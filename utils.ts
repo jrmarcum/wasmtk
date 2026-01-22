@@ -1,7 +1,7 @@
 /**
  * @module utils
- * @description Core utilities for WASM/WAT compilation, binary inspection, and environment shimming.
- * Now supports direct execution of JS/TS files in addition to WebAssembly.
+ * @description Core utilities for WASM/WAT compilation and environment shimming.
+ * Restored Zig support by adding missing WASI filesystem shims.
  */
 
 import { basename, join, dirname } from "@std/path";
@@ -17,9 +17,6 @@ let wasiInstance: WebAssembly.Instance | undefined;
 type WasmCallable = (...args: (number | bigint)[]) => number | bigint | void;
 type WasiImports = Record<string, Record<string, WasmCallable | WebAssembly.Memory>>;
 
-/**
- * Custom interfaces to expose hidden Binaryen methods for type-safe inspection.
- */
 interface BinaryenModuleExt extends binaryen.Module {
   getNumImports(): number;
   getImportByIndex(index: number): number;
@@ -64,6 +61,7 @@ const wasiImports: WasiImports = {
       view.setUint32(Number(nwrittenPtr), nwritten, true);
       return 0;
     },
+    fd_pwrite: (): number => 0,
     fd_read: (fd: number | bigint, iovs: number | bigint, iovsLen: number | bigint, nreadPtr: number | bigint): number => {
       if (Number(fd) !== 0) return 28;
       const memory = wasiInstance?.exports.memory as WebAssembly.Memory;
@@ -106,7 +104,6 @@ const wasiImports: WasiImports = {
       view.setUint32(Number(bufSizePtr), 0, true);
       return 0;
     },
-    fd_close: (): number => 0,
     fd_fdstat_get: (fd: number | bigint, ptr: number | bigint): number => {
       const view = new DataView((wasiInstance?.exports.memory as WebAssembly.Memory).buffer);
       view.setUint8(Number(ptr), Number(fd) <= 2 ? 2 : 3);
@@ -115,9 +112,19 @@ const wasiImports: WasiImports = {
       view.setBigUint64(Number(ptr) + 16, 0n, true);
       return 0;
     },
+    fd_close: (): number => 0,
     fd_seek: (): number => 0,
     fd_prestat_get: (): number => 8,
     fd_prestat_dir_name: (): number => 8,
+    fd_advise: (): number => 0,
+    fd_allocate: (): number => 0,
+    fd_datasync: (): number => 0,
+    fd_sync: (): number => 0,
+    // FIXED: Added fd_filestat_get and fd_stat_put for Zig filesystem queries
+    fd_stat_put: (): number => 0,
+    fd_filestat_get: (): number => 0,
+    poll_oneoff: (): number => 28,
+    sched_yield: (): number => 0,
   }
 };
 
@@ -136,10 +143,6 @@ async function getWasmBytes(path: string): Promise<Uint8Array> {
   return await Deno.readFile(path);
 }
 
-/**
- * Compiles an AssemblyScript file to a WASM library.
- * @param path The path to the .ts file.
- */
 export async function compileModule(path: string): Promise<void> {
   if (path.endsWith(".wasm") || path.endsWith(".wat")) {
     console.error(`❌ Input Error: modc expects an AssemblyScript (.ts) file.`);
@@ -180,15 +183,7 @@ export async function compileModule(path: string): Promise<void> {
   } catch (err) { console.error(`❌ modc Exception: ${err}`); } finally { try { await Deno.remove(tempTsPath); } catch { /* ignore */ } }
 }
 
-/**
- * Executes a file. 
- * - If .wasm or .wat, runs in internal WASI.
- * - If .js or .ts, executes via the Deno runtime.
- * @param path File path to run.
- * @param args Arguments for execution.
- */
 export async function runWasi(path: string, args: string[]): Promise<void> {
-  // RESTORED: Direct Script Execution (TS/JS)
   if (path.endsWith(".ts") || path.endsWith(".js")) {
     const command = new Deno.Command(Deno.execPath(), {
       args: ["run", "-A", path, ...args],
@@ -198,7 +193,6 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
     return;
   }
 
-  // WASM/WAT Execution
   try {
     const wasmBytes = await getWasmBytes(path);
     const extendedImports = {
@@ -218,7 +212,6 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
     const result = await WebAssembly.instantiate(wasmBytes as BufferSource, extendedImports as unknown as WebAssembly.Imports);
     wasiInstance = result.instance;
     
-    // Library Mode: call specific export
     if (args.length > 0 && await checkIsLibrary(path)) {
       const [name, ...params] = args;
       const fn = wasiInstance.exports[name];
@@ -245,10 +238,6 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
   } catch (err) { console.error(`❌ Run error: ${err}`); Deno.exit(1); }
 }
 
-/**
- * Displays metadata and exported functions for a WASM/WAT module.
- * @param path Path to the module.
- */
 export async function showInfo(path: string): Promise<void> {
   try {
     const bytes = await getWasmBytes(path);
@@ -293,10 +282,6 @@ export async function showInfo(path: string): Promise<void> {
   } catch (err) { console.error("❌ Info error: " + err); }
 }
 
-/**
- * Checks if a module is a library (no _start function).
- * @param path Path to the module.
- */
 export async function checkIsLibrary(path: string): Promise<boolean> {
   try {
     const bytes = await getWasmBytes(path);
@@ -305,10 +290,6 @@ export async function checkIsLibrary(path: string): Promise<boolean> {
   } catch { return false; }
 }
 
-/**
- * Converts a WASM/WAT module into a standalone JavaScript file.
- * @param path Path to the module.
- */
 export async function wasm2js(path: string): Promise<void> {
   const outPath = path.replace(/\.(wasm|wat)$/, ".js");
   try {
@@ -319,10 +300,6 @@ export async function wasm2js(path: string): Promise<void> {
   } catch (err) { console.error(`❌ Conversion failed: ${err}`); }
 }
 
-/**
- * Compiles a TypeScript file for a WASI environment using Javy.
- * @param path Path to the TS file.
- */
 export async function compileWasi(path: string): Promise<void> {
   const name = basename(path).replace(/\.[^/.]+$/, "");
   const bundle = new Deno.Command(Deno.execPath(), { args: ["bundle", "--quiet", path], stdout: "piped" });
@@ -333,10 +310,6 @@ export async function compileWasi(path: string): Promise<void> {
   if ((await javy.output()).success) console.log(`✅ WASI: ${name}.wasm`);
 }
 
-/**
- * Converts between .wasm and .wat formats.
- * @param p Path to the file.
- */
 export async function convertFile(p: string): Promise<void> { 
   const isWat = p.endsWith(".wat");
   const out = isWat ? p.replace(".wat", ".wasm") : p.replace(".wasm", ".wat");
@@ -345,11 +318,6 @@ export async function convertFile(p: string): Promise<void> {
   console.log(`✅ Converted to ${out}`);
 }
 
-/**
- * Bundles a TypeScript file into a single JavaScript file.
- * @param p Path to the TS file.
- * @param outPath Optional explicit output path.
- */
 export async function bundleTs(p: string, outPath?: string): Promise<void> {
   const out = outPath || p.replace(".ts", ".js");
   const b = new Deno.Command(Deno.execPath(), { args: ["bundle", "--quiet", p], stdout: "piped" });

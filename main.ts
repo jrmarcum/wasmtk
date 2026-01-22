@@ -18,42 +18,56 @@ import {
 
 /**
  * Main entry point for the wasmtk CLI application.
- * * Handles routing of subcommands and displays help documentation.
- * * @returns {Promise<void>}
+ * Handles routing of subcommands and displays help documentation.
+ * @returns {Promise<void>}
  */
 async function main(): Promise<void> {
   const args = parseArgs(Deno.args, {
-    alias: { v: "version" },
-    boolean: ["version"],
+    alias: { 
+      v: "version",
+      V: "version",
+      h: "help" 
+    },
+    boolean: ["version", "help"],
   });
 
-  const command = args._[0];
-  const target = args._[1] as string;
-
-  if (args.version || args.v) {
+  // 1. Version Check
+  if (args.version) {
     console.log(`wasmtk v${VERSION}`);
     return;
   }
 
-  if (!command || !target) {
+  const command = args._[0] as string;
+  const target = args._[1] as string;
+
+  // 2. Help/Usage Check - Reorganized: modc -> wasic -> run
+  if (args.help || !command || !target) {
     console.log(`
 wasmtk - WebAssembly Development Toolkit v${VERSION}
 
 Usage:
-  wasmtk compile <file.ts>     Compile AssemblyScript to library WASM
+  wasmtk modc <file.ts>        Compile AssemblyScript to library WASM
+  wasmtk wasic <file.ts>       Compile TS to WASI module (Javy)
   wasmtk run <file.wasm>       Run WASM/WAT module (WASI supported)
   wasmtk info <file.wasm>      Show exported functions and info
   wasmtk wasm2js <file.wasm>   Convert WASM to standalone JS
-  wasmtk wasi <file.ts>        Compile TS to WASI module (Javy)
   wasmtk convert <file>        Toggle between .wasm and .wat
   wasmtk bundle <file.ts>      Bundle TS to JS
+
+Options:
+  -v, -V, --version            Show version information
+  -h, --help                   Show this help message
     `);
     return;
   }
 
+  // 3. Command Routing
   switch (command) {
-    case "compile":
+    case "modc":
       await compileModule(target);
+      break;
+    case "wasic":
+      await compileWasi(target);
       break;
     case "run": {
       const isLib = await checkIsLibrary(target);
@@ -61,7 +75,6 @@ Usage:
         console.log(`💡 Library module loaded. Use: wasmtk run ${target} <function> [args...]`);
         await showInfo(target);
         if (args._.length > 2) {
-          // Pass any extra positional arguments to the WASM function
           await runWasi(target, args._.slice(2).map(String));
         }
       } else {
@@ -75,22 +88,18 @@ Usage:
     case "wasm2js":
       await wasm2js(target);
       break;
-    case "wasi":
-      await compileWasi(target);
-      break;
     case "convert":
       await convertFile(target);
       break;
     case "bundle":
-      // Explicitly pass the output path to fix signature requirement
       await bundleTs(target, target.replace(/\.ts$/, ".js"));
       break;
     default:
-      console.error(`Unknown command: ${command}`);
+      console.error(`❌ Unknown command: ${command}`);
+      Deno.exit(1);
   }
 }
 
-// Start the CLI if the module is run directly
 if (import.meta.main) {
   main();
 }
