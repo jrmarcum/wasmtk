@@ -10,7 +10,7 @@ type WasmCallable = (...args: (number | bigint)[]) => number | bigint | void;
 type WasiImports = Record<string, Record<string, WasmCallable | WebAssembly.Memory>>;
 
 /**
- * Custom interfaces to expose hidden Binaryen methods and constants
+ * Custom interfaces to expose hidden Binaryen methods without using 'any'
  */
 interface BinaryenModuleExt extends binaryen.Module {
   getNumImports(): number;
@@ -30,7 +30,7 @@ interface BinaryenLibExt {
 }
 
 /**
- * Helper: Converts Binaryen type constants to human-readable strings for rsxtk style
+ * Helper: Converts Binaryen type constants to human-readable strings
  */
 function getTypeName(typeId: number): string {
   const b = binaryen as unknown as BinaryenLibExt;
@@ -131,9 +131,6 @@ const wasiImports: WasiImports = {
   }
 };
 
-/**
- * Centralized Byte Loader: Automatically compiles .wat to .wasm bytes in-memory
- */
 async function getWasmBytes(path: string): Promise<Uint8Array> {
   if (path.endsWith(".wat")) {
     const tempWasm = `${path}.tmp.wasm`;
@@ -203,7 +200,7 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
           const strBuf = new Uint16Array(memory.buffer, ptr, len / 2);
           console.log(String.fromCharCode(...strBuf));
         },
-        abort: () => { throw new WebAssembly.RuntimeError("abort"); }
+        abort: (): void => { throw new WebAssembly.RuntimeError("abort"); }
       }
     };
     const result = await WebAssembly.instantiate(wasmBytes as BufferSource, extendedImports as unknown as WebAssembly.Imports);
@@ -325,7 +322,7 @@ export async function convertFile(p: string): Promise<void> {
 }
 
 /**
- * bundleTs: Now allows second parameter to fix TS2554 error in main.ts
+ * bundleTs: Now allows second parameter and has explicit return type for JSR publishing
  */
 export async function bundleTs(p: string, outPath?: string): Promise<void> {
   const out = outPath || p.replace(".ts", ".js");
