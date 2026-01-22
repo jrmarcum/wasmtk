@@ -1,39 +1,51 @@
 /**
  * @module args
- * @description Utilities for parsing and validating command-line arguments for the wasmtk CLI.
+ * @description Utilities for parsing and validating command-line arguments using the modern Deno Standard Library.
  */
 
-import { parse } from "@std/flags";
+import { parseArgs } from "@std/cli/parse-args";
 
 /**
- * Interface representing the parsed CLI arguments.
+ * Interface representing the parsed CLI arguments for the toolkit.
  */
 export interface WasmtkArgs {
-  /** The primary command (e.g., 'compile', 'run'). */
+  /** The primary command (e.g., 'compile', 'run', 'info'). */
   command: string;
-  /** The target file path. */
+  /** The target file path or module name. */
   target: string;
-  /** Additional positional arguments. */
+  /** Additional positional arguments passed after the target. */
   extra: string[];
-  /** Whether the version flag was passed. */
+  /** Flag indicating if the version information should be displayed. */
   showVersion: boolean;
 }
 
 /**
- * Parses raw Deno arguments into a structured format.
- * @param rawArgs - The `Deno.args` array.
- * @returns A structured WasmtkArgs object.
+ * Parses raw CLI arguments into a structured WasmtkArgs object.
+ * Uses the modern `@std/cli/parse-args` implementation.
+ * * @example
+ * ```ts
+ * const args = parseWasmtkArgs(Deno.args);
+ * if (args.command === "run") {
+ * executeWasm(args.target, args.extra);
+ * }
+ * ```
+ * * @param rawArgs - Typically `Deno.args`.
+ * @returns A structured and typed argument object.
  */
 export function parseWasmtkArgs(rawArgs: string[]): WasmtkArgs {
-  const parsed = parse(rawArgs, {
+  const parsed = parseArgs(rawArgs, {
     alias: { v: "version" },
     boolean: ["version"],
+    stopEarly: false,
   });
 
+  // Extract positional arguments
+  const [command, target, ...extra] = parsed._;
+
   return {
-    command: String(parsed._[0] || ""),
-    target: String(parsed._[1] || ""),
-    extra: parsed._.slice(2).map(String),
+    command: String(command || ""),
+    target: String(target || ""),
+    extra: extra.map(String),
     showVersion: !!parsed.version,
   };
 }

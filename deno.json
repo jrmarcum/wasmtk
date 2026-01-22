@@ -5,21 +5,22 @@
   "license": "Apache-2.0 AND MIT",
   "exports": {
     ".": "./main.ts",
+    "./utils": "./utils.ts",
     "./runner": "./runner.ts",
-    "./utils": "./utils.ts"
+    "./args": "./args.ts",
+    "./compiler": "./compiler.ts"
   },
   "publish": {
     "include": [
       "LICENSE",
       "README.md",
-      "main.ts",
-      "runner.ts",
-      "utils.ts",
+      "*.ts",
       "deno.json"
     ]
   },
   "imports": {
-    "@std/assert": "jsr:@std/assert@1",
+    "@std/cli": "jsr:@std/cli@^1.0.26",
+    "@std/assert": "jsr:@std/assert@1.0.0",
     "@std/path": "jsr:@std/path@^1.1.2",
     "@std/encoding": "jsr:@std/encoding@^1.0.5",
     "binaryen": "npm:binaryen@^116.0.0",
@@ -35,7 +36,9 @@
     "compile": "deno compile -A --output wasmtk main.ts"
   },
   "fmt": {
+    "useTabs": false,
+    "lineWidth": 100,
     "indentWidth": 2,
-    "lineWidth": 100
+    "semiColons": true
   }
 }

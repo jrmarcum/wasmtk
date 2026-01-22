@@ -4,7 +4,6 @@
  */
 
 import { main as asc } from "asc";
-import { basename, dirname, join } from "@std/path";
 
 /**
  * Interface for compiler output results.
@@ -18,7 +17,12 @@ export interface CompileResult {
 
 /**
  * Low-level wrapper for the AssemblyScript compiler (asc).
- * @param inputPath - Path to the source .ts file.
+ * * @example
+ * ```ts
+ * const result = await runAssemblyScriptCompiler("math.ts", "math.wasm");
+ * if (result.success) console.log("Compiled!");
+ * ```
+ * * @param inputPath - Path to the source .ts file.
  * @param outputPath - Path where the .wasm file should be written.
  * @returns A promise resolving to a CompileResult.
  */
@@ -46,9 +50,10 @@ export async function runAssemblyScriptCompiler(
 }
 
 /**
- * Uses Javy to compile a JS bundle into a WASI-compatible WASM module.
- * @param jsPath - Path to the bundled JavaScript file.
+ * Uses Javy (a JavaScript-to-Wasm toolchain) to compile a JS bundle into a WASI-compatible WASM module.
+ * * @param jsPath - Path to the bundled JavaScript file.
  * @param wasmPath - Output path for the generated WASM.
+ * @throws Error if the Javy command fails or is not found in the PATH.
  */
 export async function runJavyCompiler(jsPath: string, wasmPath: string): Promise<void> {
   const command = new Deno.Command("javy", {
