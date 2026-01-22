@@ -3,12 +3,15 @@ import wasm2js_compiler from "wasm2js";
 import binaryen from "binaryen";
 import { main as asc } from "asc";
 
-export const VERSION = "1.1.1";
+export const VERSION = "1.1.3";
 let wasiInstance: WebAssembly.Instance | undefined;
 
 type WasmCallable = (...args: (number | bigint)[]) => number | bigint | void;
 type WasiImports = Record<string, Record<string, WasmCallable | WebAssembly.Memory>>;
 
+/**
+ * Custom interfaces to expose hidden Binaryen methods and constants
+ */
 interface BinaryenModuleExt extends binaryen.Module {
   getNumImports(): number;
   getImportByIndex(index: number): number;
@@ -26,6 +29,9 @@ interface BinaryenLibExt {
   none: number;
 }
 
+/**
+ * Helper: Converts Binaryen type constants to human-readable strings for rsxtk style
+ */
 function getTypeName(typeId: number): string {
   const b = binaryen as unknown as BinaryenLibExt;
   if (typeId === b.i32) return "i32";
@@ -41,11 +47,11 @@ function getTypeName(typeId: number): string {
 
 const wasiImports: WasiImports = {
   wasi_snapshot_preview1: {
-    proc_exit: (code: number | bigint) => {
+    proc_exit: (code: number | bigint): void => {
       if (Number(code) === 0) Deno.exit(0);
       throw new WebAssembly.RuntimeError(`exit:${code}`);
     },
-    fd_write: (fd: number | bigint, iovs: number | bigint, iovsLen: number | bigint, nwrittenPtr: number | bigint) => {
+    fd_write: (fd: number | bigint, iovs: number | bigint, iovsLen: number | bigint, nwrittenPtr: number | bigint): number => {
       const memory = wasiInstance?.exports.memory as WebAssembly.Memory;
       const view = new DataView(memory.buffer);
       let nwritten = 0;
@@ -59,8 +65,8 @@ const wasiImports: WasiImports = {
       view.setUint32(Number(nwrittenPtr), nwritten, true);
       return 0;
     },
-    fd_pwrite: () => 0, 
-    fd_read: (fd: number | bigint, iovs: number | bigint, iovsLen: number | bigint, nreadPtr: number | bigint) => {
+    fd_pwrite: (): number => 0, 
+    fd_read: (fd: number | bigint, iovs: number | bigint, iovsLen: number | bigint, nreadPtr: number | bigint): number => {
       if (Number(fd) !== 0) return 28;
       const memory = wasiInstance?.exports.memory as WebAssembly.Memory;
       const view = new DataView(memory.buffer);
@@ -77,27 +83,27 @@ const wasiImports: WasiImports = {
       view.setUint32(Number(nreadPtr), totalRead, true);
       return 0;
     },
-    clock_time_get: (_id: number | bigint, _prec: bigint | number, resPtr: number | bigint) => {
+    clock_time_get: (_id: number | bigint, _prec: bigint | number, resPtr: number | bigint): number => {
       const view = new DataView((wasiInstance?.exports.memory as WebAssembly.Memory).buffer);
       view.setBigUint64(Number(resPtr), BigInt(Date.now()) * 1000000n, true);
       return 0;
     },
-    environ_get: () => 0,
-    environ_sizes_get: (countPtr: number | bigint, bufSizePtr: number | bigint) => {
+    environ_get: (): number => 0,
+    environ_sizes_get: (countPtr: number | bigint, bufSizePtr: number | bigint): number => {
       const view = new DataView((wasiInstance?.exports.memory as WebAssembly.Memory).buffer);
       view.setUint32(Number(countPtr), 0, true);
       view.setUint32(Number(bufSizePtr), 0, true);
       return 0;
     },
-    args_get: () => 0,
-    args_sizes_get: (countPtr: number | bigint, bufSizePtr: number | bigint) => {
+    args_get: (): number => 0,
+    args_sizes_get: (countPtr: number | bigint, bufSizePtr: number | bigint): number => {
       const view = new DataView((wasiInstance?.exports.memory as WebAssembly.Memory).buffer);
       view.setUint32(Number(countPtr), 0, true);
       view.setUint32(Number(bufSizePtr), 0, true);
       return 0;
     },
-    fd_close: () => 0,
-    fd_fdstat_get: (fd: number | bigint, ptr: number | bigint) => {
+    fd_close: (): number => 0,
+    fd_fdstat_get: (fd: number | bigint, ptr: number | bigint): number => {
       const view = new DataView((wasiInstance?.exports.memory as WebAssembly.Memory).buffer);
       view.setUint8(Number(ptr), Number(fd) <= 2 ? 2 : 3);
       view.setUint16(Number(ptr) + 2, 0, true);
@@ -105,28 +111,28 @@ const wasiImports: WasiImports = {
       view.setBigUint64(Number(ptr) + 16, 0n, true);
       return 0;
     },
-    fd_seek: () => 0,
-    fd_prestat_get: () => 8,
-    fd_prestat_dir_name: () => 8,
-    fd_advise: () => 0,
-    fd_allocate: () => 0,
-    fd_datasync: () => 0,
-    fd_sync: () => 0,
-    fd_stat_put: () => 0,
-    fd_filestat_get: () => 0,
-    poll_oneoff: () => 28,
-    random_get: (bufPtr: number | bigint, bufLen: number | bigint) => {
+    fd_seek: (): number => 0,
+    fd_prestat_get: (): number => 8,
+    fd_prestat_dir_name: (): number => 8,
+    fd_advise: (): number => 0,
+    fd_allocate: (): number => 0,
+    fd_datasync: (): number => 0,
+    fd_sync: (): number => 0,
+    fd_stat_put: (): number => 0,
+    fd_filestat_get: (): number => 0,
+    poll_oneoff: (): number => 28,
+    random_get: (bufPtr: number | bigint, bufLen: number | bigint): number => {
       const memory = wasiInstance?.exports.memory as WebAssembly.Memory;
       const buf = new Uint8Array(memory.buffer, Number(bufPtr), Number(bufLen));
       crypto.getRandomValues(buf);
       return 0;
     },
-    sched_yield: () => 0,
+    sched_yield: (): number => 0,
   }
 };
 
 /**
- * Enhanced getWasmBytes: Automatically converts .wat to .wasm bytes in-memory
+ * Centralized Byte Loader: Automatically compiles .wat to .wasm bytes in-memory
  */
 async function getWasmBytes(path: string): Promise<Uint8Array> {
   if (path.endsWith(".wat")) {
@@ -227,9 +233,6 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
   } catch (err) { console.error(`❌ Run error: ${err}`); Deno.exit(1); }
 }
 
-/**
- * showInfo: Updated to handle .wat files via getWasmBytes
- */
 export async function showInfo(path: string): Promise<void> {
   try {
     const bytes = await getWasmBytes(path);
@@ -321,8 +324,11 @@ export async function convertFile(p: string): Promise<void> {
   console.log(`✅ Converted to ${out}`);
 }
 
-export async function bundleTs(p: string): Promise<void> {
-  const out = p.replace(".ts", ".js");
+/**
+ * bundleTs: Now allows second parameter to fix TS2554 error in main.ts
+ */
+export async function bundleTs(p: string, outPath?: string): Promise<void> {
+  const out = outPath || p.replace(".ts", ".js");
   const b = new Deno.Command(Deno.execPath(), { args: ["bundle", "--quiet", p], stdout: "piped" });
   const output = await b.output();
   await Deno.writeTextFile(out, new TextDecoder().decode(output.stdout));
