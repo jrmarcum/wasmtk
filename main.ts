@@ -1,9 +1,9 @@
 /**
  * @module main
- * @description Command-line entry point for the wasmtk toolkit.
+ * @description The primary command-line interface entry point for wasmtk.
  */
 
-import { parse } from "@std/flags";
+import { parseArgs } from "@std/cli/parse-args";
 import { 
   VERSION, 
   compileModule, 
@@ -17,11 +17,16 @@ import {
 } from "./utils.ts";
 
 /**
- * Main entry point for the wasmtk CLI.
- * Handles commands: compile, run, info, wasm2js, wasi, convert, bundle.
+ * Main entry point for the wasmtk CLI application.
+ * * Handles routing of subcommands and displays help documentation.
+ * * @returns {Promise<void>}
  */
 async function main(): Promise<void> {
-  const args = parse(Deno.args);
+  const args = parseArgs(Deno.args, {
+    alias: { v: "version" },
+    boolean: ["version"],
+  });
+
   const command = args._[0];
   const target = args._[1] as string;
 
@@ -56,6 +61,7 @@ Usage:
         console.log(`💡 Library module loaded. Use: wasmtk run ${target} <function> [args...]`);
         await showInfo(target);
         if (args._.length > 2) {
+          // Pass any extra positional arguments to the WASM function
           await runWasi(target, args._.slice(2).map(String));
         }
       } else {
@@ -76,6 +82,7 @@ Usage:
       await convertFile(target);
       break;
     case "bundle":
+      // Explicitly pass the output path to fix signature requirement
       await bundleTs(target, target.replace(/\.ts$/, ".js"));
       break;
     default:
@@ -83,6 +90,7 @@ Usage:
   }
 }
 
+// Start the CLI if the module is run directly
 if (import.meta.main) {
   main();
 }
