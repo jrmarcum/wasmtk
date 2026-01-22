@@ -1,107 +1,88 @@
+/**
+ * @module main
+ * @description Command-line entry point for the wasmtk toolkit.
+ */
+
+import { parse } from "@std/flags";
 import { 
-  compileWasi, 
-  runWasi, 
+  VERSION, 
   compileModule, 
+  runWasi, 
+  showInfo, 
+  checkIsLibrary, 
+  wasm2js, 
+  compileWasi, 
   convertFile, 
-  bundleTs, 
-  showInfo,
-  checkIsLibrary,
-  wasm2js,
-  VERSION 
+  bundleTs 
 } from "./utils.ts";
 
-const [command, target, ...extraArgs] = Deno.args;
+/**
+ * Main entry point for the wasmtk CLI.
+ * Handles commands: compile, run, info, wasm2js, wasi, convert, bundle.
+ */
+async function main(): Promise<void> {
+  const args = parse(Deno.args);
+  const command = args._[0];
+  const target = args._[1] as string;
 
-const helpMessage = `
-wasmtk - WebAssembly Toolkit (v${VERSION})
+  if (args.version || args.v) {
+    console.log(`wasmtk v${VERSION}`);
+    return;
+  }
+
+  if (!command || !target) {
+    console.log(`
+wasmtk - WebAssembly Development Toolkit v${VERSION}
 
 Usage:
-  wasmtk wasic <file.ts>   - Compile to WASI
-  wasmtk run <file>        - Execute file (.wasm/.wat via WASI, .ts/.js via Deno)
-  wasmtk info <file.wasm>  - Display WebAssembly module information
-  wasmtk modc <file.ts>    - Compile to non-WASI module
-  wasmtk convert <file>    - Convert between .wasm and .wat
-  wasmtk wasm2js <file>    - Convert .wasm to .js
-  wasmtk bundle <file.ts>  - Bundle TS to a single JS file (No shims)
-  wasmtk --version, -v     - Show version
-  wasmtk --help, -h        - Show help
-`;
+  wasmtk compile <file.ts>     Compile AssemblyScript to library WASM
+  wasmtk run <file.wasm>       Run WASM/WAT module (WASI supported)
+  wasmtk info <file.wasm>      Show exported functions and info
+  wasmtk wasm2js <file.wasm>   Convert WASM to standalone JS
+  wasmtk wasi <file.ts>        Compile TS to WASI module (Javy)
+  wasmtk convert <file>        Toggle between .wasm and .wat
+  wasmtk bundle <file.ts>      Bundle TS to JS
+    `);
+    return;
+  }
 
-const validCommands = [
-  "wasic", "run", "info", "modc", "convert", 
-  "wasm2js", "bundle", "--version", "-v", "-V", "--help", "-h"
-];
-
-if (!command) {
-  console.log(helpMessage);
-  Deno.exit(0);
-}
-
-if (!validCommands.includes(command)) {
-  console.error(`❌ Error: "${command}" is not a valid wasmtk command.`);
-  Deno.exit(1);
-}
-
-if (["--help", "-h"].includes(command)) {
-  console.log(helpMessage);
-  Deno.exit(0);
-}
-
-if (["--version", "-v", "-V"].includes(command)) {
-  console.log(`wasmtk v${VERSION}`);
-  Deno.exit(0);
-}
-
-switch (command) {
-  case "wasic":
-    if (!target) { console.error("❌ Target missing."); Deno.exit(1); }
-    await compileWasi(target);
-    break;
-
-  case "info":
-    if (!target) { console.error("❌ Target missing."); Deno.exit(1); }
-    await showInfo(target);
-    break;
-
-  case "modc":
-    if (!target) { console.error("❌ Target missing."); Deno.exit(1); }
-    compileModule(target);
-    break;
-
-  case "convert":
-    if (!target) { console.error("❌ Target missing."); Deno.exit(1); }
-    await convertFile(target);
-    break;
-
-  case "wasm2js":
-    if (!target) { console.error("❌ Target missing."); Deno.exit(1); }
-    await wasm2js(target);
-    break;
-
-  case "bundle":
-    if (!target) { console.error("❌ Target missing."); Deno.exit(1); }
-    await bundleTs(target, target.replace(/\.ts$/, ".js"));
-    break;
-
-  case "run":
-    if (!target) { console.error("❌ Target missing."); Deno.exit(1); }
-    
-    if (target.endsWith(".ts") || target.endsWith(".js")) {
-      const process = new Deno.Command(Deno.execPath(), {
-        args: ["run", "-A", target, ...extraArgs],
-      });
-      await process.spawn().status;
-    } else if (target.endsWith(".wasm") || target.endsWith(".wat")) {
+  switch (command) {
+    case "compile":
+      await compileModule(target);
+      break;
+    case "run": {
       const isLib = await checkIsLibrary(target);
-      if (isLib && extraArgs.length === 0) {
+      if (isLib) {
         console.log(`💡 Library module loaded. Use: wasmtk run ${target} <function> [args...]`);
         await showInfo(target);
+        if (args._.length > 2) {
+          await runWasi(target, args._.slice(2).map(String));
+        }
       } else {
-        await runWasi(target, extraArgs);
+        await runWasi(target, []);
       }
-    } else {
-      console.error("❌ Unknown file type.");
-      Deno.exit(1);
+      break;
     }
-    break;
+    case "info":
+      await showInfo(target);
+      break;
+    case "wasm2js":
+      await wasm2js(target);
+      break;
+    case "wasi":
+      await compileWasi(target);
+      break;
+    case "convert":
+      await convertFile(target);
+      break;
+    case "bundle":
+      await bundleTs(target, target.replace(/\.ts$/, ".js"));
+      break;
+    default:
+      console.error(`Unknown command: ${command}`);
+  }
+}
+
+if (import.meta.main) {
+  main();
 }

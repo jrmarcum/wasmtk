@@ -1,17 +1,21 @@
+/**
+ * @module utils
+ * @description Core utilities for WASM/WAT compilation, binary inspection, and WASI shimming.
+ */
+
 import { basename, join, dirname } from "@std/path";
 import wasm2js_compiler from "wasm2js";
 import binaryen from "binaryen";
 import { main as asc } from "asc";
 
+/** The current version of the wasmtk toolkit. */
 export const VERSION = "1.1.3";
+
 let wasiInstance: WebAssembly.Instance | undefined;
 
 type WasmCallable = (...args: (number | bigint)[]) => number | bigint | void;
 type WasiImports = Record<string, Record<string, WasmCallable | WebAssembly.Memory>>;
 
-/**
- * Custom interfaces to expose hidden Binaryen methods without using 'any'
- */
 interface BinaryenModuleExt extends binaryen.Module {
   getNumImports(): number;
   getImportByIndex(index: number): number;
@@ -19,28 +23,16 @@ interface BinaryenModuleExt extends binaryen.Module {
 
 interface BinaryenLibExt {
   getImportInfo(importRef: number): { module: string; name: string; kind: number };
-  i32: number;
-  i64: number;
-  f32: number;
-  f64: number;
-  v128: number;
-  funcref: number;
-  externref: number;
-  none: number;
+  i32: number; i64: number; f32: number; f64: number;
+  v128: number; funcref: number; externref: number; none: number;
 }
 
-/**
- * Helper: Converts Binaryen type constants to human-readable strings
- */
 function getTypeName(typeId: number): string {
   const b = binaryen as unknown as BinaryenLibExt;
   if (typeId === b.i32) return "i32";
   if (typeId === b.i64) return "i64";
   if (typeId === b.f32) return "f32";
   if (typeId === b.f64) return "f64";
-  if (typeId === b.v128) return "v128";
-  if (typeId === b.funcref) return "funcref";
-  if (typeId === b.externref) return "externref";
   if (typeId === b.none) return "void";
   return "unknown";
 }
@@ -65,7 +57,7 @@ const wasiImports: WasiImports = {
       view.setUint32(Number(nwrittenPtr), nwritten, true);
       return 0;
     },
-    fd_pwrite: (): number => 0, 
+    fd_pwrite: (): number => 0,
     fd_read: (fd: number | bigint, iovs: number | bigint, iovsLen: number | bigint, nreadPtr: number | bigint): number => {
       if (Number(fd) !== 0) return 28;
       const memory = wasiInstance?.exports.memory as WebAssembly.Memory;
@@ -146,6 +138,10 @@ async function getWasmBytes(path: string): Promise<Uint8Array> {
   return await Deno.readFile(path);
 }
 
+/**
+ * Compiles an AssemblyScript file to a WASM library.
+ * @param path The path to the .ts file.
+ */
 export async function compileModule(path: string): Promise<void> {
   if (path.endsWith(".wasm") || path.endsWith(".wat")) {
     console.error(`❌ Input Error: modc expects an AssemblyScript (.ts) file.`);
@@ -186,6 +182,11 @@ export async function compileModule(path: string): Promise<void> {
   } catch (err) { console.error(`❌ modc Exception: ${err}`); } finally { try { await Deno.remove(tempTsPath); } catch { /* ignore */ } }
 }
 
+/**
+ * Executes a WASM/WAT file with WASI support.
+ * @param path Path to the module.
+ * @param args Arguments for function calls if library mode.
+ */
 export async function runWasi(path: string, args: string[]): Promise<void> {
   try {
     const wasmBytes = await getWasmBytes(path);
@@ -230,43 +231,37 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
   } catch (err) { console.error(`❌ Run error: ${err}`); Deno.exit(1); }
 }
 
+/**
+ * Displays metadata and exported functions for a WASM/WAT module.
+ * @param path Path to the module.
+ */
 export async function showInfo(path: string): Promise<void> {
   try {
     const bytes = await getWasmBytes(path);
     const module = binaryen.readBinary(bytes);
-    
     console.log(`\n📄 Module Info: ${basename(path)}`);
     console.log("─".repeat(40));
     console.log(`🚀 User Callable Functions:`);
-
     const numExports = module.getNumExports();
     let found = 0;
-
     for (let i = 0; i < numExports; i++) {
       const exp = binaryen.getExportInfo(module.getExportByIndex(i));
       if (exp.kind !== 0) continue; 
-
       const name = exp.name;
       const isInternal = name === "_start" || name === "_initialize" || name === "abort" || name.startsWith("__") || name.startsWith("cabi_") || name.includes("config-schema");
-      
       if (!isInternal) {
         const func = module.getFunction(exp.value);
         const info = binaryen.getFunctionInfo(func);
-        
         const params = binaryen.expandType(info.params).map(getTypeName).join(", ") || "";
         const results = binaryen.expandType(info.results).map(getTypeName).join(", ") || "void";
-        
         console.log(`  - ${name}(${params}) -> ${results}`);
         found++;
       }
     }
-
     if (found === 0) console.log("  (None found)");
-
     let isWasi = false;
     const modExt = module as BinaryenModuleExt;
     const binExt = binaryen as unknown as BinaryenLibExt;
-
     if (typeof modExt.getNumImports === "function") {
       const numImports = modExt.getNumImports();
       for (let i = 0; i < numImports; i++) {
@@ -278,13 +273,16 @@ export async function showInfo(path: string): Promise<void> {
         }
       }
     }
-    
     console.log(`\n🛠️  WASI Support: ${isWasi ? "Yes" : "No"}`);
     console.log("─".repeat(40));
     module.dispose();
   } catch (err) { console.error("❌ Info error: " + err); }
 }
 
+/**
+ * Checks if a module is a library (no _start function).
+ * @param path Path to the module.
+ */
 export async function checkIsLibrary(path: string): Promise<boolean> {
   try {
     const bytes = await getWasmBytes(path);
@@ -293,6 +291,10 @@ export async function checkIsLibrary(path: string): Promise<boolean> {
   } catch { return false; }
 }
 
+/**
+ * Converts a WASM/WAT module into a standalone JavaScript file.
+ * @param path Path to the module.
+ */
 export async function wasm2js(path: string): Promise<void> {
   const outPath = path.replace(/\.(wasm|wat)$/, ".js");
   try {
@@ -303,6 +305,10 @@ export async function wasm2js(path: string): Promise<void> {
   } catch (err) { console.error(`❌ Conversion failed: ${err}`); }
 }
 
+/**
+ * Compiles a TypeScript file for a WASI environment using Javy.
+ * @param path Path to the TS file.
+ */
 export async function compileWasi(path: string): Promise<void> {
   const name = basename(path).replace(/\.[^/.]+$/, "");
   const bundle = new Deno.Command(Deno.execPath(), { args: ["bundle", "--quiet", path], stdout: "piped" });
@@ -313,6 +319,10 @@ export async function compileWasi(path: string): Promise<void> {
   if ((await javy.output()).success) console.log(`✅ WASI: ${name}.wasm`);
 }
 
+/**
+ * Converts between .wasm and .wat formats.
+ * @param p Path to the file.
+ */
 export async function convertFile(p: string): Promise<void> { 
   const isWat = p.endsWith(".wat");
   const out = isWat ? p.replace(".wat", ".wasm") : p.replace(".wasm", ".wat");
@@ -322,7 +332,9 @@ export async function convertFile(p: string): Promise<void> {
 }
 
 /**
- * bundleTs: Now allows second parameter and has explicit return type for JSR publishing
+ * Bundles a TypeScript file into a single JavaScript file.
+ * @param p Path to the TS file.
+ * @param outPath Optional explicit output path.
  */
 export async function bundleTs(p: string, outPath?: string): Promise<void> {
   const out = outPath || p.replace(".ts", ".js");

@@ -1,10 +1,15 @@
+/**
+ * @module runner
+ * @description Provides the WASI execution environment and import factories for WebAssembly modules.
+ */
+
 let wasiInstance: WebAssembly.Instance | undefined;
 
 /**
- * Creates the WASI import object with explicit return type for JSR publishing.
- * @param _args - Command line arguments (prefixed with _ to ignore unused lint)
- * @param _env - Environment variables (prefixed with _ to ignore unused lint)
- * @returns A WebAssembly Imports object
+ * Creates a standard WASI (snapshot_preview1) import object.
+ * @param _args Unused command line arguments (WASI interface compatibility).
+ * @param _env Unused environment variables (WASI interface compatibility).
+ * @returns An object compatible with WebAssembly.instantiate imports.
  */
 export function createWasiImports(_args: string[], _env: Record<string, string>): WebAssembly.Imports {
   return {
@@ -86,14 +91,15 @@ export function createWasiImports(_args: string[], _env: Record<string, string>)
 }
 
 /**
- * Internal executor for WASI modules
+ * Instantiates and runs a WASM module as a command-line application.
+ * @param path Path to the .wasm file.
+ * @param args Arguments passed to the module's _start function.
  */
 export async function executeWasm(path: string, args: string[] = []): Promise<void> {
   const bytes = await Deno.readFile(path);
   const imports = createWasiImports(args, Deno.env.toObject());
   const { instance } = await WebAssembly.instantiate(bytes, imports);
   wasiInstance = instance;
-
   const start = instance.exports._start as CallableFunction;
   if (typeof start === "function") {
     try {
