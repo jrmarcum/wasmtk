@@ -18,8 +18,6 @@ import {
 
 /**
  * Main entry point for the wasmtk CLI application.
- * Handles routing of subcommands and displays help documentation.
- * @returns {Promise<void>}
  */
 async function main(): Promise<void> {
   const args = parseArgs(Deno.args, {
@@ -31,7 +29,6 @@ async function main(): Promise<void> {
     boolean: ["version", "help"],
   });
 
-  // 1. Version Check
   if (args.version) {
     console.log(`wasmtk v${VERSION}`);
     return;
@@ -40,7 +37,6 @@ async function main(): Promise<void> {
   const command = args._[0] as string;
   const target = args._[1] as string;
 
-  // 2. Help/Usage Check - Updated with exact requested descriptions
   if (args.help || !command || !target) {
     console.log(`
 wasmtk - WebAssembly Development Toolkit v${VERSION}
@@ -61,7 +57,6 @@ Options:
     return;
   }
 
-  // 3. Command Routing
   switch (command) {
     case "modc":
       await compileModule(target);
@@ -71,13 +66,19 @@ Options:
       break;
     case "run": {
       const isLib = await checkIsLibrary(target);
+      const hasFunctionCall = args._.length > 2;
+
       if (isLib) {
-        console.log(`💡 Library module loaded. Use: wasmtk run ${target} <function> [args...]`);
-        await showInfo(target);
-        if (args._.length > 2) {
+        if (hasFunctionCall) {
+          // Attempt to run directly. runWasi handles internal error logging if function is missing.
           await runWasi(target, args._.slice(2).map(String));
+        } else {
+          // No function provided: Assist the user by showing what is available.
+          console.log(`💡 Library module loaded. To execute a function, use: wasmtk run ${target} <function> [args...]`);
+          await showInfo(target);
         }
       } else {
+        // Standard WASI/Command module execution
         await runWasi(target, []);
       }
       break;
