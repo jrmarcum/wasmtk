@@ -349,3 +349,11 @@ export async function convertFile(p: string): Promise<void> {
  * Bundles a TypeScript file into a single JavaScript file.
  * @param p Path to the TS file.
  * @param outPath Optional explicit output path.
+ */
+export async function bundleTs(p: string, outPath?: string): Promise<void> {
+  const out = outPath || p.replace(".ts", ".js");
+  const b = new Deno.Command(Deno.execPath(), { args: ["bundle", "--quiet", p], stdout: "piped" });
+  const output = await b.output();
+  await Deno.writeTextFile(out, new TextDecoder().decode(output.stdout));
+  console.log(`✅ Bundled: ${out}`);
+}

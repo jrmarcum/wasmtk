@@ -10,6 +10,9 @@
     "npm:wasm2js@0.2": "0.2.0"
   },
   "jsr": {
+    "@std/cli@1.0.3": {
+      "integrity": "9a0488b5d2e58d29dce106a941eecec7181fae996bf0d2225563f1ca7e4b100c"
+    },
     "@std/cli@1.0.22": {
       "integrity": "50d1e4f87887cb8a8afa29b88505ab5081188f5cad3985460c3b471fa49ff21a"
     },
