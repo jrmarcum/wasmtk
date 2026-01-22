@@ -1,6 +1,14 @@
 /**
  * @module main
- * @description The primary command-line interface entry point for wasmtk.
+ * @description The primary CLI entry point for wasmtk.
+ * * Supports a comprehensive suite of WebAssembly development tools:
+ * - `modc`: AssemblyScript library compilation (asc)
+ * - `wasic`: WASI module compilation (Javy)
+ * - `run`: Multi-format execution (.wasm, .wat, .js, .ts)
+ * - `info`: Module inspection
+ * - `wasm2js`: JS porting
+ * - `convert`: Format toggling
+ * - `bundle`: TS bundling
  */
 
 import { parseArgs } from "@std/cli/parse-args";
@@ -18,6 +26,8 @@ import {
 
 /**
  * Main entry point for the wasmtk CLI application.
+ * Orchestrates command routing and handles intelligent UX for WASM library execution.
+ * @returns {Promise<void>}
  */
 async function main(): Promise<void> {
   const args = parseArgs(Deno.args, {
@@ -70,15 +80,15 @@ Options:
 
       if (isLib) {
         if (hasFunctionCall) {
-          // Attempt to run directly. runWasi handles internal error logging if function is missing.
+          // Executes the function directly without reprinting info
           await runWasi(target, args._.slice(2).map(String));
         } else {
-          // No function provided: Assist the user by showing what is available.
+          // Assists the user by showing available functions when none are specified
           console.log(`💡 Library module loaded. To execute a function, use: wasmtk run ${target} <function> [args...]`);
           await showInfo(target);
         }
       } else {
-        // Standard WASI/Command module execution
+        // Runs standalone WASI binaries or scripts
         await runWasi(target, []);
       }
       break;

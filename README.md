@@ -15,4 +15,4 @@ Most runners are either too minimal (breaking on complex Zig/Rust builds) or too
 
 ### Installation
 ```bash
-deno install -A -n wasmtk main.ts
+deno add jsr:@jrmarcum/wasmtk

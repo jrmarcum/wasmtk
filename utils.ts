@@ -1,7 +1,7 @@
 /**
  * @module utils
- * @description Core utilities for WASM/WAT compilation and environment shimming.
- * Restored Zig support by adding missing WASI filesystem shims.
+ * @description Core toolchain logic including the WASI shim environment, 
+ * binary inspection via Binaryen, and multi-runtime execution logic.
  */
 
 import { basename, join, dirname } from "@std/path";
@@ -39,7 +39,8 @@ function getTypeName(typeId: number): string {
 }
 
 /**
- * Internal WASI Shims for the wasmtk runtime.
+ * Comprehensive WASI Shims for the wasmtk runtime.
+ * Includes extended support for Zig-compiled binaries (fd_pwrite, fd_filestat_get, etc).
  */
 const wasiImports: WasiImports = {
   wasi_snapshot_preview1: {
@@ -120,7 +121,6 @@ const wasiImports: WasiImports = {
     fd_allocate: (): number => 0,
     fd_datasync: (): number => 0,
     fd_sync: (): number => 0,
-    // FIXED: Added fd_filestat_get and fd_stat_put for Zig filesystem queries
     fd_stat_put: (): number => 0,
     fd_filestat_get: (): number => 0,
     poll_oneoff: (): number => 28,
@@ -143,6 +143,10 @@ async function getWasmBytes(path: string): Promise<Uint8Array> {
   return await Deno.readFile(path);
 }
 
+/**
+ * Compiles an AssemblyScript file to an optimized WASM library (modc).
+ * @param path - Path to the source .ts file.
+ */
 export async function compileModule(path: string): Promise<void> {
   if (path.endsWith(".wasm") || path.endsWith(".wat")) {
     console.error(`❌ Input Error: modc expects an AssemblyScript (.ts) file.`);
@@ -183,6 +187,11 @@ export async function compileModule(path: string): Promise<void> {
   } catch (err) { console.error(`❌ modc Exception: ${err}`); } finally { try { await Deno.remove(tempTsPath); } catch { /* ignore */ } }
 }
 
+/**
+ * Polyfilled runner for multiple file types (.wasm, .wat, .js, .ts).
+ * @param path - File path to execute.
+ * @param args - Positional arguments for library function calls.
+ */
 export async function runWasi(path: string, args: string[]): Promise<void> {
   if (path.endsWith(".ts") || path.endsWith(".js")) {
     const command = new Deno.Command(Deno.execPath(), {
@@ -238,6 +247,10 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
   } catch (err) { console.error(`❌ Run error: ${err}`); Deno.exit(1); }
 }
 
+/**
+ * Displays metadata and callable exported functions for a WASM module.
+ * @param path - Path to the module.
+ */
 export async function showInfo(path: string): Promise<void> {
   try {
     const bytes = await getWasmBytes(path);
@@ -282,6 +295,10 @@ export async function showInfo(path: string): Promise<void> {
   } catch (err) { console.error("❌ Info error: " + err); }
 }
 
+/**
+ * Inspects a module to determine if it is a library (no _start function).
+ * @param path - Path to the module.
+ */
 export async function checkIsLibrary(path: string): Promise<boolean> {
   try {
     const bytes = await getWasmBytes(path);
@@ -290,6 +307,10 @@ export async function checkIsLibrary(path: string): Promise<boolean> {
   } catch { return false; }
 }
 
+/**
+ * Converts a WASM/WAT module into a standalone JS-based script.
+ * @param path - Path to the module.
+ */
 export async function wasm2js(path: string): Promise<void> {
   const outPath = path.replace(/\.(wasm|wat)$/, ".js");
   try {
@@ -300,6 +321,10 @@ export async function wasm2js(path: string): Promise<void> {
   } catch (err) { console.error(`❌ Conversion failed: ${err}`); }
 }
 
+/**
+ * Compiles a TypeScript file into a WASI-compliant module using Javy (wasic).
+ * @param path - Path to the source .ts file.
+ */
 export async function compileWasi(path: string): Promise<void> {
   const name = basename(path).replace(/\.[^/.]+$/, "");
   const bundle = new Deno.Command(Deno.execPath(), { args: ["bundle", "--quiet", path], stdout: "piped" });
@@ -310,6 +335,10 @@ export async function compileWasi(path: string): Promise<void> {
   if ((await javy.output()).success) console.log(`✅ WASI: ${name}.wasm`);
 }
 
+/**
+ * Toggles format between .wasm and .wat.
+ * @param p - Path to the input file.
+ */
 export async function convertFile(p: string): Promise<void> { 
   const isWat = p.endsWith(".wat");
   const out = isWat ? p.replace(".wat", ".wasm") : p.replace(".wasm", ".wat");
@@ -318,6 +347,11 @@ export async function convertFile(p: string): Promise<void> {
   console.log(`✅ Converted to ${out}`);
 }
 
+/**
+ * Bundles a TypeScript project into a single JavaScript file.
+ * @param p - Path to the source file.
+ * @param outPath - The output destination.
+ */
 export async function bundleTs(p: string, outPath?: string): Promise<void> {
   const out = outPath || p.replace(".ts", ".js");
   const b = new Deno.Command(Deno.execPath(), { args: ["bundle", "--quiet", p], stdout: "piped" });
