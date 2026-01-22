@@ -1,7 +1,7 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@std/cli@*": "1.0.24",
+    "jsr:@std/cli@1": "1.0.3",
     "jsr:@std/encoding@^1.0.5": "1.0.10",
     "jsr:@std/internal@^1.0.12": "1.0.12",
     "jsr:@std/path@^1.1.2": "1.1.4",
@@ -10,8 +10,8 @@
     "npm:wasm2js@0.2": "0.2.0"
   },
   "jsr": {
-    "@std/cli@1.0.24": {
-      "integrity": "b655a5beb26aa94f98add6bc8889f5fb9bc3ee2cc3fc954e151201f4c4200a5e"
+    "@std/cli@1.0.22": {
+      "integrity": "50d1e4f87887cb8a8afa29b88505ab5081188f5cad3985460c3b471fa49ff21a"
     },
     "@std/encoding@1.0.10": {
       "integrity": "8783c6384a2d13abd5e9e87a7ae0520a30e9f56aeeaa3bdf910a3eaaf5c811a1"
@@ -69,8 +69,8 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@std/assert@1",
-      "jsr:@std/cli@*",
+      "jsr:@std/assert@1.0.0",
+      "jsr:@std/cli@1",
       "jsr:@std/encoding@^1.0.5",
       "jsr:@std/path@^1.1.2",
       "npm:assemblyscript@~0.27.30",

@@ -1,6 +1,7 @@
 /**
  * @module utils
- * @description Core utilities for WASM/WAT compilation, binary inspection, and WASI shimming.
+ * @description Core utilities for WASM/WAT compilation, binary inspection, and environment shimming.
+ * Now supports direct execution of JS/TS files in addition to WebAssembly.
  */
 
 import { basename, join, dirname } from "@std/path";
@@ -9,13 +10,16 @@ import binaryen from "binaryen";
 import { main as asc } from "asc";
 
 /** The current version of the wasmtk toolkit. */
-export const VERSION = "1.1.2";
+export const VERSION = "1.1.3";
 
 let wasiInstance: WebAssembly.Instance | undefined;
 
 type WasmCallable = (...args: (number | bigint)[]) => number | bigint | void;
 type WasiImports = Record<string, Record<string, WasmCallable | WebAssembly.Memory>>;
 
+/**
+ * Custom interfaces to expose hidden Binaryen methods for type-safe inspection.
+ */
 interface BinaryenModuleExt extends binaryen.Module {
   getNumImports(): number;
   getImportByIndex(index: number): number;
@@ -37,6 +41,9 @@ function getTypeName(typeId: number): string {
   return "unknown";
 }
 
+/**
+ * Internal WASI Shims for the wasmtk runtime.
+ */
 const wasiImports: WasiImports = {
   wasi_snapshot_preview1: {
     proc_exit: (code: number | bigint): void => {
@@ -57,7 +64,6 @@ const wasiImports: WasiImports = {
       view.setUint32(Number(nwrittenPtr), nwritten, true);
       return 0;
     },
-    fd_pwrite: (): number => 0,
     fd_read: (fd: number | bigint, iovs: number | bigint, iovsLen: number | bigint, nreadPtr: number | bigint): number => {
       if (Number(fd) !== 0) return 28;
       const memory = wasiInstance?.exports.memory as WebAssembly.Memory;
@@ -78,6 +84,12 @@ const wasiImports: WasiImports = {
     clock_time_get: (_id: number | bigint, _prec: bigint | number, resPtr: number | bigint): number => {
       const view = new DataView((wasiInstance?.exports.memory as WebAssembly.Memory).buffer);
       view.setBigUint64(Number(resPtr), BigInt(Date.now()) * 1000000n, true);
+      return 0;
+    },
+    random_get: (bufPtr: number | bigint, bufLen: number | bigint): number => {
+      const memory = wasiInstance?.exports.memory as WebAssembly.Memory;
+      const buf = new Uint8Array(memory.buffer, Number(bufPtr), Number(bufLen));
+      crypto.getRandomValues(buf);
       return 0;
     },
     environ_get: (): number => 0,
@@ -106,20 +118,6 @@ const wasiImports: WasiImports = {
     fd_seek: (): number => 0,
     fd_prestat_get: (): number => 8,
     fd_prestat_dir_name: (): number => 8,
-    fd_advise: (): number => 0,
-    fd_allocate: (): number => 0,
-    fd_datasync: (): number => 0,
-    fd_sync: (): number => 0,
-    fd_stat_put: (): number => 0,
-    fd_filestat_get: (): number => 0,
-    poll_oneoff: (): number => 28,
-    random_get: (bufPtr: number | bigint, bufLen: number | bigint): number => {
-      const memory = wasiInstance?.exports.memory as WebAssembly.Memory;
-      const buf = new Uint8Array(memory.buffer, Number(bufPtr), Number(bufLen));
-      crypto.getRandomValues(buf);
-      return 0;
-    },
-    sched_yield: (): number => 0,
   }
 };
 
@@ -183,11 +181,24 @@ export async function compileModule(path: string): Promise<void> {
 }
 
 /**
- * Executes a WASM/WAT file with WASI support.
- * @param path Path to the module.
- * @param args Arguments for function calls if library mode.
+ * Executes a file. 
+ * - If .wasm or .wat, runs in internal WASI.
+ * - If .js or .ts, executes via the Deno runtime.
+ * @param path File path to run.
+ * @param args Arguments for execution.
  */
 export async function runWasi(path: string, args: string[]): Promise<void> {
+  // RESTORED: Direct Script Execution (TS/JS)
+  if (path.endsWith(".ts") || path.endsWith(".js")) {
+    const command = new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", path, ...args],
+    });
+    const process = command.spawn();
+    await process.status;
+    return;
+  }
+
+  // WASM/WAT Execution
   try {
     const wasmBytes = await getWasmBytes(path);
     const extendedImports = {
@@ -206,7 +217,9 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
     };
     const result = await WebAssembly.instantiate(wasmBytes as BufferSource, extendedImports as unknown as WebAssembly.Imports);
     wasiInstance = result.instance;
-    if (args.length > 0) {
+    
+    // Library Mode: call specific export
+    if (args.length > 0 && await checkIsLibrary(path)) {
       const [name, ...params] = args;
       const fn = wasiInstance.exports[name];
       if (typeof fn === "function") {
@@ -216,9 +229,10 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
         }) as (number | bigint)[];
         const res = (fn as WasmCallable)(...parsedArgs);
         if (res !== undefined) console.log(`Result: ${res}`);
-      } else { console.error(`❌ Function '${name}' not found.`); }
-      return;
+        return;
+      }
     }
+
     const init = wasiInstance.exports._initialize || wasiInstance.exports._start;
     if (typeof init === "function") {
       try {
@@ -335,11 +349,3 @@ export async function convertFile(p: string): Promise<void> {
  * Bundles a TypeScript file into a single JavaScript file.
  * @param p Path to the TS file.
  * @param outPath Optional explicit output path.
- */
-export async function bundleTs(p: string, outPath?: string): Promise<void> {
-  const out = outPath || p.replace(".ts", ".js");
-  const b = new Deno.Command(Deno.execPath(), { args: ["bundle", "--quiet", p], stdout: "piped" });
-  const output = await b.output();
-  await Deno.writeTextFile(out, new TextDecoder().decode(output.stdout));
-  console.log(`✅ Bundled: ${out}`);
-}
