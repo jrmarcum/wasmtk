@@ -1,0 +1,41 @@
+{
+  "name": "@jrmarcum/wasmtk",
+  "version": "1.1.1",
+  "description": "A polyglot WASM toolkit for Deno: Run, inspect, and convert WASM/WAT and WASI modules with high compatibility.",
+  "license": "Apache-2.0 AND MIT",
+  "exports": {
+    ".": "./main.ts",
+    "./runner": "./runner.ts",
+    "./utils": "./utils.ts"
+  },
+  "publish": {
+    "include": [
+      "LICENSE",
+      "README.md",
+      "main.ts",
+      "runner.ts",
+      "utils.ts",
+      "deno.json"
+    ]
+  },
+  "imports": {
+    "@std/assert": "jsr:@std/assert@1",
+    "@std/path": "jsr:@std/path@^1.1.2",
+    "@std/encoding": "jsr:@std/encoding@^1.0.5",
+    "binaryen": "npm:binaryen@^116.0.0",
+    "asc": "npm:assemblyscript@^0.27.30/asc",
+    "@std/cli/parse-args": "jsr:@std/cli/parse-args",
+    "wasm2js": "npm:wasm2js@^0.2.0"
+  },
+  "tasks": {
+    "dev": "deno run --watch main.ts",
+    "cache": "deno cache main.ts",
+    "update-version": "deno run --allow-read --allow-write -e 'import { updateVersion } from \"./utils.ts\"; updateVersion();'",
+    "install": "deno task cache && deno install -g --allow-run --allow-read --allow-write --allow-env --allow-ffi --allow-net --config deno.json --force -n wasmtk main.ts",
+    "compile": "deno compile -A --output wasmtk main.ts"
+  },
+  "fmt": {
+    "indentWidth": 2,
+    "lineWidth": 100
+  }
+}
