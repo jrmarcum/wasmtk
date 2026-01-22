@@ -10,7 +10,7 @@ import binaryen from "binaryen";
 import { main as asc } from "asc";
 
 /** The current version of the wasmtk toolkit. */
-export const VERSION = "1.1.3";
+export const VERSION = "1.1.4";
 
 let wasiInstance: WebAssembly.Instance | undefined;
 
