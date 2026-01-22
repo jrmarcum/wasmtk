@@ -16,3 +16,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: jsr publish
+      - name: Attest Build Provenance
+        uses: actions/attest-build-provenance@v3.1.0
+
