@@ -40,19 +40,19 @@ async function main(): Promise<void> {
   const command = args._[0] as string;
   const target = args._[1] as string;
 
-  // 2. Help/Usage Check - Reorganized: modc -> wasic -> run
+  // 2. Help/Usage Check - Updated with exact requested descriptions
   if (args.help || !command || !target) {
     console.log(`
 wasmtk - WebAssembly Development Toolkit v${VERSION}
 
 Usage:
-  wasmtk modc <file.ts>        Compile AssemblyScript to library WASM
-  wasmtk wasic <file.ts>       Compile TS to WASI module (Javy)
-  wasmtk run <file.wasm>       Run WASM/WAT module (WASI supported)
-  wasmtk info <file.wasm>      Show exported functions and info
-  wasmtk wasm2js <file.wasm>   Convert WASM to standalone JS
-  wasmtk convert <file>        Toggle between .wasm and .wat
-  wasmtk bundle <file.ts>      Bundle TS to JS
+  wasmtk modc <file.ts>        Compile a Typescript file to a WASM library (asc)
+  wasmtk wasic <file.ts>       Compile a Typescript file to a WASI module (Javy)
+  wasmtk run <file>            Run .wasm, .wat, .js, .ts files, and run callable WASM module functions
+  wasmtk info <file>           Show callable WASM functions in .wasm or .wat library/module
+  wasmtk wasm2js <file.wasm>   Convert .wasm -> .js based script
+  wasmtk convert <file>        Convert .wasm -> .wat and .wat -> .wasm
+  wasmtk bundle <file.ts>      Bundle a .ts project to a single .js file
 
 Options:
   -v, -V, --version            Show version information
