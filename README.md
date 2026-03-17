@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="wasmtk_logo.png" alt="wasmtk logo" width="300">
+</p>
+
 # wasmtk
 
 A polyglot WebAssembly toolkit for Deno. Seamlessly run, inspect, and convert Wasm modules regardless of their source language (Zig, Rust, AssemblyScript, or Javy).
@@ -15,4 +19,5 @@ Most runners are either too minimal (breaking on complex Zig/Rust builds) or too
 
 ### Installation
 ```bash
+
 deno add jsr:@jrmarcum/wasmtk

@@ -1,6 +1,6 @@
 {
   "name": "@jrmarcum/wasmtk",
-  "version": "1.1.4",
+  "version": "1.1.8",
   "description": "A polyglot WASM toolkit for Deno: Run, inspect, and convert WASM/WAT and WASI modules with high compatibility.",
   "license": "Apache-2.0 AND MIT",
   "exports": {
@@ -26,7 +26,8 @@
     "@std/encoding": "jsr:@std/encoding@^1.0.5",
     "binaryen": "npm:binaryen@^116.0.0",
     "asc": "npm:assemblyscript@^0.27.30/asc",
-    "wasm2js": "npm:wasm2js@^0.2.0"
+    "wasm2js": "npm:wasm2js@^0.2.0",
+    "wabt": "npm:wabt@^1.0.36"
   },
   "tasks": {
     "dev": "deno run --watch main.ts",
