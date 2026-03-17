@@ -30,6 +30,19 @@ import {
  * @returns {Promise<void>}
  */
 async function main(): Promise<void> {
+  // Ensure UTF-8 output on Windows so emojis and box-drawing characters render correctly.
+  // SetConsoleOutputCP(65001) sets the console to UTF-8 at the Windows API level.
+  // chcp is insufficient as Deno writes directly to the console handle, bypassing the code page.
+  if (Deno.build.os === "windows") {
+    try {
+      const kernel32 = Deno.dlopen("kernel32.dll", {
+        SetConsoleOutputCP: { parameters: ["u32"], result: "bool" },
+      });
+      kernel32.symbols.SetConsoleOutputCP(65001);
+      kernel32.close();
+    } catch { /* FFI unavailable in this build — silently continue */ }
+  }
+
   const args = parseArgs(Deno.args, {
     alias: { 
       v: "version",
@@ -84,7 +97,7 @@ Options:
           await runWasi(target, args._.slice(2).map(String));
         } else {
           // Assists the user by showing available functions when none are specified
-          console.log(`💡 Library module loaded. To execute a function, use: wasmtk run ${target} <function> [args...]`);
+          console.log(`✅ Library module loaded. To execute a function, use: wasmtk run ${target} <function> [args...]`);
           await showInfo(target);
         }
       } else {

@@ -1,22 +1,25 @@
-name: build-attest
+name: Publish to JSR
 
 on:
-  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
 
 jobs:
-  build:
-    runs-on: windows-latest
+  publish:
+    runs-on: ubuntu-latest
     permissions:
-      id-token: write
       contents: read
-      attestations: write
+      id-token: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Build artifact
-        run: make my-app
-      - name: Attest
-        uses: actions/attest-build-provenance@v3
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
         with:
-          subject-path: '${{ github.workspace }}/wasmtk'
+          deno-version: v2.x
+
+      - name: Publish to JSR
+        run: deno publish
