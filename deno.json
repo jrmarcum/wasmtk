@@ -8,7 +8,9 @@
     "./utils": "./utils.ts",
     "./runner": "./runner.ts",
     "./args": "./args.ts",
-    "./compiler": "./compiler.ts"
+    "./compiler": "./compiler.ts",
+    "./javyc": "./javyc.ts",
+    "./wasic": "./wasic.ts"
   },
   "publish": {
     "include": [

@@ -12,16 +12,17 @@
  */
 
 import { parseArgs } from "@std/cli/parse-args";
-import { 
-  VERSION, 
-  compileModule, 
-  runWasi, 
-  showInfo, 
-  checkIsLibrary, 
-  wasm2js, 
-  compileWasi, 
-  convertFile, 
-  bundleTs 
+import {
+  VERSION,
+  compileModule,
+  runWasi,
+  showInfo,
+  checkIsLibrary,
+  wasm2js,
+  compileJavy,
+  compileWasi,
+  convertFile,
+  bundleTs
 } from "./utils.ts";
 
 /**
@@ -65,8 +66,9 @@ async function main(): Promise<void> {
 wasmtk - WebAssembly Development Toolkit v${VERSION}
 
 Usage:
-  wasmtk modc <file.ts>        Compile a Typescript file to a WASM library (asc)
-  wasmtk wasic <file.ts>       Compile a Typescript file to a WASI module (Javy)
+  wasmtk modc <file.ts>        Compile a TypeScript file to a WASM library (asc)
+  wasmtk wasic <file.ts|.wat>  Compile to a standalone WASI module (no JS runtime, smaller output)
+  wasmtk javyc <file.ts>       Compile a TypeScript file to a WASI module via Javy/QuickJS
   wasmtk run <file>            Run .wasm, .wat, .js, .ts files, and run callable WASM module functions
   wasmtk info <file>           Show callable WASM functions in .wasm or .wat library/module
   wasmtk wasm2js <file.wasm>   Convert .wasm -> .js based script
@@ -86,6 +88,9 @@ Options:
       break;
     case "wasic":
       await compileWasi(target);
+      break;
+    case "javyc":
+      await compileJavy(target);
       break;
     case "run": {
       const isLib = await checkIsLibrary(target);

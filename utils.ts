@@ -1,6 +1,6 @@
 /**
  * @module utils
- * @description Core toolchain logic including the WASI shim environment, 
+ * @description Core toolchain logic including the WASI shim environment,
  * binary inspection via Binaryen, and multi-runtime execution logic.
  */
 
@@ -9,6 +9,15 @@ import wasm2js_compiler from "wasm2js";
 import binaryen from "binaryen";
 import { main as asc } from "asc";
 import wabt from "wabt";
+import {
+  detectJavyProvider,
+  ensureJavy,
+  isJavyAvailable,
+  getJavyInstallPath,
+} from "./javyc.ts";
+
+export { compileJavy } from "./javyc.ts";
+export { compileWasi } from "./wasic.ts";
 
 // Minimal type stubs for the wabt npm package API
 interface WasmFeatures { enable_all?: boolean; [key: string]: boolean | undefined; }
@@ -488,159 +497,6 @@ export async function wasm2js(path: string): Promise<void> {
   } catch (err) { console.error(`❌ Conversion failed: ${err}`); }
 }
 
-const JAVY_VERSION = "v8.0.0";
-
-/**
- * Maps the current OS and architecture to the correct Javy release asset name.
- * Asset naming follows the pattern used in bytecodealliance/javy GitHub releases:
- *   javy-{arch}-{os}-{version}.gz
- * where arch is one of: x86_64, arm
- * and os is one of: linux, macos, windows
- */
-function getJavyAssetName(): string {
-  const os = Deno.build.os;
-  const arch = Deno.build.arch;
-
-  const archStr = arch === "aarch64" ? "arm" : "x86_64";
-  let osStr: string;
-  if (os === "darwin") osStr = "macos";
-  else if (os === "windows") osStr = "windows";
-  else osStr = "linux";
-
-  return `javy-${archStr}-${osStr}-${JAVY_VERSION}.gz`;
-}
-
-/**
- * Returns the path where the Javy binary should be installed.
- * Uses ~/.deno/bin/ which is already on PATH after `deno install`.
- */
-function getJavyInstallPath(): string {
-  const home = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? ".";
-  const ext = Deno.build.os === "windows" ? ".exe" : "";
-  return `${home}/.deno/bin/javy${ext}`;
-}
-
-/**
- * Checks if the javy binary is available in PATH or at the install location.
- */
-async function isJavyAvailable(): Promise<boolean> {
-  try {
-    const { success } = await new Deno.Command("javy", { args: ["--version"], stdout: "null", stderr: "null" }).output();
-    return success;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Ensures the Javy binary is available, downloading it from the Bytecode Alliance
- * GitHub releases if not found. Installs to ~/.deno/bin/javy for automatic PATH availability.
- * @throws Error if the download or installation fails.
- */
-async function ensureJavy(): Promise<void> {
-  if (await isJavyAvailable()) return;
-
-  const installPath = getJavyInstallPath();
-
-  // Check if we already downloaded it but it's not on PATH yet
-  try {
-    await Deno.stat(installPath);
-    return; // File exists, Deno.Command will find it by absolute path below
-  } catch { /* not yet installed */ }
-
-  const assetName = getJavyAssetName();
-  const url = `https://github.com/bytecodealliance/javy/releases/download/${JAVY_VERSION}/${assetName}`;
-
-  console.log(`✅ Javy not found. Downloading ${assetName} from Bytecode Alliance...`);
-
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to download Javy: HTTP ${response.status} from ${url}`);
-  }
-
-  // Decompress the .gz stream and write the binary
-  const compressed = new Uint8Array(await response.arrayBuffer());
-  const decompressed = await new Response(
-    new Blob([compressed]).stream().pipeThrough(new DecompressionStream("gzip"))
-  ).arrayBuffer();
-
-  await Deno.mkdir(`${Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "."}/.deno/bin`, { recursive: true });
-  await Deno.writeFile(installPath, new Uint8Array(decompressed));
-
-  // Make executable on Unix
-  if (Deno.build.os !== "windows") {
-    await new Deno.Command("chmod", { args: ["+x", installPath] }).output();
-  }
-
-  console.log(`✅ Javy ${JAVY_VERSION} installed to ${installPath}`);
-}
-
-/**
- * Compiles a TypeScript file into a WASI-compliant module using Javy (wasic).
- * @param path - Path to the source .ts file.
- */
-export async function compileWasi(path: string): Promise<void> {
-  await ensureJavy();
-  const name = basename(path).replace(/\.[^/.]+$/, "");
-  const bundle = new Deno.Command(Deno.execPath(), { args: ["bundle", "--quiet", path], stdout: "piped" });
-  const output = await bundle.output();
-  const preamble = `const prompt = function(message) { if (message) { Javy.IO.writeSync(1, new TextEncoder().encode(message + " ")); } let input = ""; const buffer = new Uint8Array(1); while (true) { const n = Javy.IO.readSync(0, buffer); if (n > 0) { const char = new TextDecoder().decode(buffer); if (char === "\\n" || char === "\\r") break; input += char; } else if (n === 0) { continue; } else { break; } } return input.trim(); };`;
-  await Deno.writeTextFile(`./${name}.js`, preamble + new TextDecoder().decode(output.stdout));
-  // Use the absolute install path as fallback if javy was just downloaded this session
-  const javyCmd = (await isJavyAvailable()) ? "javy" : getJavyInstallPath();
-  const javy = new Deno.Command(javyCmd, { args: ["build", `./${name}.js`, "-o", `./${name}.wasm`] });
-  if ((await javy.output()).success) console.log(`✅ WASI: ${name}.wasm`);
-}
-
-/**
- * Scans the binary custom sections of a WASM file to detect if it was built by Javy.
- * Javy embeds its version in the standard "producers" custom section (section id=0),
- * which survives Wizer fusion intact across all Javy versions. After Wizer snapshots
- * the fused binary, the import section is fully internalized — so custom sections are
- * the only reliable fingerprint.
- * Returns "javy" if detected, or null.
- */
-function detectJavyProvider(buf: Uint8Array): string | null {
-  // Verify WASM magic + version header
-  if (buf.length < 8 || buf[0] !== 0x00 || buf[1] !== 0x61 || buf[2] !== 0x73 || buf[3] !== 0x6d) return null;
-
-  const readULEB128 = (p: number): [number, number] => {
-    let val = 0, shift = 0;
-    while (p < buf.length) {
-      const b = buf[p++];
-      val |= (b & 0x7f) << shift;
-      shift += 7;
-      if ((b & 0x80) === 0) return [val, p];
-    }
-    return [val, p];
-  };
-
-  const decoder = new TextDecoder();
-  let pos = 8;
-  while (pos < buf.length) {
-    const sectionId = buf[pos++];
-    const [sectionSize, bodyPos] = readULEB128(pos);
-    const sectionEnd = bodyPos + sectionSize;
-    pos = sectionEnd;
-
-    // Custom sections have id=0; they begin with a name string
-    if (sectionId !== 0) continue;
-
-    // Read the custom section name
-    let p = bodyPos;
-    const [nameLen, afterName] = readULEB128(p); p = afterName;
-    const sectionName = decoder.decode(buf.slice(p, p + nameLen));
-
-    // "producers" is the standard custom section Javy writes its version into.
-    // The section body contains the tool name "javy" as a length-prefixed string.
-    // We also check the section name itself for any javy-prefixed custom sections.
-    if (sectionName === "producers" || sectionName === "import_namespace" || sectionName.startsWith("javy")) {
-      const bodyText = decoder.decode(buf.slice(p + nameLen, sectionEnd));
-      if (bodyText.toLowerCase().includes("javy")) return "javy";
-    }
-  }
-  return null;
-}
 
 /**
  * Finds the original JS/TS source file alongside a WASM file.
