@@ -12,7 +12,8 @@
   },
   "publish": {
     "include": [
-      "LICENSE",
+      "LICENSE-APACHE",
+      "LICENSE-MIT",
       "README.md",
       "*.ts",
       "deno.json"
