@@ -16,6 +16,7 @@ import {
   VERSION,
   compileModule,
   runWasi,
+  callExport,
   showInfo,
   checkIsLibrary,
   wasm2js,
@@ -69,7 +70,8 @@ Usage:
   wasmtk modc <file.ts>        Compile a TypeScript file to a WASM library (asc)
   wasmtk wasic <file.ts|.wat>  Compile to a standalone WASI module (no JS runtime, smaller output)
   wasmtk javyc <file.ts>       Compile a TypeScript file to a WASI module via Javy/QuickJS
-  wasmtk run <file>            Run .wasm, .wat, .js, .ts files, and run callable WASM module functions
+  wasmtk run <file>            Run a standalone .wasm, .wat, .js, or .ts WASI module
+  wasmtk mod <file> [fn] [...] Call a function in a WASM library module (no fn = list functions)
   wasmtk info <file>           Show callable WASM functions in .wasm or .wat library/module
   wasmtk wasm2js <file.wasm>   Convert .wasm -> .js based script
   wasmtk convert <file>        Convert .wasm -> .wat and .wat -> .wasm
@@ -92,22 +94,16 @@ Options:
     case "javyc":
       await compileJavy(target);
       break;
-    case "run": {
-      const isLib = await checkIsLibrary(target);
-      const hasFunctionCall = args._.length > 2;
-
-      if (isLib) {
-        if (hasFunctionCall) {
-          // Executes the function directly without reprinting info
-          await runWasi(target, args._.slice(2).map(String));
-        } else {
-          // Assists the user by showing available functions when none are specified
-          console.log(`✅ Library module loaded. To execute a function, use: wasmtk run ${target} <function> [args...]`);
-          await showInfo(target);
-        }
+    case "run":
+      await runWasi(target, []);
+      break;
+    case "mod": {
+      const fn = args._[2] as string | undefined;
+      if (fn) {
+        await callExport(target, fn, args._.slice(3).map(String));
       } else {
-        // Runs standalone WASI binaries or scripts
-        await runWasi(target, []);
+        console.log(`✅ Module loaded. To call a function, use: wasmtk mod ${target} <function> [args...]`);
+        await showInfo(target);
       }
       break;
     }

@@ -19,12 +19,11 @@
  *   - while loops
  *   - Arithmetic: + - * / %
  *   - Comparisons: === !== < > <= >=
- *   - console.log("string literal") via WASI fd_write
+ *   - console.log(...) via WASI fd_write  (see console_log.ts for full argument support)
  *   - A top-level main() or exported main() becomes the WASI _start entry point
  *
  * Limitations (planned for future iterations):
  *   - No closures, classes, or prototype-based OOP
- *   - No dynamic strings (only string literal arguments to console.log)
  *   - No arrays or objects
  *   - No imports between modules
  */
@@ -32,6 +31,14 @@
 import wabt from "wabt";
 import binaryen from "binaryen";
 import { basename } from "@std/path";
+import {
+  DATA_BASE,
+  parseConsoleLogArgs,
+  emitConsoleLog,
+  getHelperWat,
+  type DataAllocator,
+  type FuncLookup,
+} from "./console_log.ts";
 
 // ---------------------------------------------------------------------------
 // wabt type stubs (same pattern as utils.ts)
@@ -159,8 +166,12 @@ class WasicTranspiler {
 
   // String data section: message → [offset, byteLength]
   private dataMap: Map<string, [number, number]> = new Map();
-  private dataOffset = 256; // first 256 bytes: iov scratch + reserved
+  private dataOffset = DATA_BASE;  // first DATA_BASE bytes reserved for iov/scratch/nwritten
   private hasConsoleLog = false;
+  private needsNumericHelpers = false;
+
+  // Top-level statements that become the _start body (patterns 2–4)
+  private startBodyLines: string[] = [];
 
   constructor(source: string) {
     this.src = stripComments(source);
@@ -207,6 +218,86 @@ class WasicTranspiler {
         .filter(l => l.length > 0);
 
       this.functions.push({ name, params, result, exported, bodyLines });
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Pass 2 – collect top-level statements for _start
+  // -------------------------------------------------------------------------
+  /**
+   * Scans source lines at brace-depth 0 and populates startBodyLines with
+   * statements that should run in _start. Handles all four TS entry patterns:
+   *
+   *   Pattern 1: function main(){...}; main();
+   *     → main() is already in this.functions; hasMain logic in transpile() calls it.
+   *       The bare `main();` call is skipped here.
+   *
+   *   Pattern 2: (function main(){...}).call(this);
+   *     → parseFunctions() captured the inner function; the IIFE wrapper is skipped
+   *       so the body isn't duplicated. hasMain logic in transpile() calls it.
+   *
+   *   Pattern 3: if (import.meta.main) { ... }
+   *     → The block body is collected into startBodyLines.
+   *
+   *   Pattern 4: bare top-level statement (e.g. console.log(...))
+   *     → Collected directly into startBodyLines.
+   */
+  private parseTopLevel(): void {
+    const lines = this.src.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+    let depth = 0;
+    let collectInner = false; // true while inside an import.meta.main block
+
+    for (const line of lines) {
+      const opens  = (line.match(/\{/g) ?? []).length;
+      const closes = (line.match(/\}/g) ?? []).length;
+
+      if (depth === 0) {
+        // Regular function declaration — skip body, already parsed
+        if (/^(?:export\s+)?function\s+\w+/.test(line)) {
+          depth += opens - closes;
+          continue;
+        }
+
+        // Pattern 2: IIFE (function …) — inner function already parsed, just skip wrapper
+        if (/^\(function\s+/.test(line)) {
+          depth += opens - closes;
+          continue;
+        }
+
+        // Pattern 3: if (import.meta.main) { … }
+        if (/^if\s*\(\s*import\.meta\.main\s*\)/.test(line)) {
+          depth += opens - closes;
+          collectInner = true;
+          continue;
+        }
+
+        // Pattern 1 trailing call: main(); — hasMain handles it
+        if (/^main\s*\(\s*\)\s*;?$/.test(line)) continue;
+
+        // Skip bare closing braces, comment lines, and export/import statements
+        if (line === "}" || line === "};" || line === ";" ) continue;
+        if (line.startsWith("//") || line.startsWith("*") || line.startsWith("import ") || line.startsWith("export {")) continue;
+
+        // Pattern 4: bare top-level statement → goes into _start
+        this.startBodyLines.push(line);
+
+      } else {
+        // Inside a function/block body
+        const newDepth = depth + opens - closes;
+
+        if (collectInner) {
+          // Collect lines belonging to if (import.meta.main) block.
+          // When newDepth would reach 0 this is the closing } — don't collect it.
+          if (newDepth >= 1) {
+            this.startBodyLines.push(line);
+          } else {
+            collectInner = false;
+          }
+        }
+
+        depth = Math.max(0, newDepth);
+        if (depth === 0) collectInner = false;
+      }
     }
   }
 
@@ -284,9 +375,15 @@ class WasicTranspiler {
       if (idx !== -1) {
         const lhs = expr.slice(0, idx).trim();
         const rhs = expr.slice(idx + op.length).trim();
-        const suffix = (defaultType === "i32" || defaultType === "i64") ? i32suf : f64suf;
-        const watOp = `${defaultType}.${suffix}`;
-        return `(${watOp} ${this.emitExpr(lhs, locals, defaultType)} ${this.emitExpr(rhs, locals, defaultType)})`;
+        // Infer operand type from the LHS if it is a known local — this ensures
+        // comparisons like `num > 0` where `num` is f64 use f64.gt, not i32.gt_s.
+        const lhsType: WatType = (/^\w+$/.test(lhs) && locals.has(lhs))
+          ? locals.get(lhs)!
+          : defaultType;
+        const isFloat = lhsType === "f64" || lhsType === "f32";
+        const suffix  = isFloat ? f64suf : i32suf;
+        const watOp   = `${lhsType}.${suffix}`;
+        return `(${watOp} ${this.emitExpr(lhs, locals, lhsType)} ${this.emitExpr(rhs, locals, lhsType)})`;
       }
     }
 
@@ -345,8 +442,8 @@ class WasicTranspiler {
       return `(return ${this.emitExpr(expr, locals, funcResult)})`;
     }
 
-    // let / const declaration
-    const letMatch = line.match(/^(?:let|const)\s+(\w+)\s*(?::\s*(\w+))?\s*=\s*(.+?);?$/);
+    // var / let / const declaration
+    const letMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+))?\s*=\s*(.+?);?$/);
     if (letMatch) {
       const varName = letMatch[1];
       const varType = mapType(letMatch[2] ?? "number");
@@ -355,7 +452,26 @@ class WasicTranspiler {
       return `(local.set $${varName} ${this.emitExpr(initExpr, locals, varType)})`;
     }
 
-    // Assignment (no let/const)
+    // Compound assignment: x += y, x -= y, x *= y, x /= y
+    const compoundMatch = line.match(/^(\w+)\s*([+\-*\/])=\s*(.+?);?$/);
+    if (compoundMatch && locals.has(compoundMatch[1])) {
+      const varName = compoundMatch[1];
+      const varType = locals.get(varName)!;
+      const op = compoundMatch[2];
+      const rhs = compoundMatch[3].trim();
+      const isFloat = varType === "f64" || varType === "f32";
+      const watOps: Record<string, [string, string]> = {
+        "+": ["add",   "add"],
+        "-": ["sub",   "sub"],
+        "*": ["mul",   "mul"],
+        "/": ["div",   "div_s"],
+      };
+      const [fOp, iOp] = watOps[op] ?? ["add", "add"];
+      const suffix = isFloat ? fOp : iOp;
+      return `(local.set $${varName} (${varType}.${suffix} (local.get $${varName}) ${this.emitExpr(rhs, locals, varType)}))`;
+    }
+
+    // Simple assignment (no let/const)
     const assignMatch = line.match(/^(\w+)\s*=\s*(.+?);?$/);
     if (assignMatch && locals.has(assignMatch[1])) {
       const varName = assignMatch[1];
@@ -363,18 +479,16 @@ class WasicTranspiler {
       return `(local.set $${varName} ${this.emitExpr(assignMatch[2].trim(), locals, varType)})`;
     }
 
-    // console.log("string literal")
-    const logMatch = line.match(/^console\.log\s*\(\s*"([^"]*)"\s*\)\s*;?$/);
+    // console.log(...) — delegate to console_log.ts for full argument support
+    const logMatch = line.match(/^console\.log\s*\((.+)\)\s*;?$/);
     if (logMatch) {
-      const msg = logMatch[1] + "\n";
-      const [offset, len] = this.allocString(msg);
-      // iov at offset 0: ptr=4 (data ptr field), len=8 (data len field)
-      // Layout: [0..3]=ptr, [4..7]=len, nwritten at [8..11]
-      return [
-        `(i32.store (i32.const 0) (i32.const ${offset}))`,
-        `(i32.store (i32.const 4) (i32.const ${len}))`,
-        `(drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8)))`,
-      ].join("\n      ");
+      this.hasConsoleLog = true;
+      const allocator: DataAllocator = (text) => this.allocString(text);
+      const lookup: FuncLookup = (name) => this.functions.find(f => f.name === name);
+      const segments = parseConsoleLogArgs(logMatch[1], locals as Map<string, string>, lookup);
+      const { statements, needsHelpers } = emitConsoleLog(segments, allocator);
+      if (needsHelpers) this.needsNumericHelpers = true;
+      return statements.join("\n      ");
     }
 
     // Standalone function call (statement form)
@@ -505,6 +619,10 @@ class WasicTranspiler {
     return lines.join("\n");
   }
 
+  private emitHelpers(): string {
+    return this.needsNumericHelpers ? getHelperWat() : "";
+  }
+
   private emitDataSection(): string {
     if (this.dataMap.size === 0) return "";
     const segments: string[] = [];
@@ -525,10 +643,10 @@ class WasicTranspiler {
     const result = fn.result ? `(result ${fn.result})` : "";
     const exportAttr = fn.exported ? `(export "${fn.name}") ` : "";
 
-    // Pre-scan body for let/const declarations to emit WAT locals
+    // Pre-scan body for var/let/const declarations to emit WAT locals
     const declaredLocals: [string, WatType][] = [];
     for (const line of fn.bodyLines) {
-      const m = line.match(/^(?:let|const)\s+(\w+)\s*(?::\s*(\w+))?/);
+      const m = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+))?/);
       if (m) {
         const t = mapType(m[2] ?? "number");
         declaredLocals.push([m[1], t]);
@@ -551,15 +669,35 @@ class WasicTranspiler {
 
   transpile(moduleName: string): string {
     this.parseFunctions();
+    this.parseTopLevel();
 
-    // Emit all functions first so hasConsoleLog is populated before imports
+    // Emit all user functions first — this populates hasConsoleLog/needsNumericHelpers
     const funcWat = this.functions.map(f => this.emitFunction(f)).join("\n\n");
 
-    // Determine if there is a main() to call from _start
+    // Build _start inner body — priority: named main() > collected startBodyLines > empty
     const hasMain = this.functions.some(f => f.name === "main");
-    const startBody = hasMain ? `\n    (call $main)\n    (call $proc_exit (i32.const 0))` : `\n    (call $proc_exit (i32.const 0))`;
+    let startBody: string;
+    if (hasMain) {
+      startBody = `\n    (call $main)\n    (call $proc_exit (i32.const 0))`;
+    } else if (this.startBodyLines.length > 0) {
+      // Pre-scan for var/let/const so WAT locals are declared at the top of _start
+      const startLocals = new Map<string, WatType>();
+      for (const line of this.startBodyLines) {
+        const m = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+))?/);
+        if (m) startLocals.set(m[1], mapType(m[2] ?? "number"));
+      }
+      const localDecls = [...startLocals.entries()]
+        .map(([n, t]) => `    (local $${n} ${t})`)
+        .join("\n");
+      const bodyWat = this.emitBlock(this.startBodyLines, startLocals, null);
+      startBody = `\n${localDecls ? localDecls + "\n" : ""}${bodyWat}\n    (call $proc_exit (i32.const 0))`;
+    } else {
+      startBody = `\n    (call $proc_exit (i32.const 0))`;
+    }
 
+    // Emit imports after all body emission so fd_write/helpers flags are set
     const imports = this.emitWasiImports();
+    const helpers = this.emitHelpers();
     const dataSection = this.emitDataSection();
     const memoryPages = Math.max(1, Math.ceil(this.dataOffset / 65536));
 
@@ -568,6 +706,7 @@ class WasicTranspiler {
       imports,
       `  (memory (export "memory") ${memoryPages})`,
       ``,
+      helpers,
       funcWat,
       ``,
       `  (func $_start (export "_start")${startBody}`,
@@ -611,7 +750,7 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
   }
 
   // Write WAT alongside the source for inspection / debugging
-  const watPath = `./${name}.wasic.wat`;
+  const watPath = `./${name}.wat`;
   await Deno.writeTextFile(watPath, wat);
 
   const result = await watToOptimisedWasm(wat, watPath, out);

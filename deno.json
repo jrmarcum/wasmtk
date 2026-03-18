@@ -10,7 +10,8 @@
     "./args": "./args.ts",
     "./compiler": "./compiler.ts",
     "./javyc": "./javyc.ts",
-    "./wasic": "./wasic.ts"
+    "./wasic": "./wasic.ts",
+    "./console_log": "./console_log.ts"
   },
   "publish": {
     "include": [

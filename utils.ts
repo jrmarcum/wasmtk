@@ -404,7 +404,7 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
             return isNaN(n) ? 0 : n;
         }) as (number | bigint)[];
         const res = (fn as WasmCallable)(...parsedArgs);
-        if (res !== undefined) console.log(`Result: ${res}`);
+        if (res !== undefined) console.log(`${res}`);
         return;
       }
     }
@@ -419,6 +419,48 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
       }
     }
   } catch (err) { console.error(`❌ Run error: ${err}`); Deno.exit(1); }
+}
+
+/**
+ * Directly calls a named exported function from a WASM module regardless of
+ * whether the module also exports _start. This is the backend for the `mod`
+ * command and deliberately skips the checkIsLibrary gate used by runWasi.
+ *
+ * @param path   - Path to the .wasm or .wat file.
+ * @param fnName - Name of the exported function to call.
+ * @param params - String-encoded numeric arguments to pass.
+ */
+export async function callExport(path: string, fnName: string, params: string[]): Promise<void> {
+  try {
+    const wasmBytes = await getWasmBytes(path);
+    const extendedImports = {
+      ...wasiImports,
+      env: { abort: (): void => { throw new WebAssembly.RuntimeError("abort"); } },
+    };
+    const result = await WebAssembly.instantiate(
+      wasmBytes as BufferSource,
+      extendedImports as unknown as WebAssembly.Imports
+    );
+    wasiInstance = result.instance;
+
+    const fn = wasiInstance.exports[fnName];
+    if (typeof fn !== "function") {
+      console.error(`❌ mod: no exported function named "${fnName}" in ${path}`);
+      console.error(`   Use "wasmtk info ${path}" to list available functions.`);
+      Deno.exit(1);
+    }
+
+    const parsedArgs = params.map(p => {
+      const n = Number(p);
+      return isNaN(n) ? 0 : n;
+    }) as (number | bigint)[];
+
+    const res = (fn as WasmCallable)(...parsedArgs);
+    if (res !== undefined) console.log(`${res}`);
+  } catch (err) {
+    console.error(`❌ mod error: ${err}`);
+    Deno.exit(1);
+  }
 }
 
 /**
