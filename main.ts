@@ -46,12 +46,14 @@ async function main(): Promise<void> {
   }
 
   const args = parseArgs(Deno.args, {
-    alias: { 
+    alias: {
       v: "version",
       V: "version",
-      h: "help" 
+      h: "help",
+      n: "name",
     },
     boolean: ["version", "help"],
+    string: ["name"],
   });
 
   if (args.version) {
@@ -61,6 +63,7 @@ async function main(): Promise<void> {
 
   const command = args._[0] as string;
   const target = args._[1] as string;
+  const outPath = args.name as string | undefined;
 
   if (args.help || !command || !target) {
     console.log(`
@@ -80,19 +83,20 @@ Usage:
 Options:
   -v, -V, --version            Show version information
   -h, --help                   Show this help message
+  -n, --name <path>            Output file path (e.g. dist/mymodule.wasm)
     `);
     return;
   }
 
   switch (command) {
     case "modc":
-      await compileModule(target);
+      await compileModule(target, outPath);
       break;
     case "wasic":
-      await compileWasi(target);
+      await compileWasi(target, outPath);
       break;
     case "javyc":
-      await compileJavy(target);
+      await compileJavy(target, outPath);
       break;
     case "run":
       await runWasi(target, []);
@@ -111,13 +115,13 @@ Options:
       await showInfo(target);
       break;
     case "wasm2js":
-      await wasm2js(target);
+      await wasm2js(target, outPath);
       break;
     case "convert":
-      await convertFile(target);
+      await convertFile(target, outPath);
       break;
     case "bundle":
-      await bundleTs(target, target.replace(/\.ts$/, ".js"));
+      await bundleTs(target, outPath ?? target.replace(/\.ts$/, ".js"));
       break;
     default:
       console.error(`❌ Unknown command: ${command}`);

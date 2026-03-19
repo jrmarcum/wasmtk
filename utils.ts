@@ -28,7 +28,7 @@ interface WabtModule {
 }
 
 /** The current version of the wasmtk toolkit. */
-export const VERSION = "1.1.8";
+export const VERSION = "1.1.9";
 
 let wasiInstance: WebAssembly.Instance | undefined;
 
@@ -287,7 +287,7 @@ async function removeEnvAbortImport(wasmPath: string): Promise<void> {
   console.log("  ✅ Patched: removed start section and env/abort import for standalone runtime compatibility");
 }
 
-export async function compileModule(path: string): Promise<void> {
+export async function compileModule(path: string, outPath?: string): Promise<void> {
   if (path.endsWith(".wasm") || path.endsWith(".wat")) {
     console.error(`❌ Input Error: modc expects an AssemblyScript (.ts) file.`);
     return;
@@ -295,8 +295,11 @@ export async function compileModule(path: string): Promise<void> {
   const name = basename(path).replace(/\.[^/.]+$/, "");
   const dir = dirname(path);
   const tempTsPath = join(dir, `${name}.build.tmp.ts`);
-  console.log(`✅ Building Library: ${name}.wasm`);
+  const out = outPath ?? `./${name}.wasm`;
+  console.log(`✅ Building Library: ${basename(out)}`);
   try {
+    if (outPath) await Deno.mkdir(dirname(outPath), { recursive: true });
+
     const fullSource = await Deno.readTextFile(path);
 
     // Extract only `export function` declarations for asc.
@@ -327,7 +330,7 @@ export async function compileModule(path: string): Promise<void> {
     const { error, stderr } = await asc([
       tempTsPath,
       "--target", "release",
-      "--outFile", `./${name}.wasm`,
+      "--outFile", out,
       "--optimize",
       "--noAssert",
       "--runtime", "stub",
@@ -337,8 +340,8 @@ export async function compileModule(path: string): Promise<void> {
       // Skip Binaryen post-processing - asc --optimize already produces
       // correct output; Binaryen opt level 3 miscompiles some asc patterns.
       // Just strip the start section and any env/abort import from the binary.
-      await removeEnvAbortImport(`./${name}.wasm`);
-      console.log(`✅ Library Ready: ${name}.wasm`);
+      await removeEnvAbortImport(out);
+      console.log(`✅ Library Ready: ${out}`);
     } else {
       console.error(`❌ Build failed: ${error.message}`);
       if (stderr) console.error(stderr.toString());
@@ -529,13 +532,14 @@ export async function checkIsLibrary(path: string): Promise<boolean> {
  * Converts a WASM/WAT module into a standalone JS-based script.
  * @param path - Path to the module.
  */
-export async function wasm2js(path: string): Promise<void> {
-  const outPath = path.replace(/\.(wasm|wat)$/, ".js");
+export async function wasm2js(path: string, outPath?: string): Promise<void> {
+  const out = outPath ?? path.replace(/\.(wasm|wat)$/, ".js");
   try {
+    if (outPath) await Deno.mkdir(dirname(outPath), { recursive: true });
     const wasmBuffer = await getWasmBytes(path);
     const result = wasm2js_compiler(wasmBuffer as BufferSource);
-    await Deno.writeTextFile(outPath, typeof result === "string" ? result : new TextDecoder().decode(result));
-    console.log(`✅ Success: ${outPath}`);
+    await Deno.writeTextFile(out, typeof result === "string" ? result : new TextDecoder().decode(result));
+    console.log(`✅ Success: ${out}`);
   } catch (err) { console.error(`❌ Conversion failed: ${err}`); }
 }
 
@@ -565,9 +569,10 @@ async function findSourceAlongside(wasmPath: string): Promise<string | null> {
  *   - WAT → WASM: detects javy_quickjs_provider imports in the WAT text and blocks conversion with a clear notice.
  * @param p - Path to the input file.
  */
-export async function convertFile(p: string): Promise<void> {
+export async function convertFile(p: string, outPath?: string): Promise<void> {
   const isWat = p.endsWith(".wat");
-  const out = isWat ? p.replace(".wat", ".wasm") : p.replace(".wasm", ".wat");
+  const out = outPath ?? (isWat ? p.replace(".wat", ".wasm") : p.replace(".wasm", ".wat"));
+  if (outPath) await Deno.mkdir(dirname(outPath), { recursive: true });
 
   try {
     if (isWat) {

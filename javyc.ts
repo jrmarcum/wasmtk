@@ -150,19 +150,24 @@ export function detectJavyProvider(buf: Uint8Array): string | null {
  *
  * @param path - Path to the source .ts file.
  */
-export async function compileJavy(path: string): Promise<void> {
+export async function compileJavy(path: string, outPath?: string): Promise<void> {
   await ensureJavy();
   const name = basename(path).replace(/\.[^/.]+$/, "");
+  const wasmOut = outPath ?? `./${name}.wasm`;
+  const jsOut = outPath ? outPath.replace(/\.wasm$/, ".js") : `./${name}.js`;
+
+  if (outPath) await Deno.mkdir(dirname(outPath), { recursive: true });
+
   const bundle = new Deno.Command(Deno.execPath(), {
     args: ["bundle", "--quiet", path],
     stdout: "piped",
   });
   const output = await bundle.output();
   const preamble = `const prompt = function(message) { if (message) { Javy.IO.writeSync(1, new TextEncoder().encode(message + " ")); } let input = ""; const buffer = new Uint8Array(1); while (true) { const n = Javy.IO.readSync(0, buffer); if (n > 0) { const char = new TextDecoder().decode(buffer); if (char === "\\n" || char === "\\r") break; input += char; } else if (n === 0) { continue; } else { break; } } return input.trim(); };`;
-  await Deno.writeTextFile(`./${name}.js`, preamble + new TextDecoder().decode(output.stdout));
+  await Deno.writeTextFile(jsOut, preamble + new TextDecoder().decode(output.stdout));
   const javyCmd = (await isJavyAvailable()) ? "javy" : getJavyInstallPath();
   const javy = new Deno.Command(javyCmd, {
-    args: ["build", `./${name}.js`, "-o", `./${name}.wasm`],
+    args: ["build", jsOut, "-o", wasmOut],
   });
-  if ((await javy.output()).success) console.log(`✅ Javy WASI: ${name}.wasm`);
+  if ((await javy.output()).success) console.log(`✅ Javy WASI: ${wasmOut}`);
 }

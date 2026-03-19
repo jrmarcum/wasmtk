@@ -30,7 +30,7 @@
 
 import wabt from "wabt";
 import binaryen from "binaryen";
-import { basename } from "@std/path";
+import { basename, dirname } from "@std/path";
 import {
   DATA_BASE,
   parseConsoleLogArgs,
@@ -733,6 +733,10 @@ class WasicTranspiler {
 export async function compileWasiTs(tsPath: string, outPath?: string): Promise<WasicResult> {
   const name = basename(tsPath).replace(/\.[^/.]+$/, "");
   const out = outPath ?? `./${name}.wasm`;
+  // WAT goes alongside the output WASM when outPath is specified
+  const watPath = outPath ? out.replace(/\.wasm$/, ".wat") : `./${name}.wat`;
+
+  if (outPath) await Deno.mkdir(dirname(outPath), { recursive: true });
 
   let source: string;
   try {
@@ -749,8 +753,7 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
     return { success: false, error: `Transpile error: ${err instanceof Error ? err.message : String(err)}` };
   }
 
-  // Write WAT alongside the source for inspection / debugging
-  const watPath = `./${name}.wat`;
+  // Write WAT alongside the output for inspection / debugging
   await Deno.writeTextFile(watPath, wat);
 
   const result = await watToOptimisedWasm(wat, watPath, out);
@@ -770,9 +773,9 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
  *
  * @param path - Path to a .ts or .wat source file.
  */
-export async function compileWasi(path: string): Promise<void> {
+export async function compileWasi(path: string, outPath?: string): Promise<void> {
   if (path.endsWith(".wat")) {
-    await compileWat(path);
+    await compileWat(path, outPath);
     return;
   }
 
@@ -781,7 +784,7 @@ export async function compileWasi(path: string): Promise<void> {
     return;
   }
 
-  const result = await compileWasiTs(path);
+  const result = await compileWasiTs(path, outPath);
   if (!result.success) {
     Deno.exit(1);
   }
