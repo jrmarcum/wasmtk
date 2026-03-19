@@ -39,7 +39,8 @@
     "cache": "deno cache main.ts",
     "update-version": "deno run --allow-read --allow-write -e 'import { updateVersion } from \"./utils.ts\"; updateVersion();'",
     "install": "deno task cache && deno install -g --allow-run --allow-read --allow-write --allow-env --allow-ffi --allow-net --config deno.json --force -n wasmtk main.ts",
-    "compile": "deno compile -A --output wasmtk main.ts"
+    "compile": "deno compile -A --output wasmtk main.ts",
+    "publish": "deno publish"
   },
   "fmt": {
     "useTabs": false,
