@@ -18,7 +18,6 @@ import {
   runWasi,
   callExport,
   showInfo,
-  checkIsLibrary,
   wasm2js,
   compileJavy,
   compileWasi,
