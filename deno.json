@@ -11,6 +11,7 @@
     "./compiler": "./compiler.ts",
     "./javyc": "./javyc.ts",
     "./wasic": "./wasic.ts",
+    "./modc": "./modc.ts",
     "./tsbundler": "./tsbundler.ts",
     "./console_log": "./console_log.ts"
   },

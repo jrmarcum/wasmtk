@@ -7,7 +7,6 @@
 import { basename, join, dirname } from "@std/path";
 import wasm2js_compiler from "wasm2js";
 import binaryen from "binaryen";
-import { main as asc } from "asc";
 import wabt from "wabt";
 import {
   detectJavyProvider,
@@ -18,6 +17,7 @@ import {
 
 export { compileJavy } from "./javyc.ts";
 export { compileWasi } from "./wasic.ts";
+export { compileModule } from "./modc.ts";
 
 // Minimal type stubs for the wabt npm package API
 interface WasmFeatures { enable_all?: boolean; [key: string]: boolean | undefined; }
@@ -160,193 +160,6 @@ async function getWasmBytes(path: string): Promise<Uint8Array> {
     }
   }
   return await Deno.readFile(path);
-}
-
-/**
- * Compiles an AssemblyScript file to an optimized WASM library (modc).
- * @param path - Path to the source .ts file.
- */
-/**
- * Safety-net post-processor: if env/abort still appears in the module after asc compilation,
- * patch it out via WAT round-trip so the binary is self-contained for wasmtime/wasmer.
- */
-/**
- * Removes the env/abort import from an AssemblyScript-compiled WASM binary by directly
- * parsing and rewriting the binary-level import section. This avoids fragile WAT round-trips
- * and works reliably regardless of how Binaryen formats its text output.
- *
- * WASM binary structure of the import section (section id = 2):
- *   [section_id=2][section_size][num_imports][...import entries...]
- * Each import entry: [mod_len][mod_bytes][name_len][name_bytes][import_kind][...]
- */
-/**
- * Post-processes a compiled WASM library binary to:
- * 1. Remove any env/abort import (leftover from AssemblyScript)
- * 2. Remove the start section (section id=8) - illegal in library modules
- * Both fixes make the binary compatible with strict runtimes like wasmtime/wasmer.
- */
-async function removeEnvAbortImport(wasmPath: string): Promise<void> {
-  const bytes = await Deno.readFile(wasmPath);
-  const buf = new Uint8Array(bytes);
-
-  const readULEB128 = (p: number): [number, number] => {
-    let val = 0, shift = 0;
-    while (true) {
-      const b = buf[p++];
-      val |= (b & 0x7f) << shift;
-      shift += 7;
-      if ((b & 0x80) === 0) return [val, p];
-    }
-  };
-
-  const writeULEB128 = (n: number): Uint8Array => {
-    const out: number[] = [];
-    do {
-      let b = n & 0x7f; n >>>= 7;
-      if (n !== 0) b |= 0x80;
-      out.push(b);
-    } while (n !== 0);
-    return new Uint8Array(out);
-  };
-
-  // Collect sections that need rewriting or dropping
-  // We'll rebuild the entire binary, section by section
-  const outputChunks: Uint8Array[] = [buf.slice(0, 8)]; // WASM header
-  let pos = 8;
-  let patched = false;
-
-  while (pos < buf.length) {
-    const sectionIdPos = pos;
-    const sectionId = buf[pos++];
-    const [sectionSize, bodyPos] = readULEB128(pos);
-    const sectionEndPos = bodyPos + sectionSize;
-    pos = sectionEndPos;
-
-    // --- Section 8: start section --- drop it entirely (invalid for libraries)
-    if (sectionId === 8) {
-      patched = true;
-      continue; // skip - do not emit this section
-    }
-
-    // --- Section 2: import section --- filter out env/abort if present
-    if (sectionId === 2) {
-      let p = bodyPos;
-      const [numImports, afterCount] = readULEB128(p); p = afterCount;
-
-      const entries: Array<{ bytes: Uint8Array; drop: boolean }> = [];
-      for (let i = 0; i < numImports; i++) {
-        const entryStart = p;
-        const [modLen, p2] = readULEB128(p); p = p2;
-        const modName = new TextDecoder().decode(buf.slice(p, p + modLen)); p += modLen;
-        const [nameLen, p3] = readULEB128(p); p = p3;
-        const fieldName = new TextDecoder().decode(buf.slice(p, p + nameLen)); p += nameLen;
-        const kind = buf[p++];
-        if (kind === 0) { const [, np] = readULEB128(p); p = np; }
-        else if (kind === 1) { p++; const f = buf[p++]; const [, np] = readULEB128(p); p = np; if (f & 1) { const [, np2] = readULEB128(p); p = np2; } }
-        else if (kind === 2) { const f = buf[p++]; const [, np] = readULEB128(p); p = np; if (f & 1) { const [, np2] = readULEB128(p); p = np2; } }
-        else if (kind === 3) { p += 2; }
-        const drop = modName === "env" && fieldName === "abort";
-        if (drop) patched = true;
-        entries.push({ bytes: buf.slice(entryStart, p), drop });
-      }
-
-      const kept = entries.filter(e => !e.drop);
-      if (kept.length === entries.length) {
-        // Nothing dropped - emit section unchanged
-        outputChunks.push(buf.slice(sectionIdPos, sectionEndPos));
-        continue;
-      }
-
-      // Rebuild import section
-      const newCount = writeULEB128(kept.length);
-      const bodyLen = newCount.length + kept.reduce((a, e) => a + e.bytes.length, 0);
-      const newSectionSize = writeULEB128(bodyLen);
-      const section = new Uint8Array(1 + newSectionSize.length + bodyLen);
-      let wp = 0;
-      section[wp++] = 2;
-      section.set(newSectionSize, wp); wp += newSectionSize.length;
-      section.set(newCount, wp); wp += newCount.length;
-      for (const e of kept) { section.set(e.bytes, wp); wp += e.bytes.length; }
-      outputChunks.push(section);
-      continue;
-    }
-
-    // All other sections: emit unchanged
-    outputChunks.push(buf.slice(sectionIdPos, sectionEndPos));
-  }
-
-  if (!patched) return;
-
-  // Concatenate all chunks
-  const totalLen = outputChunks.reduce((a, c) => a + c.length, 0);
-  const result = new Uint8Array(totalLen);
-  let wp = 0;
-  for (const chunk of outputChunks) { result.set(chunk, wp); wp += chunk.length; }
-
-  await Deno.writeFile(wasmPath, result);
-  console.log("  ✅ Patched: removed start section and env/abort import for standalone runtime compatibility");
-}
-
-export async function compileModule(path: string, outPath?: string): Promise<void> {
-  if (path.endsWith(".wasm") || path.endsWith(".wat")) {
-    console.error(`❌ Input Error: modc expects an AssemblyScript (.ts) file.`);
-    return;
-  }
-  const name = basename(path).replace(/\.[^/.]+$/, "");
-  const dir = dirname(path);
-  const tempTsPath = join(dir, `${name}.build.tmp.ts`);
-  const out = outPath ?? `./${name}.wasm`;
-  console.log(`✅ Building Library: ${basename(out)}`);
-  try {
-    if (outPath) await Deno.mkdir(dirname(outPath), { recursive: true });
-
-    const fullSource = await Deno.readTextFile(path);
-
-    // Extract only `export function` declarations for asc.
-    // Strips all runner code: IIFEs, top-level calls, console.log,
-    // import.meta.main blocks, and plain function main() calls.
-    // This handles all common TS patterns that asc cannot parse.
-    const exportFunctions: string[] = [];
-    const exportFnRegex = /^export\s+function\s+[\s\S]*?^}/gm;
-    let match: RegExpExecArray | null;
-    while ((match = exportFnRegex.exec(fullSource)) !== null) {
-      exportFunctions.push(match[0]);
-    }
-
-    if (exportFunctions.length === 0) {
-      console.error(`\u274c No exported functions found in ${path}. Use "export function" syntax.`);
-      return;
-    }
-
-    // Remap number types to f64 for asc compatibility
-    const source = exportFunctions
-      .join("\n\n")
-      .replace(/:\s*number/g, ": f64");
-
-    console.log(`  Extracted ${exportFunctions.length} export function(s)`);
-
-    // Tell asc to use its built-in no-op abort stub so no env/abort import is injected
-    await Deno.writeTextFile(tempTsPath, source);
-    const { error, stderr } = await asc([
-      tempTsPath,
-      "--target", "release",
-      "--outFile", out,
-      "--optimize",
-      "--noAssert",
-      "--runtime", "stub",
-      "--converge",
-    ]);
-    if (!error) {
-      // Skip Binaryen post-processing - asc --optimize already produces
-      // correct output; Binaryen opt level 3 miscompiles some asc patterns.
-      // Just strip the start section and any env/abort import from the binary.
-      await removeEnvAbortImport(out);
-      console.log(`✅ Library Ready: ${out}`);
-    } else {
-      console.error(`❌ Build failed: ${error.message}`);
-      if (stderr) console.error(stderr.toString());
-    }
-  } catch (err) { console.error(`❌ modc Exception: ${err}`); } finally { try { await Deno.remove(tempTsPath); } catch { /* ignore */ } }
 }
 
 /**
