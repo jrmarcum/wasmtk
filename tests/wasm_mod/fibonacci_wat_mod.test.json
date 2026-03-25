@@ -1,0 +1,9 @@
+{
+  "fib": [
+    { "args": [0],  "expected": 0,    "desc": "fib(0) — i32 iterative WAT" },
+    { "args": [1],  "expected": 1,    "desc": "fib(1)" },
+    { "args": [5],  "expected": 5,    "desc": "fib(5)" },
+    { "args": [10], "expected": 55,   "desc": "fib(10)" },
+    { "args": [20], "expected": 6765, "desc": "fib(20)" }
+  ]
+}

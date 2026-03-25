@@ -1,0 +1,8 @@
+{
+  "add": [
+    { "args": [10, 20],  "expected": 30,   "desc": "basic sum" },
+    { "args": [0, 0],    "expected": 0,    "desc": "zero + zero" },
+    { "args": [-5, 3],   "expected": -2,   "desc": "negative + positive" },
+    { "args": [100, -1], "expected": 99,   "desc": "positive + negative" }
+  ]
+}

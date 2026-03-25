@@ -1,0 +1,8 @@
+{
+  "fac": [
+    { "args": [0], "expected": 1,   "desc": "0! = 1" },
+    { "args": [1], "expected": 1,   "desc": "1! = 1" },
+    { "args": [5], "expected": 120, "desc": "5! = 120" },
+    { "args": [7], "expected": 5040, "desc": "7! = 5040" }
+  ]
+}

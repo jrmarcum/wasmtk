@@ -483,7 +483,7 @@ export async function showInfo(path: string): Promise<void> {
       const exp = binaryen.getExportInfo(module.getExportByIndex(i));
       if (exp.kind !== 0) continue; 
       const name = exp.name;
-      const isInternal = name === "_start" || name === "_initialize" || name === "abort" || name.startsWith("__") || name.startsWith("cabi_") || name.includes("config-schema");
+      const isInternal = name === "_initialize" || name === "abort" || name.startsWith("__") || name.startsWith("cabi_") || name.includes("config-schema");
       if (!isInternal) {
         const func = module.getFunction(exp.value);
         const info = binaryen.getFunctionInfo(func);
@@ -495,19 +495,12 @@ export async function showInfo(path: string): Promise<void> {
     }
     if (found === 0) console.log("  (None found)");
     let isWasi = false;
-    const modExt = module as BinaryenModuleExt;
-    const binExt = binaryen as unknown as BinaryenLibExt;
-    if (typeof modExt.getNumImports === "function") {
-      const numImports = modExt.getNumImports();
-      for (let i = 0; i < numImports; i++) {
-        const impRef = modExt.getImportByIndex(i);
-        const imp = binExt.getImportInfo(impRef);
-        if (imp.module === "wasi_snapshot_preview1") {
-          isWasi = true;
-          break;
-        }
-      }
-    }
+    try {
+      const compiledMod = await WebAssembly.compile(bytes as BufferSource);
+      isWasi = WebAssembly.Module.imports(compiledMod).some(
+        (imp) => imp.module === "wasi_snapshot_preview1",
+      );
+    } catch { /* fall through — isWasi stays false */ }
     // Detect Javy binary for informational note (Wizer fuses WASI imports so isWasi may be false)
     const isJavy = path.endsWith(".wasm") && detectJavyProvider(bytes) !== null;
     console.log(`\n🛠️  WASI Support: ${isWasi || isJavy ? "Yes" : "No"}${isJavy ? " (Javy/QuickJS — WASI internalized by Wizer)" : ""}`);

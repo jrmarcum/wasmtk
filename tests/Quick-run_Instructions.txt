@@ -1,0 +1,1 @@
+deno run --allow-read --allow-run quick-run.ts ./wasm_wasi wasmtk run -- .js .ts .wat .wasm

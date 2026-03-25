@@ -1,0 +1,10 @@
+{
+  "isLeapYear": [
+    { "args": [2000], "expected": 1, "desc": "2000 divisible by 400" },
+    { "args": [1900], "expected": 0, "desc": "1900 divisible by 100 but not 400" },
+    { "args": [2004], "expected": 1, "desc": "2004 divisible by 4" },
+    { "args": [2001], "expected": 0, "desc": "2001 not divisible by 4" },
+    { "args": [1600], "expected": 1, "desc": "1600 divisible by 400" },
+    { "args": [2100], "expected": 0, "desc": "2100 divisible by 100 but not 400" }
+  ]
+}

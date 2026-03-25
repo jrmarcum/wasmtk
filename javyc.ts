@@ -153,8 +153,9 @@ export function detectJavyProvider(buf: Uint8Array): string | null {
 export async function compileJavy(path: string, outPath?: string): Promise<void> {
   await ensureJavy();
   const name = basename(path).replace(/\.[^/.]+$/, "");
-  const wasmOut = outPath ?? `./${name}.wasm`;
-  const jsOut = outPath ? outPath.replace(/\.wasm$/, ".js") : `./${name}.js`;
+  const srcDir = dirname(path);
+  const wasmOut = outPath ?? `${srcDir}/${name}.wasm`;
+  const jsOut = outPath ? outPath.replace(/\.wasm$/, ".js") : `${srcDir}/${name}.js`;
 
   if (outPath) await Deno.mkdir(dirname(outPath), { recursive: true });
 
