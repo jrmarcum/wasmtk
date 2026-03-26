@@ -346,3 +346,36 @@ The `wasic` direct compiler is developed incrementally. Each phase adds a self-c
 | 15 | Exception handling | `try`/`catch`/`throw` via WAT exceptions proposal (`exnref`, `throw`, `catch`) |
 | 16 | Module system extras | Re-exports (`export { x } from "./lib.ts"`), default exports, namespace imports (`import * as m`) |
 | 17 | wasic library mode | `modc` backend: drop WASI scaffolding, emit pure WASM library — replaces AssemblyScript for `wasmtk modc` |
+| 18 | WASM import bundling | Import pre-compiled `.wasm` modules directly: `import { add } from "./math.wasm"` — WAT-level merge with module-prefix mangling |
+
+#### Phase 18 — WASM Import Bundling
+
+Phase 18 extends `tsbundler.ts` to handle `.wasm` specifiers alongside `.ts` ones. When a `.wasm` import is encountered:
+
+1. **Disassemble** — wabt converts the `.wasm` to WAT (wabt is already in the pipeline)
+2. **Validate** — reject any module that exports a `_start` function with a clear error (see below)
+3. **Extract** — parse exported function signatures and bodies from the WAT
+4. **Mangle** — apply the same module-prefix naming used for `.ts` imports: `math.wasm` exports `add` → `math_add`
+5. **Register** — inject the signatures into `WasicTranspiler`'s function table so call sites type-check correctly
+6. **Merge** — append the prefixed function bodies into the final WAT output before the wabt compile step
+
+**Supported cases (incrementally):**
+
+| Case | Complexity | Notes |
+| --- | --- | --- |
+| Pure computation (no memory, no imports) | Low | Hash functions, math libs, encoders — clean merge |
+| Modules with globals | Medium | Globals get prefix mangling like functions |
+| Modules sharing WASI imports | Medium | `fd_write` etc. deduplicated against main module's imports |
+| Modules with memory / data segments | High | Requires data-offset relocation relative to `DATA_BASE` |
+
+**`_start` exclusion:**
+
+Any `.wasm` module — including WASI executables — can be imported. However, `_start` is **always excluded** from the merge. A compiled program can only have one `_start` entry point; merging a second would produce a WAT compile error or silently override the program's entry. `tsbundler.ts` detects the presence of `_start` and drops it, emitting an informational notice so the user knows what happened:
+
+```text
+⚠️  Imported "./myprogram.wasm": _start excluded from merge.
+    WASI entry points cannot be imported as callable functions.
+    All other exports from this module are available normally.
+```
+
+This means WASI executables compiled with `wasmtk wasic` can still be imported as utility libraries — their exported helper functions are fully accessible; only the entry point is withheld. This pairing makes `wasmtk modc` and `wasmtk wasic` a natural matched set: `modc` produces clean importable libraries, `wasic` can consume both `modc` output and other `wasic` modules equally.
