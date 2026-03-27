@@ -295,6 +295,13 @@ function inferInitType(
   // 2. contains a comparison or logical operator → boolean
   if (/===|!==|==|!=|<=|>=|<|>|&&|\|\||^!/.test(e)) return "bool";
   if (e.startsWith("!")) return "bool";
+  // 2b. string-producing expressions
+  if (e.startsWith('"') || e.startsWith("'")) return "string";   // string literal or concat
+  if (/^String\s*\(/.test(e)) return "string";                   // String(n)
+  if (/^\w+\.toString\s*\(\s*\)$/.test(e)) return "string";     // n.toString()
+  // str.slice(...) — only if receiver is a known string var (checked at call sites; hint here)
+  const sliceLeadId = e.match(/^(\w+)\.slice\s*\(/)?.[1];
+  if (sliceLeadId && locals.get(sliceLeadId) === "string") return "string";
   // 3. leading identifier has a known declared type — inherit it
   const leadId = e.match(/^(\w+)/)?.[1];
   if (leadId) { const t = locals.get(leadId); if (t) return t; }
@@ -339,6 +346,8 @@ class WasicTranspiler {
   private hasConsoleLog = false;
   private needsNumericHelpers = false;
   private needsStringHelpers = false;
+  private needsStringOpHelpers = false;
+  private needsStrGatherHelper = false;
 
   // String data section: message → [offset, byteLength]
   // Raw (non-string) data segments for arrays etc.
@@ -1239,9 +1248,10 @@ class WasicTranspiler {
   private emitStringAssign(
     varName: string,
     initExpr: string,
-    _locals: Map<string, WatType>
+    locals: Map<string, WatType>
   ): string {
     this.stringVars.add(varName);
+    const ind = "      ";
 
     // String literal
     const litMatch = initExpr.match(/^"([^"]*)"$/) ?? initExpr.match(/^'([^']*)'$/);
@@ -1249,7 +1259,7 @@ class WasicTranspiler {
       const [offset, len] = this.allocString(litMatch[1]);
       return [
         `(local.set $${varName}_ptr (i32.const ${offset}))`,
-        `      (local.set $${varName}_len (i32.const ${len}))`,
+        `${ind}(local.set $${varName}_len (i32.const ${len}))`,
       ].join("\n");
     }
 
@@ -1257,11 +1267,94 @@ class WasicTranspiler {
     if (/^\w+$/.test(initExpr) && this.stringVars.has(initExpr)) {
       return [
         `(local.set $${varName}_ptr (local.get $${initExpr}_ptr))`,
-        `      (local.set $${varName}_len (local.get $${initExpr}_len))`,
+        `${ind}(local.set $${varName}_len (local.get $${initExpr}_len))`,
       ].join("\n");
     }
 
+    // str.slice(start, end) → call $__str_slice (multi-value → ptr, len)
+    const sliceMatch = initExpr.match(/^(\w+)\.slice\s*\((.+?),\s*(.+?)\)$/);
+    if (sliceMatch && locals.get(sliceMatch[1]) === "string") {
+      this.needsStringOpHelpers = true;
+      const startWat = this.emitExpr(sliceMatch[2].trim(), locals, "i32");
+      const endWat   = this.emitExpr(sliceMatch[3].trim(), locals, "i32");
+      return [
+        `(call $__str_slice (local.get $${sliceMatch[1]}_ptr) (local.get $${sliceMatch[1]}_len) ${startWat} ${endWat})`,
+        `${ind}(local.set $${varName}_len)`,
+        `${ind}(local.set $${varName}_ptr)`,
+      ].join("\n");
+    }
+
+    // n.toString() → malloc 32 bytes, call $__i32_to_str / $__f64_to_str
+    const toStrMatch = initExpr.match(/^(\w+)\.toString\s*\(\s*\)$/);
+    if (toStrMatch) {
+      const srcType = locals.get(toStrMatch[1]);
+      if (srcType === "i32" || srcType === "f64" || srcType === "i64") {
+        this.needsNumericHelpers = true;
+        const helperName = srcType === "f64" ? "$__f64_to_str" : "$__i32_to_str";
+        return [
+          `(local.set $${varName}_ptr (call $__malloc (i32.const 32)))`,
+          `${ind}(local.set $${varName}_len (call ${helperName} (local.get $${toStrMatch[1]}) (local.get $${varName}_ptr)))`,
+        ].join("\n");
+      }
+    }
+
+    // String(n) → same pattern
+    const stringOfMatch = initExpr.match(/^String\s*\((.+?)\)\s*$/);
+    if (stringOfMatch) {
+      this.needsNumericHelpers = true;
+      const argExpr = stringOfMatch[1].trim();
+      const argType: WatType = /^\w+$/.test(argExpr) ? (locals.get(argExpr) ?? "i32") : "i32";
+      const helperName = argType === "f64" ? "$__f64_to_str" : "$__i32_to_str";
+      const valWat = this.emitExpr(argExpr, locals, argType);
+      return [
+        `(local.set $${varName}_ptr (call $__malloc (i32.const 32)))`,
+        `${ind}(local.set $${varName}_len (call ${helperName} ${valWat} (local.get $${varName}_ptr)))`,
+      ].join("\n");
+    }
+
+    // String concatenation: flatten the binary + tree and reduce left-to-right
+    // e.g. a + " " + b  →  result = concat(a, " "); result = concat(result, b)
+    const concatParts = this.flattenStringConcat(initExpr, locals);
+    if (concatParts && concatParts.length >= 2) {
+      this.needsStringOpHelpers = true;
+      const stmts: string[] = [];
+      const p0 = this.emitStringPtrLen(concatParts[0], locals);
+      const p1 = this.emitStringPtrLen(concatParts[1], locals);
+      stmts.push(`(call $__str_concat ${p0} ${p1})`);
+      stmts.push(`(local.set $${varName}_len)`);
+      stmts.push(`(local.set $${varName}_ptr)`);
+      for (let i = 2; i < concatParts.length; i++) {
+        const pi = this.emitStringPtrLen(concatParts[i], locals);
+        stmts.push(`(call $__str_concat (local.get $${varName}_ptr) (local.get $${varName}_len) ${pi})`);
+        stmts.push(`(local.set $${varName}_len)`);
+        stmts.push(`(local.set $${varName}_ptr)`);
+      }
+      return stmts.join(`\n${ind}`);
+    }
+
     return `(;; string assignment from complex expression not yet supported: ${varName} = ${initExpr};)`;
+  }
+
+  /**
+   * Returns the list of operand sub-expressions in a left-associative string concat chain,
+   * or null if the expression is not a string + operation.
+   */
+  private flattenStringConcat(expr: string, locals: Map<string, WatType>): string[] | null {
+    const plusIdx = this.findBinaryOp(expr, "+");
+    if (plusIdx === -1) return null;
+    const lhs = expr.slice(0, plusIdx).trim();
+    const rhs = expr.slice(plusIdx + 1).trim();
+    if (!this.isStringExpr(lhs, locals) && !this.isStringExpr(rhs, locals)) return null;
+    const lhsParts = this.flattenStringConcat(lhs, locals) ?? [lhs];
+    return [...lhsParts, rhs];
+  }
+
+  /** Returns true if expr is a string literal or a known string variable. */
+  private isStringExpr(expr: string, locals: Map<string, WatType>): boolean {
+    const e = expr.trim();
+    if (/^["']/.test(e)) return true;
+    if (/^\w+$/.test(e)) return locals.get(e) === "string";
+    return false;
   }
 
   /**
@@ -1323,6 +1416,22 @@ class WasicTranspiler {
       if (locals.get(lenPropMatch[1]) === "string") {
         return `(local.get $${lenPropMatch[1]}_len)`;
       }
+    }
+
+    // String method calls returning i32 (can appear in any expression context)
+    // str.indexOf(sub) → i32 offset or -1
+    const strIndexOfMatch = expr.match(/^(\w+)\.indexOf\s*\((.+)\)$/);
+    if (strIndexOfMatch && locals.get(strIndexOfMatch[1]) === "string") {
+      this.needsStringOpHelpers = true;
+      const subPtrLen = this.emitStringPtrLen(strIndexOfMatch[2].trim(), locals);
+      return `(call $__str_indexof (local.get $${strIndexOfMatch[1]}_ptr) (local.get $${strIndexOfMatch[1]}_len) ${subPtrLen})`;
+    }
+    // str.includes(sub) → i32 bool (1 = found, 0 = not found)
+    const strIncludesMatch = expr.match(/^(\w+)\.includes\s*\((.+)\)$/);
+    if (strIncludesMatch && locals.get(strIncludesMatch[1]) === "string") {
+      this.needsStringOpHelpers = true;
+      const subPtrLen = this.emitStringPtrLen(strIncludesMatch[2].trim(), locals);
+      return `(i32.ne (call $__str_indexof (local.get $${strIncludesMatch[1]}_ptr) (local.get $${strIncludesMatch[1]}_len) ${subPtrLen}) (i32.const -1))`;
     }
 
     // Array element read: arr[idx]
@@ -2180,8 +2289,9 @@ class WasicTranspiler {
         return undefined;
       };
       const segments = parseConsoleLogArgs(logMatch[1], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFn);
-      const { statements, needsHelpers } = emitConsoleLog(segments, allocator);
+      const { statements, needsHelpers, needsStrGather } = emitConsoleLog(segments, allocator);
       if (needsHelpers) this.needsNumericHelpers = true;
+      if (needsStrGather) this.needsStrGatherHelper = true;
       return statements.join("\n      ");
     }
 
@@ -2242,8 +2352,9 @@ class WasicTranspiler {
         return undefined;
       };
       const segments = parseConsoleLogArgs(errMatch[2], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFnErr);
-      const { statements, needsHelpers } = emitConsoleLog(segments, allocator, "    ", 2);
+      const { statements, needsHelpers, needsStrGather } = emitConsoleLog(segments, allocator, "    ", 2);
       if (needsHelpers) this.needsNumericHelpers = true;
+      if (needsStrGather) this.needsStrGatherHelper = true;
       return statements.join("\n      ");
     }
 
@@ -2773,6 +2884,7 @@ class WasicTranspiler {
     (local.get $ptr)
   )`);
     if (this.needsStringHelpers)   parts.push(this.getStringHelperWat());
+    if (this.needsStringOpHelpers || this.needsStrGatherHelper) parts.push(this.getStringOpHelperWat());
     if (this.needsNumericHelpers)  parts.push(getHelperWat());
     if (this.mathHelpers.size > 0) parts.push(this.emitMathHelpers());
     if (this.dynArrHelpers.size > 0) parts.push(this.emitDynArrHelpers());
@@ -2998,6 +3110,128 @@ class WasicTranspiler {
       )
     )
     (i32.sub (local.get $alen) (local.get $blen))
+  )`.trimEnd();
+  }
+
+  private getStringOpHelperWat(): string {
+    return `
+  ;; ── str_gather: copy len bytes from src to dst (byte-copy loop, no bulk-memory) ──
+  ;; Used by gather-buffer mode in console.log for strvar/boolvar segments.
+  (func $__str_gather (param $src i32) (param $slen i32) (param $dst i32)
+    (local $i i32)
+    (block $done
+      (loop $loop
+        (br_if $done (i32.ge_u (local.get $i) (local.get $slen)))
+        (i32.store8
+          (i32.add (local.get $dst) (local.get $i))
+          (i32.load8_u (i32.add (local.get $src) (local.get $i)))
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop)
+      )
+    )
+  )
+
+  ;; ── str_concat: heap-allocate new string = a ++ b ───────────────────────────
+  ;; Copies bytes of a then b into a malloc'd buffer. Returns (ptr, len).
+  ;; Old buffers become dead memory (bump allocator has no free).
+  (func $__str_concat
+    (param $aptr i32) (param $alen i32) (param $bptr i32) (param $blen i32)
+    (result i32 i32)
+    (local $newptr i32) (local $newlen i32) (local $i i32)
+    (local.set $newlen (i32.add (local.get $alen) (local.get $blen)))
+    (local.set $newptr (call $__malloc (local.get $newlen)))
+    ;; copy a
+    (local.set $i (i32.const 0))
+    (block $done_a
+      (loop $copy_a
+        (br_if $done_a (i32.ge_u (local.get $i) (local.get $alen)))
+        (i32.store8
+          (i32.add (local.get $newptr) (local.get $i))
+          (i32.load8_u (i32.add (local.get $aptr) (local.get $i)))
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $copy_a)
+      )
+    )
+    ;; copy b
+    (local.set $i (i32.const 0))
+    (block $done_b
+      (loop $copy_b
+        (br_if $done_b (i32.ge_u (local.get $i) (local.get $blen)))
+        (i32.store8
+          (i32.add (local.get $newptr) (i32.add (local.get $alen) (local.get $i)))
+          (i32.load8_u (i32.add (local.get $bptr) (local.get $i)))
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $copy_b)
+      )
+    )
+    (local.get $newptr)
+    (local.get $newlen)
+  )
+
+  ;; ── str_slice: return sub-range of existing string (no allocation) ───────────
+  ;; Clamps start/end to [0, len]. Returns (ptr+start, end-start).
+  (func $__str_slice
+    (param $ptr i32) (param $len i32) (param $start i32) (param $end i32)
+    (result i32 i32)
+    (local $cs i32) (local $ce i32)
+    ;; clamp start to [0, len]
+    (local.set $cs
+      (select (i32.const 0) (local.get $start) (i32.lt_s (local.get $start) (i32.const 0)))
+    )
+    (if (i32.gt_s (local.get $cs) (local.get $len))
+      (then (local.set $cs (local.get $len)))
+    )
+    ;; clamp end to [cs, len]
+    (local.set $ce
+      (select (local.get $len) (local.get $end) (i32.gt_s (local.get $end) (local.get $len)))
+    )
+    (if (i32.lt_s (local.get $ce) (local.get $cs))
+      (then (local.set $ce (local.get $cs)))
+    )
+    (i32.add (local.get $ptr) (local.get $cs))
+    (i32.sub (local.get $ce) (local.get $cs))
+  )
+
+  ;; ── str_indexof: first occurrence of sub in str, or -1 ──────────────────────
+  (func $__str_indexof
+    (param $ptr i32) (param $len i32) (param $subptr i32) (param $sublen i32)
+    (result i32)
+    (local $i i32) (local $j i32) (local $max i32) (local $ok i32)
+    ;; empty substring always found at position 0
+    (if (i32.eqz (local.get $sublen)) (then (return (i32.const 0))))
+    ;; if sub is longer than str, impossible
+    (local.set $max (i32.sub (local.get $len) (local.get $sublen)))
+    (if (i32.lt_s (local.get $max) (i32.const 0)) (then (return (i32.const -1))))
+    (block $found_none
+      (loop $outer
+        (br_if $found_none (i32.gt_s (local.get $i) (local.get $max)))
+        (local.set $j (i32.const 0))
+        (local.set $ok (i32.const 1))
+        (block $inner_done
+          (loop $inner
+            (br_if $inner_done (i32.ge_u (local.get $j) (local.get $sublen)))
+            (if (i32.ne
+              (i32.load8_u (i32.add (local.get $ptr) (i32.add (local.get $i) (local.get $j))))
+              (i32.load8_u (i32.add (local.get $subptr) (local.get $j)))
+            )
+              (then
+                (local.set $ok (i32.const 0))
+                (br $inner_done)
+              )
+            )
+            (local.set $j (i32.add (local.get $j) (i32.const 1)))
+            (br $inner)
+          )
+        )
+        (if (local.get $ok) (then (return (local.get $i))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $outer)
+      )
+    )
+    (i32.const -1)
   )`.trimEnd();
   }
 

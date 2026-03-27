@@ -109,6 +109,12 @@ wasmtk run myprogram.wasm
 | Template literals | `` `x=${x} y=${y}` `` — numeric and string interpolation |
 | `console.log` | Mixed-type argument lists (numbers, strings, booleans, BigInt, template literals) |
 | `console.error` / `console.warn` | Same as `console.log` but writes to stderr (fd=2) |
+| `str + str` | Concatenation — heap-allocates a new string; chains left-to-right (e.g. `a + b + c`) |
+| `str.slice(start, end)` | Returns a sub-range pointer with clamped bounds (no allocation) |
+| `str.indexOf(sub)` | Returns i32 offset of first occurrence, or -1 if not found |
+| `str.includes(sub)` | Returns bool — `true` if substring is present |
+| `String(n)` | Converts numeric value to a heap-allocated string |
+| `n.toString()` | Same as `String(n)` — works on `i32`, `f64`, `i64` variables |
 
 ##### Arrays
 
@@ -209,7 +215,6 @@ export function _start() { ... }
 | Feature | Status |
 | --- | --- |
 | Class inheritance (`extends`) | Deferred — virtual dispatch via vtable requires heap |
-| String operations (concat, slice, indexOf) | Phase 11 |
 | Array methods (map, filter, forEach, reduce) | Phase 12 |
 | Rest parameters / spread | Phase 13 |
 | Generics (monomorphization) | Phase 14 |
@@ -365,12 +370,12 @@ The `wasic` direct compiler is developed incrementally. Each phase adds a self-c
 | 10a | Bump allocator | `$__heap_ptr` mutable global initialized to end of static data; `$__malloc(size)` advances and returns old ptr; 1 extra memory page reserved; Binaryen -Oz strips it when unused |
 | 10b | Dynamic arrays | `push` / `pop` / `shift` / `unshift` on `i32[]` and `f64[]`; heap layout `[length i32][capacity i32][elem...]`; auto-detected by pre-scan; per-type WAT helpers emitted on demand; capacity = `max(n × 2, 8)` |
 | 10c | Dynamic array growth | `push` / `unshift` grow on overflow: `$__dynarr_grow_T` mallocates new block (`cap × 2`), copies elements, returns new ptr; helpers return new array ptr so callers `local.set` their pointer; old block becomes dead memory (bump allocator has no free) |
+| 11 | String operations | `str + str` concat (chained, heap-allocated); `str.slice(start, end)` (sub-range, no alloc); `str.indexOf(sub)` → i32; `str.includes(sub)` → bool; `String(n)` / `n.toString()` (number-to-string via heap); gather-buffer mode in `console.log` extended to handle string and bool variables |
 
 ### Planned Phases
 
 | Phase | Feature | Description |
 | --- | --- | --- |
-| 11 | String operations | `str + str`, `slice`, `indexOf`, `includes`, `String(n)` — requires Phase 10 heap |
 | 12 | Array methods | `forEach`, `map`, `filter`, `find`, `slice`, `indexOf`, `reduce` — requires Phase 10 |
 | 13 | Rest parameters / spread | `function f(...args: i32[])`, `[...a, ...b]`, spread call `f(...arr)` |
 | 14 | Generics | Monomorphization: `function id<T>(x: T): T` expanded per concrete type at compile time |

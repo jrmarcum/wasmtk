@@ -683,7 +683,7 @@ export function emitConsoleLog(
   allocString: DataAllocator,
   indent = "    ",
   fd = 1
-): { statements: string[]; needsHelpers: boolean } {
+): { statements: string[]; needsHelpers: boolean; needsStrGather: boolean } {
   // Step 1: merge consecutive literal segments to minimise iov count.
   // e.g. [{literal,"x: "},{literal," "},{literal,"\n"}] → [{literal,"x:  \n"}]
   const merged: LogSegment[] = [];
@@ -698,11 +698,13 @@ export function emitConsoleLog(
 
   // Step 2: detect a standalone trailing "\n" so we can absorb it inline.
   const numericKinds = new Set(["i32var","i64var","f64var","i32expr","i64expr","f64expr"]);
+  const strBoolKinds = new Set(["strvar","boolvar"]);
   const trailingLitNL =
     merged.length >= 2 &&
     merged[merged.length - 1].kind === "literal" &&
     (merged[merged.length - 1] as { kind: "literal"; text: string }).text === "\n";
-  const canInlineNL = trailingLitNL && numericKinds.has(merged[merged.length - 2].kind);
+  const canInlineNL = trailingLitNL &&
+    (numericKinds.has(merged[merged.length - 2].kind) || strBoolKinds.has(merged[merged.length - 2].kind));
 
   // Active segments to process (strip standalone "\n" when we will inline it).
   const activeSegs = (trailingLitNL && canInlineNL) ? merged.slice(0, -1) : merged;
@@ -710,13 +712,17 @@ export function emitConsoleLog(
   // Step 3: decide emit strategy.
   // Gather mode consolidates ALL output into scratch (SCRATCH_BASE...) and emits a
   // single fd_write iov — needed because wasmtime 43 only processes the first iov.
-  // Gather works for literal + numeric segments; strvar/bool fall back to per-iov.
+  // strvar uses memory.copy into scratch; boolvar uses conditional memory.copy.
+  // boolexpr (arbitrary WAT) stays in per-iov mode (evaluated multiple times would be unsafe).
   const gatherable = (s: LogSegment) =>
-    s.kind === "literal" || numericKinds.has(s.kind);
-  const useGather = activeSegs.length > 1 && activeSegs.every(gatherable);
+    s.kind === "literal" || numericKinds.has(s.kind) || s.kind === "strvar" || s.kind === "boolvar";
+  // Single strvar/boolvar segments also use gather so the newline can be inlined.
+  const useGather = activeSegs.every(gatherable) &&
+    (activeSegs.length > 1 || strBoolKinds.has(activeSegs[0]?.kind ?? ""));
 
   const statements: string[] = [];
   let needsHelpers = false;
+  let needsStrGather = false;
 
   if (useGather) {
     // ── Gather-buffer mode ────────────────────────────────────────────────────
@@ -754,6 +760,50 @@ export function emitConsoleLog(
               `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.load (i32.const ${cursorAddr})) (i32.const ${bytes.length})))`,
             );
           }
+        }
+      } else if (seg.kind === "strvar") {
+        // String variable — copy bytes into scratch via $__str_gather, advance cursor
+        // $__str_gather(src_ptr, src_len, dst_ptr) — a byte-copy loop helper, no bulk-memory needed
+        needsStrGather = true;
+        const destExpr = runtimeCursor
+          ? `(i32.add (i32.const ${SCRATCH_BASE}) (i32.load (i32.const ${cursorAddr})))`
+          : `(i32.const ${SCRATCH_BASE + compileCursor})`;
+        statements.push(
+          `${indent}(call $__str_gather (local.get $${seg.ptrLocal}) (local.get $${seg.lenLocal}) ${destExpr})`,
+        );
+        if (!runtimeCursor) {
+          statements.push(
+            `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.const ${compileCursor}) (local.get $${seg.lenLocal})))`,
+          );
+          runtimeCursor = true;
+        } else {
+          statements.push(
+            `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.load (i32.const ${cursorAddr})) (local.get $${seg.lenLocal})))`,
+          );
+        }
+      } else if (seg.kind === "boolvar") {
+        // Bool variable — copy "true"/"false" bytes into scratch via $__str_gather, advance cursor
+        needsStrGather = true;
+        const [trueOff]  = allocString("true");
+        const [falseOff] = allocString("false");
+        const val = `(local.get $${seg.name})`;
+        const destExpr = runtimeCursor
+          ? `(i32.add (i32.const ${SCRATCH_BASE}) (i32.load (i32.const ${cursorAddr})))`
+          : `(i32.const ${SCRATCH_BASE + compileCursor})`;
+        const srcExpr = `(if (result i32) ${val} (then (i32.const ${trueOff})) (else (i32.const ${falseOff})))`;
+        const lenExpr = `(if (result i32) ${val} (then (i32.const 4)) (else (i32.const 5)))`;
+        statements.push(
+          `${indent}(call $__str_gather ${srcExpr} ${lenExpr} ${destExpr})`,
+        );
+        if (!runtimeCursor) {
+          statements.push(
+            `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.const ${compileCursor}) ${lenExpr}))`,
+          );
+          runtimeCursor = true;
+        } else {
+          statements.push(
+            `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.load (i32.const ${cursorAddr})) ${lenExpr}))`,
+          );
         }
       } else {
         // Numeric segment — convert directly into scratch at current cursor position
@@ -900,7 +950,7 @@ export function emitConsoleLog(
     );
   }
 
-  return { statements, needsHelpers };
+  return { statements, needsHelpers, needsStrGather };
 }
 
 // ---------------------------------------------------------------------------
