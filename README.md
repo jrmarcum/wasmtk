@@ -121,13 +121,21 @@ wasmtk run myprogram.wasm
 | Feature | Notes |
 | --- | --- |
 | Static numeric arrays | `i32[]`, `f64[]` — literal initializer, elements baked into the data section |
-| Dynamic numeric arrays | `i32[]`, `f64[]` — heap-allocated when `push`/`pop`/`shift`/`unshift` are detected |
+| Dynamic numeric arrays | `i32[]`, `f64[]` — heap-allocated when any mutating or querying method is detected by the pre-scan |
 | Element access | `arr[i]`, `arr[i] = v` — works on both static and dynamic arrays |
-| Length | `arr.length` — compile-time constant for static; runtime load for dynamic |
+| Length | `arr.length` — compile-time constant for static; runtime load from 8-byte header for dynamic |
 | `push(val)` | Appends a value; grows array automatically if at capacity (cap × 2 realloc) |
 | `pop()` | Removes and returns the last element; decrements length |
 | `shift()` | Removes and returns the first element; shifts remaining elements left |
 | `unshift(val)` | Inserts a value at the front; shifts elements right; grows array automatically if at capacity |
+| `indexOf(val)` | Returns i32 index of the first matching element, or -1 if not found |
+| `includes(val)` | Returns bool — `true` if the element is present in the array |
+| `slice(start, end)` | Returns a new heap-allocated array containing elements from `[start, end)`; bounds clamped |
+| `forEach(fn)` | Calls `fn(element)` for each element via `call_indirect` through the funcref table |
+| `map(fn)` | Returns a new array of the same length where each element is `fn(element)` |
+| `filter(fn)` | Returns a new array containing only elements for which `fn(element)` is truthy |
+| `find(fn)` | Returns the first element for which `fn(element)` is truthy, or -1 / NaN if not found |
+| `reduce(fn, init)` | Folds the array to a single value: `acc = fn(acc, element)` starting from `init` |
 | Array parameters | Passed as i32 pointer to the array's memory region |
 
 ##### Structs & Objects
@@ -215,7 +223,6 @@ export function _start() { ... }
 | Feature | Status |
 | --- | --- |
 | Class inheritance (`extends`) | Deferred — virtual dispatch via vtable requires heap |
-| Array methods (map, filter, forEach, reduce) | Phase 12 |
 | Rest parameters / spread | Phase 13 |
 | Generics (monomorphization) | Phase 14 |
 | Exception handling (try/catch/throw) | Phase 15 |
@@ -371,12 +378,12 @@ The `wasic` direct compiler is developed incrementally. Each phase adds a self-c
 | 10b | Dynamic arrays | `push` / `pop` / `shift` / `unshift` on `i32[]` and `f64[]`; heap layout `[length i32][capacity i32][elem...]`; auto-detected by pre-scan; per-type WAT helpers emitted on demand; capacity = `max(n × 2, 8)` |
 | 10c | Dynamic array growth | `push` / `unshift` grow on overflow: `$__dynarr_grow_T` mallocates new block (`cap × 2`), copies elements, returns new ptr; helpers return new array ptr so callers `local.set` their pointer; old block becomes dead memory (bump allocator has no free) |
 | 11 | String operations | `str + str` concat (chained, heap-allocated); `str.slice(start, end)` (sub-range, no alloc); `str.indexOf(sub)` → i32; `str.includes(sub)` → bool; `String(n)` / `n.toString()` (number-to-string via heap); gather-buffer mode in `console.log` extended to handle string and bool variables |
+| 12 | Array methods | `arr.indexOf(val)` → i32; `arr.includes(val)` → bool; `arr.slice(start, end)` → new array; `arr.forEach(fn)`; `arr.map(fn)` → new array; `arr.filter(fn)` → new array; `arr.find(fn)` → element; `arr.reduce(fn, init)` → value; dynamic arrays only; `const r: T[] = arr.map(fn)` pattern supported; `findDynamicArrays` extended to auto-detect arrays used with Phase 12 methods |
 
 ### Planned Phases
 
 | Phase | Feature | Description |
 | --- | --- | --- |
-| 12 | Array methods | `forEach`, `map`, `filter`, `find`, `slice`, `indexOf`, `reduce` — requires Phase 10 |
 | 13 | Rest parameters / spread | `function f(...args: i32[])`, `[...a, ...b]`, spread call `f(...arr)` |
 | 14 | Generics | Monomorphization: `function id<T>(x: T): T` expanded per concrete type at compile time |
 | 15 | Exception handling | `try`/`catch`/`throw` via WAT exceptions proposal (`exnref`, `throw`, `catch`) |

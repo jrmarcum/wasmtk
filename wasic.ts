@@ -50,10 +50,23 @@
  *   - console.log / console.error / console.warn with mixed-type argument lists
  *
  * Arrays
- *   - Numeric arrays:  i32[], f64[] — static allocation in linear memory
- *   - Element read/write:  arr[i], arr[i] = v
- *   - .length property
- *   - Arrays as function parameters (passed as i32 pointer)
+ *   - Static arrays:    i32[], f64[] — literal initializer, elements in data section
+ *   - Dynamic arrays:   heap-allocated when push/pop/shift/unshift or any Phase 12 method is used
+ *   - Element access:   arr[i], arr[i] = v — static and dynamic
+ *   - .length:          compile-time constant (static) or runtime load from header (dynamic)
+ *   - push(v):          appends; grows to cap×2 if full
+ *   - pop():            removes and returns last element
+ *   - shift():          removes and returns first element (O(n) shift)
+ *   - unshift(v):       inserts at front; grows to cap×2 if full
+ *   - indexOf(v):       i32 index of first match, or -1
+ *   - includes(v):      bool — true if element present
+ *   - slice(s, e):      new heap array from [s, e); bounds clamped
+ *   - forEach(fn):      calls fn(elem) for each element via call_indirect
+ *   - map(fn):          new array of fn(elem) results via call_indirect
+ *   - filter(fn):       new array of elements where fn(elem) is truthy
+ *   - find(fn):         first element where fn(elem) is truthy, or -1/NaN
+ *   - reduce(fn, init): folds array to a single value via call_indirect
+ *   - Array parameters: passed as i32 pointer
  *
  * Structs / Objects
  *   - interface / type alias declarations as struct definitions
@@ -80,9 +93,6 @@
  *   - IIFE pattern:  (function main() { ... })()
  *
  * ── Not yet supported (planned) ─────────────────────────────────────────────
- *   - Dynamic array push/pop/shift/unshift        (Phase 10 — heap allocator done; dynamic arrays next)
- *   - String operations (concat, slice, indexOf)  (Phase 11)
- *   - Array methods (push, pop, map, filter)      (Phase 12)
  *   - Rest parameters / spread operator           (Phase 13)
  *   - Generics (monomorphization)                 (Phase 14)
  *   - Exception handling (try/catch/throw)        (Phase 15)
@@ -1197,7 +1207,7 @@ class WasicTranspiler {
   private findDynamicArrays(lines: string[]): Set<string> {
     const dynamic = new Set<string>();
     for (const line of lines) {
-      const m = line.match(/\b(\w+)\.(push|pop|shift|unshift)\s*\(/);
+      const m = line.match(/\b(\w+)\.(push|pop|shift|unshift|indexOf|includes|slice|forEach|map|filter|find|reduce)\s*\(/);
       if (m) dynamic.add(m[1]);
     }
     return dynamic;
@@ -1471,6 +1481,58 @@ class WasicTranspiler {
           return `(i32.load (local.tee $${arrName} (call ${helperName} (local.get $${arrName}) ${valWat})))`;
         }
         return `(call ${helperName} (local.get $${arrName}))`;
+      }
+    }
+
+    // Dynamic array read/query methods: arr.indexOf(val), arr.includes(val), arr.slice(start,end)
+    // Dynamic array callback methods (expression form): arr.map(fn), arr.filter(fn), arr.find(fn), arr.reduce(fn,init)
+    const dynArrMethod = expr.match(/^(\w+)\.(indexOf|includes|slice|map|filter|find|reduce)\s*\(([\s\S]*)\)$/);
+    if (dynArrMethod) {
+      const arrName  = dynArrMethod[1];
+      const method   = dynArrMethod[2] as "indexOf"|"includes"|"slice"|"map"|"filter"|"find"|"reduce";
+      const argsStr  = dynArrMethod[3].trim();
+      const arrInfo  = this.arrayVars.get(arrName);
+      if (arrInfo?.dynamic) {
+        const elemType = arrInfo.elemType as WatType;
+        if (method === "indexOf") {
+          const key = `indexof_${elemType}`;
+          this.dynArrHelpers.add(key);
+          const valWat = this.emitExpr(argsStr, locals, elemType);
+          return `(call $__dynarr_${key} (local.get $${arrName}) ${valWat})`;
+        }
+        if (method === "includes") {
+          const key = `indexof_${elemType}`;
+          this.dynArrHelpers.add(key);
+          const valWat = this.emitExpr(argsStr, locals, elemType);
+          return `(i32.ne (call $__dynarr_${key} (local.get $${arrName}) ${valWat}) (i32.const -1))`;
+        }
+        if (method === "slice") {
+          const key = `slice_${elemType}`;
+          this.dynArrHelpers.add(key);
+          const args = this.splitArgs(argsStr);
+          const startWat = args[0]?.trim() ? this.emitExpr(args[0].trim(), locals, "i32") : "(i32.const 0)";
+          const endWat   = args[1]?.trim() ? this.emitExpr(args[1].trim(), locals, "i32") : `(i32.load (local.get $${arrName}))`;
+          return `(call $__dynarr_${key} (local.get $${arrName}) ${startWat} ${endWat})`;
+        }
+        // Callback methods: map, filter, find, reduce
+        const args = this.splitArgs(argsStr);
+        const fnName = args[0]?.trim() ?? "";
+        const fnIdx  = this.getFuncTableIdx(fnName);
+        const key    = `${method}_${elemType}`;
+        this.dynArrHelpers.add(key);
+        // Pre-register callback funtype so emitFuncTypes() includes it
+        if (method === "map") {
+          this.getOrCreateFuncType([elemType], elemType);
+        } else if (method === "filter" || method === "find") {
+          this.getOrCreateFuncType([elemType], "i32");
+        } else if (method === "reduce") {
+          this.getOrCreateFuncType([elemType, elemType], elemType);
+        }
+        if (method === "reduce") {
+          const initWat = args[1]?.trim() ? this.emitExpr(args[1].trim(), locals, elemType) : zeroOf(elemType);
+          return `(call $__dynarr_${key} (local.get $${arrName}) (i32.const ${fnIdx}) ${initWat})`;
+        }
+        return `(call $__dynarr_${key} (local.get $${arrName}) (i32.const ${fnIdx}))`;
       }
     }
 
@@ -2011,6 +2073,17 @@ class WasicTranspiler {
       }
     }
 
+    // Array variable from method-call RHS: const arr: T[] = someArr.slice/map/filter(...)
+    const arrCallDecl = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*\w+\[\]\s*=\s*([^[].+?);?$/);
+    if (arrCallDecl) {
+      const varName = arrCallDecl[1];
+      const info = this.arrayVars.get(varName);
+      if (info?.dynamic) {
+        const initWat = this.emitExpr(arrCallDecl[2].trim(), locals, "i32");
+        return `(local.set $${varName} ${initWat})`;
+      }
+    }
+
     // Struct object literal init: const/let p: TypeName = { ... }
     // The pre-scan allocated static memory; emit local.set $p (i32.const ptr).
     // Must come BEFORE the generic letMatch handler below.
@@ -2190,6 +2263,41 @@ class WasicTranspiler {
           return `(local.set $${arrName} (call ${helperName} (local.get $${arrName}) ${valWat}))`;
         }
         return `(drop (call ${helperName} (local.get $${arrName})))`;
+      }
+    }
+
+    // Dynamic array callback methods (statement form): arr.forEach(fn), arr.map(fn), etc.
+    const dynArrCallbackStmt = line.match(/^(\w+)\.(forEach|map|filter|find|reduce)\s*\(([\s\S]*?)\)\s*;?$/);
+    if (dynArrCallbackStmt) {
+      const arrName  = dynArrCallbackStmt[1];
+      const method   = dynArrCallbackStmt[2] as "forEach"|"map"|"filter"|"find"|"reduce";
+      const argsStr  = dynArrCallbackStmt[3].trim();
+      const arrInfo  = this.arrayVars.get(arrName);
+      if (arrInfo?.dynamic) {
+        const elemType = arrInfo.elemType as WatType;
+        const args   = this.splitArgs(argsStr);
+        const fnName = args[0]?.trim() ?? "";
+        const fnIdx  = this.getFuncTableIdx(fnName);
+        // Normalize method name to lowercase for key/helper name consistency
+        const methodLc = method.toLowerCase() as string;
+        const key    = `${methodLc}_${elemType}`;
+        this.dynArrHelpers.add(key);
+        if (methodLc === "foreach") {
+          this.getOrCreateFuncType([elemType], null);
+          return `(call $__dynarr_foreach_${elemType} (local.get $${arrName}) (i32.const ${fnIdx}))`;
+        }
+        if (methodLc === "map") {
+          this.getOrCreateFuncType([elemType], elemType);
+        } else if (methodLc === "filter" || methodLc === "find") {
+          this.getOrCreateFuncType([elemType], "i32");
+        } else if (methodLc === "reduce") {
+          this.getOrCreateFuncType([elemType, elemType], elemType);
+        }
+        if (methodLc === "reduce") {
+          const initWat = args[1]?.trim() ? this.emitExpr(args[1].trim(), locals, elemType) : zeroOf(elemType);
+          return `(drop (call $__dynarr_${key} (local.get $${arrName}) (i32.const ${fnIdx}) ${initWat}))`;
+        }
+        return `(drop (call $__dynarr_${key} (local.get $${arrName}) (i32.const ${fnIdx})))`;
       }
     }
 
@@ -3075,6 +3183,180 @@ class WasicTranspiler {
     (i32.store (local.get $arr) (local.get $len))
     (local.get $arr)
   )`);
+      } else if (method === "indexof") {
+        const cmpOp = isF64 ? "f64.eq" : "i32.eq";
+        parts.push(`  ;; Dynamic array indexof_${elemType}: linear search, returns index or -1.
+  (func ${name} (param $arr i32) (param $val ${valType}) (result i32)
+    (local $i i32)
+    (local $len i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.ge_u (local.get $i) (local.get $len)))
+        (if (${cmpOp}
+              (${loadOp} (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift}))))
+              (local.get $val))
+          (then (return (local.get $i)))
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)
+      )
+    )
+    (i32.const -1)
+  )`);
+      } else if (method === "slice") {
+        parts.push(`  ;; Dynamic array slice_${elemType}: alloc new array from [start,end), clamp to bounds.
+  (func ${name} (param $arr i32) (param $start i32) (param $end i32) (result i32)
+    (local $len i32)
+    (local $newlen i32)
+    (local $newptr i32)
+    (local $i i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (if (i32.lt_s (local.get $start) (i32.const 0)) (then (local.set $start (i32.const 0))))
+    (if (i32.gt_s (local.get $start) (local.get $len)) (then (local.set $start (local.get $len))))
+    (if (i32.lt_s (local.get $end) (i32.const 0)) (then (local.set $end (i32.const 0))))
+    (if (i32.gt_s (local.get $end) (local.get $len)) (then (local.set $end (local.get $len))))
+    (local.set $newlen (i32.sub (local.get $end) (local.get $start)))
+    (if (i32.lt_s (local.get $newlen) (i32.const 0)) (then (local.set $newlen (i32.const 0))))
+    (local.set $newptr (call $__malloc (i32.add (i32.const 8) (i32.shl (local.get $newlen) (i32.const ${shift})))))
+    (i32.store (local.get $newptr) (local.get $newlen))
+    (i32.store offset=4 (local.get $newptr) (local.get $newlen))
+    (block $done
+      (loop $lp
+        (br_if $done (i32.ge_u (local.get $i) (local.get $newlen)))
+        (${storeOp}
+          (i32.add (i32.add (local.get $newptr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift})))
+          (${loadOp}
+            (i32.add (i32.add (local.get $arr) (i32.const 8))
+              (i32.shl (i32.add (local.get $i) (local.get $start)) (i32.const ${shift})))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)
+      )
+    )
+    (local.get $newptr)
+  )`);
+      } else if (method === "foreach") {
+        // Register callback type: (elemType) → void
+        const ftName = this.getOrCreateFuncType([elemType], null);
+        parts.push(`  ;; Dynamic array foreach_${elemType}: call fn(elem) for each element.
+  (func ${name} (param $arr i32) (param $fn i32)
+    (local $i i32)
+    (local $len i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.ge_u (local.get $i) (local.get $len)))
+        (call_indirect (type ${ftName})
+          (${loadOp} (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift}))))
+          (local.get $fn))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)
+      )
+    )
+  )`);
+      } else if (method === "map") {
+        // Register callback type: (elemType) → elemType
+        const ftName = this.getOrCreateFuncType([elemType], elemType);
+        parts.push(`  ;; Dynamic array map_${elemType}: alloc new array, fill with fn(elem) results.
+  (func ${name} (param $arr i32) (param $fn i32) (result i32)
+    (local $i i32)
+    (local $len i32)
+    (local $newptr i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (local.set $newptr (call $__malloc (i32.add (i32.const 8) (i32.shl (local.get $len) (i32.const ${shift})))))
+    (i32.store (local.get $newptr) (local.get $len))
+    (i32.store offset=4 (local.get $newptr) (local.get $len))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.ge_u (local.get $i) (local.get $len)))
+        (${storeOp}
+          (i32.add (i32.add (local.get $newptr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift})))
+          (call_indirect (type ${ftName})
+            (${loadOp} (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift}))))
+            (local.get $fn)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)
+      )
+    )
+    (local.get $newptr)
+  )`);
+      } else if (method === "filter") {
+        // Register callback type: (elemType) → i32
+        const ftName = this.getOrCreateFuncType([elemType], "i32");
+        parts.push(`  ;; Dynamic array filter_${elemType}: alloc new array with elements where fn(elem) is truthy.
+  (func ${name} (param $arr i32) (param $fn i32) (result i32)
+    (local $i i32)
+    (local $len i32)
+    (local $newptr i32)
+    (local $newlen i32)
+    (local $val ${valType})
+    (local.set $len (i32.load (local.get $arr)))
+    (local.set $newptr (call $__malloc (i32.add (i32.const 8) (i32.shl (local.get $len) (i32.const ${shift})))))
+    (i32.store offset=4 (local.get $newptr) (local.get $len))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.ge_u (local.get $i) (local.get $len)))
+        (local.set $val (${loadOp} (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift})))))
+        (if (call_indirect (type ${ftName}) (local.get $val) (local.get $fn))
+          (then
+            (${storeOp}
+              (i32.add (i32.add (local.get $newptr) (i32.const 8)) (i32.shl (local.get $newlen) (i32.const ${shift})))
+              (local.get $val))
+            (local.set $newlen (i32.add (local.get $newlen) (i32.const 1)))
+          )
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)
+      )
+    )
+    (i32.store (local.get $newptr) (local.get $newlen))
+    (local.get $newptr)
+  )`);
+      } else if (method === "find") {
+        // Register callback type: (elemType) → i32
+        const ftName = this.getOrCreateFuncType([elemType], "i32");
+        const notFound = isF64 ? "(f64.const nan)" : "(i32.const -1)";
+        parts.push(`  ;; Dynamic array find_${elemType}: return first elem where fn(elem) is truthy, or ${isF64 ? "NaN" : "-1"}.
+  (func ${name} (param $arr i32) (param $fn i32) (result ${valType})
+    (local $i i32)
+    (local $len i32)
+    (local $val ${valType})
+    (local.set $len (i32.load (local.get $arr)))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.ge_u (local.get $i) (local.get $len)))
+        (local.set $val (${loadOp} (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift})))))
+        (if (call_indirect (type ${ftName}) (local.get $val) (local.get $fn))
+          (then (return (local.get $val)))
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)
+      )
+    )
+    ${notFound}
+  )`);
+      } else if (method === "reduce") {
+        // Register callback type: (elemType, elemType) → elemType
+        const ftName = this.getOrCreateFuncType([elemType, elemType], elemType);
+        parts.push(`  ;; Dynamic array reduce_${elemType}: fold array with fn(acc, elem), starting from init.
+  (func ${name} (param $arr i32) (param $fn i32) (param $acc ${valType}) (result ${valType})
+    (local $i i32)
+    (local $len i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.ge_u (local.get $i) (local.get $len)))
+        (local.set $acc
+          (call_indirect (type ${ftName})
+            (local.get $acc)
+            (${loadOp} (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift}))))
+            (local.get $fn)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)
+      )
+    )
+    (local.get $acc)
+  )`);
       }
     }
     return parts.join("\n\n");
@@ -3364,6 +3646,17 @@ class WasicTranspiler {
         locals.set(varName, "i32");
         continue;
       }
+      // Array variable from method-call RHS: const arr: T[] = someArr.slice(...) / .map(...) etc.
+      // Not a literal [...]; runtime pointer returned by the method — always dynamic layout.
+      const arrCallPre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\w+)\[\]\s*=\s*([^[].+)/);
+      if (arrCallPre && !this.arrayVars.has(arrCallPre[1])) {
+        const varName = arrCallPre[1];
+        const elemType = mapType(arrCallPre[2]) as WatType;
+        this.arrayVars.set(varName, { elemType, ptr: -2, length: 0, dynamic: true });
+        declaredLocals.push([varName, "i32"]);
+        locals.set(varName, "i32");
+        continue;
+      }
       // Object destructuring: const { x, y } = structVar  or  const { x: localX } = structVar
       const destructPre = line.match(/^(?:var|let|const)\s*\{([^}]+)\}\s*=\s*(\w+)\s*;?$/);
       if (destructPre) {
@@ -3557,6 +3850,16 @@ class WasicTranspiler {
           }
           startLocals.set(varName2, "i32");
           startDeclaredLocals.push([varName2, "i32"]);
+          continue;
+        }
+        // Array variable from method-call RHS: const arr: T[] = someArr.slice(...) etc.
+        const arrCallPre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\w+)\[\]\s*=\s*([^[].+)/);
+        if (arrCallPre2 && !this.arrayVars.has(arrCallPre2[1])) {
+          const varName2c = arrCallPre2[1];
+          const elemType2c = mapType(arrCallPre2[2]) as WatType;
+          this.arrayVars.set(varName2c, { elemType: elemType2c, ptr: -2, length: 0, dynamic: true });
+          startLocals.set(varName2c, "i32");
+          startDeclaredLocals.push([varName2c, "i32"]);
           continue;
         }
         const m = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+))?\s*(?:=\s*(.+?))?;?$/);
