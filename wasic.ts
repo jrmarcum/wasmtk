@@ -51,7 +51,7 @@
  *
  * Arrays
  *   - Static arrays:    i32[], f64[] — literal initializer, elements in data section
- *   - Dynamic arrays:   heap-allocated when push/pop/shift/unshift or any Phase 12 method is used
+ *   - Dynamic arrays:   heap-allocated when push/pop/shift/unshift, any Phase 12 method, or spread is used
  *   - Element access:   arr[i], arr[i] = v — static and dynamic
  *   - .length:          compile-time constant (static) or runtime load from header (dynamic)
  *   - push(v):          appends; grows to cap×2 if full
@@ -67,6 +67,9 @@
  *   - find(fn):         first element where fn(elem) is truthy, or -1/NaN
  *   - reduce(fn, init): folds array to a single value via call_indirect
  *   - Array parameters: passed as i32 pointer
+ *   - Rest parameters:  function f(...args: i32[]) — receives heap array ptr; literal call sites build temp array
+ *   - Spread call:      f(...arr) — passes existing dynamic array pointer directly
+ *   - Spread literal:   const m = [...a, ...b] — new heap array via $__dynarr_concat_T
  *
  * Structs / Objects
  *   - interface / type alias declarations as struct definitions
@@ -210,6 +213,7 @@ interface FuncParam {
   arrayElemType?: WatType; // set when param is an array pointer (T[])
   structType?: string;     // set when param is a struct pointer (stores struct name, e.g. "Point")
   funcTypeInfo?: { params: WatType[]; result: WatType | null }; // set when param is a function type
+  isRest?: boolean;        // set when param is a rest parameter (...name: T[])
 }
 
 interface StructField {
@@ -675,6 +679,16 @@ class WasicTranspiler {
     paramStrs.push(rawParams.slice(start).trim());
 
     return paramStrs.filter(p => p.length > 0).map(p => {
+      // Rest parameter: ...name: T[]
+      if (p.startsWith("...")) {
+        const withoutDots = p.slice(3);
+        const colonIdx = withoutDots.indexOf(":");
+        const name = colonIdx !== -1 ? withoutDots.slice(0, colonIdx).trim() : withoutDots.trim();
+        const typeAnnotation = colonIdx !== -1 ? withoutDots.slice(colonIdx + 1).trim().replace(/\s*=.*$/, "") : "i32[]";
+        const arrElemMatch = typeAnnotation.match(/^(\w+)\[\]$/);
+        const arrayElemType: WatType = arrElemMatch ? mapType(arrElemMatch[1]) as WatType : "i32";
+        return { name, type: "i32" as WatType, isRest: true, arrayElemType };
+      }
       // Function-type param: name: (params) => retType  — track as funcTypeVar (i32 = table index)
       if (/^\w+\s*:\s*\(/.test(p) && p.includes("=>")) {
         const nm = p.match(/^(\w+)/)![1];
@@ -1207,8 +1221,13 @@ class WasicTranspiler {
   private findDynamicArrays(lines: string[]): Set<string> {
     const dynamic = new Set<string>();
     for (const line of lines) {
+      // Method calls that require heap layout
       const m = line.match(/\b(\w+)\.(push|pop|shift|unshift|indexOf|includes|slice|forEach|map|filter|find|reduce)\s*\(/);
       if (m) dynamic.add(m[1]);
+      // Spread usages: ...arrName in calls or array literals — source must have heap layout
+      for (const sm of line.matchAll(/\.\.\.\s*(\w+)/g)) {
+        dynamic.add(sm[1]);
+      }
     }
     return dynamic;
   }
@@ -1240,6 +1259,107 @@ class WasicTranspiler {
         valExpr = `(i32.const ${parseInt(raw, 10) || 0})`;
       }
       stmts.push(`(${storeOp} offset=${byteOffset} (local.get $${varName}) ${valExpr})`);
+    }
+    return stmts.join("\n      ");
+  }
+
+  // -------------------------------------------------------------------------
+  // Phase 13 — Rest parameters & spread helpers
+  // -------------------------------------------------------------------------
+
+  /** Returns true if any line in `lines` calls a rest-param function with inline literal args. */
+  private hasRestLiteralCalls(lines: string[]): boolean {
+    for (const line of lines) {
+      // Look for callName(arg1, arg2, ...) where none of the args start with "..."
+      // and the callee is a known rest-param function
+      const m = line.match(/^\s*(?:(?:var|let|const)\s+\w+\s*(?::\s*[\w\[\]]+)?\s*=\s*)?(\w+)\s*\(([^)]*)\)/);
+      if (!m) continue;
+      const fnName = m[1];
+      const fnDef = this.functions.find((f: FuncDef) => f.name === fnName);
+      if (!fnDef) continue;
+      const lastParam = fnDef.params[fnDef.params.length - 1];
+      if (!lastParam?.isRest) continue;
+      // Has rest param — check if call site passes literal args (not a spread)
+      const argsStr = m[2].trim();
+      if (argsStr && !argsStr.startsWith("...")) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Emits WAT for calling a rest-param function with literal arguments.
+   * Builds a temporary heap array from the non-rest args, stores it in $__rest_ptr,
+   * then calls the function.
+   * Returns multi-line WAT string (used in statement context).
+   */
+  private emitRestParamCall(
+    fnName: string,
+    allArgs: string[],
+    locals: Map<string, WatType>,
+    expectReturn: WatType | null
+  ): string {
+    const fnDef = this.functions.find((f: FuncDef) => f.name === fnName)!;
+    const restIdx = fnDef.params.findIndex((p: FuncParam) => p.isRest);
+    const normalArgs = allArgs.slice(0, restIdx);
+    const restArgs  = allArgs.slice(restIdx);
+    const restParam = fnDef.params[restIdx];
+    const elemType  = restParam.arrayElemType ?? "i32";
+    const elemSize  = (elemType === "f64" || elemType === "i64") ? 8 : 4;
+    const storeOp   = elemType === "f64" ? "f64.store" : elemType === "i64" ? "i64.store" : "i32.store";
+    const len       = restArgs.length;
+    const capacity  = Math.max(len * 2, 8);
+    const byteSize  = capacity * elemSize + 8;
+
+    const lines: string[] = [];
+    lines.push(`(local.set $__rest_ptr (call $__malloc (i32.const ${byteSize})))`);
+    lines.push(`(i32.store (local.get $__rest_ptr) (i32.const ${len}))`);
+    lines.push(`(i32.store offset=4 (local.get $__rest_ptr) (i32.const ${capacity}))`);
+    for (let i = 0; i < restArgs.length; i++) {
+      const byteOff = 8 + i * elemSize;
+      const val = this.emitExpr(restArgs[i].trim(), locals, elemType);
+      lines.push(`(${storeOp} offset=${byteOff} (local.get $__rest_ptr) ${val})`);
+    }
+    const callArgs = [
+      ...normalArgs.map((a, idx) => this.emitExpr(a.trim(), locals, fnDef.params[idx].type)),
+      "(local.get $__rest_ptr)",
+    ].join(" ");
+    const callExpr = `(call $${fnName} ${callArgs})`;
+    if (expectReturn) {
+      lines.push(callExpr);
+    } else {
+      lines.push(`(drop ${callExpr})`);
+    }
+    return lines.join("\n      ");
+  }
+
+  /**
+   * Emits WAT to build a spread-concat array from `[...a, ...b, ...]` syntax.
+   * Returns a WAT expression yielding the new array pointer (i32).
+   */
+  private emitSpreadArrayInit(
+    varName: string,
+    spreads: string[],
+    elemType: WatType
+  ): string {
+    const suffix = elemType === "f64" ? "f64" : "i32";
+    this.dynArrHelpers.add(`concat_${suffix}`);
+    if (spreads.length === 0) {
+      // Empty spread: allocate empty dynamic array
+      const capacity = 8;
+      const elemSize = elemType === "f64" ? 8 : 4;
+      const byteSize = capacity * elemSize + 8;
+      return [
+        `(local.set $${varName} (call $__malloc (i32.const ${byteSize})))`,
+        `(i32.store (local.get $${varName}) (i32.const 0))`,
+        `(i32.store offset=4 (local.get $${varName}) (i32.const ${capacity}))`,
+      ].join("\n      ");
+    }
+    const stmts: string[] = [];
+    // Start with first spread array
+    stmts.push(`(local.set $${varName} (local.get $${spreads[0]}))`);
+    // Concat subsequent spreads
+    for (let i = 1; i < spreads.length; i++) {
+      stmts.push(`(local.set $${varName} (call $__dynarr_concat_${suffix} (local.get $${varName}) (local.get $${spreads[i]})))`);
     }
     return stmts.join("\n      ");
   }
@@ -1809,6 +1929,24 @@ class WasicTranspiler {
       }
     }
 
+    // Spread call: foo(...arr) — passes arr pointer directly to rest-param function
+    // Handles the case where the entire argument list is a single spread of an array variable.
+    const spreadCallMatch = expr.match(/^(\w+)\s*\(\s*\.\.\.(\w+)\s*\)$/);
+    if (spreadCallMatch) {
+      const fnName  = spreadCallMatch[1];
+      const arrName = spreadCallMatch[2];
+      const fn      = this.functions.find((f: FuncDef) => f.name === fnName);
+      const lastParam = fn?.params[fn.params.length - 1];
+      if (fn && lastParam?.isRest) {
+        // Pass all normal args (none expected in pure spread call) then the array ptr
+        const normalCount = fn.params.length - 1;
+        const normalEmitted = fn.params.slice(0, normalCount).map((p: FuncParam) =>
+          p.defaultValue !== undefined ? this.emitExpr(p.defaultValue, locals, p.type) : `(i32.const 0)`
+        );
+        return `(call $${fnName} ${[...normalEmitted, `(local.get $${arrName})`].join(" ")})`.trim();
+      }
+    }
+
     // Function call: name(arg1, arg2, ...)
     const callMatch = expr.match(/^(\w+)\s*\((.*)?\)$/);
     if (callMatch) {
@@ -2063,6 +2201,18 @@ class WasicTranspiler {
       }
     }
 
+    // Spread array literal declaration: const merged: T[] = [...a, ...b]
+    const spreadDeclMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+)\[\])?\s*=\s*\[([^\]]*)\]/);
+    if (spreadDeclMatch && spreadDeclMatch[3]?.includes("...")) {
+      const varName = spreadDeclMatch[1];
+      const typeHint = spreadDeclMatch[2] ?? "";
+      const info = this.arrayVars.get(varName);
+      const elemType: WatType = info?.elemType ?? (typeHint ? mapType(typeHint) as WatType : "i32");
+      const parts = spreadDeclMatch[3].split(",").map(s => s.trim()).filter(Boolean);
+      const spreads = parts.filter(p => p.startsWith("...")).map(p => p.slice(3).trim());
+      return this.emitSpreadArrayInit(varName, spreads, elemType);
+    }
+
     // Array literal declaration: const arr: T[] = [...] or const arr = [...]
     const arrLetMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*\w+\[\])?\s*=\s*\[/);
     if (arrLetMatch) {
@@ -2081,6 +2231,50 @@ class WasicTranspiler {
       if (info?.dynamic) {
         const initWat = this.emitExpr(arrCallDecl[2].trim(), locals, "i32");
         return `(local.set $${varName} ${initWat})`;
+      }
+    }
+
+    // Rest-param call with var init: const result = fnName(a, b, restArgs...)
+    const restVarCallMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*[\w\[\]]+)?\s*=\s*(\w+)\s*\(([^)]*)\)\s*;?$/);
+    if (restVarCallMatch) {
+      const varName = restVarCallMatch[1];
+      const fnName  = restVarCallMatch[2];
+      const fnDef   = this.functions.find((f: FuncDef) => f.name === fnName);
+      const lastParam = fnDef?.params[fnDef.params.length - 1];
+      if (fnDef && lastParam?.isRest) {
+        const rawArgs = restVarCallMatch[3].split(",").map(s => s.trim()).filter(Boolean);
+        const restIdx = fnDef.params.findIndex((p: FuncParam) => p.isRest);
+        const restRaw = rawArgs.slice(restIdx);
+        // Spread call: pass existing array pointer directly
+        if (restRaw.length === 1 && restRaw[0].startsWith("...")) {
+          const arrName = restRaw[0].slice(3).trim();
+          const normalEmitted = rawArgs.slice(0, restIdx).map((a, i) => this.emitExpr(a, locals, fnDef!.params[i].type));
+          const callWat = `(call $${fnName} ${[...normalEmitted, `(local.get $${arrName})`].join(" ")})`.trim();
+          return `${callWat}\n      (local.set $${varName})`;
+        }
+        const retType = fnDef.result ?? "i32";
+        const callWat = this.emitRestParamCall(fnName, rawArgs, locals, retType);
+        return `${callWat}\n      (local.set $${varName})`;
+      }
+    }
+
+    // Rest-param call statement: fnName(a, b, restArgs...)
+    const restCallStmtMatch = line.match(/^(\w+)\s*\(([^)]*)\)\s*;?$/);
+    if (restCallStmtMatch) {
+      const fnName  = restCallStmtMatch[1];
+      const fnDef   = this.functions.find((f: FuncDef) => f.name === fnName);
+      const lastParam = fnDef?.params[fnDef.params.length - 1];
+      if (fnDef && lastParam?.isRest) {
+        const rawArgs = restCallStmtMatch[2].split(",").map(s => s.trim()).filter(Boolean);
+        const restIdx = fnDef.params.findIndex((p: FuncParam) => p.isRest);
+        const restRaw = rawArgs.slice(restIdx);
+        // Spread call: pass existing array pointer directly
+        if (restRaw.length === 1 && restRaw[0].startsWith("...")) {
+          const arrName = restRaw[0].slice(3).trim();
+          const normalEmitted = rawArgs.slice(0, restIdx).map((a, i) => this.emitExpr(a, locals, fnDef!.params[i].type));
+          return `(call $${fnName} ${[...normalEmitted, `(local.get $${arrName})`].join(" ")})`.trim();
+        }
+        return this.emitRestParamCall(fnName, rawArgs, locals, null);
       }
     }
 
@@ -3357,6 +3551,50 @@ class WasicTranspiler {
     )
     (local.get $acc)
   )`);
+      } else if (method === "concat") {
+        // Allocate new array of combined length, copy both arrays into it.
+        parts.push(`  ;; Dynamic array concat_${elemType}: alloc new array = arrA ++ arrB.
+  (func ${name} (param $a i32) (param $b i32) (result i32)
+    (local $lenA i32)
+    (local $lenB i32)
+    (local $newlen i32)
+    (local $cap i32)
+    (local $newptr i32)
+    (local $i i32)
+    (local.set $lenA (i32.load (local.get $a)))
+    (local.set $lenB (i32.load (local.get $b)))
+    (local.set $newlen (i32.add (local.get $lenA) (local.get $lenB)))
+    (local.set $cap (local.get $newlen))
+    (if (i32.lt_u (local.get $cap) (i32.const 8)) (then (local.set $cap (i32.const 8))))
+    (local.set $newptr (call $__malloc
+      (i32.add (i32.const 8) (i32.shl (local.get $cap) (i32.const ${shift})))))
+    (i32.store (local.get $newptr) (local.get $newlen))
+    (i32.store offset=4 (local.get $newptr) (local.get $cap))
+    (local.set $i (i32.const 0))
+    (block $doneA
+      (loop $lpA
+        (br_if $doneA (i32.ge_u (local.get $i) (local.get $lenA)))
+        (${storeOp}
+          (i32.add (i32.add (local.get $newptr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift})))
+          (${loadOp} (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift})))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lpA)
+      )
+    )
+    (local.set $i (i32.const 0))
+    (block $doneB
+      (loop $lpB
+        (br_if $doneB (i32.ge_u (local.get $i) (local.get $lenB)))
+        (${storeOp}
+          (i32.add (i32.add (local.get $newptr) (i32.const 8))
+            (i32.shl (i32.add (local.get $i) (local.get $lenA)) (i32.const ${shift})))
+          (${loadOp} (i32.add (i32.add (local.get $b) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift})))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lpB)
+      )
+    )
+    (local.get $newptr)
+  )`);
       }
     }
     return parts.join("\n\n");
@@ -3544,7 +3782,12 @@ class WasicTranspiler {
       if (p.type === "string") this.stringVars.add(p.name);
       // Array param: register in arrayVars so arr[i] works inside the function body
       if (p.arrayElemType) {
-        this.arrayVars.set(p.name, { elemType: p.arrayElemType, ptr: -1, length: 0 });
+        if (p.isRest) {
+          // Rest param: dynamic layout (8-byte header), pointer received from caller
+          this.arrayVars.set(p.name, { elemType: p.arrayElemType, ptr: -1, length: 0, dynamic: true });
+        } else {
+          this.arrayVars.set(p.name, { elemType: p.arrayElemType, ptr: -1, length: 0 });
+        }
       }
       // Struct param: register in structVars with ptr=-1 (runtime pointer via local.get)
       if (p.structType) {
@@ -3624,6 +3867,17 @@ class WasicTranspiler {
           locals.set(varName, "i32");
           continue;
         }
+      }
+      // Spread array literal: const merged = [...a, ...b]
+      const spreadArrPre = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+)\[\])?\s*=\s*\[([^\]]*)\]/);
+      if (spreadArrPre && spreadArrPre[3]?.includes("...")) {
+        const varName = spreadArrPre[1];
+        const typeHint = spreadArrPre[2] ?? "";
+        const elemType: WatType = typeHint ? mapType(typeHint) as WatType : "i32";
+        this.arrayVars.set(varName, { elemType, ptr: -2, length: 0, dynamic: true });
+        declaredLocals.push([varName, "i32"]);
+        locals.set(varName, "i32");
+        continue;
       }
       // Array literal declaration: allocate static memory or (for dynamic arrays) heap.
       const arrPre = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+)\[\])?\s*=\s*\[([^\]]*)\]/);
@@ -3722,6 +3976,11 @@ class WasicTranspiler {
         declaredLocals.push([forM[1], t2]);
         locals.set(forM[1], t2);
       }
+    }
+    // Add $__rest_ptr if any body line calls a rest-param function with literal args
+    if (this.hasRestLiteralCalls(fn.bodyLines) && !locals.has("__rest_ptr")) {
+      declaredLocals.push(["__rest_ptr", "i32"]);
+      locals.set("__rest_ptr", "i32");
     }
     const localDecls = declaredLocals
       .map(([n, t]) => `    (local $${n} ${watBaseType(t)})`)
@@ -3832,6 +4091,17 @@ class WasicTranspiler {
       const startLocals = new Map<string, WatType>();
       const startDeclaredLocals: [string, WatType][] = [];
       for (const line of this.startBodyLines) {
+        // Spread array literal — mirrors emitFunction pre-scan
+        const spreadArrPre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+)\[\])?\s*=\s*\[([^\]]*)\]/);
+        if (spreadArrPre2 && spreadArrPre2[3]?.includes("...")) {
+          const varNameS = spreadArrPre2[1];
+          const typeHintS = spreadArrPre2[2] ?? "";
+          const elemTypeS: WatType = typeHintS ? mapType(typeHintS) as WatType : "i32";
+          this.arrayVars.set(varNameS, { elemType: elemTypeS, ptr: -2, length: 0, dynamic: true });
+          startLocals.set(varNameS, "i32");
+          startDeclaredLocals.push([varNameS, "i32"]);
+          continue;
+        }
         // Array literal declaration — mirrors emitFunction pre-scan
         const arrPre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+)\[\])?\s*=\s*\[([^\]]*)\]/);
         if (arrPre2) {
@@ -3887,6 +4157,11 @@ class WasicTranspiler {
           startDeclaredLocals.push([forM[1], t2]);
           startLocals.set(forM[1], t2);
         }
+      }
+      // Add $__rest_ptr if any start body line calls a rest-param function with literal args
+      if (this.hasRestLiteralCalls(this.startBodyLines) && !startLocals.has("__rest_ptr")) {
+        startDeclaredLocals.push(["__rest_ptr", "i32"]);
+        startLocals.set("__rest_ptr", "i32");
       }
       const localDecls = [...startLocals.entries()]
         .filter(([, t]) => t !== "string") // "string" is a tracker only

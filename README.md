@@ -121,7 +121,7 @@ wasmtk run myprogram.wasm
 | Feature | Notes |
 | --- | --- |
 | Static numeric arrays | `i32[]`, `f64[]` — literal initializer, elements baked into the data section |
-| Dynamic numeric arrays | `i32[]`, `f64[]` — heap-allocated when any mutating or querying method is detected by the pre-scan |
+| Dynamic numeric arrays | `i32[]`, `f64[]` — heap-allocated when any mutating method, query method, or spread usage (`...arr`) is detected by the pre-scan |
 | Element access | `arr[i]`, `arr[i] = v` — works on both static and dynamic arrays |
 | Length | `arr.length` — compile-time constant for static; runtime load from 8-byte header for dynamic |
 | `push(val)` | Appends a value; grows array automatically if at capacity (cap × 2 realloc) |
@@ -137,6 +137,9 @@ wasmtk run myprogram.wasm
 | `find(fn)` | Returns the first element for which `fn(element)` is truthy, or -1 / NaN if not found |
 | `reduce(fn, init)` | Folds the array to a single value: `acc = fn(acc, element)` starting from `init` |
 | Array parameters | Passed as i32 pointer to the array's memory region |
+| Rest parameters | `function f(...args: i32[])` — receives an i32 pointer to a dynamic array; caller builds temp heap array from literal args |
+| Spread call | `f(...arr)` — passes an existing dynamic array pointer directly to a rest-param function |
+| Spread array literal | `const merged = [...a, ...b]` — heap-allocates a new array via `$__dynarr_concat_T`; source arrays are automatically promoted to dynamic layout |
 
 ##### Structs & Objects
 
@@ -223,7 +226,6 @@ export function _start() { ... }
 | Feature | Status |
 | --- | --- |
 | Class inheritance (`extends`) | Deferred — virtual dispatch via vtable requires heap |
-| Rest parameters / spread | Phase 13 |
 | Generics (monomorphization) | Phase 14 |
 | Exception handling (try/catch/throw) | Phase 15 |
 
@@ -379,12 +381,12 @@ The `wasic` direct compiler is developed incrementally. Each phase adds a self-c
 | 10c | Dynamic array growth | `push` / `unshift` grow on overflow: `$__dynarr_grow_T` mallocates new block (`cap × 2`), copies elements, returns new ptr; helpers return new array ptr so callers `local.set` their pointer; old block becomes dead memory (bump allocator has no free) |
 | 11 | String operations | `str + str` concat (chained, heap-allocated); `str.slice(start, end)` (sub-range, no alloc); `str.indexOf(sub)` → i32; `str.includes(sub)` → bool; `String(n)` / `n.toString()` (number-to-string via heap); gather-buffer mode in `console.log` extended to handle string and bool variables |
 | 12 | Array methods | `arr.indexOf(val)` → i32; `arr.includes(val)` → bool; `arr.slice(start, end)` → new array; `arr.forEach(fn)`; `arr.map(fn)` → new array; `arr.filter(fn)` → new array; `arr.find(fn)` → element; `arr.reduce(fn, init)` → value; dynamic arrays only; `const r: T[] = arr.map(fn)` pattern supported; `findDynamicArrays` extended to auto-detect arrays used with Phase 12 methods |
+| 13 | Rest parameters / spread | `function f(...args: i32[])` — rest param receives heap array pointer; literal call sites build temp array via `$__malloc`; `f(...arr)` passes existing dynamic array pointer directly; `[...a, ...b]` concat via `$__dynarr_concat_T`; spread-source arrays auto-promoted to dynamic layout by `findDynamicArrays` |
 
 ### Planned Phases
 
 | Phase | Feature | Description |
 | --- | --- | --- |
-| 13 | Rest parameters / spread | `function f(...args: i32[])`, `[...a, ...b]`, spread call `f(...arr)` |
 | 14 | Generics | Monomorphization: `function id<T>(x: T): T` expanded per concrete type at compile time |
 | 15 | Exception handling | `try`/`catch`/`throw` via WAT exceptions proposal (`exnref`, `throw`, `catch`) |
 | 16 | Module system extras | Re-exports (`export { x } from "./lib.ts"`), default exports, namespace imports (`import * as m`) |
