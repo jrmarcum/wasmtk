@@ -174,14 +174,37 @@ export function _start() { ... }
 
 ---
 
+#### Memory
+
+| Feature | Notes |
+| --- | --- |
+| Bump allocator | `$__malloc(size: i32): i32` — advances `$__heap_ptr` and returns the old value |
+| Heap start | Initialized immediately after the static data section; at least 1 extra 64 KB page reserved |
+| Unused-code elimination | Binaryen `-Oz` strips `$__malloc` from the binary when it is never called |
+
+#### Classes
+
+| Feature | Notes |
+| --- | --- |
+| Class declarations | `class Foo { field: i32; ... }` — fields desugared to fixed struct layout |
+| Constructor | `constructor(params) { }` → `Foo_constructor(__self: i32, params)` |
+| Instance methods | `method(): retType { }` → `Foo_method(__self: i32)` — `this` maps to `local.get $__self` |
+| Static methods | `static method(params): retType { }` → `Foo_method(params)` — no hidden param |
+| `this.field` read/write | Load/store at field offset from `__self` pointer |
+| `new Foo(args)` | Allocates struct in linear memory (static); calls constructor |
+| `instance.method(args)` | Dispatches to `Foo_method(instancePtr, args...)` |
+| `Foo.staticMethod(args)` | Dispatches to `Foo_staticMethod(args...)` |
+| `instance.field` | Field read/write via instance pointer in classVars |
+| Class instance params | Functions accepting `obj: Foo` receive an `i32` struct pointer |
+
 #### Limitations (Planned for Future Phases)
 
 | Feature | Status |
 | --- | --- |
-| Classes / OOP | Phase 9 — desugar to struct + prefixed methods |
-| Dynamic memory / heap | Phase 10 — bump allocator for push/pop, dynamic strings |
+| Class inheritance (`extends`) | Deferred — virtual dispatch via vtable requires heap |
+| Dynamic arrays (`push`/`pop`/`shift`/`unshift`) | Phase 10b — dynamic array header + realloc-and-copy |
 | String operations (concat, slice, indexOf) | Phase 11 |
-| Array methods (push, pop, map, filter) | Phase 12 |
+| Array methods (map, filter, forEach, reduce) | Phase 12 |
 | Rest parameters / spread | Phase 13 |
 | Generics (monomorphization) | Phase 14 |
 | Exception handling (try/catch/throw) | Phase 15 |
@@ -332,14 +355,15 @@ The `wasic` direct compiler is developed incrementally. Each phase adds a self-c
 | 7a | Math intrinsics | `Math.sqrt/abs/pow/floor/ceil/round/min/max/sign/trunc` → native WASM ops |
 | 7b | Stderr output | `console.error` / `console.warn` → WASI fd=2 |
 | 8 | Import bundler (`tsbundler.ts`) | Relative import resolution, module-prefix name mangling, alias (`as`) rewriting, chained imports, deduplication |
+| 9 | Classes | `class` declarations desugared to struct layout + `ClassName_method` prefixed functions; `this` → hidden `__self: i32` param; `new ClassName()` → static alloc + constructor call; instance/static method dispatch; dot-call expressions in `console.log` args |
+| 10a | Bump allocator | `$__heap_ptr` mutable global initialized to end of static data; `$__malloc(size)` advances and returns old ptr; 1 extra memory page reserved; Binaryen -Oz strips it when unused |
 
 ### Planned Phases
 
 | Phase | Feature | Description |
 | --- | --- | --- |
-| 9 | Classes | `class` declarations desugared to struct layout + `ClassName_method` prefixed functions; `this` as hidden struct pointer; static methods |
-| 10 | Dynamic memory / heap | Bump allocator in linear memory — foundation for `push`/`pop`, dynamic strings, and rest params |
-| 11 | String operations | `str + str`, `slice`, `indexOf`, `includes`, `String(n)` — requires Phase 10 |
+| 10b | Dynamic arrays | `push` / `pop` / `shift` / `unshift` — dynamic array header (ptr, length, capacity) with realloc-and-copy growth; uses `$__malloc` |
+| 11 | String operations | `str + str`, `slice`, `indexOf`, `includes`, `String(n)` — requires Phase 10 heap |
 | 12 | Array methods | `forEach`, `map`, `filter`, `find`, `slice`, `indexOf`, `reduce` — requires Phase 10 |
 | 13 | Rest parameters / spread | `function f(...args: i32[])`, `[...a, ...b]`, spread call `f(...arr)` |
 | 14 | Generics | Monomorphization: `function id<T>(x: T): T` expanded per concrete type at compile time |

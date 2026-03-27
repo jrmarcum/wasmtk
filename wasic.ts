@@ -80,8 +80,7 @@
  *   - IIFE pattern:  (function main() { ... })()
  *
  * ── Not yet supported (planned) ─────────────────────────────────────────────
- *   - Classes and prototype-based OOP   (Phase 9)
- *   - Dynamic memory / heap allocator   (Phase 10)
+ *   - Dynamic array push/pop/shift/unshift        (Phase 10 — heap allocator done; dynamic arrays next)
  *   - String operations (concat, slice, indexOf)  (Phase 11)
  *   - Array methods (push, pop, map, filter)      (Phase 12)
  *   - Rest parameters / spread operator           (Phase 13)
@@ -102,6 +101,7 @@ import {
   type FuncLookup,
   type ArrayLookup,
   type StructFieldLookup,
+  type DotCallLookup,
 } from "./console_log.ts";
 
 // ---------------------------------------------------------------------------
@@ -215,6 +215,12 @@ interface StructDef {
   totalSize: number;
 }
 
+interface ClassDef {
+  name: string;
+  struct: StructDef;
+  methods: Array<{ name: string; isStatic: boolean; isConstructor: boolean }>;
+}
+
 interface FuncDef {
   name: string;
   params: FuncParam[];
@@ -223,6 +229,8 @@ interface FuncDef {
   bodyLines: string[];
   /** Names of outer-scope variables captured as hidden extra parameters (closure capture). */
   closureCaptures?: string[];
+  /** Class name this function is an instance method of (Phase 9). */
+  className?: string;
 }
 
 /** Maps TypeScript type annotation strings to WAT types (or the "string" pseudo-type). */
@@ -296,6 +304,13 @@ function inferInitType(
     const fn = functions.find(f => f.name === callMatch[1]);
     if (fn?.result) return fn.result;
   }
+  // 4b. dot-call: Receiver.method(args) — look up prefixed function name
+  const dotCallMatch = e.match(/^(\w+)\.(\w+)\s*\(/);
+  if (dotCallMatch && functions) {
+    const prefixedName = `${dotCallMatch[1]}_${dotCallMatch[2]}`;
+    const fn = functions.find(f => f.name === prefixedName);
+    if (fn?.result) return fn.result;
+  }
   // 5. enum member access
   if (/^\w+\.\w+$/.test(e) && enumValues.has(e)) return "i32";
   // plain integer literal (no decimal, no n suffix) → i32 (typical loop counter)
@@ -338,6 +353,15 @@ class WasicTranspiler {
   // ptr=-1 means the struct comes from a parameter (runtime pointer); ptr>=0 is a static address.
   // Reset at the start of each emitFunction call.
   private structVars: Map<string, { def: StructDef; ptr: number }> = new Map();
+
+  // Class definitions (Phase 9): className → ClassDef
+  private classDefs: Map<string, ClassDef> = new Map();
+  // Per-function class instance variable tracking: varName → { className, ptr }
+  // ptr=-1 means the instance comes from a parameter (runtime pointer); ptr>=0 is static address.
+  // Reset at the start of each emitFunction call.
+  private classVars: Map<string, { className: string; ptr: number }> = new Map();
+  // Set to the class name when emitting an instance method body (for `this.field` resolution).
+  private currentMethodClass: string | null = null;
 
   // Tracks which Math.* WAT helper functions are needed (emitted on demand)
   private mathHelpers: Set<string> = new Set();
@@ -824,6 +848,18 @@ class WasicTranspiler {
           continue;
         }
 
+        // Class declaration — skip body, already parsed by parseClasses
+        if (/^(?:export\s+)?class\s+\w+/.test(line)) {
+          depth += opens - closes;
+          continue;
+        }
+
+        // Interface / type alias declaration — skip body
+        if (/^(?:export\s+)?(?:interface|type)\s+\w+/.test(line)) {
+          depth += opens - closes;
+          continue;
+        }
+
         // Pattern 3: if (import.meta.main) { … }
         if (/^if\s*\(\s*import\.meta\.main\s*\)/.test(line)) {
           depth += opens - closes;
@@ -922,6 +958,158 @@ class WasicTranspiler {
         if (fields.length > 0) {
           this.structDefs.set(name, { name, fields, totalSize: offset });
         }
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Pass 0c – collect class declarations
+  // -------------------------------------------------------------------------
+  /**
+   * Scans source for `class Name { ... }` declarations.
+   * For each class:
+   *   - Creates a StructDef for the instance fields and registers it in structDefs.
+   *   - Creates a ClassDef with the method list.
+   *   - Generates FuncDef entries for constructor and methods (prepending __self: i32).
+   *   - Static methods get no hidden parameter.
+   */
+  private parseClasses(): void {
+    const src = this.src;
+    const classRe = /(?:export\s+)?class\s+(\w+)(?:\s+extends\s+\w+)?\s*\{/g;
+    let m: RegExpExecArray | null;
+
+    while ((m = classRe.exec(src)) !== null) {
+      const className = m[1];
+      const classBodyStart = m.index + m[0].length;
+
+      // Find end of class body by brace counting
+      let depth = 1, ci = classBodyStart;
+      while (ci < src.length && depth > 0) {
+        if (src[ci] === "{") depth++;
+        else if (src[ci] === "}") depth--;
+        ci++;
+      }
+      const classBodyEnd = ci - 1;
+      const classBody = src.slice(classBodyStart, classBodyEnd);
+
+      // Parse instance fields: scan line by line at depth 0
+      const fields: StructField[] = [];
+      let fieldOffset = 0;
+      let fieldDepth = 0;
+
+      for (const rawLine of classBody.split("\n")) {
+        const line = rawLine.trim();
+        const opens = (rawLine.match(/\{/g) ?? []).length;
+        const closes = (rawLine.match(/\}/g) ?? []).length;
+
+        if (fieldDepth === 0 && line && !line.includes("(") && !/\bstatic\b/.test(line)) {
+          const fm = line.match(/^(?:(?:private|protected|public|readonly)\s+)*(\w+)\s*[!?]?\s*:\s*([\w\[\]]+)/);
+          if (fm) {
+            const type = mapType(fm[2]);
+            const size = (type === "f64" || type === "i64") ? 8 : 4;
+            if (fieldOffset % size !== 0) fieldOffset = Math.ceil(fieldOffset / size) * size;
+            fields.push({ name: fm[1], type, offset: fieldOffset, size });
+            fieldOffset += size;
+          }
+        }
+
+        fieldDepth += opens - closes;
+      }
+
+      // Register struct and class definitions
+      const def: StructDef = { name: className, fields, totalSize: fieldOffset };
+      this.structDefs.set(className, def);
+      const classDef: ClassDef = { name: className, struct: def, methods: [] };
+      this.classDefs.set(className, classDef);
+
+      // Parse methods: scan src within class body, detect `{` at class-level depth
+      let methodDepth = 1; // inside the class body (class's { was depth 0→1)
+      let scanPos = classBodyStart;
+      let lastMethodEnd = classBodyStart;
+
+      while (scanPos < classBodyEnd) {
+        const ch = src[scanPos];
+
+        if (ch === "{") {
+          if (methodDepth === 1) {
+            // This `{` opens a method body. Backtrack to find the opening paren.
+            // Going backwards: `)` is a "pending open" (increment depth),
+            // `(` closes a "pending open" (decrement); when depth reaches 0
+            // it is the method's own opening paren.
+            let parenDepth = 0;
+            let openParen = -1;
+            for (let k = scanPos - 1; k >= lastMethodEnd; k--) {
+              if (src[k] === ")") {
+                parenDepth++;
+              } else if (src[k] === "(") {
+                parenDepth--;
+                if (parenDepth === 0) { openParen = k; break; }
+              }
+            }
+
+            if (openParen !== -1) {
+              const [rawParams, afterClose] = WasicTranspiler.extractParamBlock(src, openParen);
+
+              // Extract method name from text before `(`
+              const beforeParen = src.slice(lastMethodEnd, openParen).trimEnd();
+              const nameMatch = beforeParen.match(/(\w+)\s*$/);
+
+              if (nameMatch) {
+                const methodName = nameMatch[1];
+                const SKIP = ["if", "while", "for", "switch", "catch", "new", "return", "typeof", "instanceof"];
+                if (!SKIP.includes(methodName)) {
+                  const isStatic = /\bstatic\s+\w+\s*$/.test(beforeParen);
+
+                  // Parse return type (between `)` and `{`)
+                  const betweenParenAndBrace = src.slice(afterClose, scanPos);
+                  const retTypeMatch = betweenParenAndBrace.match(/:\s*([\w\[\]]+)/);
+                  const rawResult = retTypeMatch ? retTypeMatch[1].trim() : "void";
+                  const result: WatType | null = rawResult === "void" ? null : mapType(rawResult as string);
+
+                  // Extract method body
+                  const methodBodyStart = scanPos + 1;
+                  let bodyDepth = 1, bodyEnd = methodBodyStart;
+                  while (bodyEnd < src.length && bodyDepth > 0) {
+                    if (src[bodyEnd] === "{") bodyDepth++;
+                    else if (src[bodyEnd] === "}") bodyDepth--;
+                    bodyEnd++;
+                  }
+                  const rawBody = src.slice(methodBodyStart, bodyEnd - 1);
+                  const bodyLines = rawBody.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+
+                  const isConstructor = methodName === "constructor";
+                  const funcName = isConstructor
+                    ? `${className}_constructor`
+                    : `${className}_${methodName}`;
+
+                  const parsedParams = this.parseParams(rawParams);
+                  const allParams: FuncParam[] = isStatic
+                    ? parsedParams
+                    : [{ name: "__self", type: "i32" as WatType }, ...parsedParams];
+
+                  if (!this.functions.find(f => f.name === funcName)) {
+                    this.functions.push({
+                      name: funcName,
+                      params: allParams,
+                      result: isConstructor ? null : result,
+                      exported: false,
+                      bodyLines,
+                      className: isStatic ? undefined : className,
+                    });
+                  }
+
+                  classDef.methods.push({ name: methodName, isStatic, isConstructor });
+                }
+              }
+            }
+          }
+          methodDepth++;
+        } else if (ch === "}") {
+          methodDepth--;
+          if (methodDepth === 1) lastMethodEnd = scanPos + 1;
+        }
+
+        scanPos++;
       }
     }
   }
@@ -1098,6 +1286,35 @@ class WasicTranspiler {
       }
     }
 
+    // this.field (read) or this.method(args) — inside a class instance method
+    if (expr.startsWith("this.") && this.currentMethodClass) {
+      const dotMethodMatch = expr.match(/^this\.(\w+)\s*\(([\s\S]*)\)$/);
+      if (dotMethodMatch) {
+        const methodName = dotMethodMatch[1];
+        const argsStr = dotMethodMatch[2].trim();
+        const funcName = `${this.currentMethodClass}_${methodName}`;
+        const fn = this.functions.find(f => f.name === funcName);
+        if (fn) {
+          const args = argsStr ? this.splitArgs(argsStr) : [];
+          const emittedArgs = args.flatMap((a, i) => {
+            const pt = fn.params[i + 1]?.type ?? defaultType;
+            return [this.emitExpr(a, locals, pt)];
+          });
+          return `(call $${funcName} (local.get $__self) ${emittedArgs.join(" ")})`.trim();
+        }
+      }
+      const dotFieldMatch = expr.match(/^this\.(\w+)$/);
+      if (dotFieldMatch) {
+        const cd = this.classDefs.get(this.currentMethodClass);
+        const field = cd?.struct.fields.find(f => f.name === dotFieldMatch[1]);
+        if (field) {
+          const loadOp = field.type === "f64" ? "f64.load"
+                       : field.type === "i64" ? "i64.load" : "i32.load";
+          return `(${loadOp} (i32.add (local.get $__self) (i32.const ${field.offset})))`;
+        }
+      }
+    }
+
     // Enum member access: EnumName.MemberName → (i32.const value)
     const enumDotMatch = expr.match(/^(\w+)\.(\w+)$/);
     if (enumDotMatch) {
@@ -1111,6 +1328,18 @@ class WasicTranspiler {
     // This check must come after enum dot-match (which has already returned if it matched).
     const structFieldMatch = expr.match(/^(\w+)\.(\w+)$/);
     if (structFieldMatch) {
+      // Class instance field read (takes priority over struct field)
+      const cv = this.classVars.get(structFieldMatch[1]);
+      if (cv) {
+        const cd = this.classDefs.get(cv.className);
+        const field = cd?.struct.fields.find(f => f.name === structFieldMatch[2]);
+        if (field) {
+          const loadOp = field.type === "f64" ? "f64.load"
+                       : field.type === "i64" ? "i64.load" : "i32.load";
+          const baseWat = cv.ptr === -1 ? `(local.get $${structFieldMatch[1]})` : `(i32.const ${cv.ptr})`;
+          return `(${loadOp} (i32.add ${baseWat} (i32.const ${field.offset})))`;
+        }
+      }
       const sv = this.structVars.get(structFieldMatch[1]);
       if (sv) {
         const field = sv.def.fields.find(f => f.name === structFieldMatch[2]);
@@ -1263,6 +1492,70 @@ class WasicTranspiler {
       // Known function name used as a value → funcref table index
       if (this.functions.find(f => f.name === expr)) {
         return `(i32.const ${this.getFuncTableIdx(expr)})`;
+      }
+    }
+
+    // new ClassName(args) — allocate static struct + call constructor
+    const newMatch = expr.match(/^new\s+([A-Z]\w*)\s*\(([\s\S]*)\)$/);
+    if (newMatch) {
+      const ctorClassName = newMatch[1];
+      const argsStr = newMatch[2].trim();
+      const cd = this.classDefs.get(ctorClassName);
+      if (cd) {
+        const ptr = this.allocStructData(cd.struct, {});
+        const constructorName = `${ctorClassName}_constructor`;
+        const ctorFn = this.functions.find(f => f.name === constructorName);
+        if (ctorFn) {
+          const args = argsStr ? this.splitArgs(argsStr) : [];
+          const emittedArgs = args.flatMap((a, i) => {
+            const pt = ctorFn.params[i + 1]?.type ?? ("i32" as WatType);
+            return [this.emitExpr(a, locals, pt)];
+          });
+          const ctorCall = `(call $${constructorName} (i32.const ${ptr}) ${emittedArgs.join(" ")})`.trim();
+          return `(block (result i32) ${ctorCall} (i32.const ${ptr}))`;
+        }
+        return `(i32.const ${ptr})`;
+      }
+    }
+
+    // instance.method(args) or ClassName.staticMethod(args) dot-call in expression position
+    const dotCallExprMatch = expr.match(/^(\w+)\.(\w+)\s*\(([\s\S]*)\)$/);
+    if (dotCallExprMatch) {
+      const receiver = dotCallExprMatch[1];
+      const methodName = dotCallExprMatch[2];
+      const argsStr = dotCallExprMatch[3].trim();
+      const args = argsStr ? this.splitArgs(argsStr) : [];
+
+      // Instance method call
+      const cv = this.classVars.get(receiver);
+      if (cv) {
+        const funcName = `${cv.className}_${methodName}`;
+        const fn = this.functions.find(f => f.name === funcName);
+        if (fn) {
+          const baseWat = cv.ptr === -1 ? `(local.get $${receiver})` : `(i32.const ${cv.ptr})`;
+          const emittedArgs = args.flatMap((a, i) => {
+            const pt = fn.params[i + 1]?.type ?? defaultType;
+            return [this.emitExpr(a, locals, pt)];
+          });
+          return `(call $${funcName} ${baseWat} ${emittedArgs.join(" ")})`.trim();
+        }
+      }
+
+      // Static method call
+      const staticCd = this.classDefs.get(receiver);
+      if (staticCd) {
+        const method = staticCd.methods.find(mm => mm.name === methodName && mm.isStatic);
+        if (method) {
+          const funcName = `${receiver}_${methodName}`;
+          const fn = this.functions.find(f => f.name === funcName);
+          if (fn) {
+            const emittedArgs = args.flatMap((a, i) => {
+              const pt = fn.params[i]?.type ?? defaultType;
+              return [this.emitExpr(a, locals, pt)];
+            });
+            return `(call $${funcName} ${emittedArgs.join(" ")})`.trim();
+          }
+        }
       }
     }
 
@@ -1564,6 +1857,30 @@ class WasicTranspiler {
       return stmts.join("\n      ");
     }
 
+    // Class instance declaration: const obj: ClassName = new ClassName(args)
+    const newDeclMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*[A-Z]\w*)?\s*=\s*new\s+([A-Z]\w*)\s*\(([\s\S]*?)\)\s*;?$/);
+    if (newDeclMatch) {
+      const varName = newDeclMatch[1];
+      const cv = this.classVars.get(varName);
+      if (cv) {
+        const ptr = cv.ptr;
+        const argsStr = newDeclMatch[3].trim();
+        const constructorName = `${cv.className}_constructor`;
+        const ctorFn = this.functions.find(f => f.name === constructorName);
+        const setLocal = `(local.set $${varName} (i32.const ${ptr}))`;
+        if (ctorFn) {
+          const args = argsStr ? this.splitArgs(argsStr) : [];
+          const emittedArgs = args.flatMap((a, i) => {
+            const pt = ctorFn.params[i + 1]?.type ?? ("i32" as WatType);
+            return [this.emitExpr(a, locals, pt)];
+          });
+          const ctorCall = `(call $${constructorName} (i32.const ${ptr}) ${emittedArgs.join(" ")})`.trim();
+          return `${setLocal}\n      ${ctorCall}`;
+        }
+        return setLocal;
+      }
+    }
+
     // var / let / const declaration
     const letMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+))?\s*=\s*(.+?);?$/);
     if (letMatch) {
@@ -1621,9 +1938,35 @@ class WasicTranspiler {
       return `(local.set $${varName} (${opType}.${suffix} (local.get $${varName}) ${this.emitExpr(rhs, locals, opType)}))`;
     }
 
+    // this.field = val — write to instance field inside a class method
+    const thisWriteMatch = line.match(/^this\.(\w+)\s*=\s*(.+?);?$/);
+    if (thisWriteMatch && this.currentMethodClass) {
+      const cd = this.classDefs.get(this.currentMethodClass);
+      const field = cd?.struct.fields.find(f => f.name === thisWriteMatch[1]);
+      if (field) {
+        const storeOp = field.type === "f64" ? "f64.store"
+                      : field.type === "i64" ? "i64.store" : "i32.store";
+        const valWat = this.emitExpr(thisWriteMatch[2], locals, field.type);
+        return `(${storeOp} (i32.add (local.get $__self) (i32.const ${field.offset})) ${valWat})`;
+      }
+    }
+
     // Struct field write: p.field = value
     const structWriteMatch = line.match(/^(\w+)\.(\w+)\s*=\s*(.+?);?$/);
     if (structWriteMatch) {
+      // Class instance field write (takes priority)
+      const wCv = this.classVars.get(structWriteMatch[1]);
+      if (wCv) {
+        const wCd = this.classDefs.get(wCv.className);
+        const wField = wCd?.struct.fields.find(f => f.name === structWriteMatch[2]);
+        if (wField) {
+          const storeOp = wField.type === "f64" ? "f64.store"
+                        : wField.type === "i64" ? "i64.store" : "i32.store";
+          const baseWat = wCv.ptr === -1 ? `(local.get $${structWriteMatch[1]})` : `(i32.const ${wCv.ptr})`;
+          const valWat = this.emitExpr(structWriteMatch[3], locals, wField.type);
+          return `(${storeOp} (i32.add ${baseWat} (i32.const ${wField.offset})) ${valWat})`;
+        }
+      }
       const sv = this.structVars.get(structWriteMatch[1]);
       if (sv) {
         const field = sv.def.fields.find(f => f.name === structWriteMatch[2]);
@@ -1681,6 +2024,17 @@ class WasicTranspiler {
         this.mathHelpers.add("math_pow");  // triggers all-helpers emission in emitMathHelpers
       }
       const structLookupFn: StructFieldLookup = (vn, fn) => {
+        // Check class instance vars first
+        const cv = this.classVars.get(vn);
+        if (cv) {
+          const cd = this.classDefs.get(cv.className);
+          const f = cd?.struct.fields.find(fi => fi.name === fn);
+          if (f) {
+            const loadOp = f.type === "f64" ? "f64.load" : f.type === "i64" ? "i64.load" : "i32.load";
+            const baseWat = cv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
+            return { type: f.type, watLoad: `(${loadOp} (i32.add ${baseWat} (i32.const ${f.offset})))` };
+          }
+        }
         const sv = this.structVars.get(vn);
         if (!sv) return undefined;
         const f = sv.def.fields.find(fi => fi.name === fn);
@@ -1689,7 +2043,38 @@ class WasicTranspiler {
         const baseWat = sv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${sv.ptr})`;
         return { type: f.type, watLoad: `(${loadOp} (i32.add ${baseWat} (i32.const ${f.offset})))` };
       };
-      const segments = parseConsoleLogArgs(logMatch[1], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn);
+      const dotCallLookupFn: DotCallLookup = (token) => {
+        const result = this.emitExpr(token, locals, "i32");
+        if (result === "(unreachable)" || result.startsWith("(;?")) return undefined;
+        // Determine return type from the expression
+        const m2 = token.match(/^(?:this|\w+)\.(\w+)\s*\(/);
+        if (m2) {
+          const receiver2 = token.match(/^(\w+)\./)?.[1] ?? "";
+          const methodName2 = m2[1];
+          const cv2 = receiver2 === "this" ? null : this.classVars.get(receiver2);
+          const className2 = receiver2 === "this" ? this.currentMethodClass : cv2?.className;
+          const cd2 = className2 ? this.classDefs.get(className2) : null;
+          const method2 = cd2?.methods.find(mm => mm.name === methodName2);
+          if (method2) {
+            const fn2 = this.functions.find(f => f.name === `${className2}_${methodName2}`);
+            if (fn2) {
+              const retType = fn2.result ?? "i32";
+              return { type: retType as string, wat: this.emitExpr(token, locals, retType) };
+            }
+          }
+          // Static method
+          const staticCd = this.classDefs.get(receiver2);
+          if (staticCd) {
+            const fn2 = this.functions.find(f => f.name === `${receiver2}_${methodName2}`);
+            if (fn2) {
+              const retType = fn2.result ?? "i32";
+              return { type: retType as string, wat: this.emitExpr(token, locals, retType) };
+            }
+          }
+        }
+        return undefined;
+      };
+      const segments = parseConsoleLogArgs(logMatch[1], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFn);
       const { statements, needsHelpers } = emitConsoleLog(segments, allocator);
       if (needsHelpers) this.needsNumericHelpers = true;
       return statements.join("\n      ");
@@ -1705,6 +2090,17 @@ class WasicTranspiler {
       const arrayLookupFn = (name: string) => this.arrayVars.get(name);
       if (errMatch[2].includes("Math.")) this.mathHelpers.add("math_pow");
       const structLookupFn: StructFieldLookup = (vn, fn) => {
+        // Check class instance vars first
+        const cv = this.classVars.get(vn);
+        if (cv) {
+          const cd = this.classDefs.get(cv.className);
+          const f = cd?.struct.fields.find(fi => fi.name === fn);
+          if (f) {
+            const loadOp = f.type === "f64" ? "f64.load" : f.type === "i64" ? "i64.load" : "i32.load";
+            const baseWat = cv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
+            return { type: f.type, watLoad: `(${loadOp} (i32.add ${baseWat} (i32.const ${f.offset})))` };
+          }
+        }
         const sv = this.structVars.get(vn);
         if (!sv) return undefined;
         const f = sv.def.fields.find(fi => fi.name === fn);
@@ -1713,7 +2109,34 @@ class WasicTranspiler {
         const baseWat = sv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${sv.ptr})`;
         return { type: f.type, watLoad: `(${loadOp} (i32.add ${baseWat} (i32.const ${f.offset})))` };
       };
-      const segments = parseConsoleLogArgs(errMatch[2], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn);
+      const dotCallLookupFnErr: DotCallLookup = (token) => {
+        const m2 = token.match(/^(?:this|\w+)\.(\w+)\s*\(/);
+        if (m2) {
+          const receiver2 = token.match(/^(\w+)\./)?.[1] ?? "";
+          const methodName2 = m2[1];
+          const cv2 = receiver2 === "this" ? null : this.classVars.get(receiver2);
+          const className2 = receiver2 === "this" ? this.currentMethodClass : cv2?.className;
+          const cd2 = className2 ? this.classDefs.get(className2) : null;
+          const method2 = cd2?.methods.find(mm => mm.name === methodName2);
+          if (method2) {
+            const fn2 = this.functions.find(f => f.name === `${className2}_${methodName2}`);
+            if (fn2) {
+              const retType = fn2.result ?? "i32";
+              return { type: retType as string, wat: this.emitExpr(token, locals, retType) };
+            }
+          }
+          const staticCd = this.classDefs.get(receiver2);
+          if (staticCd) {
+            const fn2 = this.functions.find(f => f.name === `${receiver2}_${methodName2}`);
+            if (fn2) {
+              const retType = fn2.result ?? "i32";
+              return { type: retType as string, wat: this.emitExpr(token, locals, retType) };
+            }
+          }
+        }
+        return undefined;
+      };
+      const segments = parseConsoleLogArgs(errMatch[2], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFnErr);
       const { statements, needsHelpers } = emitConsoleLog(segments, allocator, "    ", 2);
       if (needsHelpers) this.needsNumericHelpers = true;
       return statements.join("\n      ");
@@ -1747,6 +2170,60 @@ class WasicTranspiler {
       const v = line.replace(/[-;]/g, "").trim();
       const vt = watBaseType(locals.get(v) ?? "i32");
       return `(local.set $${v} (${vt}.sub (local.get $${v}) (${vt}.const 1)))`;
+    }
+
+    // Dot-method call as statement: instance.method(args) / this.method(args) / ClassName.staticMethod(args)
+    const dotCallStmt = line.match(/^(this|\w+)\.(\w+)\s*\(([\s\S]*?)\)\s*;?$/);
+    if (dotCallStmt) {
+      const receiver = dotCallStmt[1];
+      const methodName = dotCallStmt[2];
+      const argsStr = dotCallStmt[3].trim();
+      const args = argsStr ? this.splitArgs(argsStr) : [];
+
+      if (receiver === "this" && this.currentMethodClass) {
+        const funcName = `${this.currentMethodClass}_${methodName}`;
+        const fn = this.functions.find(f => f.name === funcName);
+        if (fn) {
+          const emittedArgs = args.flatMap((a, i) => {
+            const pt = fn.params[i + 1]?.type ?? ("i32" as WatType);
+            return [this.emitExpr(a, locals, pt)];
+          });
+          const call = `(call $${funcName} (local.get $__self) ${emittedArgs.join(" ")})`.trim();
+          return fn.result ? `(drop ${call})` : call;
+        }
+      }
+
+      const cv = this.classVars.get(receiver);
+      if (cv) {
+        const funcName = `${cv.className}_${methodName}`;
+        const fn = this.functions.find(f => f.name === funcName);
+        if (fn) {
+          const baseWat = cv.ptr === -1 ? `(local.get $${receiver})` : `(i32.const ${cv.ptr})`;
+          const emittedArgs = args.flatMap((a, i) => {
+            const pt = fn.params[i + 1]?.type ?? ("i32" as WatType);
+            return [this.emitExpr(a, locals, pt)];
+          });
+          const call = `(call $${funcName} ${baseWat} ${emittedArgs.join(" ")})`.trim();
+          return fn.result ? `(drop ${call})` : call;
+        }
+      }
+
+      const staticCd = this.classDefs.get(receiver);
+      if (staticCd) {
+        const method = staticCd.methods.find(mm => mm.name === methodName && mm.isStatic);
+        if (method) {
+          const funcName = `${receiver}_${methodName}`;
+          const fn = this.functions.find(f => f.name === funcName);
+          if (fn) {
+            const emittedArgs = args.flatMap((a, i) => {
+              const pt = fn.params[i]?.type ?? ("f64" as WatType);
+              return [this.emitExpr(a, locals, pt)];
+            });
+            const call = `(call $${funcName} ${emittedArgs.join(" ")})`.trim();
+            return fn.result ? `(drop ${call})` : call;
+          }
+        }
+      }
     }
 
     // Standalone function call (statement form)
@@ -2182,6 +2659,14 @@ class WasicTranspiler {
 
   private emitHelpers(): string {
     const parts: string[] = [];
+    // Bump allocator (Phase 10) — always emitted; Binaryen -Oz strips it when unused
+    parts.push(`  ;; Bump allocator — advances __heap_ptr and returns the old value
+  (func $__malloc (param $size i32) (result i32)
+    (local $ptr i32)
+    (local.set $ptr (global.get $__heap_ptr))
+    (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))
+    (local.get $ptr)
+  )`);
     if (this.needsStringHelpers)  parts.push(this.getStringHelperWat());
     if (this.needsNumericHelpers) parts.push(getHelperWat());
     if (this.mathHelpers.size > 0) parts.push(this.emitMathHelpers());
@@ -2279,6 +2764,8 @@ class WasicTranspiler {
     // Reset per-function array and struct tracking
     this.arrayVars  = new Map();
     this.structVars = new Map();
+    this.classVars  = new Map();
+    this.currentMethodClass = fn.className ?? null;
 
     const locals = new Map<string, WatType>();
     for (const p of fn.params) {
@@ -2292,6 +2779,10 @@ class WasicTranspiler {
       if (p.structType) {
         const def = this.structDefs.get(p.structType);
         if (def) this.structVars.set(p.name, { def, ptr: -1 });
+      }
+      // Class instance param: also register in classVars for method dispatch
+      if (p.structType && this.classDefs.has(p.structType)) {
+        this.classVars.set(p.name, { className: p.structType, ptr: -1 });
       }
     }
 
@@ -2322,6 +2813,22 @@ class WasicTranspiler {
         locals.set(funcTypedDecl[1], "i32");
         continue;
       }
+      // Class instance: const obj: ClassName = new ClassName(args) or const obj = new ClassName(args)
+      const newClassPre = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*([A-Z]\w*))?\s*=\s*new\s+([A-Z]\w*)\s*\(/);
+      if (newClassPre) {
+        const varName = newClassPre[1];
+        const ctorName = newClassPre[3];
+        const typeName = newClassPre[2] ?? ctorName;
+        const cd = this.classDefs.get(typeName) ?? this.classDefs.get(ctorName);
+        if (cd) {
+          const ptr = this.allocStructData(cd.struct, {});
+          this.classVars.set(varName, { className: cd.name, ptr });
+          declaredLocals.push([varName, "i32"]);
+          locals.set(varName, "i32");
+          continue;
+        }
+      }
+
       // Struct object literal: const p: Point = { x: 1.5, y: 2.5 }
       const structPre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\{([^}]*)\}/);
       if (structPre) {
@@ -2507,6 +3014,7 @@ class WasicTranspiler {
   transpile(_moduleName: string): string {
     this.parseEnums();
     this.parseStructs();
+    this.parseClasses();
     this.parseFunctions();
     this.parseArrowFunctions();
     this.injectClosureCaptures();
@@ -2568,7 +3076,10 @@ class WasicTranspiler {
     const imports = this.emitWasiImports();
     const helpers = this.emitHelpers();
     const dataSection = this.emitDataSection();
-    const memoryPages = Math.max(1, Math.ceil(this.dataOffset / 65536));
+    // Reserve at least 1 extra page (64 KB) beyond static data for heap growth
+    const memoryPages = Math.max(2, Math.ceil(this.dataOffset / 65536) + 1);
+    // __heap_ptr starts immediately after the static data section
+    const heapStart = this.dataOffset;
 
     // If the user defined _start() directly, skip the generated wrapper
     const startFunc = hasUserStart ? [] : [
@@ -2583,6 +3094,7 @@ class WasicTranspiler {
       `(module`,
       imports,
       `  (memory (export "memory") ${memoryPages})`,
+      `  (global $__heap_ptr (mut i32) (i32.const ${heapStart}))`,
       funcTypesWat,
       ``,
       helpers,

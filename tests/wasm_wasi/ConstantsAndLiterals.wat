@@ -1,7 +1,15 @@
 (module
   (import "wasi_snapshot_preview1" "proc_exit" (func $proc_exit (param i32)))
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
-  (memory (export "memory") 1)
+  (memory (export "memory") 2)
+  (global $__heap_ptr (mut i32) (i32.const 280))
+  ;; Bump allocator — advances __heap_ptr and returns the old value
+  (func $__malloc (param $size i32) (result i32)
+    (local $ptr i32)
+    (local.set $ptr (global.get $__heap_ptr))
+    (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))
+    (local.get $ptr)
+  )
 
   ;; ── str_cmp: lexicographic byte comparison ─────────────────────────────────
   ;; Returns negative if a<b, 0 if a==b, positive if a>b.
@@ -40,7 +48,6 @@
     (return (i32.eq (local.get $a) (i32.const 42)))
   )
   (func $_start (export "_start")
-    (;; type i32 = number;;)
         (i32.store (i32.const 0) (if (result i32) (call $isHello (i32.const 260) (i32.const 5)) (then (i32.const 265)) (else (i32.const 269))))
           (i32.store (i32.const 4) (if (result i32) (call $isHello (i32.const 260) (i32.const 5)) (then (i32.const 4)) (else (i32.const 5))))
           (i32.store (i32.const 8) (i32.const 274))

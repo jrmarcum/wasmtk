@@ -1,7 +1,15 @@
 (module
   (import "wasi_snapshot_preview1" "proc_exit" (func $proc_exit (param i32)))
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
-  (memory (export "memory") 1)
+  (memory (export "memory") 2)
+  (global $__heap_ptr (mut i32) (i32.const 261))
+  ;; Bump allocator — advances __heap_ptr and returns the old value
+  (func $__malloc (param $size i32) (result i32)
+    (local $ptr i32)
+    (local.set $ptr (global.get $__heap_ptr))
+    (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))
+    (local.get $ptr)
+  )
 
   ;; ── i32 → decimal string ──────────────────────────────────────────────────
   ;; Writes the decimal representation of $val at $buf, returns byte count.
@@ -233,7 +241,6 @@
     (return (i32.eq (i32.rem_s (local.get $n) (i32.const 2)) (i32.const 0)))
   )
   (func $_start (export "_start")
-    (;; type i32 = number;;)
         (i32.store (i32.const 0) (i32.const 132))
           (i32.store (i32.const 4) (call $__i32_to_str (call $testArrowInLoop (i32.const 10)) (i32.const 132)))
           (i32.store (i32.const 8) (i32.const 260))
