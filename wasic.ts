@@ -343,9 +343,17 @@ class WasicTranspiler {
   // String data section: message → [offset, byteLength]
   // Raw (non-string) data segments for arrays etc.
   private rawDataSegments: Array<{ ptr: number; bytes: string }> = [];
-  // Per-function array variable tracking: varName → { elemType, ptr, length }
+  // Per-function array variable tracking: varName → { elemType, ptr, length, dynamic?, capacity?, initElements? }
+  // ptr=-1: runtime param pointer. ptr=-2: dynamic heap array (ptr in local). ptr>=0: static data address.
   // Reset at the start of each emitFunction call.
-  private arrayVars: Map<string, { elemType: WatType; ptr: number; length: number }> = new Map();
+  private arrayVars: Map<string, {
+    elemType: WatType; ptr: number; length: number;
+    dynamic?: boolean; capacity?: number; initElements?: string[];
+  }> = new Map();
+
+  // Tracks which dynamic-array WAT helper functions are needed for this module.
+  // Key format: "push_i32", "pop_f64", "shift_i32", "unshift_f64", etc.
+  private dynArrHelpers: Set<string> = new Set();
 
   // Struct type definitions parsed from interface/type declarations.
   private structDefs: Map<string, StructDef> = new Map();
@@ -1173,6 +1181,51 @@ class WasicTranspiler {
   }
 
   // -------------------------------------------------------------------------
+  // Dynamic array helpers (Phase 10b)
+  // -------------------------------------------------------------------------
+
+  /** Scans function body lines for array method calls to determine which arrays need heap layout. */
+  private findDynamicArrays(lines: string[]): Set<string> {
+    const dynamic = new Set<string>();
+    for (const line of lines) {
+      const m = line.match(/\b(\w+)\.(push|pop|shift|unshift)\s*\(/);
+      if (m) dynamic.add(m[1]);
+    }
+    return dynamic;
+  }
+
+  /** Emits WAT statements that malloc + initialise a dynamic array (length/capacity header + elements). */
+  private emitDynArrayInit(varName: string, info: {
+    elemType: WatType; length: number; capacity?: number; initElements?: string[];
+  }): string {
+    const capacity = info.capacity ?? Math.max(info.length * 2, 8);
+    const elemSize = (info.elemType === "f64" || info.elemType === "i64") ? 8 : 4;
+    const byteSize = capacity * elemSize + 8; // 8-byte header: [length i32][capacity i32]
+    const storeOp  = info.elemType === "f64" ? "f64.store"
+                   : info.elemType === "i64" ? "i64.store" : "i32.store";
+
+    const stmts: string[] = [];
+    stmts.push(`(local.set $${varName} (call $__malloc (i32.const ${byteSize})))`);
+    stmts.push(`(i32.store (local.get $${varName}) (i32.const ${info.length}))`);
+    stmts.push(`(i32.store offset=4 (local.get $${varName}) (i32.const ${capacity}))`);
+
+    for (let i = 0; i < (info.initElements?.length ?? 0); i++) {
+      const raw = info.initElements![i].trim();
+      const byteOffset = 8 + i * elemSize;
+      let valExpr: string;
+      if (info.elemType === "f64") {
+        valExpr = `(f64.const ${parseFloat(raw) || 0})`;
+      } else if (info.elemType === "i64") {
+        valExpr = `(i64.const ${parseInt(raw.replace(/n$/, ""), 10) || 0})`;
+      } else {
+        valExpr = `(i32.const ${parseInt(raw, 10) || 0})`;
+      }
+      stmts.push(`(${storeOp} offset=${byteOffset} (local.get $${varName}) ${valExpr})`);
+    }
+    return stmts.join("\n      ");
+  }
+
+  // -------------------------------------------------------------------------
   // String variable helpers
   // -------------------------------------------------------------------------
 
@@ -1258,11 +1311,14 @@ class WasicTranspiler {
       return `(${defaultType}.const ${expr})`;
     }
 
-    // Array .length property: arr.length → compile-time constant
+    // Array .length property: dynamic → runtime load from header; static → compile-time constant
     const lenPropMatch = expr.match(/^(\w+)\.length$/);
     if (lenPropMatch) {
       const arrInfo = this.arrayVars.get(lenPropMatch[1]);
-      if (arrInfo) return `(i32.const ${arrInfo.length})`;
+      if (arrInfo) {
+        if (arrInfo.dynamic) return `(i32.load (local.get $${lenPropMatch[1]}))`;
+        return `(i32.const ${arrInfo.length})`;
+      }
       // String .length property: varName.length
       if (locals.get(lenPropMatch[1]) === "string") {
         return `(local.get $${lenPropMatch[1]}_len)`;
@@ -1278,11 +1334,34 @@ class WasicTranspiler {
                      : arrInfo.elemType === "i64" ? "i64.load" : "i32.load";
         const shift   = (arrInfo.elemType === "f64" || arrInfo.elemType === "i64") ? 3 : 2;
         const idxWat  = this.emitExpr(bracketMatch[2], locals, "i32");
-        // ptr=-1 means array comes from a param/local (runtime pointer); otherwise static address
-        const baseWat = arrInfo.ptr === -1
+        // ptr=-1/ptr=-2: runtime local; ptr>=0: static data address. Dynamic arrays add 8-byte header offset.
+        const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
           ? `(local.get $${bracketMatch[1]})`
           : `(i32.const ${arrInfo.ptr})`;
-        return `(${loadOp} (i32.add ${baseWat} (i32.shl ${idxWat} (i32.const ${shift}))))`;
+        const dataBase = arrInfo.dynamic
+          ? `(i32.add ${baseWat} (i32.const 8))`
+          : baseWat;
+        return `(${loadOp} (i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift}))))`;
+      }
+    }
+
+    // Dynamic array methods used as expressions: arr.push(val), arr.pop(), arr.shift(), arr.unshift(val)
+    const dynArrExpr = expr.match(/^(\w+)\.(push|pop|shift|unshift)\s*\((.*?)\)$/);
+    if (dynArrExpr) {
+      const arrName  = dynArrExpr[1];
+      const method   = dynArrExpr[2] as "push" | "pop" | "shift" | "unshift";
+      const argsStr  = dynArrExpr[3].trim();
+      const arrInfo  = this.arrayVars.get(arrName);
+      if (arrInfo?.dynamic) {
+        const key        = `${method}_${arrInfo.elemType}`;
+        const helperName = `$__dynarr_${key}`;
+        this.dynArrHelpers.add(key);
+        if (method === "push" || method === "unshift") {
+          const valWat = this.emitExpr(argsStr, locals, arrInfo.elemType);
+          // Push/unshift return new arr ptr (possibly grown); update local and return new length.
+          return `(i32.load (local.tee $${arrName} (call ${helperName} (local.get $${arrName}) ${valWat})))`;
+        }
+        return `(call ${helperName} (local.get $${arrName}))`;
       }
     }
 
@@ -1817,7 +1896,10 @@ class WasicTranspiler {
     const arrLetMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*\w+\[\])?\s*=\s*\[/);
     if (arrLetMatch) {
       const info = this.arrayVars.get(arrLetMatch[1]);
-      if (info) return `(local.set $${arrLetMatch[1]} (i32.const ${info.ptr}))`;
+      if (info) {
+        if (info.dynamic) return this.emitDynArrayInit(arrLetMatch[1], info);
+        return `(local.set $${arrLetMatch[1]} (i32.const ${info.ptr}))`;
+      }
     }
 
     // Struct object literal init: const/let p: TypeName = { ... }
@@ -1982,6 +2064,26 @@ class WasicTranspiler {
       }
     }
 
+    // Dynamic array methods: arr.push(val), arr.pop(), arr.shift(), arr.unshift(val) — statement form
+    const dynArrStmt = line.match(/^(\w+)\.(push|pop|shift|unshift)\s*\((.*?)\)\s*;?$/);
+    if (dynArrStmt) {
+      const arrName  = dynArrStmt[1];
+      const method   = dynArrStmt[2] as "push" | "pop" | "shift" | "unshift";
+      const argsStr  = dynArrStmt[3].trim();
+      const arrInfo  = this.arrayVars.get(arrName);
+      if (arrInfo?.dynamic) {
+        const key        = `${method}_${arrInfo.elemType}`;
+        const helperName = `$__dynarr_${key}`;
+        this.dynArrHelpers.add(key);
+        if (method === "push" || method === "unshift") {
+          const valWat = this.emitExpr(argsStr, locals, arrInfo.elemType);
+          // Push/unshift return new arr ptr (possibly grown after realloc); update local via local.set.
+          return `(local.set $${arrName} (call ${helperName} (local.get $${arrName}) ${valWat}))`;
+        }
+        return `(drop (call ${helperName} (local.get $${arrName})))`;
+      }
+    }
+
     // Array element write: arr[idx] = val
     const arrWriteMatch = line.match(/^(\w+)\s*\[(.+?)\]\s*=\s*(.+?);?$/);
     if (arrWriteMatch) {
@@ -1992,10 +2094,13 @@ class WasicTranspiler {
         const shift   = (arrInfo.elemType === "f64" || arrInfo.elemType === "i64") ? 3 : 2;
         const idxWat  = this.emitExpr(arrWriteMatch[2], locals, "i32");
         const valWat  = this.emitExpr(arrWriteMatch[3], locals, arrInfo.elemType);
-        const baseWat = arrInfo.ptr === -1
+        const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
           ? `(local.get $${arrWriteMatch[1]})`
           : `(i32.const ${arrInfo.ptr})`;
-        return `(${storeOp} (i32.add ${baseWat} (i32.shl ${idxWat} (i32.const ${shift}))) ${valWat})`;
+        const dataBase = arrInfo.dynamic
+          ? `(i32.add ${baseWat} (i32.const 8))`
+          : baseWat;
+        return `(${storeOp} (i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift}))) ${valWat})`;
       }
     }
 
@@ -2667,9 +2772,10 @@ class WasicTranspiler {
     (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))
     (local.get $ptr)
   )`);
-    if (this.needsStringHelpers)  parts.push(this.getStringHelperWat());
-    if (this.needsNumericHelpers) parts.push(getHelperWat());
+    if (this.needsStringHelpers)   parts.push(this.getStringHelperWat());
+    if (this.needsNumericHelpers)  parts.push(getHelperWat());
     if (this.mathHelpers.size > 0) parts.push(this.emitMathHelpers());
+    if (this.dynArrHelpers.size > 0) parts.push(this.emitDynArrHelpers());
     return parts.join("\n");
   }
 
@@ -2711,6 +2817,155 @@ class WasicTranspiler {
     (local.get $result)
   )`,
     ].join("\n\n");
+  }
+
+  private emitDynArrHelpers(): string {
+    const parts: string[] = [];
+
+    // Determine which grow helpers are needed (one per elem type used by push or unshift).
+    const growNeeded = new Set<string>();
+    for (const key of this.dynArrHelpers) {
+      const [method, elemType] = key.split("_");
+      if (method === "push" || method === "unshift") growNeeded.add(elemType);
+    }
+
+    // Emit grow helpers first (push/unshift call them).
+    for (const elemType of growNeeded) {
+      const isF64   = elemType === "f64";
+      const shift   = isF64 ? 3 : 2;
+      const loadOp  = isF64 ? "f64.load"  : "i32.load";
+      const storeOp = isF64 ? "f64.store" : "i32.store";
+      parts.push(`  ;; Dynamic array grow_${elemType}: malloc new block of newcap elements, copy data, return new ptr.
+  (func $__dynarr_grow_${elemType} (param $arr i32) (param $newcap i32) (result i32)
+    (local $newptr i32)
+    (local $len i32)
+    (local $i i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (local.set $newptr (call $__malloc (i32.add (i32.const 8) (i32.shl (local.get $newcap) (i32.const ${shift})))))
+    (i32.store (local.get $newptr) (local.get $len))
+    (i32.store offset=4 (local.get $newptr) (local.get $newcap))
+    (local.set $i (i32.const 0))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.ge_u (local.get $i) (local.get $len)))
+        (${storeOp}
+          (i32.add (i32.add (local.get $newptr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift})))
+          (${loadOp}
+            (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift})))
+          )
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)
+      )
+    )
+    (local.get $newptr)
+  )`);
+    }
+
+    // Emit only the helpers actually used in this module.
+    for (const key of this.dynArrHelpers) {
+      const [method, elemType] = key.split("_") as [string, WatType];
+      const isF64   = elemType === "f64";
+      const shift   = isF64 ? 3 : 2;
+      const loadOp  = isF64 ? "f64.load"  : "i32.load";
+      const storeOp = isF64 ? "f64.store" : "i32.store";
+      const valType = isF64 ? "f64" : "i32";
+      const name    = `$__dynarr_${key}`;
+
+      if (method === "push") {
+        parts.push(`  ;; Dynamic array push_${elemType}: grow if full, store val at end, increment length, return new arr ptr.
+  (func ${name} (param $arr i32) (param $val ${valType}) (result i32)
+    (local $len i32)
+    (local $cap i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (local.set $cap (i32.load offset=4 (local.get $arr)))
+    (if (i32.ge_u (local.get $len) (local.get $cap))
+      (then
+        (local.set $arr (call $__dynarr_grow_${elemType} (local.get $arr) (i32.shl (local.get $cap) (i32.const 1))))
+      )
+    )
+    (${storeOp}
+      (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $len) (i32.const ${shift})))
+      (local.get $val)
+    )
+    (local.set $len (i32.add (local.get $len) (i32.const 1)))
+    (i32.store (local.get $arr) (local.get $len))
+    (local.get $arr)
+  )`);
+      } else if (method === "pop") {
+        parts.push(`  ;; Dynamic array pop_${elemType}: decrement length, return last element. Traps if empty.
+  (func ${name} (param $arr i32) (result ${valType})
+    (local $newlen i32)
+    (if (i32.eqz (i32.load (local.get $arr))) (then (unreachable)))
+    (local.set $newlen (i32.sub (i32.load (local.get $arr)) (i32.const 1)))
+    (i32.store (local.get $arr) (local.get $newlen))
+    (${loadOp}
+      (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $newlen) (i32.const ${shift})))
+    )
+  )`);
+      } else if (method === "shift") {
+        parts.push(`  ;; Dynamic array shift_${elemType}: return first element, shift remainder left. Traps if empty.
+  (func ${name} (param $arr i32) (result ${valType})
+    (local $len i32)
+    (local $val ${valType})
+    (local $i i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (if (i32.eqz (local.get $len)) (then (unreachable)))
+    (local.set $val (${loadOp} offset=8 (local.get $arr)))
+    (local.set $i (i32.const 0))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.ge_u (local.get $i) (i32.sub (local.get $len) (i32.const 1))))
+        (${storeOp}
+          (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift})))
+          (${loadOp}
+            (i32.add (i32.add (local.get $arr) (i32.const 8))
+              (i32.shl (i32.add (local.get $i) (i32.const 1)) (i32.const ${shift})))
+          )
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)
+      )
+    )
+    (i32.store (local.get $arr) (i32.sub (local.get $len) (i32.const 1)))
+    (local.get $val)
+  )`);
+      } else if (method === "unshift") {
+        parts.push(`  ;; Dynamic array unshift_${elemType}: grow if full, insert val at front, shift elements right, return new arr ptr.
+  (func ${name} (param $arr i32) (param $val ${valType}) (result i32)
+    (local $len i32)
+    (local $cap i32)
+    (local $i i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (local.set $cap (i32.load offset=4 (local.get $arr)))
+    (if (i32.ge_u (local.get $len) (local.get $cap))
+      (then
+        (local.set $arr (call $__dynarr_grow_${elemType} (local.get $arr) (i32.shl (local.get $cap) (i32.const 1))))
+      )
+    )
+    (local.set $i (local.get $len))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.eqz (local.get $i)))
+        (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+        (${storeOp}
+          (i32.add (i32.add (local.get $arr) (i32.const 8))
+            (i32.shl (i32.add (local.get $i) (i32.const 1)) (i32.const ${shift})))
+          (${loadOp}
+            (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift})))
+          )
+        )
+        (br $lp)
+      )
+    )
+    (${storeOp} offset=8 (local.get $arr) (local.get $val))
+    (local.set $len (i32.add (local.get $len) (i32.const 1)))
+    (i32.store (local.get $arr) (local.get $len))
+    (local.get $arr)
+  )`);
+      }
+    }
+    return parts.join("\n\n");
   }
 
   private getStringHelperWat(): string {
@@ -2799,6 +3054,9 @@ class WasicTranspiler {
     // _start is always exported (IIFE pattern parses it with exported=false, but WASI requires it)
     const exportAttr = (fn.exported || fn.name === "_start") ? `(export "${fn.name}") ` : "";
 
+    // Phase 10b: identify arrays that need dynamic (heap) layout because push/pop/shift/unshift are called.
+    const dynamicArrayNames = this.findDynamicArrays(fn.bodyLines);
+
     // Pre-scan body for var/let/const declarations to emit WAT locals.
     // String variables expand to two i32 locals: $name_ptr and $name_len.
     const declaredLocals: [string, WatType][] = [];
@@ -2851,7 +3109,7 @@ class WasicTranspiler {
           continue;
         }
       }
-      // Array literal declaration: allocate static memory, track as i32 pointer
+      // Array literal declaration: allocate static memory or (for dynamic arrays) heap.
       const arrPre = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+)\[\])?\s*=\s*\[([^\]]*)\]/);
       if (arrPre) {
         const varName = arrPre[1];
@@ -2860,8 +3118,14 @@ class WasicTranspiler {
         const elements = elemsStr.split(",").map(e => e.trim()).filter(e => e.length > 0);
         const elemType: WatType = typeHint ? mapType(typeHint) as WatType
           : elements.some(e => /[.]/.test(e) && !/^-?\d+n?$/.test(e)) ? "f64" : "i32";
-        const ptr = this.allocArrayData(elements, elemType);
-        this.arrayVars.set(varName, { elemType, ptr, length: elements.length });
+        if (dynamicArrayNames.has(varName)) {
+          // Dynamic array: runtime malloc with [length, capacity] header. ptr=-2 signals heap layout.
+          const capacity = Math.max(elements.length * 2, 8);
+          this.arrayVars.set(varName, { elemType, ptr: -2, length: elements.length, dynamic: true, capacity, initElements: elements });
+        } else {
+          const ptr = this.allocArrayData(elements, elemType);
+          this.arrayVars.set(varName, { elemType, ptr, length: elements.length });
+        }
         declaredLocals.push([varName, "i32"]);
         locals.set(varName, "i32");
         continue;
@@ -3033,9 +3297,34 @@ class WasicTranspiler {
     } else if (this.startBodyLines.length > 0) {
       // Pre-scan for var/let/const so WAT locals are declared at the top of _start.
       // String variables expand to two i32 locals ($name_ptr, $name_len).
+      // Reset per-function state so dynamic array helpers work for top-level code.
+      this.arrayVars  = new Map();
+      this.structVars = new Map();
+      this.classVars  = new Map();
+      const startDynArrayNames = this.findDynamicArrays(this.startBodyLines);
       const startLocals = new Map<string, WatType>();
       const startDeclaredLocals: [string, WatType][] = [];
       for (const line of this.startBodyLines) {
+        // Array literal declaration — mirrors emitFunction pre-scan
+        const arrPre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+)\[\])?\s*=\s*\[([^\]]*)\]/);
+        if (arrPre2) {
+          const varName2  = arrPre2[1];
+          const typeHint2 = arrPre2[2] ?? "";
+          const elemsStr2 = arrPre2[3] ?? "";
+          const elements2 = elemsStr2.split(",").map(e => e.trim()).filter(e => e.length > 0);
+          const elemType2: WatType = typeHint2 ? mapType(typeHint2) as WatType
+            : elements2.some(e => /[.]/.test(e) && !/^-?\d+n?$/.test(e)) ? "f64" : "i32";
+          if (startDynArrayNames.has(varName2)) {
+            const capacity2 = Math.max(elements2.length * 2, 8);
+            this.arrayVars.set(varName2, { elemType: elemType2, ptr: -2, length: elements2.length, dynamic: true, capacity: capacity2, initElements: elements2 });
+          } else {
+            const ptr2 = this.allocArrayData(elements2, elemType2);
+            this.arrayVars.set(varName2, { elemType: elemType2, ptr: ptr2, length: elements2.length });
+          }
+          startLocals.set(varName2, "i32");
+          startDeclaredLocals.push([varName2, "i32"]);
+          continue;
+        }
         const m = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+))?\s*(?:=\s*(.+?))?;?$/);
         if (m) {
           const typeStr = m[2] ?? "";

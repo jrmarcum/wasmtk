@@ -67,8 +67,10 @@ export type FuncLookup = (name: string) => {
  */
 export type DataAllocator = (text: string) => [offset: number, byteLen: number];
 
-/** Callback to resolve an array variable by name: returns its element type, base ptr, and length. */
-export type ArrayLookup = (name: string) => { elemType: string; ptr: number; length: number } | undefined;
+/** Callback to resolve an array variable by name: returns its element type, base ptr, and length.
+ *  ptr=-1 means runtime local (param). ptr=-2 means dynamic heap array (local with 8-byte header).
+ *  dynamic=true means the array has a [length, capacity] header at its pointer. */
+export type ArrayLookup = (name: string) => { elemType: string; ptr: number; length: number; dynamic?: boolean } | undefined;
 
 /**
  * Callback to resolve a struct field access `varName.fieldName`.
@@ -268,22 +270,30 @@ function parseSingleArg(
   if (bracketMatch && arrayLookup) {
     const arrInfo = arrayLookup(bracketMatch[1]);
     if (arrInfo) {
-      const loadOp = arrInfo.elemType === "f64" ? "f64.load"
-                   : arrInfo.elemType === "i64" ? "i64.load" : "i32.load";
-      const shift  = (arrInfo.elemType === "f64" || arrInfo.elemType === "i64") ? 3 : 2;
-      const idxWat = exprToWat(bracketMatch[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup);
-      const wat    = `(${loadOp} (i32.add (local.get $${bracketMatch[1]}) (i32.shl ${idxWat} (i32.const ${shift}))))`;
-      const kind   = arrInfo.elemType === "f64" ? "f64expr" as const
-                   : arrInfo.elemType === "i64" ? "i64expr" as const : "i32expr" as const;
+      const loadOp  = arrInfo.elemType === "f64" ? "f64.load"
+                    : arrInfo.elemType === "i64" ? "i64.load" : "i32.load";
+      const shift   = (arrInfo.elemType === "f64" || arrInfo.elemType === "i64") ? 3 : 2;
+      const idxWat  = exprToWat(bracketMatch[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup);
+      // Dynamic arrays (ptr=-2) have a [length, capacity] header at the pointer; data starts at +8.
+      const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic) ? `(local.get $${bracketMatch[1]})` : `(i32.const ${arrInfo.ptr})`;
+      const dataBase = arrInfo.dynamic ? `(i32.add ${baseWat} (i32.const 8))` : baseWat;
+      const wat     = `(${loadOp} (i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift}))))`;
+      const kind    = arrInfo.elemType === "f64" ? "f64expr" as const
+                    : arrInfo.elemType === "i64" ? "i64expr" as const : "i32expr" as const;
       return [{ kind, wat }];
     }
   }
 
-  // ── Array .length: arr.length → compile-time i32 constant
+  // ── Array .length: dynamic → runtime i32 load from header; static → compile-time constant
   const dotLenMatch = token.match(/^(\w+)\.length$/);
   if (dotLenMatch && arrayLookup) {
     const arrInfo = arrayLookup(dotLenMatch[1]);
-    if (arrInfo) return [{ kind: "i32expr", wat: `(i32.const ${arrInfo.length})` }];
+    if (arrInfo) {
+      const wat = arrInfo.dynamic
+        ? `(i32.load (local.get $${dotLenMatch[1]}))`
+        : `(i32.const ${arrInfo.length})`;
+      return [{ kind: "i32expr", wat }];
+    }
   }
 
   // ── Math.* — route to correct kind based on return type
@@ -404,11 +414,11 @@ function exprToWat(
   // Bigint literal: 5n → (i64.const 5)  (must come before identifier check: /^\w+$/ matches "5n")
   if (/^-?\d+n$/.test(expr)) return `(i64.const ${expr.slice(0, -1)})`;
 
-  // Array .length: arr.length → compile-time constant
+  // Array .length: dynamic → runtime i32 load from header; static → compile-time constant
   const dotLenM = expr.match(/^(\w+)\.length$/);
   if (dotLenM && arrayLookup) {
     const ai = arrayLookup(dotLenM[1]);
-    if (ai) return `(i32.const ${ai.length})`;
+    if (ai) return ai.dynamic ? `(i32.load (local.get $${dotLenM[1]}))` : `(i32.const ${ai.length})`;
   }
 
   // Array element read: arr[idx]
@@ -416,11 +426,13 @@ function exprToWat(
   if (bracketM && arrayLookup) {
     const ai = arrayLookup(bracketM[1]);
     if (ai) {
-      const loadOp = ai.elemType === "f64" ? "f64.load" : ai.elemType === "i64" ? "i64.load" : "i32.load";
+      const loadOp  = ai.elemType === "f64" ? "f64.load" : ai.elemType === "i64" ? "i64.load" : "i32.load";
       const shift   = (ai.elemType === "f64" || ai.elemType === "i64") ? 3 : 2;
       const idxWat  = exprToWat(bracketM[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup);
-      const baseWat = ai.ptr === -1 ? `(local.get $${bracketM[1]})` : `(i32.const ${ai.ptr})`;
-      return `(${loadOp} (i32.add ${baseWat} (i32.shl ${idxWat} (i32.const ${shift}))))`;
+      // Dynamic arrays have a [length, capacity] header; data starts at ptr+8.
+      const baseWat = (ai.ptr === -1 || ai.dynamic) ? `(local.get $${bracketM[1]})` : `(i32.const ${ai.ptr})`;
+      const dataBase = ai.dynamic ? `(i32.add ${baseWat} (i32.const 8))` : baseWat;
+      return `(${loadOp} (i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift}))))`;
     }
   }
 
@@ -672,82 +684,221 @@ export function emitConsoleLog(
   indent = "    ",
   fd = 1
 ): { statements: string[]; needsHelpers: boolean } {
+  // Step 1: merge consecutive literal segments to minimise iov count.
+  // e.g. [{literal,"x: "},{literal," "},{literal,"\n"}] → [{literal,"x:  \n"}]
+  const merged: LogSegment[] = [];
+  for (const seg of segments) {
+    const last = merged[merged.length - 1];
+    if (seg.kind === "literal" && last?.kind === "literal") {
+      merged[merged.length - 1] = { kind: "literal", text: last.text + seg.text };
+    } else {
+      merged.push({ ...seg } as LogSegment);
+    }
+  }
+
+  // Step 2: detect a standalone trailing "\n" so we can absorb it inline.
+  const numericKinds = new Set(["i32var","i64var","f64var","i32expr","i64expr","f64expr"]);
+  const trailingLitNL =
+    merged.length >= 2 &&
+    merged[merged.length - 1].kind === "literal" &&
+    (merged[merged.length - 1] as { kind: "literal"; text: string }).text === "\n";
+  const canInlineNL = trailingLitNL && numericKinds.has(merged[merged.length - 2].kind);
+
+  // Active segments to process (strip standalone "\n" when we will inline it).
+  const activeSegs = (trailingLitNL && canInlineNL) ? merged.slice(0, -1) : merged;
+
+  // Step 3: decide emit strategy.
+  // Gather mode consolidates ALL output into scratch (SCRATCH_BASE...) and emits a
+  // single fd_write iov — needed because wasmtime 43 only processes the first iov.
+  // Gather works for literal + numeric segments; strvar/bool fall back to per-iov.
+  const gatherable = (s: LogSegment) =>
+    s.kind === "literal" || numericKinds.has(s.kind);
+  const useGather = activeSegs.length > 1 && activeSegs.every(gatherable);
+
   const statements: string[] = [];
-  let numericSlot = 0;
   let needsHelpers = false;
 
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i];
-    const iovPtr = IOV_BASE + i * 8;      // iov[i].buf  (i32)
-    const iovLen = IOV_BASE + i * 8 + 4;  // iov[i].buf_len (i32)
+  if (useGather) {
+    // ── Gather-buffer mode ────────────────────────────────────────────────────
+    // iov[0].ptr (IOV_BASE+0) = SCRATCH_BASE  (set once)
+    // iov[0].len (IOV_BASE+4) doubles as the running cursor into scratch.
+    const cursorAddr = IOV_BASE + 4;
+    statements.push(
+      `${indent}(i32.store (i32.const ${IOV_BASE}) (i32.const ${SCRATCH_BASE}))`,
+      `${indent}(i32.store (i32.const ${cursorAddr}) (i32.const 0))`,
+    );
 
-    if (seg.kind === "literal") {
-      const [offset, len] = allocString(seg.text);
+    let compileCursor = 0;   // byte offset from SCRATCH_BASE, valid until first numeric
+    let runtimeCursor = false; // true after the first numeric (cursor only in mem[cursorAddr])
+
+    for (const seg of activeSegs) {
+      if (seg.kind === "literal") {
+        const bytes = Array.from(new TextEncoder().encode(seg.text));
+        if (!runtimeCursor) {
+          // Compile-time position: fixed-address stores
+          for (let j = 0; j < bytes.length; j++) {
+            statements.push(
+              `${indent}(i32.store8 (i32.const ${SCRATCH_BASE + compileCursor + j}) (i32.const ${bytes[j]}))`,
+            );
+          }
+          compileCursor += bytes.length;
+        } else {
+          // Runtime position: cursor-relative stores then advance cursor
+          for (let j = 0; j < bytes.length; j++) {
+            statements.push(
+              `${indent}(i32.store8 (i32.add (i32.const ${SCRATCH_BASE}) (i32.add (i32.load (i32.const ${cursorAddr})) (i32.const ${j}))) (i32.const ${bytes[j]}))`,
+            );
+          }
+          if (bytes.length > 0) {
+            statements.push(
+              `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.load (i32.const ${cursorAddr})) (i32.const ${bytes.length})))`,
+            );
+          }
+        }
+      } else {
+        // Numeric segment — convert directly into scratch at current cursor position
+        needsHelpers = true;
+        const destExpr = runtimeCursor
+          ? `(i32.add (i32.const ${SCRATCH_BASE}) (i32.load (i32.const ${cursorAddr})))`
+          : `(i32.const ${SCRATCH_BASE + compileCursor})`;
+
+        let callExpr: string;
+        if (seg.kind === "i32var") {
+          callExpr = `(call $__i32_to_str (local.get $${seg.name}) ${destExpr})`;
+        } else if (seg.kind === "i64var") {
+          callExpr = `(call $__i64_to_str (local.get $${seg.name}) ${destExpr})`;
+        } else if (seg.kind === "f64var") {
+          callExpr = `(call $__f64_to_str (local.get $${seg.name}) ${destExpr})`;
+        } else if (seg.kind === "i32expr") {
+          callExpr = `(call $__i32_to_str ${seg.wat} ${destExpr})`;
+        } else if (seg.kind === "i64expr") {
+          callExpr = `(call $__i64_to_str ${seg.wat} ${destExpr})`;
+        } else {
+          callExpr = `(call $__f64_to_str ${seg.wat} ${destExpr})`;
+        }
+
+        if (!runtimeCursor) {
+          // cursor = compileCursor + result_of_call
+          statements.push(
+            `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.const ${compileCursor}) ${callExpr}))`,
+          );
+          runtimeCursor = true;
+        } else {
+          // cursor = cursor + result_of_call
+          statements.push(
+            `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.load (i32.const ${cursorAddr})) ${callExpr}))`,
+          );
+        }
+      }
+    }
+
+    // Inline the trailing newline into scratch
+    if (canInlineNL) {
       statements.push(
-        `${indent}(i32.store (i32.const ${iovPtr}) (i32.const ${offset}))`,
-        `${indent}(i32.store (i32.const ${iovLen}) (i32.const ${len}))`,
+        `${indent}(i32.store8 (i32.add (i32.const ${SCRATCH_BASE}) (i32.load (i32.const ${cursorAddr}))) (i32.const 10))`,
+        `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.load (i32.const ${cursorAddr})) (i32.const 1)))`,
       );
-    } else if (seg.kind === "strvar") {
-      // String variable: ptr and len are already in i32 locals — no scratch slot needed
-      statements.push(
-        `${indent}(i32.store (i32.const ${iovPtr}) (local.get $${seg.ptrLocal}))`,
-        `${indent}(i32.store (i32.const ${iovLen}) (local.get $${seg.lenLocal}))`,
-      );
-    } else if (seg.kind === "boolvar" || seg.kind === "boolexpr") {
-      // Boolean segment: select "true"/"false" string at runtime — no scratch slot needed
-      const [trueOff]  = allocString("true");
-      const [falseOff] = allocString("false");
-      const val = seg.kind === "boolvar" ? `(local.get $${seg.name})` : seg.wat;
-      statements.push(
-        `${indent}(i32.store (i32.const ${iovPtr}) (if (result i32) ${val} (then (i32.const ${trueOff})) (else (i32.const ${falseOff}))))`,
-        `${indent}(i32.store (i32.const ${iovLen}) (if (result i32) ${val} (then (i32.const 4)) (else (i32.const 5))))`,
-      );
-    } else {
-      // Numeric segment — write to scratch slot, store dynamic length in iov
-      if (numericSlot >= SCRATCH_SLOTS) {
-        // Overflow: fall back to a placeholder literal
-        const [offset, len] = allocString("?");
+    }
+
+    // Single fd_write — iov[0].ptr is SCRATCH_BASE, iov[0].len is the cursor value
+    statements.push(
+      `${indent}(drop (call $fd_write`,
+      `${indent}  (i32.const ${fd})`,
+      `${indent}  (i32.const ${IOV_BASE})`,
+      `${indent}  (i32.const 1)`,
+      `${indent}  (i32.const ${NWRITTEN_OFFSET})))`,
+    );
+  } else {
+    // ── Per-iov mode (single active segment, or strvar/bool segments) ─────────
+    let numericSlot = 0;
+    let lastNumericScratch = -1;
+    let lastNumericIovLen  = -1;
+
+    for (let i = 0; i < activeSegs.length; i++) {
+      const seg = activeSegs[i];
+      const iovPtr = IOV_BASE + i * 8;      // iov[i].buf  (i32)
+      const iovLen = IOV_BASE + i * 8 + 4;  // iov[i].buf_len (i32)
+
+      if (seg.kind === "literal") {
+        const [offset, len] = allocString(seg.text);
         statements.push(
           `${indent}(i32.store (i32.const ${iovPtr}) (i32.const ${offset}))`,
           `${indent}(i32.store (i32.const ${iovLen}) (i32.const ${len}))`,
         );
-        continue;
-      }
-
-      needsHelpers = true;
-      const scratchPtr = SCRATCH_BASE + numericSlot * 32;
-      numericSlot++;
-
-      let callExpr: string;
-      if (seg.kind === "i32var") {
-        callExpr = `(call $__i32_to_str (local.get $${seg.name}) (i32.const ${scratchPtr}))`;
-      } else if (seg.kind === "i64var") {
-        callExpr = `(call $__i64_to_str (local.get $${seg.name}) (i32.const ${scratchPtr}))`;
-      } else if (seg.kind === "f64var") {
-        callExpr = `(call $__f64_to_str (local.get $${seg.name}) (i32.const ${scratchPtr}))`;
-      } else if (seg.kind === "i32expr") {
-        callExpr = `(call $__i32_to_str ${seg.wat} (i32.const ${scratchPtr}))`;
-      } else if (seg.kind === "i64expr") {
-        callExpr = `(call $__i64_to_str ${seg.wat} (i32.const ${scratchPtr}))`;
+        lastNumericScratch = -1;
+        lastNumericIovLen  = -1;
+      } else if (seg.kind === "strvar") {
+        statements.push(
+          `${indent}(i32.store (i32.const ${iovPtr}) (local.get $${seg.ptrLocal}))`,
+          `${indent}(i32.store (i32.const ${iovLen}) (local.get $${seg.lenLocal}))`,
+        );
+        lastNumericScratch = -1;
+        lastNumericIovLen  = -1;
+      } else if (seg.kind === "boolvar" || seg.kind === "boolexpr") {
+        const [trueOff]  = allocString("true");
+        const [falseOff] = allocString("false");
+        const val = seg.kind === "boolvar" ? `(local.get $${seg.name})` : seg.wat;
+        statements.push(
+          `${indent}(i32.store (i32.const ${iovPtr}) (if (result i32) ${val} (then (i32.const ${trueOff})) (else (i32.const ${falseOff}))))`,
+          `${indent}(i32.store (i32.const ${iovLen}) (if (result i32) ${val} (then (i32.const 4)) (else (i32.const 5))))`,
+        );
+        lastNumericScratch = -1;
+        lastNumericIovLen  = -1;
       } else {
-        callExpr = `(call $__f64_to_str ${seg.wat} (i32.const ${scratchPtr}))`;
-      }
+        // Numeric segment
+        if (numericSlot >= SCRATCH_SLOTS) {
+          const [offset, len] = allocString("?");
+          statements.push(
+            `${indent}(i32.store (i32.const ${iovPtr}) (i32.const ${offset}))`,
+            `${indent}(i32.store (i32.const ${iovLen}) (i32.const ${len}))`,
+          );
+          continue;
+        }
 
+        needsHelpers = true;
+        const scratchPtr = SCRATCH_BASE + numericSlot * 32;
+        numericSlot++;
+
+        let callExpr: string;
+        if (seg.kind === "i32var") {
+          callExpr = `(call $__i32_to_str (local.get $${seg.name}) (i32.const ${scratchPtr}))`;
+        } else if (seg.kind === "i64var") {
+          callExpr = `(call $__i64_to_str (local.get $${seg.name}) (i32.const ${scratchPtr}))`;
+        } else if (seg.kind === "f64var") {
+          callExpr = `(call $__f64_to_str (local.get $${seg.name}) (i32.const ${scratchPtr}))`;
+        } else if (seg.kind === "i32expr") {
+          callExpr = `(call $__i32_to_str ${seg.wat} (i32.const ${scratchPtr}))`;
+        } else if (seg.kind === "i64expr") {
+          callExpr = `(call $__i64_to_str ${seg.wat} (i32.const ${scratchPtr}))`;
+        } else {
+          callExpr = `(call $__f64_to_str ${seg.wat} (i32.const ${scratchPtr}))`;
+        }
+
+        statements.push(
+          `${indent}(i32.store (i32.const ${iovPtr}) (i32.const ${scratchPtr}))`,
+          `${indent}(i32.store (i32.const ${iovLen}) ${callExpr})`,
+        );
+        lastNumericScratch = scratchPtr;
+        lastNumericIovLen  = iovLen;
+      }
+    }
+
+    // Inline the newline byte into the last numeric scratch buffer.
+    if (canInlineNL && lastNumericScratch >= 0) {
       statements.push(
-        `${indent}(i32.store (i32.const ${iovPtr}) (i32.const ${scratchPtr}))`,
-        `${indent}(i32.store (i32.const ${iovLen}) ${callExpr})`,
+        `${indent}(i32.store8 (i32.add (i32.const ${lastNumericScratch}) (i32.load (i32.const ${lastNumericIovLen}))) (i32.const 10))`,
+        `${indent}(i32.store (i32.const ${lastNumericIovLen}) (i32.add (i32.load (i32.const ${lastNumericIovLen})) (i32.const 1)))`,
       );
     }
-  }
 
-  // Single fd_write call covering all iovecs
-  statements.push(
-    `${indent}(drop (call $fd_write`,
-    `${indent}  (i32.const ${fd})`,
-    `${indent}  (i32.const ${IOV_BASE})`,
-    `${indent}  (i32.const ${segments.length})`,
-    `${indent}  (i32.const ${NWRITTEN_OFFSET})))`,
-  );
+    statements.push(
+      `${indent}(drop (call $fd_write`,
+      `${indent}  (i32.const ${fd})`,
+      `${indent}  (i32.const ${IOV_BASE})`,
+      `${indent}  (i32.const ${activeSegs.length})`,
+      `${indent}  (i32.const ${NWRITTEN_OFFSET})))`,
+    );
+  }
 
   return { statements, needsHelpers };
 }

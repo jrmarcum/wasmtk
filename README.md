@@ -114,9 +114,14 @@ wasmtk run myprogram.wasm
 
 | Feature | Notes |
 | --- | --- |
-| Numeric arrays | `i32[]`, `f64[]` — statically allocated in linear memory |
-| Element access | `arr[i]`, `arr[i] = v` |
-| Length | `arr.length` |
+| Static numeric arrays | `i32[]`, `f64[]` — literal initializer, elements baked into the data section |
+| Dynamic numeric arrays | `i32[]`, `f64[]` — heap-allocated when `push`/`pop`/`shift`/`unshift` are detected |
+| Element access | `arr[i]`, `arr[i] = v` — works on both static and dynamic arrays |
+| Length | `arr.length` — compile-time constant for static; runtime load for dynamic |
+| `push(val)` | Appends a value; grows array automatically if at capacity (cap × 2 realloc) |
+| `pop()` | Removes and returns the last element; decrements length |
+| `shift()` | Removes and returns the first element; shifts remaining elements left |
+| `unshift(val)` | Inserts a value at the front; shifts elements right; grows array automatically if at capacity |
 | Array parameters | Passed as i32 pointer to the array's memory region |
 
 ##### Structs & Objects
@@ -180,7 +185,9 @@ export function _start() { ... }
 | --- | --- |
 | Bump allocator | `$__malloc(size: i32): i32` — advances `$__heap_ptr` and returns the old value |
 | Heap start | Initialized immediately after the static data section; at least 1 extra 64 KB page reserved |
-| Unused-code elimination | Binaryen `-Oz` strips `$__malloc` from the binary when it is never called |
+| Dynamic array layout | `[length: i32][capacity: i32][elem0][elem1]...` — 8-byte header precedes element data |
+| Initial capacity | `max(initialLength × 2, 8)` elements pre-allocated; grows automatically on overflow (`cap × 2` realloc via `$__dynarr_grow_T`) |
+| Unused-code elimination | Binaryen `-Oz` strips `$__malloc` and unused array helpers from the binary automatically |
 
 #### Classes
 
@@ -202,7 +209,6 @@ export function _start() { ... }
 | Feature | Status |
 | --- | --- |
 | Class inheritance (`extends`) | Deferred — virtual dispatch via vtable requires heap |
-| Dynamic arrays (`push`/`pop`/`shift`/`unshift`) | Phase 10b — dynamic array header + realloc-and-copy |
 | String operations (concat, slice, indexOf) | Phase 11 |
 | Array methods (map, filter, forEach, reduce) | Phase 12 |
 | Rest parameters / spread | Phase 13 |
@@ -357,12 +363,13 @@ The `wasic` direct compiler is developed incrementally. Each phase adds a self-c
 | 8 | Import bundler (`tsbundler.ts`) | Relative import resolution, module-prefix name mangling, alias (`as`) rewriting, chained imports, deduplication |
 | 9 | Classes | `class` declarations desugared to struct layout + `ClassName_method` prefixed functions; `this` → hidden `__self: i32` param; `new ClassName()` → static alloc + constructor call; instance/static method dispatch; dot-call expressions in `console.log` args |
 | 10a | Bump allocator | `$__heap_ptr` mutable global initialized to end of static data; `$__malloc(size)` advances and returns old ptr; 1 extra memory page reserved; Binaryen -Oz strips it when unused |
+| 10b | Dynamic arrays | `push` / `pop` / `shift` / `unshift` on `i32[]` and `f64[]`; heap layout `[length i32][capacity i32][elem...]`; auto-detected by pre-scan; per-type WAT helpers emitted on demand; capacity = `max(n × 2, 8)` |
+| 10c | Dynamic array growth | `push` / `unshift` grow on overflow: `$__dynarr_grow_T` mallocates new block (`cap × 2`), copies elements, returns new ptr; helpers return new array ptr so callers `local.set` their pointer; old block becomes dead memory (bump allocator has no free) |
 
 ### Planned Phases
 
 | Phase | Feature | Description |
 | --- | --- | --- |
-| 10b | Dynamic arrays | `push` / `pop` / `shift` / `unshift` — dynamic array header (ptr, length, capacity) with realloc-and-copy growth; uses `$__malloc` |
 | 11 | String operations | `str + str`, `slice`, `indexOf`, `includes`, `String(n)` — requires Phase 10 heap |
 | 12 | Array methods | `forEach`, `map`, `filter`, `find`, `slice`, `indexOf`, `reduce` — requires Phase 10 |
 | 13 | Rest parameters / spread | `function f(...args: i32[])`, `[...a, ...b]`, spread call `f(...arr)` |
