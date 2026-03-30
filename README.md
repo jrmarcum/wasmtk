@@ -199,8 +199,13 @@ The bundler pre-pass (`tsbundler.ts`) runs before compilation and merges all imp
 | --- | --- |
 | Named imports | `import { foo, bar } from "./lib.ts"` |
 | Import aliases | `import { foo as f } from "./lib.ts"` — alias is a compile-time rewrite |
+| Default imports | `import foo from "./lib.ts"` — `foo` rewrites to the module's default export |
+| Namespace imports | `import * as ns from "./lib.ts"` — `ns.foo` rewrites to `lib_foo` |
 | Type-only imports | `import type { Foo } from "./lib.ts"` — stripped |
 | Side-effect imports | `import "./lib.ts"` |
+| Named re-exports | `export { foo } from "./lib.ts"` — bubbles `lib_foo` into this module's export map |
+| Wildcard re-exports | `export * from "./lib.ts"` — all of lib's exports become this module's exports |
+| Default exports | `export default function foo()` — exposed as `"default"` in the export map |
 | Chained imports | lib A imports lib B imports lib C — resolved recursively |
 | Name mangling | Same-named symbols across modules are prefixed: `lib_foo`, `other_foo` — no collision |
 | Deduplication | Circular / duplicate imports are silently resolved (first occurrence wins) |
@@ -411,12 +416,12 @@ The `wasic` direct compiler is developed incrementally. Each phase adds a self-c
 | 13 | Rest parameters / spread | `function f(...args: i32[])` — rest param receives heap array pointer; literal call sites build temp array via `$__malloc`; `f(...arr)` passes existing dynamic array pointer directly; `[...a, ...b]` concat via `$__dynarr_concat_T`; spread-source arrays auto-promoted to dynamic layout by `findDynamicArrays` |
 | 14 | Generics (monomorphization) | `function f<T>(x: T): T` — one concrete copy per distinct type; `interface Box<T> { value: T; }` → `Box_i32`, `Box_f64`, etc.; explicit type args (`f<i32>(x)`) and single-T literal inference (`f(42)` → `f_i32`); generic struct refs in function signatures rewritten automatically; source-level `expandGenerics()` pre-pass runs before all other parsing |
 | 15 | Exception handling | `throw new Error("msg")` / `throw str` → `(throw $__exn_tag ptr len)`; `try/catch(e)/finally` via WAT exceptions proposal; `(tag $__exn_tag (param i32 i32))` payload carries `(ptr, len)` string pair; `e` / `e.message` in catch bound as string locals; `exceptions: true` in wabt options; `binMod.setFeatures(Features.All)` before Binaryen `-Oz` to preserve exception sections |
+| 16 | Module system extras | Default imports (`import foo from "./lib.ts"`); namespace imports (`import * as ns from "./lib.ts"`) with `ns.name` → `lib_name` rewriting; named re-exports (`export { foo } from "./lib.ts"`); wildcard re-exports (`export * from "./lib.ts"`); `export default function`; `exportRenamesCache` to resolve re-export chains across already-visited files; `applyRenames` updated to escape regex metacharacters (enabling dotted-key `ns.foo` rewrites) |
 
 ### Planned Phases
 
 | Phase | Feature | Description |
 | --- | --- | --- |
-| 16 | Module system extras | Re-exports (`export { x } from "./lib.ts"`), default exports, namespace imports (`import * as m`) |
 | 17 | wasic library mode | `modc` backend: drop WASI scaffolding, emit pure WASM library — replaces AssemblyScript for `wasmtk modc` |
 | 18 | WASM import bundling | Import pre-compiled `.wasm` modules directly: `import { add } from "./math.wasm"` — WAT-level merge with module-prefix mangling |
 

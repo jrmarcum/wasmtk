@@ -23,16 +23,29 @@
  *
  * ## Supported import forms (single-line)
  *
- *   import { foo, bar }           from "./path.ts"
- *   import { foo as f, bar as b } from "./path.ts"
- *   import type { Foo }           from "./path.ts"
- *   import "./path.ts"
+ *   import { foo, bar }             from "./path.ts"   — named imports
+ *   import { foo as f, bar as b }   from "./path.ts"   — aliased named imports
+ *   import defaultExport            from "./path.ts"   — default import
+ *   import * as ns                  from "./path.ts"   — namespace import
+ *   import defaultExport, { foo }   from "./path.ts"   — default + named
+ *   import type { Foo }             from "./path.ts"   — type-only (erased)
+ *   import "./path.ts"                                 — side-effect import
+ *
+ * ## Supported export forms (non-entry files)
+ *
+ *   export function foo() {}                           — named function export
+ *   export const x = 1                                 — named const export
+ *   export default function foo() {}                   — default export
+ *   export { foo } from "./lib.ts"                     — named re-export
+ *   export { foo as bar } from "./lib.ts"              — aliased re-export
+ *   export * from "./lib.ts"                           — wildcard re-export
  *
  * Non-relative specifiers (jsr:, npm:, https://) are left in place and will
  * surface as unsupported-feature warnings from the transpiler.
  *
  * Circular and duplicate imports are detected via a visited-path set and
- * silently deduplicated (first occurrence wins).
+ * silently deduplicated (first occurrence wins).  Export rename maps are cached
+ * separately so re-exports can resolve names from already-visited files.
  *
  * ## Limitation
  * Multiline import blocks (opening `{` on a separate line) are not yet
@@ -96,11 +109,38 @@ function parseNamedImports(clause: string, prefix: string): Map<string, string> 
 }
 
 /**
- * Applies a rename map to a source string using whole-word (`\b`) boundaries,
- * so that e.g. renaming "add" does not affect "addOne" or "readd".
+ * Parses a named clause `{ foo, bar as baz }` and returns a map of
+ * **local/alias name → original name** (without any prefix applied).
+ * Used when resolving re-exports against a child's exportRenames.
+ */
+function parseClauseNames(clause: string): Map<string, string> {
+  const inner = clause.replace(/^\{|\}$/g, "").trim();
+  const map = new Map<string, string>();
+  if (!inner) return map;
+  for (const part of inner.split(",")) {
+    const spec = part.trim();
+    if (!spec) continue;
+    const asMatch = spec.match(/^(\w+)\s+as\s+(\w+)$/);
+    if (asMatch) {
+      map.set(asMatch[2], asMatch[1]); // alias → original
+    } else {
+      map.set(spec, spec); // name → name
+    }
+  }
+  return map;
+}
+
+/**
+ * Applies a rename map to a source string.
  *
- * Renames are applied longest-key-first to avoid partial substitution when one
- * renamed symbol is a prefix of another (e.g. "add" vs "addExt").
+ * Keys may contain dots (e.g. `ns.foo`) for namespace-import rewrites.
+ * All regex metacharacters in keys are escaped.  Renames are applied
+ * longest-key-first to avoid partial substitution when one renamed symbol is
+ * a prefix of another (e.g. "add" vs "addExt").
+ *
+ * Boundaries: `(?<!\w)key(?!\w)` — no word character immediately before or after.
+ * This is equivalent to `\b` for pure-identifier keys and correctly handles
+ * dotted keys like `math.add` (the `.` is a non-word character).
  *
  * @param src     - Source text to rewrite.
  * @param renames - Map of oldName → newName.
@@ -109,7 +149,9 @@ function applyRenames(src: string, renames: Map<string, string>): string {
   // Sort by descending key length so longer names are replaced first
   const entries = [...renames.entries()].sort((a, b) => b[0].length - a[0].length);
   for (const [from, to] of entries) {
-    src = src.replace(new RegExp(`\\b${from}\\b`, "g"), to);
+    // Escape all regex metacharacters (including `.` in namespace keys)
+    const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    src = src.replace(new RegExp(`(?<!\\w)${escaped}(?!\\w)`, "g"), to);
   }
   return src;
 }
@@ -122,11 +164,11 @@ interface LoadResult {
   /** Merged source with all imports inlined and names rewritten. */
   source: string;
   /**
-   * Maps each exported canonical prefixed name to itself (for non-entry files)
-   * so callers can build the full rename table for their own import clauses.
-   * Keyed by the **original** export name; value is the prefixed name.
+   * Maps each **original** export name to the canonical prefixed name for this
+   * module.  Used by callers to resolve named, default, and re-export bindings.
    *
-   * e.g. for mathlib.ts:  { "add" → "mathlib_add", "multiply" → "mathlib_multiply" }
+   * e.g. for mathlib.ts:
+   *   { "add" → "mathlib_add", "default" → "mathlib_compute", ... }
    */
   exportRenames: Map<string, string>;
 }
@@ -146,6 +188,11 @@ interface LoadResult {
  *   both their definitions and all internal call sites.
  * - Import aliases are resolved: the alias is rewritten to the canonical
  *   prefixed name at every call site in the importing file.
+ * - Namespace imports (`import * as ns`) rewrite `ns.foo` to `module_foo`.
+ * - Default imports (`import foo from "./lib"`) rewrite `foo` to the
+ *   canonical name of the default export.
+ * - Re-exports (`export { foo } from "./lib"`, `export * from "./lib"`) bubble
+ *   the child's canonical names into this module's export map.
  * - Missing imported files are silently skipped; the transpiler will surface
  *   any resulting undefined-symbol errors.
  * - If the entry file itself cannot be read, the error propagates to the caller.
@@ -155,6 +202,9 @@ interface LoadResult {
  */
 export async function bundleImports(entryPath: string): Promise<string> {
   const visited = new Set<string>();
+  // Cache exportRenames per realPath so re-export chains can resolve names
+  // from already-visited (source-deduplicated) files.
+  const exportRenamesCache = new Map<string, Map<string, string>>();
 
   async function load(filePath: string, isEntry: boolean): Promise<LoadResult> {
     // ── 1. Resolve canonical path ─────────────────────────────────────────
@@ -166,7 +216,11 @@ export async function bundleImports(entryPath: string): Promise<string> {
       return { source: "", exportRenames: new Map() };
     }
 
-    if (visited.has(realPath)) return { source: "", exportRenames: new Map() };
+    // Already visited: return empty source but supply cached exportRenames so
+    // re-export chains still work.
+    if (visited.has(realPath)) {
+      return { source: "", exportRenames: exportRenamesCache.get(realPath) ?? new Map() };
+    }
     visited.add(realPath);
 
     let src: string;
@@ -181,19 +235,70 @@ export async function bundleImports(entryPath: string): Promise<string> {
     const prefix = modulePrefix(realPath);
     const importedChunks: string[] = [];
 
-    // ── 2. Process import statements ─────────────────────────────────────
-    // Regex captures:
-    //   group 1 — named-import clause including braces (may be absent for side-effect imports)
-    //   group 2 — module specifier string
-    const importRe =
-      /^[ \t]*import\s+(?:type\s+)?(\{[^}]*\}\s+from\s+)?['"]([^'"]+)['"]\s*;?[ \t]*\r?\n?/gm;
-
     // Collect all rewrites needed in this file's source after processing imports
     const localRewrites = new Map<string, string>();
 
+    // exportRenames for this file (populated in steps 2 and 4)
+    const exportRenames = new Map<string, string>();
+
+    // ── 2a. Process re-export-from statements ─────────────────────────────
+    //   export { foo, bar as baz } from "./lib.ts"
+    const reExportNamedRe =
+      /^[ \t]*export\s+(?:type\s+)?\{([^}]*)\}\s+from\s+['"]([^'"]+)['"]\s*;?[ \t]*\r?\n?/gm;
+    let rm: RegExpExecArray | null;
+    while ((rm = reExportNamedRe.exec(src)) !== null) {
+      const clause    = rm[1];
+      const specifier = rm[2];
+      if (!specifier.startsWith(".")) continue;
+      const resolved = join(
+        fileDir,
+        specifier.endsWith(".ts") ? specifier : specifier + ".ts",
+      );
+      const childResult = await load(resolved, false);
+      // importedChunks: only add source if it hasn't already been added
+      if (childResult.source) importedChunks.push(childResult.source);
+
+      const childPrefix = modulePrefix(resolved);
+      // Map alias/name → originalName from the clause
+      const clauseMap = parseClauseNames(clause);
+      for (const [exported, original] of clauseMap) {
+        const canonical =
+          childResult.exportRenames.get(original) ?? `${childPrefix}_${original}`;
+        exportRenames.set(exported, canonical);
+      }
+    }
+
+    //   export * from "./lib.ts"
+    const reExportStarRe =
+      /^[ \t]*export\s+\*\s+from\s+['"]([^'"]+)['"]\s*;?[ \t]*\r?\n?/gm;
+    let rs: RegExpExecArray | null;
+    while ((rs = reExportStarRe.exec(src)) !== null) {
+      const specifier = rs[1];
+      if (!specifier.startsWith(".")) continue;
+      const resolved = join(
+        fileDir,
+        specifier.endsWith(".ts") ? specifier : specifier + ".ts",
+      );
+      const childResult = await load(resolved, false);
+      if (childResult.source) importedChunks.push(childResult.source);
+      // Bubble all of child's exports into this module's export map
+      for (const [orig, canonical] of childResult.exportRenames) {
+        exportRenames.set(orig, canonical);
+      }
+    }
+
+    // ── 2b. Process import statements ─────────────────────────────────────
+    // Captures everything between `import [type]` and `from "specifier"`.
+    // Handles: named `{ foo }`, namespace `* as ns`, default `name`,
+    //          combined `name, { foo }`, type-only.
+    // Group 1: binding text (may be absent for side-effect imports)
+    // Group 2: module specifier
+    const importRe =
+      /^[ \t]*import\s+(?:type\s+)?(.+?)\s+from\s+['"]([^'"]+)['"]\s*;?[ \t]*\r?\n?/gm;
+
     let m: RegExpExecArray | null;
     while ((m = importRe.exec(src)) !== null) {
-      const clause    = m[1] ?? ""; // "{foo, bar as b} from " or ""
+      const binding   = m[1].trim(); // e.g. "{ foo }", "* as math", "foo", "foo, { bar }"
       const specifier = m[2];
 
       if (!specifier.startsWith(".")) continue; // skip non-relative specifiers
@@ -204,30 +309,78 @@ export async function bundleImports(entryPath: string): Promise<string> {
       );
 
       const childResult = await load(resolved, false);
-      importedChunks.push(childResult.source);
+      if (childResult.source) importedChunks.push(childResult.source);
 
-      // Build local-name → canonical-prefixed-name map for this import
-      if (clause) {
-        const clauseNames = clause.replace(/\s*from\s*$/, "").trim();
-        const childPrefix = modulePrefix(resolved);
-        const importMap = parseNamedImports(clauseNames, childPrefix);
-        for (const [local, canonical] of importMap) {
+      const childPrefix = modulePrefix(resolved);
+
+      // ── Namespace import: `* as ns` ─────────────────────────────────────
+      const nsMatch = binding.match(/^\*\s+as\s+(\w+)$/);
+      if (nsMatch) {
+        const ns = nsMatch[1];
+        // For every exported name from child, register `ns.name → canonical`
+        for (const [orig, canonical] of childResult.exportRenames) {
+          if (orig !== "default") {
+            localRewrites.set(`${ns}.${orig}`, canonical);
+          }
+        }
+        continue;
+      }
+
+      // ── Default import: plain identifier (no braces, no `*`) ─────────────
+      // May be combined with named: `foo, { bar }`
+      let remaining = binding;
+      const defaultMatch = remaining.match(/^(\w+)\s*(?:,|$)/);
+      if (defaultMatch && !remaining.startsWith("{") && !remaining.startsWith("*")) {
+        const localDefault = defaultMatch[1];
+        const canonical =
+          childResult.exportRenames.get("default") ?? `${childPrefix}_default`;
+        localRewrites.set(localDefault, canonical);
+        // Strip the default part; remaining may still have `{ named }`
+        remaining = remaining.slice(defaultMatch[0].length).trim();
+      }
+
+      // ── Named imports: `{ foo, bar as b }` ──────────────────────────────
+      const namedMatch = remaining.match(/\{([^}]*)\}/);
+      if (namedMatch) {
+        const clauseMap = parseClauseNames(namedMatch[1]);
+        for (const [local, original] of clauseMap) {
+          const canonical =
+            childResult.exportRenames.get(original) ?? `${childPrefix}_${original}`;
           localRewrites.set(local, canonical);
         }
       }
     }
 
-    // ── 3. Strip all import declarations ─────────────────────────────────
+    // ── 3. Strip all import and re-export-from declarations ──────────────
+    // Named imports and side-effect imports
     src = src.replace(
-      /^[ \t]*import\s+(?:type\s+)?(?:\{[^}]*\}\s+from\s+)?['"][^'"]+['"]\s*;?[ \t]*\r?\n?/gm,
+      /^[ \t]*import\s+(?:type\s+)?(?:.+?\s+from\s+)?['"][^'"]+['"]\s*;?[ \t]*\r?\n?/gm,
+      "",
+    );
+    // Re-export-from: `export { … } from "…"` and `export * from "…"`
+    src = src.replace(
+      /^[ \t]*export\s+(?:type\s+)?\{[^}]*\}\s+from\s+['"][^'"]+['"]\s*;?[ \t]*\r?\n?/gm,
+      "",
+    );
+    src = src.replace(
+      /^[ \t]*export\s+\*\s+from\s+['"][^'"]+['"]\s*;?[ \t]*\r?\n?/gm,
       "",
     );
 
     // ── 4. Non-entry: rename exported definitions to module-prefixed names ─
-    const exportRenames = new Map<string, string>();
-
     if (!isEntry) {
-      // Match: export [async] function|const|let|var|type|interface|enum <Name>
+      // Default exports: `export default function foo()`
+      src = src.replace(
+        /^export\s+default\s+((?:async\s+)?function)\s+(\w+)/gm,
+        (_match, keyword, name) => {
+          const prefixed = `${prefix}_${name}`;
+          exportRenames.set(name, prefixed);
+          exportRenames.set("default", prefixed);
+          return `${keyword} ${prefixed}`;
+        },
+      );
+
+      // Named exports: `export [async] function|const|let|var|type|interface|enum Name`
       src = src.replace(
         /^export\s+((?:async\s+)?function|const|let|var|type|interface|enum)\s+(\w+)/gm,
         (_match, keyword, name) => {
@@ -247,6 +400,10 @@ export async function bundleImports(entryPath: string): Promise<string> {
     if (localRewrites.size > 0) {
       src = applyRenames(src, localRewrites);
     }
+
+    // Cache export map so re-export chains can resolve names from this module
+    // even after it has been deduplicated (source not emitted twice).
+    exportRenamesCache.set(realPath, exportRenames);
 
     return { source: [...importedChunks, src].join(""), exportRenames };
   }
