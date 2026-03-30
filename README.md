@@ -152,6 +152,35 @@ wasmtk run myprogram.wasm
 | Object destructuring | `const { x, y } = vec` → i32.load / f64.load at field offsets |
 | Renamed destructuring | `const { x: vx, y: vy } = vec` |
 
+##### Generics
+
+`wasic` monomorphizes generic functions and structs at compile time — zero runtime overhead, no boxing, no type-erasure penalty.
+
+| Feature | Syntax / Notes |
+| --- | --- |
+| Generic functions | `function identity<T>(x: T): T` — one concrete copy per distinct type used |
+| Multi-param generics | `function minVal<T>(a: T, b: T): T` — all params bound to the same type |
+| Explicit type arguments | `identity<i32>(42)` → emits `identity_i32`; `identity<f64>(3.14)` → `identity_f64` |
+| Literal type inference | `identity(42)` → infers `i32`; `identity(3.14)` → `f64`; `identity(true)` → `bool` |
+| Generic structs | `interface Box<T> { value: T; count: i32; }` |
+| Generic struct usage | `const b: Box<i32> = { value: 99, count: 3 }` → concrete struct `Box_i32` |
+| Generic function + struct param | `function getBoxValue<T>(b: Box<T>): T` — struct ref in signature is rewritten |
+| Naming convention | Concrete names are `name_T1_T2` (e.g., `identity_i32`, `Box_f64`, `minVal_i32`) |
+| `type` alias generics | `type Pair<A, B> = { first: A; second: B; }` — same as `interface` |
+
+##### Exception Handling
+
+| Feature | Notes |
+| --- | --- |
+| `throw new Error("msg")` | Allocates message string in data section; emits `(throw $__exn_tag ptr len)` |
+| `throw "literal"` | Same — string literal as throw payload |
+| `throw someStringVar` | Passes existing string variable's `(ptr, len)` as payload |
+| `try { } catch (e) { }` | WAT `(try (do ...) (catch $__exn_tag ...))` — catches all `$__exn_tag` exceptions |
+| `try { } finally { }` | `finally` body inlined in the `do` block (success path) and in a `catch_all` + `rethrow` (exception path) |
+| `try { } catch (e) { } finally { }` | Combined form — `finally` runs on success, catch success, and unhandled exception paths |
+| `e` in catch | Bound as a string variable (`$e_ptr` + `$e_len` i32 locals) — the throw message |
+| `e.message` | Alias for `e` — resolves to the same string ptr/len pair |
+
 ##### Math
 
 | Function | Notes |
@@ -226,8 +255,6 @@ export function _start() { ... }
 | Feature | Status |
 | --- | --- |
 | Class inheritance (`extends`) | Deferred — virtual dispatch via vtable requires heap |
-| Generics (monomorphization) | Phase 14 |
-| Exception handling (try/catch/throw) | Phase 15 |
 
 > **Why the limitations?** `wasic` compiles directly to raw WAT with no runtime. Dynamic allocation, garbage collection, and prototype semantics cannot be expressed without an embedded runtime library. Use `wasmtk javyc` for programs that need them today.
 
@@ -382,13 +409,13 @@ The `wasic` direct compiler is developed incrementally. Each phase adds a self-c
 | 11 | String operations | `str + str` concat (chained, heap-allocated); `str.slice(start, end)` (sub-range, no alloc); `str.indexOf(sub)` → i32; `str.includes(sub)` → bool; `String(n)` / `n.toString()` (number-to-string via heap); gather-buffer mode in `console.log` extended to handle string and bool variables |
 | 12 | Array methods | `arr.indexOf(val)` → i32; `arr.includes(val)` → bool; `arr.slice(start, end)` → new array; `arr.forEach(fn)`; `arr.map(fn)` → new array; `arr.filter(fn)` → new array; `arr.find(fn)` → element; `arr.reduce(fn, init)` → value; dynamic arrays only; `const r: T[] = arr.map(fn)` pattern supported; `findDynamicArrays` extended to auto-detect arrays used with Phase 12 methods |
 | 13 | Rest parameters / spread | `function f(...args: i32[])` — rest param receives heap array pointer; literal call sites build temp array via `$__malloc`; `f(...arr)` passes existing dynamic array pointer directly; `[...a, ...b]` concat via `$__dynarr_concat_T`; spread-source arrays auto-promoted to dynamic layout by `findDynamicArrays` |
+| 14 | Generics (monomorphization) | `function f<T>(x: T): T` — one concrete copy per distinct type; `interface Box<T> { value: T; }` → `Box_i32`, `Box_f64`, etc.; explicit type args (`f<i32>(x)`) and single-T literal inference (`f(42)` → `f_i32`); generic struct refs in function signatures rewritten automatically; source-level `expandGenerics()` pre-pass runs before all other parsing |
+| 15 | Exception handling | `throw new Error("msg")` / `throw str` → `(throw $__exn_tag ptr len)`; `try/catch(e)/finally` via WAT exceptions proposal; `(tag $__exn_tag (param i32 i32))` payload carries `(ptr, len)` string pair; `e` / `e.message` in catch bound as string locals; `exceptions: true` in wabt options; `binMod.setFeatures(Features.All)` before Binaryen `-Oz` to preserve exception sections |
 
 ### Planned Phases
 
 | Phase | Feature | Description |
 | --- | --- | --- |
-| 14 | Generics | Monomorphization: `function id<T>(x: T): T` expanded per concrete type at compile time |
-| 15 | Exception handling | `try`/`catch`/`throw` via WAT exceptions proposal (`exnref`, `throw`, `catch`) |
 | 16 | Module system extras | Re-exports (`export { x } from "./lib.ts"`), default exports, namespace imports (`import * as m`) |
 | 17 | wasic library mode | `modc` backend: drop WASI scaffolding, emit pure WASM library — replaces AssemblyScript for `wasmtk modc` |
 | 18 | WASM import bundling | Import pre-compiled `.wasm` modules directly: `import { add } from "./math.wasm"` — WAT-level merge with module-prefix mangling |

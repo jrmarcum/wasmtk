@@ -199,6 +199,12 @@ function parseSingleArg(
     return [{ kind: "i32var", name: token }];
   }
 
+  // ── varName.message — Error catch variable; .message is the string itself
+  const errMsgMatch = token.match(/^(\w+)\.message$/);
+  if (errMsgMatch && locals.get(errMsgMatch[1]) === "string") {
+    return [{ kind: "strvar", ptrLocal: `${errMsgMatch[1]}_ptr`, lenLocal: `${errMsgMatch[1]}_len` }];
+  }
+
   // ── Enum member access: EnumName.MemberName → i32 constant
   const enumMatch = token.match(/^(\w+)\.(\w+)$/);
   if (enumMatch && enumLookup) {

@@ -95,10 +95,17 @@
  *   - A top-level main() call or exported _start() becomes the WASI _start entry
  *   - IIFE pattern:  (function main() { ... })()
  *
+ * Exception Handling (Phase 15)
+ *   - throw new Error("msg")    → (throw $__exn_tag ptr len)
+ *   - throw "literal"           → (throw $__exn_tag ptr len)
+ *   - throw someStringVar       → (throw $__exn_tag ptr len)
+ *   - try { } catch (e) { }     → WAT (try (do ...) (catch $__exn_tag ...))
+ *   - try { } finally { }       → WAT (try (do ...) (catch_all ... rethrow 0))
+ *   - try { } catch (e) { } finally { }  → combined form
+ *   - e / e.message in catch    → string variable (ptr + len locals)
+ *
  * ── Not yet supported (planned) ─────────────────────────────────────────────
- *   - Rest parameters / spread operator           (Phase 13)
- *   - Generics (monomorphization)                 (Phase 14)
- *   - Exception handling (try/catch/throw)        (Phase 15)
+ *   (none in this area — see Phase 16+ for module system extensions)
  */
 
 import wabt from "wabt";
@@ -155,13 +162,19 @@ async function watToOptimisedWasm(
   try {
     // Step 1: WAT → raw binary via wabt
     const wabtMod = await (wabt as unknown as () => Promise<WabtModule>)();
-    const parsed = wabtMod.parseWat(sourcePath, watSource, { enable_all: true });
+    const parsed = wabtMod.parseWat(sourcePath, watSource, { enable_all: true, exceptions: true });
     const { buffer } = parsed.toBinary({});
     parsed.destroy();
     const rawBytes = new Uint8Array(buffer);
 
     // Step 2: Binaryen -Oz (shrinkLevel=2, optimizeLevel=2)
     const binMod = binaryen.readBinary(rawBytes);
+    // Enable all features (incl. exceptions) so the optimizer preserves them.
+    const binAny = binaryen as unknown as Record<string, unknown>;
+    const featFlags = (binAny["Features"] as Record<string, number> | undefined);
+    if (featFlags && typeof (binMod as unknown as Record<string, unknown>)["setFeatures"] === "function") {
+      (binMod as unknown as { setFeatures(n: number): void }).setFeatures(featFlags["All"] ?? 0x7FFFFFFF);
+    }
     binaryen.setShrinkLevel(2);
     binaryen.setOptimizeLevel(2);
     binMod.optimize();
@@ -377,6 +390,9 @@ class WasicTranspiler {
   // Tracks which dynamic-array WAT helper functions are needed for this module.
   // Key format: "push_i32", "pop_f64", "shift_i32", "unshift_f64", etc.
   private dynArrHelpers: Set<string> = new Set();
+
+  // Set to true when any throw/try/catch is emitted; causes (tag $__exn_tag) to be emitted.
+  private needsExceptionTag = false;
 
   // Struct type definitions parsed from interface/type declarations.
   private structDefs: Map<string, StructDef> = new Map();
@@ -939,6 +955,227 @@ class WasicTranspiler {
   }
 
   // -------------------------------------------------------------------------
+  // Pre-pass 0g – generic template expansion (monomorphization)
+  // -------------------------------------------------------------------------
+  /**
+   * Expands generic function and struct templates by monomorphization.
+   * Must run before all other parse passes so concrete definitions are visible
+   * to parseStructs, parseFunctions, etc.
+   *
+   * Supports:
+   *   function identity<T>(x: T): T                — generic function
+   *   interface Box<T> { value: T; count: i32; }   — generic struct
+   *   identity<i32>(42)                             — explicit type args at call site
+   *   identity(42)                                  — single-T inference from literal arg
+   *   const b: Box<i32> = { ... }                   — generic type annotation rewriting
+   *   function f<T>(b: Box<T>): T                   — generic struct ref in func signature
+   *
+   * Returns the rewritten source with:
+   *   - Generic templates removed
+   *   - Concrete monomorphized definitions prepended
+   *   - All use sites rewritten to concrete names (e.g., identity_i32, Box_f64)
+   */
+  private expandGenerics(src: string): string {
+    type GFuncTmpl = {
+      typeParams: string[];
+      rawParams: string;
+      rawResult: string;
+      bodyText: string;
+      exported: boolean;
+      start: number;
+      end: number;
+    };
+    type GStructTmpl = {
+      typeParams: string[];
+      rawFields: string;
+      start: number;
+      end: number;
+    };
+
+    const gFuncs   = new Map<string, GFuncTmpl>();
+    const gStructs = new Map<string, GStructTmpl>();
+
+    // --- 1. Find generic function templates: [export] function name<T,...>( ---
+    const gFuncRe = /(export\s+)?function\s+(\w+)\s*<([^>]+)>\s*\(/g;
+    let m: RegExpExecArray | null;
+    while ((m = gFuncRe.exec(src)) !== null) {
+      const exported   = !!m[1];
+      const name       = m[2];
+      const typeParams = m[3].split(",").map(t => t.trim()).filter(Boolean);
+      const openParen  = m.index + m[0].length - 1;
+      const [rawParams, afterClose] = WasicTranspiler.extractParamBlock(src, openParen);
+      // Return type may be a type param (T) or a generic type (Box<T>) — use permissive match
+      const restMatch = src.slice(afterClose).match(/^\s*(?::\s*([\w<>, ]+?))?\s*\{/);
+      if (!restMatch) continue;
+      const rawResult = (restMatch[1] ?? "void").trim();
+      const bodyStart = afterClose + restMatch[0].length;
+      let depth = 1, i = bodyStart;
+      while (i < src.length && depth > 0) {
+        if (src[i] === "{") depth++;
+        else if (src[i] === "}") depth--;
+        i++;
+      }
+      gFuncs.set(name, {
+        typeParams, rawParams, rawResult,
+        bodyText: src.slice(bodyStart, i - 1),
+        exported, start: m.index, end: i,
+      });
+    }
+
+    // --- 2. Find generic struct templates: interface Name<T,...> { ... } ---
+    const gStructRe = /(?:export\s+)?interface\s+(\w+)\s*<([^>]+)>\s*\{([^}]*)\}/g;
+    while ((m = gStructRe.exec(src)) !== null) {
+      const name       = m[1];
+      const typeParams = m[2].split(",").map(t => t.trim()).filter(Boolean);
+      gStructs.set(name, { typeParams, rawFields: m[3], start: m.index, end: m.index + m[0].length });
+    }
+    // Also handle: type Name<T> = { ... }
+    const gTypeRe = /(?:export\s+)?type\s+(\w+)\s*<([^>]+)>\s*=\s*\{([^}]*)\}/g;
+    while ((m = gTypeRe.exec(src)) !== null) {
+      const name = m[1];
+      if (!gStructs.has(name)) {
+        const typeParams = m[2].split(",").map(t => t.trim()).filter(Boolean);
+        gStructs.set(name, { typeParams, rawFields: m[3], start: m.index, end: m.index + m[0].length });
+      }
+    }
+
+    if (gFuncs.size === 0 && gStructs.size === 0) return src;
+
+    // --- 3. Storage for generated concrete definitions ---
+    const concreteFuncs   = new Map<string, string>(); // concreteName → TS source
+    const concreteStructs = new Map<string, string>(); // concreteName → TS source
+
+    // Substitute each type param with its concrete type string in text
+    const substitute = (text: string, typeParams: string[], concreteTypes: string[]): string => {
+      let result = text;
+      for (let i = 0; i < typeParams.length; i++) {
+        result = result.replace(new RegExp(`\\b${typeParams[i]}\\b`, "g"), concreteTypes[i] ?? "i32");
+      }
+      return result;
+    };
+
+    // Create (or retrieve) a concrete struct definition
+    const getOrCreateStruct = (name: string, tmpl: GStructTmpl, typeArgs: string[]): string => {
+      const concreteName = `${name}_${typeArgs.join("_")}`;
+      if (!concreteStructs.has(concreteName)) {
+        const fields = substitute(tmpl.rawFields, tmpl.typeParams, typeArgs);
+        concreteStructs.set(concreteName, `interface ${concreteName} {${fields}}`);
+      }
+      return concreteName;
+    };
+
+    // Create (or retrieve) a concrete function definition
+    const getOrCreateFunc = (name: string, tmpl: GFuncTmpl, typeArgs: string[]): string => {
+      const concreteName = `${name}_${typeArgs.join("_")}`;
+      if (!concreteFuncs.has(concreteName)) {
+        // Placeholder prevents infinite recursion on recursive generic functions
+        concreteFuncs.set(concreteName, "");
+        let params = substitute(tmpl.rawParams, tmpl.typeParams, typeArgs);
+        let result = substitute(tmpl.rawResult, tmpl.typeParams, typeArgs);
+        let body   = substitute(tmpl.bodyText,  tmpl.typeParams, typeArgs);
+        // Rewrite any generic struct refs that appear in params / result / body
+        for (const [sName, sTmpl] of gStructs) {
+          const sRe     = new RegExp(`\\b${sName}\\s*<([\\w,\\s]+)>`, "g");
+          const rewrite = (str: string) => str.replace(sRe, (_: string, tArgStr: string) => {
+            const tArgs = tArgStr.split(",").map((t: string) => t.trim());
+            return getOrCreateStruct(sName, sTmpl, tArgs);
+          });
+          params = rewrite(params);
+          result = rewrite(result);
+          body   = rewrite(body);
+        }
+        // Rewrite explicit generic function calls inside the body
+        for (const [fName, fTmpl] of gFuncs) {
+          const fRe = new RegExp(`\\b${fName}\\s*<([\\w,\\s]+)>\\s*\\(`, "g");
+          body = body.replace(fRe, (_: string, tArgStr: string) => {
+            const tArgs = tArgStr.split(",").map((t: string) => t.trim());
+            return `${getOrCreateFunc(fName, fTmpl, tArgs)}(`;
+          });
+        }
+        const exportKw = tmpl.exported ? "export " : "";
+        const retPart  = (result === "void" || !result) ? "" : `: ${result}`;
+        concreteFuncs.set(concreteName,
+          `${exportKw}function ${concreteName}(${params})${retPart} {\n${body}\n}`);
+      }
+      return concreteName;
+    };
+
+    // Infer a concrete type name from a simple literal expression.
+    // Returns null when the expression is too complex to type-infer (e.g., bare identifier).
+    const inferArgTypeLiteral = (expr: string): string | null => {
+      const e = expr.trim();
+      if (e === "true" || e === "false") return "bool";
+      if (/^-?\d+n$/.test(e))           return "i64";
+      if (e.startsWith('"') || e.startsWith("'")) return "string";
+      if (/^-?\d+\.\d/.test(e) || /^\d*\.\d+/.test(e)) return "f64";
+      if (/^-?\d+$/.test(e))            return "i32";
+      return null;
+    };
+
+    // --- 4. Remove generic templates from source (reverse order to preserve offsets) ---
+    const removals = [
+      ...[...gFuncs.values()].map(t => ({ start: t.start, end: t.end })),
+      ...[...gStructs.values()].map(t => ({ start: t.start, end: t.end })),
+    ].sort((a, b) => b.start - a.start);
+
+    let out = src;
+    for (const { start, end } of removals) {
+      out = out.slice(0, start) + out.slice(end);
+    }
+
+    // --- 5. Rewrite use sites in the template-stripped source ---
+
+    // 5a. Rewrite generic type annotations: Name<T1, T2> → Name_T1_T2
+    for (const [name, tmpl] of gStructs) {
+      const re = new RegExp(`\\b${name}\\s*<([\\w,\\s]+)>`, "g");
+      out = out.replace(re, (_: string, typeArgStr: string) => {
+        const typeArgs = typeArgStr.split(",").map((t: string) => t.trim());
+        return getOrCreateStruct(name, tmpl, typeArgs);
+      });
+    }
+
+    // 5b. Rewrite explicit generic function calls: funcName<T1,T2>(args) → funcName_T1_T2(args)
+    for (const [name, tmpl] of gFuncs) {
+      const re = new RegExp(`\\b${name}\\s*<([\\w,\\s]+)>\\s*\\(`, "g");
+      out = out.replace(re, (_: string, typeArgStr: string) => {
+        const typeArgs = typeArgStr.split(",").map((t: string) => t.trim());
+        return `${getOrCreateFunc(name, tmpl, typeArgs)}(`;
+      });
+    }
+
+    // 5c. Inferred calls (single type param only): funcName(literal) → funcName_inferredType(literal)
+    //     Only fires for functions that still have bare calls after step 5b.
+    for (const [name, tmpl] of gFuncs) {
+      if (tmpl.typeParams.length !== 1) continue;
+      const re = new RegExp(`\\b${name}\\s*\\(`, "g");
+      out = out.replace(re, (match: string, offset: number, str: string) => {
+        // Peek at the first argument to infer T
+        const afterParen = str.slice(offset + match.length);
+        let depth = 0, end = 0;
+        for (let i = 0; i < afterParen.length; i++) {
+          const c = afterParen[i];
+          if (c === "(" || c === "[") { depth++; }
+          else if ((c === ")" || c === "]") && depth > 0) { depth--; }
+          else if (c === ")" && depth === 0) { end = i; break; }
+          else if (c === "," && depth === 0) { end = i; break; }
+        }
+        const firstArg     = afterParen.slice(0, end).trim();
+        const inferredType = inferArgTypeLiteral(firstArg);
+        if (!inferredType) return match; // Can't infer — leave unchanged
+        return `${getOrCreateFunc(name, tmpl, [inferredType])}(`;
+      });
+    }
+
+    // --- 6. Prepend concrete definitions and return the expanded source ---
+    const allConcrete = [
+      ...[...concreteStructs.values()],
+      ...[...concreteFuncs.values()],
+    ].join("\n\n");
+
+    return allConcrete + "\n\n" + out;
+  }
+
+  // -------------------------------------------------------------------------
   // Pass 0 – collect enum declarations
   // -------------------------------------------------------------------------
   /**
@@ -1187,6 +1424,17 @@ class WasicTranspiler {
     this.dataMap.set(msg, entry);
     this.dataOffset += bytes.length;
     this.hasConsoleLog = true;
+    return entry;
+  }
+
+  /** Allocates a string in the data section without setting hasConsoleLog (for throw messages). */
+  private allocStringNoLog(msg: string): [number, number] {
+    const existing = this.dataMap.get(msg);
+    if (existing) return existing;
+    const bytes = new TextEncoder().encode(msg);
+    const entry: [number, number] = [this.dataOffset, bytes.length];
+    this.dataMap.set(msg, entry);
+    this.dataOffset += bytes.length;
     return entry;
   }
 
@@ -1497,6 +1745,11 @@ class WasicTranspiler {
     // String variable (or param) — use locals map for accuracy
     if (/^\w+$/.test(expr) && locals.get(expr) === "string") {
       return `(local.get $${expr}_ptr) (local.get $${expr}_len)`;
+    }
+    // varName.message — Error catch variable; .message is the string itself
+    const dotMsgMatch = expr.match(/^(\w+)\.message$/);
+    if (dotMsgMatch && locals.get(dotMsgMatch[1]) === "string") {
+      return `(local.get $${dotMsgMatch[1]}_ptr) (local.get $${dotMsgMatch[1]}_len)`;
     }
     // String literal
     const litMatch = expr.match(/^"([^"]*)"$/) ?? expr.match(/^'([^']*)'$/);
@@ -2178,6 +2431,35 @@ class WasicTranspiler {
       const expr = line.replace(/^return\s*/, "").replace(/;$/, "").trim();
       if (!expr || funcResult === null) return "(return)";
       return `(return ${this.emitExpr(expr, locals, funcResult)})`;
+    }
+
+    // throw new Error("msg") | throw "literal" | throw someVar;
+    const throwMatch = line.match(/^throw\s+(.+?);?$/);
+    if (throwMatch) {
+      this.needsExceptionTag = true;
+      const throwExpr = throwMatch[1].trim();
+      // throw new Error("msg") or throw new Error('msg')
+      const newErrMatch = throwExpr.match(/^new\s+Error\s*\(\s*["']([^"']*)["']\s*\)$/);
+      if (newErrMatch) {
+        const [ptr, len] = this.allocStringNoLog(newErrMatch[1]);
+        return `(throw $__exn_tag (i32.const ${ptr}) (i32.const ${len}))`;
+      }
+      // throw "literal" or throw 'literal'
+      const strLitMatch = throwExpr.match(/^["']([^"']*)["']$/);
+      if (strLitMatch) {
+        const [ptr, len] = this.allocStringNoLog(strLitMatch[1]);
+        return `(throw $__exn_tag (i32.const ${ptr}) (i32.const ${len}))`;
+      }
+      // throw someVar
+      if (/^\w+$/.test(throwExpr)) {
+        if (locals.get(throwExpr) === "string") {
+          return `(throw $__exn_tag (local.get $${throwExpr}_ptr) (local.get $${throwExpr}_len))`;
+        }
+        // Numeric value — wrap as ptr with len=0
+        return `(throw $__exn_tag (local.get $${throwExpr}) (i32.const 0))`;
+      }
+      // Fallback: emit as ptr expression with len=0
+      return `(throw $__exn_tag ${this.emitExpr(throwExpr, locals, "i32")} (i32.const 0))`;
     }
 
     // Function-type variable: const f: (a: i32) => i32 = someFunc  OR  let f: (a: i32) => i32;
@@ -3120,6 +3402,79 @@ class WasicTranspiler {
         continue;
       }
 
+      // try { ... } [catch (e) { ... }] [finally { ... }]
+      // Patterns: "try {" or "try{" on its own line.
+      const tryMatch = line.match(/^try\s*\{?$/);
+      if (tryMatch) {
+        const catchRe = /^}\s*catch\s*\(\s*(\w+)(?:\s*:\s*\w+)?\s*\)\s*\{?$/;
+        const finallyRe = /^}\s*finally\s*\{?$/;
+
+        const [tryBody, tryConsumed, tryTerminator] = this.extractBlock(lines, i + 1);
+        i += tryConsumed + 1;
+
+        let catchVar = "";
+        let catchBody: string[] = [];
+        let finallyBody: string[] = [];
+        let hasCatch = false;
+        let hasFinally = false;
+
+        if (catchRe.test(tryTerminator)) {
+          hasCatch = true;
+          catchVar = tryTerminator.match(catchRe)?.[1] ?? "";
+          const [cb, cc, ct] = this.extractBlock(lines, i);
+          catchBody = cb;
+          i += cc;
+          if (finallyRe.test(ct)) {
+            hasFinally = true;
+            const [fb, fc] = this.extractBlock(lines, i);
+            finallyBody = fb;
+            i += fc;
+          }
+        } else if (finallyRe.test(tryTerminator)) {
+          hasFinally = true;
+          const [fb, fc] = this.extractBlock(lines, i);
+          finallyBody = fb;
+          i += fc;
+        }
+
+        this.needsExceptionTag = true;
+        const tryWat     = this.emitBlock(tryBody,     locals, funcResult, indent + "    ");
+        const catchWat   = hasCatch   ? this.emitBlock(catchBody,   locals, funcResult, indent + "    ") : "";
+        const finallyWat = hasFinally ? this.emitBlock(finallyBody, locals, funcResult, indent + "    ") : "";
+
+        out.push(`${indent}(try`);
+        out.push(`${indent}  (do`);
+        if (tryWat)     out.push(tryWat);
+        if (hasFinally && finallyWat) out.push(finallyWat);   // success path: run finally inline
+        out.push(`${indent}  )`);
+
+        if (hasCatch) {
+          out.push(`${indent}  (catch $__exn_tag`);
+          if (catchVar) {
+            // Payload is (ptr i32, len i32); len is on top of stack.
+            out.push(`${indent}    (local.set $${catchVar}_len)`);
+            out.push(`${indent}    (local.set $${catchVar}_ptr)`);
+          } else {
+            out.push(`${indent}    (drop)`);
+            out.push(`${indent}    (drop)`);
+          }
+          if (catchWat)   out.push(catchWat);
+          if (hasFinally && finallyWat) out.push(finallyWat); // catch success path: run finally inline
+          out.push(`${indent}  )`);
+        }
+
+        if (hasFinally) {
+          // catch_all re-runs finally then rethrows any non-tag exception
+          out.push(`${indent}  (catch_all`);
+          if (finallyWat) out.push(finallyWat);
+          out.push(`${indent}    (rethrow 0)`);
+          out.push(`${indent}  )`);
+        }
+
+        out.push(`${indent})`);
+        continue;
+      }
+
       // Closing brace on its own — skip
       if (line === "}" || line === "};") { i++; continue; }
 
@@ -3151,6 +3506,11 @@ class WasicTranspiler {
         // At depth 1: terminates the current block (the if-body) — caller will handle the else.
         // At depth > 1: net-zero (inner if-else inside the block), depth unchanged.
         if (depth === 1) { depth--; terminator = l; break; }
+      } else if (/^}\s*catch\s*(?:\([^)]*\))?\s*\{?$/.test(l) || /^}\s*finally\s*\{?$/.test(l)) {
+        // } catch (e) { or } finally { — at depth 1 terminates the try body; at depth > 1 net-zero
+        // (inner try/catch inside the block), so treat as neutral (do NOT increment depth).
+        if (depth === 1) { depth--; terminator = l; break; }
+        // depth > 1: fall through to body.push — line included but depth unchanged (net-zero)
       } else if (l.endsWith("{")) {
         depth++;
       }
@@ -3976,6 +4336,14 @@ class WasicTranspiler {
         declaredLocals.push([forM[1], t2]);
         locals.set(forM[1], t2);
       }
+      // catch variable: } catch (e) { — registers e as a (ptr, len) string pair
+      const catchVarPre = line.match(/^}\s*catch\s*\(\s*(\w+)(?:\s*:\s*\w+)?\s*\)\s*\{?$/);
+      if (catchVarPre && catchVarPre[1] && !locals.has(catchVarPre[1])) {
+        const cv = catchVarPre[1];
+        declaredLocals.push([`${cv}_ptr`, "i32"], [`${cv}_len`, "i32"]);
+        locals.set(cv, "string");
+        this.stringVars.add(cv);
+      }
     }
     // Add $__rest_ptr if any body line calls a rest-param function with literal args
     if (this.hasRestLiteralCalls(fn.bodyLines) && !locals.has("__rest_ptr")) {
@@ -4062,6 +4430,8 @@ class WasicTranspiler {
   }
 
   transpile(_moduleName: string): string {
+    // Pre-pass: expand generic templates by monomorphization before any other parsing
+    this.src = this.expandGenerics(this.src);
     this.parseEnums();
     this.parseStructs();
     this.parseClasses();
@@ -4157,6 +4527,14 @@ class WasicTranspiler {
           startDeclaredLocals.push([forM[1], t2]);
           startLocals.set(forM[1], t2);
         }
+        // catch variable: } catch (e) { — registers e as a (ptr, len) string pair
+        const catchVarPre2 = line.match(/^}\s*catch\s*\(\s*(\w+)(?:\s*:\s*\w+)?\s*\)\s*\{?$/);
+        if (catchVarPre2 && catchVarPre2[1] && !startLocals.has(catchVarPre2[1])) {
+          const cv2 = catchVarPre2[1];
+          startDeclaredLocals.push([`${cv2}_ptr`, "i32"], [`${cv2}_len`, "i32"]);
+          startLocals.set(cv2, "string");
+          this.stringVars.add(cv2);
+        }
       }
       // Add $__rest_ptr if any start body line calls a rest-param function with literal args
       if (this.hasRestLiteralCalls(this.startBodyLines) && !startLocals.has("__rest_ptr")) {
@@ -4196,6 +4574,7 @@ class WasicTranspiler {
       imports,
       `  (memory (export "memory") ${memoryPages})`,
       `  (global $__heap_ptr (mut i32) (i32.const ${heapStart}))`,
+      this.needsExceptionTag ? `  (tag $__exn_tag (param i32 i32))` : "",
       funcTypesWat,
       ``,
       helpers,
