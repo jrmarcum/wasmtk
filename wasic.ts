@@ -394,6 +394,9 @@ class WasicTranspiler {
   // Set to true when any throw/try/catch is emitted; causes (tag $__exn_tag) to be emitted.
   private needsExceptionTag = false;
 
+  // Compilation mode: "wasi" emits _start + WASI scaffolding; "library" emits only export functions.
+  private mode: "wasi" | "library" = "wasi";
+
   // Struct type definitions parsed from interface/type declarations.
   private structDefs: Map<string, StructDef> = new Map();
   // Per-function struct variable tracking: varName → { def, ptr }
@@ -441,8 +444,9 @@ class WasicTranspiler {
   // Top-level statements that become the _start body (patterns 2–4)
   private startBodyLines: string[] = [];
 
-  constructor(source: string) {
+  constructor(source: string, mode: "wasi" | "library" = "wasi") {
     this.src = stripComments(source);
+    this.mode = mode;
   }
 
   /** Lazily assigns a funcref table slot to a named function. */
@@ -3524,9 +3528,11 @@ class WasicTranspiler {
   // WAT module emission
   // -------------------------------------------------------------------------
   private emitWasiImports(): string {
-    const lines = [
-      `  (import "wasi_snapshot_preview1" "proc_exit" (func $proc_exit (param i32)))`,
-    ];
+    const lines: string[] = [];
+    // proc_exit is only needed in WASI mode (called from _start; not emitted in library mode).
+    if (this.mode === "wasi") {
+      lines.push(`  (import "wasi_snapshot_preview1" "proc_exit" (func $proc_exit (param i32)))`);
+    }
     if (this.hasConsoleLog) {
       lines.push(
         `  (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))`
@@ -4444,11 +4450,15 @@ class WasicTranspiler {
     // Emit all user functions first — this populates hasConsoleLog/needsNumericHelpers
     const funcWat = this.functions.map(f => this.emitFunction(f)).join("\n\n");
 
-    // Build _start inner body — priority: user _start() > named main() > collected startBodyLines > empty
+    // Build _start inner body — priority: user _start() > named main() > collected startBodyLines > empty.
+    // In library mode skip entirely: no entry point, and top-level statements (console.log etc.) must not
+    // influence hasConsoleLog / helper flags for the library binary.
     const hasUserStart = this.functions.some(f => f.name === "_start");
     const hasMain = !hasUserStart && this.functions.some(f => f.name === "main");
     let startBody: string;
-    if (hasMain) {
+    if (this.mode === "library") {
+      startBody = ""; // unused in library mode — _start is never emitted
+    } else if (hasMain) {
       startBody = `\n    (call $main)\n    (call $proc_exit (i32.const 0))`;
     } else if (this.startBodyLines.length > 0) {
       // Pre-scan for var/let/const so WAT locals are declared at the top of _start.
@@ -4560,8 +4570,9 @@ class WasicTranspiler {
     // __heap_ptr starts immediately after the static data section
     const heapStart = this.dataOffset;
 
-    // If the user defined _start() directly, skip the generated wrapper
-    const startFunc = hasUserStart ? [] : [
+    // In library mode, skip _start entirely (no entry point, no proc_exit).
+    // In WASI mode, use the user's _start() if present, otherwise emit the generated wrapper.
+    const startFunc = (this.mode === "library" || hasUserStart) ? [] : [
       `  (func $_start (export "_start")${startBody}`,
       `  )`,
     ];
@@ -4642,6 +4653,64 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
     console.log(`   WAT:  ${watPath}`);
   } else {
     console.error(`❌ wasic: ${result.error}`);
+    console.error(`   Inspect generated WAT at: ${watPath}`);
+  }
+  return result;
+}
+
+/**
+ * Compiles a TypeScript file to a WASM library module using the wasic transpiler.
+ *
+ * Library mode differs from WASI mode in three ways:
+ *   1. No `_start` function is emitted — the module has no entry point.
+ *   2. No `proc_exit` import — only `fd_write` is imported when console.log is used.
+ *   3. Only `export function` declarations are visible to callers; all other top-level
+ *      code (runner statements, main() calls) is parsed but silently dropped.
+ *
+ * The output is a pure `.wasm` binary callable from any WASM host environment.
+ * Binaryen `-Oz` eliminates any unreachable internal helpers.
+ *
+ * @param tsPath  - Path to the source `.ts` file.
+ * @param outPath - Optional output path; defaults to `<name>.wasm` in the same directory.
+ */
+export async function compileLibTs(tsPath: string, outPath?: string): Promise<WasicResult> {
+  const name = basename(tsPath).replace(/\.[^/.]+$/, "");
+  const srcDir = dirname(tsPath);
+  const out = outPath ?? `${srcDir}/${name}.wasm`;
+  const watPath = out.replace(/\.wasm$/, ".wat");
+
+  if (outPath) await Deno.mkdir(dirname(outPath), { recursive: true });
+
+  let source: string;
+  try {
+    source = await bundleImports(tsPath);
+  } catch (err) {
+    return { success: false, error: `Cannot read ${tsPath}: ${err}` };
+  }
+
+  const transpiler = new WasicTranspiler(source, "library");
+  let wat: string;
+  try {
+    wat = transpiler.transpile(name);
+  } catch (err) {
+    return { success: false, error: `Transpile error: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  for (const msg of transpiler.warnings) {
+    console.warn(`  ⚠️  ${msg}`);
+  }
+  if (transpiler.warnings.length > 0) {
+    return { success: false, error: `Compilation aborted: ${transpiler.warnings.length} unsupported feature(s) — see warnings above` };
+  }
+
+  await Deno.writeTextFile(watPath, wat);
+
+  const result = await watToOptimisedWasm(wat, watPath, out);
+  if (result.success) {
+    console.log(`✅ Library: ${out} (${result.sizeBytes} bytes)`);
+    console.log(`   WAT:  ${watPath}`);
+  } else {
+    console.error(`❌ wasic (library): ${result.error}`);
     console.error(`   Inspect generated WAT at: ${watPath}`);
   }
   return result;

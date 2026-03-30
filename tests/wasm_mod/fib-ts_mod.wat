@@ -1,0 +1,32 @@
+(module
+  (memory (export "memory") 2)
+  (global $__heap_ptr (mut i32) (i32.const 260))
+  ;; Bump allocator — advances __heap_ptr and returns the old value
+  (func $__malloc (param $size i32) (result i32)
+    (local $ptr i32)
+    (local.set $ptr (global.get $__heap_ptr))
+    (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))
+    (local.get $ptr)
+  )
+  (func $fib (export "fib") (param $num f64) (result f64)
+    (local $a f64)
+    (local $b f64)
+    (local $temp f64)
+    (local.set $a (f64.const 0))
+    (local.set $b (f64.const 1))
+    (local.set $temp (f64.const 0))
+    (block $break_0
+      (loop $loop_0
+        (br_if $break_0 (i32.eqz (f64.gt (local.get $num) (f64.const 0))))
+        (block $cont_0
+          (local.set $temp (local.get $a))
+          (local.set $a (f64.add (local.get $a) (local.get $b)))
+          (local.set $b (local.get $temp))
+          (local.set $num (f64.sub (local.get $num) (f64.const 1)))
+        )
+        (br $loop_0)
+      )
+    )
+    (return (local.get $a))
+  )
+)

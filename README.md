@@ -291,7 +291,7 @@ wasmtk run myprogram.wasm
 
 ---
 
-### `wasmtk modc` — AssemblyScript Library Module
+### `wasmtk modc` — WASM Library Module
 
 Compiles a TypeScript file to a **WASM library module** — not a runnable WASI program. The output contains only your exported functions, callable from any WASM host environment. Implemented in `modc.ts` as a standalone module, parallel to `wasic.ts` and `javyc.ts`.
 
@@ -306,19 +306,19 @@ wasmtk mod mylib.wasm myFunction 42   # call an exported function directly
 
 ```text
 .ts source
-  → extract export function declarations  (runner code stripped)
-  → remap number → f64                    (AssemblyScript compatibility)
-  → AssemblyScript compiler (asc)         (--runtime stub, --optimize)
-  → binary post-process                   (strip env/abort + start section)
+  → tsbundler   (import resolution, module-prefix name mangling)
+  → WasicTranspiler in library mode   (TypeScript → WAT, no _start, no proc_exit)
+  → wabt parseWat   (WAT → raw WASM binary)
+  → Binaryen -Oz   (dead-code elimination, size optimisation)
   → .wasm library
 ```
 
 **Input requirements:**
 
-The source file must contain at least one `export function` declaration. Only exported functions are passed to the compiler — all other top-level code (main(), IIFE, console.log, import.meta.main blocks) is stripped automatically.
+The source file must contain at least one `export function` declaration. Top-level runner code (main(), IIFE, console.log, top-level statements) is parsed but silently dropped — only exported functions are callable from the host. Non-exported internal functions are included in the WAT but eliminated by Binaryen -Oz if unreachable.
 
 ```typescript
-// ✅ Valid modc source
+// ✅ Valid modc source — supports the full wasic TypeScript subset
 export function add(a: f64, b: f64): f64 {
   return a + b;
 }
@@ -327,6 +327,8 @@ export function multiply(a: f64, b: f64): f64 {
   return a * b;
 }
 ```
+
+**Supported types:** The full wasic subset — `i32`, `i64`, `f32`, `f64`, `number` (→ `f64`), `boolean`, `string`, arrays, structs, generics, classes, and all Phase 1–16 features. No AssemblyScript toolchain required.
 
 **Best suited for:**
 
@@ -339,11 +341,7 @@ export function multiply(a: f64, b: f64): f64 {
 
 - `modc` output is **not a standalone program** — it has no entry point and cannot be run as a WASI process
 - The module is **imported and called** by a host environment rather than executed independently
-- Uses AssemblyScript's stricter type system — `f64` required instead of `number`
-
-#### Planned: wasic library mode
-
-A future backend will replace AssemblyScript with a `wasic` library mode. The `WasicTranspiler` already generates correct WAT for all function bodies; library mode will simply drop the WASI scaffolding (`wasi_snapshot_preview1` imports, `fd_write` helpers, `_start` binding) and emit a pure WASM module directly. This eliminates the temp-file creation and binary-patching steps and produces cleaner output. The `compileModule` public API will remain stable across the backend change.
+- Supports the same TypeScript subset as `wasic` — no type restrictions beyond the wasic compiler's own limits
 
 ---
 
@@ -352,18 +350,19 @@ A future backend will replace AssemblyScript with a `wasic` library mode. The `W
 Each compiler is a standalone importable module. You can use them directly in Deno without going through the CLI:
 
 ```typescript
-import { compileWasiTs, compileWasi } from "@jrmarcum/wasmtk/wasic";
-import { compileModule }              from "@jrmarcum/wasmtk/modc";
-import { compileJavy }                from "@jrmarcum/wasmtk/javyc";
-import { bundleImports }              from "@jrmarcum/wasmtk/tsbundler";
+import { compileWasiTs, compileWasi, compileLibTs } from "@jrmarcum/wasmtk/wasic";
+import { compileModule }                            from "@jrmarcum/wasmtk/modc";
+import { compileJavy }                              from "@jrmarcum/wasmtk/javyc";
+import { bundleImports }                            from "@jrmarcum/wasmtk/tsbundler";
 ```
 
 | Export | Module | Description |
 | --- | --- | --- |
 | `compileWasi(path, outPath?)` | `./wasic` | Compile `.ts` or `.wat` to a WASI standalone `.wasm` |
 | `compileWasiTs(path, outPath?)` | `./wasic` | TypeScript-only path — runs bundler + transpiler + optimizer |
+| `compileLibTs(path, outPath?)` | `./wasic` | TypeScript → WASM library (no `_start`, no WASI scaffolding) |
 | `compileWat(path, outPath?)` | `./wasic` | WAT-only path — wabt parse + Binaryen `-Oz` |
-| `compileModule(path, outPath?)` | `./modc` | Compile `.ts` to a WASM library via AssemblyScript |
+| `compileModule(path, outPath?)` | `./modc` | Compile `.ts` to a WASM library via wasic transpiler |
 | `compileJavy(path, outPath?)` | `./javyc` | Compile `.ts` to a WASI module via Javy/QuickJS |
 | `bundleImports(entryPath)` | `./tsbundler` | Resolve and merge relative imports into a single source string |
 
@@ -417,12 +416,12 @@ The `wasic` direct compiler is developed incrementally. Each phase adds a self-c
 | 14 | Generics (monomorphization) | `function f<T>(x: T): T` — one concrete copy per distinct type; `interface Box<T> { value: T; }` → `Box_i32`, `Box_f64`, etc.; explicit type args (`f<i32>(x)`) and single-T literal inference (`f(42)` → `f_i32`); generic struct refs in function signatures rewritten automatically; source-level `expandGenerics()` pre-pass runs before all other parsing |
 | 15 | Exception handling | `throw new Error("msg")` / `throw str` → `(throw $__exn_tag ptr len)`; `try/catch(e)/finally` via WAT exceptions proposal; `(tag $__exn_tag (param i32 i32))` payload carries `(ptr, len)` string pair; `e` / `e.message` in catch bound as string locals; `exceptions: true` in wabt options; `binMod.setFeatures(Features.All)` before Binaryen `-Oz` to preserve exception sections |
 | 16 | Module system extras | Default imports (`import foo from "./lib.ts"`); namespace imports (`import * as ns from "./lib.ts"`) with `ns.name` → `lib_name` rewriting; named re-exports (`export { foo } from "./lib.ts"`); wildcard re-exports (`export * from "./lib.ts"`); `export default function`; `exportRenamesCache` to resolve re-export chains across already-visited files; `applyRenames` updated to escape regex metacharacters (enabling dotted-key `ns.foo` rewrites) |
+| 17 | wasic library mode | `WasicTranspiler` gains `mode: "wasi" \| "library"` constructor param; library mode skips `_start`, `proc_exit` import, and top-level statement processing; `compileLibTs()` public function mirrors `compileWasiTs()`; `modc.ts` backend replaced — AssemblyScript toolchain (`asc`), temp-file creation, and binary post-processor (`removeEnvAbortImport`) all removed; `compileModule` calls `compileLibTs` directly; supports full wasic TypeScript subset (no type restrictions) |
 
 ### Planned Phases
 
 | Phase | Feature | Description |
 | --- | --- | --- |
-| 17 | wasic library mode | `modc` backend: drop WASI scaffolding, emit pure WASM library — replaces AssemblyScript for `wasmtk modc` |
 | 18 | WASM import bundling | Import pre-compiled `.wasm` modules directly: `import { add } from "./math.wasm"` — WAT-level merge with module-prefix mangling |
 
 #### Phase 18 — WASM Import Bundling
