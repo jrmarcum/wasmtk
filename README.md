@@ -422,11 +422,29 @@ The `wasic` direct compiler is developed incrementally. Each phase adds a self-c
 
 | Phase | Feature | Description |
 | --- | --- | --- |
-| 18 | WASM import bundling | Import pre-compiled `.wasm` modules directly: `import { add } from "./math.wasm"` — WAT-level merge with module-prefix mangling |
+| 18 | WASM import bundling | Detect `.wasm` specifiers in ESM imports (`import { fn } from "./math.wasm"`) and `wasmImport("./path.wasm")` loader calls; WAT-level merge with module-prefix mangling; rename alias support; `_start` exclusion notice |
 
 #### Phase 18 — WASM Import Bundling
 
-Phase 18 extends `tsbundler.ts` to handle `.wasm` specifiers alongside `.ts` ones. When a `.wasm` import is encountered:
+Phase 18 extends `tsbundler.ts` to detect `.wasm` import specifiers and inline the exported functions into the merged WAT output — no runtime loader required.
+
+**Detected import forms (in priority order):**
+
+```typescript
+// 1. Direct ESM import (Deno natively supports this; tsbundler handles it at compile time)
+import { add, multiply } from "./math.wasm";
+
+// 2. universal-wasm-loader pattern (wasmImport call + destructuring)
+import { wasmImport } from "./universal-wasm-loader.js";
+const { calculate: runMath, version: wasmVer } = await wasmImport("./math.wasm");
+
+// 3. WebAssembly.instantiateStreaming / instantiate (Browsers, Node, Bun — lower priority)
+const { instance } = await WebAssembly.instantiateStreaming(fetch("./math.wasm"));
+```
+
+Forms 1 and 2 are statically analysable and the primary target for Phase 18. Rename aliases (`{ calculate: runMath }`) use the same `parseClauseNames` logic as `.ts` imports. Form 3 is dynamic and lower priority.
+
+**WAT merge pipeline (when a `.wasm` specifier is detected):**
 
 1. **Disassemble** — wabt converts the `.wasm` to WAT (wabt is already in the pipeline)
 2. **Validate** — reject any module that exports a `_start` function with a clear error (see below)
