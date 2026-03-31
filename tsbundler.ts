@@ -55,6 +55,37 @@
 import { basename, dirname, join } from "@std/path";
 
 // ---------------------------------------------------------------------------
+// Phase 18 — WASM import types
+// ---------------------------------------------------------------------------
+
+/**
+ * Describes a .wasm file referenced by an import statement in the entry source.
+ * Collected by bundleImportsEx and handed to the wasic compiler for WAT-level merge.
+ */
+export interface WasmImportEntry {
+  /** Resolved absolute path to the .wasm file. */
+  filePath: string;
+  /** Module prefix derived from the filename, e.g. "math" for "./math.wasm". */
+  prefix: string;
+  /**
+   * Maps each original export name to its canonical prefixed name.
+   * e.g. for math.wasm: { "add" → "math_add", "multiply" → "math_multiply" }
+   * Import aliases are already resolved: `{ add as sum }` → localRewrites "sum"→"math_add"
+   * but renames still records "add"→"math_add" for use by the merge step.
+   */
+  renames: Map<string, string>;
+}
+
+/** Extended return type from bundleImportsEx — includes both the merged TS source
+ *  and any .wasm imports that need WAT-level merging. */
+export interface BundleResult {
+  /** Merged TypeScript source with all .ts imports inlined and names mangled. */
+  source: string;
+  /** .wasm imports discovered during bundling, in discovery order. */
+  wasmImports: WasmImportEntry[];
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
@@ -179,29 +210,29 @@ interface LoadResult {
 
 /**
  * Reads a TypeScript entry file, resolves all relative imports recursively,
- * and returns a single merged source string ready for WasicTranspiler.
+ * and returns the merged source plus any .wasm imports that need WAT-level merging.
  *
  * Behaviour:
- * - Imported files are prepended before the content of the file that imports them.
+ * - .ts imports are inlined: files are prepended before the content that imports them.
+ * - .wasm imports are detected and recorded in wasmImports; their call sites in the
+ *   merged source are rewritten to the canonical prefixed names (e.g. math_add).
  * - All `import` declarations are stripped from the merged output.
  * - Exported symbols in non-entry files are renamed to `<module>_<name>` in
  *   both their definitions and all internal call sites.
- * - Import aliases are resolved: the alias is rewritten to the canonical
- *   prefixed name at every call site in the importing file.
+ * - Import aliases are resolved to the canonical prefixed name at every call site.
  * - Namespace imports (`import * as ns`) rewrite `ns.foo` to `module_foo`.
- * - Default imports (`import foo from "./lib"`) rewrite `foo` to the
- *   canonical name of the default export.
- * - Re-exports (`export { foo } from "./lib"`, `export * from "./lib"`) bubble
- *   the child's canonical names into this module's export map.
- * - Missing imported files are silently skipped; the transpiler will surface
- *   any resulting undefined-symbol errors.
+ * - Default imports (`import foo from "./lib"`) rewrite `foo` to the default export.
+ * - Re-exports bubble child canonical names into this module's export map.
+ * - Missing .ts files are silently skipped; missing .wasm files are recorded
+ *   with a warning but do not abort bundling.
  * - If the entry file itself cannot be read, the error propagates to the caller.
  *
  * @param entryPath - Absolute or cwd-relative path to the entry .ts file.
- * @returns Merged source string with all imports inlined and names mangled.
  */
-export async function bundleImports(entryPath: string): Promise<string> {
+export async function bundleImportsEx(entryPath: string): Promise<BundleResult> {
   const visited = new Set<string>();
+  // Collected .wasm imports in discovery order (deduped by resolved path).
+  const wasmImports: WasmImportEntry[] = [];
   // Cache exportRenames per realPath so re-export chains can resolve names
   // from already-visited (source-deduplicated) files.
   const exportRenamesCache = new Map<string, Map<string, string>>();
@@ -303,6 +334,28 @@ export async function bundleImports(entryPath: string): Promise<string> {
 
       if (!specifier.startsWith(".")) continue; // skip non-relative specifiers
 
+      // ── .wasm imports — record for WAT-level merge, don't inline as TS ───
+      if (specifier.endsWith(".wasm")) {
+        const resolvedWasm = join(fileDir, specifier);
+        const wasmPrefix = modulePrefix(resolvedWasm);
+        const renames = new Map<string, string>();
+
+        // Parse named imports: `import { add, multiply as mul } from "./math.wasm"`
+        const namedMatch = binding.match(/\{([^}]*)\}/);
+        if (namedMatch) {
+          for (const [local, original] of parseClauseNames(namedMatch[1])) {
+            const canonical = `${wasmPrefix}_${original}`;
+            renames.set(original, canonical);
+            localRewrites.set(local, canonical);
+          }
+        }
+
+        if (!wasmImports.some(w => w.filePath === resolvedWasm)) {
+          wasmImports.push({ filePath: resolvedWasm, prefix: wasmPrefix, renames });
+        }
+        continue; // do not attempt to load .wasm as TypeScript
+      }
+
       const resolved = join(
         fileDir,
         specifier.endsWith(".ts") ? specifier : specifier + ".ts",
@@ -351,12 +404,50 @@ export async function bundleImports(entryPath: string): Promise<string> {
       }
     }
 
+    // ── 2c. Detect wasmImport("./path.wasm") loader calls ─────────────────
+    // Pattern: const { fn, original: alias } = await wasmImport("./module.wasm")
+    // Note: destructuring uses JS colon syntax { original: alias }, unlike TS imports
+    // which use { original as alias }.  Parse both here.
+    const wasmImportCallRe =
+      /^[ \t]*(?:const|let)\s+\{([^}]*)\}\s*=\s*await\s+wasmImport\s*\(\s*['"]([^'"]+)['"]\s*\)\s*;?[ \t]*\r?\n?/gm;
+    let wi: RegExpExecArray | null;
+    while ((wi = wasmImportCallRe.exec(src)) !== null) {
+      const clause = wi[1];
+      const spec = wi[2];
+      if (!spec.endsWith(".wasm") || !spec.startsWith(".")) continue;
+      const resolvedWasm = join(fileDir, spec);
+      const wasmPrefix = modulePrefix(resolvedWasm);
+      const renames = new Map<string, string>();
+      // Parse destructuring clause — supports both plain `name` and `original: alias`
+      for (const part of clause.split(",")) {
+        const spec2 = part.trim();
+        if (!spec2) continue;
+        const colonIdx = spec2.indexOf(":");
+        if (colonIdx !== -1) {
+          const original = spec2.slice(0, colonIdx).trim();
+          const alias    = spec2.slice(colonIdx + 1).trim();
+          const canonical = `${wasmPrefix}_${original}`;
+          renames.set(original, canonical);
+          localRewrites.set(alias, canonical);
+        } else {
+          const canonical = `${wasmPrefix}_${spec2}`;
+          renames.set(spec2, canonical);
+          localRewrites.set(spec2, canonical);
+        }
+      }
+      if (!wasmImports.some(w => w.filePath === resolvedWasm)) {
+        wasmImports.push({ filePath: resolvedWasm, prefix: wasmPrefix, renames });
+      }
+    }
+
     // ── 3. Strip all import and re-export-from declarations ──────────────
     // Named imports and side-effect imports
     src = src.replace(
       /^[ \t]*import\s+(?:type\s+)?(?:.+?\s+from\s+)?['"][^'"]+['"]\s*;?[ \t]*\r?\n?/gm,
       "",
     );
+    // Strip wasmImport() loader calls (replaced by direct WAT-level merge)
+    src = src.replace(wasmImportCallRe, "");
     // Re-export-from: `export { … } from "…"` and `export * from "…"`
     src = src.replace(
       /^[ \t]*export\s+(?:type\s+)?\{[^}]*\}\s+from\s+['"][^'"]+['"]\s*;?[ \t]*\r?\n?/gm,
@@ -409,5 +500,18 @@ export async function bundleImports(entryPath: string): Promise<string> {
   }
 
   const result = await load(entryPath, true);
-  return result.source;
+  return { source: result.source, wasmImports };
+}
+
+/**
+ * Backward-compatible wrapper around bundleImportsEx.
+ * Returns only the merged TypeScript source string; .wasm imports are silently
+ * collected but not returned.  Use bundleImportsEx when you need the wasm list.
+ *
+ * @param entryPath - Absolute or cwd-relative path to the entry .ts file.
+ * @returns Merged source string with all .ts imports inlined and names mangled.
+ */
+export async function bundleImports(entryPath: string): Promise<string> {
+  const { source } = await bundleImportsEx(entryPath);
+  return source;
 }

@@ -111,7 +111,8 @@
 import wabt from "wabt";
 import binaryen from "binaryen";
 import { basename, dirname } from "@std/path";
-import { bundleImports } from "./tsbundler.ts";
+import { bundleImportsEx } from "./tsbundler.ts";
+import { mergeWasmWat, type ExternalFuncDef } from "./wasmmerge.ts";
 import {
   IOV_BASE,
   SCRATCH_BASE,
@@ -131,10 +132,12 @@ import {
 interface WasmFeatures { enable_all?: boolean; [key: string]: boolean | undefined; }
 interface WabtWasmModule {
   toBinary(opts: object): { buffer: ArrayBuffer };
+  toText(opts?: { foldExprs?: boolean; inlineExport?: boolean }): string;
   destroy(): void;
 }
 interface WabtModule {
   parseWat(filename: string, source: string, features?: WasmFeatures): WabtWasmModule;
+  readWasm(buffer: ArrayBuffer, opts?: { readDebugNames?: boolean }): WabtWasmModule;
 }
 
 // ---------------------------------------------------------------------------
@@ -376,6 +379,9 @@ class WasicTranspiler {
   private iovBase: number = IOV_BASE;
   private scratchBase: number = SCRATCH_BASE;
   private dataOffset = this.scratchBase + 4 * 32;  // DATA_BASE = SCRATCH_BASE + SCRATCH_SLOTS*32 = 260
+
+  /** End of the static data section after transpilation — used by Phase 18 merge. */
+  get dataEnd(): number { return this.dataOffset; }
   private hasConsoleLog = false;
   private needsNumericHelpers = false;
   private needsStringHelpers = false;
@@ -450,9 +456,19 @@ class WasicTranspiler {
   // Top-level statements that become the _start body (patterns 2–4)
   private startBodyLines: string[] = [];
 
-  constructor(source: string, mode: "wasi" | "library" = "wasi") {
+  constructor(source: string, mode: "wasi" | "library" = "wasi", externalFuncs: ExternalFuncDef[] = []) {
     this.src = stripComments(source);
     this.mode = mode;
+    // Register imported WASM functions so call-site type inference works correctly.
+    for (const ef of externalFuncs) {
+      this.functions.push({
+        name: ef.name,
+        params: ef.params.map((t, i) => ({ name: `p${i}`, type: t as WatType })),
+        result: ef.result as WatType | null,
+        exported: true,
+        bodyLines: [], // body is provided by the WAT merge step, not the transpiler
+      });
+    }
   }
 
   /** Lazily assigns a funcref table slot to a named function. */
@@ -4607,6 +4623,63 @@ class WasicTranspiler {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 18 — WASM import merge helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Disassembles a .wasm binary and merges its content into a WAT module string.
+ *
+ * The WAT string produced by WasicTranspiler ends with a closing `)` for the module.
+ * This function splices the imported module's mangled functions, globals, and data
+ * segments in just before that closing paren, and deduplicates WASI imports.
+ *
+ * @param wat          WAT source from WasicTranspiler.transpile()
+ * @param wasmBytes    Raw bytes of the .wasm file to merge
+ * @param prefix       Module prefix for name mangling (e.g. "math")
+ * @param dataOffset   Current end of the main module's static data section
+ * @param wabtMod      Initialised wabt instance (already loaded by caller)
+ * @returns            { mergedWat, notices, exportedFuncs }
+ */
+async function mergeOneWasmImport(
+  wat: string,
+  wasmBytes: Uint8Array,
+  prefix: string,
+  dataOffset: number,
+  wabtMod: WabtModule,
+): Promise<{ mergedWat: string; notices: string[]; exportedFuncs: ExternalFuncDef[] }> {
+  // Disassemble the binary to WAT text
+  const importedMod = wabtMod.readWasm(wasmBytes.buffer, { readDebugNames: true });
+  const importedWat = importedMod.toText({ foldExprs: false });
+  importedMod.destroy();
+
+  const result = mergeWasmWat(importedWat, prefix, dataOffset);
+
+  // Deduplicate WASI imports: if the imported module uses fd_write (etc.) and the
+  // main module already imports it, no action needed — the main module's import
+  // declaration is already present.  Log for transparency.
+  if (result.wasiImportNames.length > 0) {
+    const unique = [...new Set(result.wasiImportNames)];
+    console.log(`   ℹ️  WASI imports deduplicated from ${prefix}: ${unique.join(", ")}`);
+  }
+
+  // Splice merged fragments before the closing `)` of the module
+  const fragments: string[] = [];
+  if (result.globalWat) fragments.push(`  ;; globals from ${prefix}\n  ${result.globalWat}`);
+  if (result.funcWat)   fragments.push(`  ;; functions from ${prefix}\n  ${result.funcWat}`);
+  if (result.dataWat)   fragments.push(`  ;; data from ${prefix}\n  ${result.dataWat}`);
+
+  if (fragments.length === 0) return { mergedWat: wat, notices: result.notices, exportedFuncs: result.exportedFuncs };
+
+  // Insert before the final `)` that closes the module
+  const closeIdx = wat.lastIndexOf(")");
+  const mergedWat = closeIdx === -1
+    ? wat + "\n" + fragments.join("\n") + "\n)"
+    : wat.slice(0, closeIdx) + "\n" + fragments.join("\n") + "\n)";
+
+  return { mergedWat, notices: result.notices, exportedFuncs: result.exportedFuncs };
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -4627,14 +4700,35 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
 
   if (outPath) await Deno.mkdir(dirname(outPath), { recursive: true });
 
-  let source: string;
+  let bundleResult: Awaited<ReturnType<typeof bundleImportsEx>>;
   try {
-    source = await bundleImports(tsPath);
+    bundleResult = await bundleImportsEx(tsPath);
   } catch (err) {
     return { success: false, error: `Cannot read ${tsPath}: ${err}` };
   }
+  const { source, wasmImports } = bundleResult;
 
-  const transpiler = new WasicTranspiler(source);
+  // Pre-load external function signatures so the transpiler can type call sites.
+  // We disassemble each imported .wasm now (before transpilation) to extract exports.
+  const wabtMod = await (wabt as unknown as () => Promise<WabtModule>)();
+  const allExternalFuncs: ExternalFuncDef[] = [];
+  const wasmBytesMap = new Map<string, Uint8Array>();
+
+  for (const entry of wasmImports) {
+    try {
+      const bytes = await Deno.readFile(entry.filePath);
+      wasmBytesMap.set(entry.filePath, bytes);
+      const mod = wabtMod.readWasm(bytes.buffer, { readDebugNames: true });
+      const importedWat = mod.toText({ foldExprs: false });
+      mod.destroy();
+      const preResult = mergeWasmWat(importedWat, entry.prefix, 0);
+      allExternalFuncs.push(...preResult.exportedFuncs);
+    } catch (_err) {
+      console.warn(`  ⚠️  Cannot read imported WASM ${entry.filePath} — skipping`);
+    }
+  }
+
+  const transpiler = new WasicTranspiler(source, "wasi", allExternalFuncs);
   let wat: string;
   try {
     wat = transpiler.transpile(name);
@@ -4650,6 +4744,27 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
     return { success: false, error: `Compilation aborted: ${transpiler.warnings.length} unsupported feature(s) — see warnings above` };
   }
 
+  // Phase 18: merge each imported .wasm module into the WAT
+  let dataOffset = transpiler.dataEnd;
+  for (const entry of wasmImports) {
+    const bytes = wasmBytesMap.get(entry.filePath);
+    if (!bytes) continue;
+    const { mergedWat, notices } = await mergeOneWasmImport(wat, bytes, entry.prefix, dataOffset, wabtMod);
+    for (const notice of notices) {
+      console.log(`  ⚠️  Imported "${entry.filePath}": ${notice}`);
+    }
+    wat = mergedWat;
+    // Advance dataOffset so the next imported module's data lands above this one.
+    // A second pass with mergeWasmWat(dataReloc=0) gives us the imported module's own
+    // dataOffset, which we use as the relocation size.
+    const mod2 = wabtMod.readWasm(bytes.buffer, { readDebugNames: false });
+    const wat2 = mod2.toText({ foldExprs: false });
+    mod2.destroy();
+    // Advance dataOffset by the imported module's static footprint
+    const heapM = wat2.match(/\(global\s+\(;0;\)\s+\(mut i32\)\s+\(i32\.const\s+(\d+)\)\)/);
+    dataOffset += heapM ? parseInt(heapM[1]) : 260 /* DATA_BASE fallback */;
+  }
+
   // Write WAT alongside the output for inspection / debugging
   await Deno.writeTextFile(watPath, wat);
 
@@ -4657,6 +4772,9 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
   if (result.success) {
     console.log(`✅ WASI: ${out} (${result.sizeBytes} bytes)`);
     console.log(`   WAT:  ${watPath}`);
+    if (wasmImports.length > 0) {
+      console.log(`   Merged: ${wasmImports.map(e => e.prefix).join(", ")}`);
+    }
   } else {
     console.error(`❌ wasic: ${result.error}`);
     console.error(`   Inspect generated WAT at: ${watPath}`);
@@ -4687,14 +4805,33 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
 
   if (outPath) await Deno.mkdir(dirname(outPath), { recursive: true });
 
-  let source: string;
+  let bundleResult2: Awaited<ReturnType<typeof bundleImportsEx>>;
   try {
-    source = await bundleImports(tsPath);
+    bundleResult2 = await bundleImportsEx(tsPath);
   } catch (err) {
     return { success: false, error: `Cannot read ${tsPath}: ${err}` };
   }
+  const { source, wasmImports } = bundleResult2;
 
-  const transpiler = new WasicTranspiler(source, "library");
+  const wabtMod2 = await (wabt as unknown as () => Promise<WabtModule>)();
+  const allExternalFuncs2: ExternalFuncDef[] = [];
+  const wasmBytesMap2 = new Map<string, Uint8Array>();
+
+  for (const entry of wasmImports) {
+    try {
+      const bytes = await Deno.readFile(entry.filePath);
+      wasmBytesMap2.set(entry.filePath, bytes);
+      const mod = wabtMod2.readWasm(bytes.buffer, { readDebugNames: true });
+      const importedWat = mod.toText({ foldExprs: false });
+      mod.destroy();
+      const preResult2 = mergeWasmWat(importedWat, entry.prefix, 0);
+      allExternalFuncs2.push(...preResult2.exportedFuncs);
+    } catch (_err) {
+      console.warn(`  ⚠️  Cannot read imported WASM ${entry.filePath} — skipping`);
+    }
+  }
+
+  const transpiler = new WasicTranspiler(source, "library", allExternalFuncs2);
   let wat: string;
   try {
     wat = transpiler.transpile(name);
@@ -4709,12 +4846,31 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
     return { success: false, error: `Compilation aborted: ${transpiler.warnings.length} unsupported feature(s) — see warnings above` };
   }
 
+  let dataOffset2 = transpiler.dataEnd;
+  for (const entry of wasmImports) {
+    const bytes = wasmBytesMap2.get(entry.filePath);
+    if (!bytes) continue;
+    const { mergedWat, notices } = await mergeOneWasmImport(wat, bytes, entry.prefix, dataOffset2, wabtMod2);
+    for (const notice of notices) {
+      console.log(`  ⚠️  Imported "${entry.filePath}": ${notice}`);
+    }
+    wat = mergedWat;
+    const mod2 = wabtMod2.readWasm(bytes.buffer, { readDebugNames: false });
+    const wat2 = mod2.toText({ foldExprs: false });
+    mod2.destroy();
+    const heapM = wat2.match(/\(global\s+\(;0;\)\s+\(mut i32\)\s+\(i32\.const\s+(\d+)\)\)/);
+    dataOffset2 += heapM ? parseInt(heapM[1]) : 260;
+  }
+
   await Deno.writeTextFile(watPath, wat);
 
   const result = await watToOptimisedWasm(wat, watPath, out);
   if (result.success) {
     console.log(`✅ Library: ${out} (${result.sizeBytes} bytes)`);
     console.log(`   WAT:  ${watPath}`);
+    if (wasmImports.length > 0) {
+      console.log(`   Merged: ${wasmImports.map(e => e.prefix).join(", ")}`);
+    }
   } else {
     console.error(`❌ wasic (library): ${result.error}`);
     console.error(`   Inspect generated WAT at: ${watPath}`);
