@@ -15,8 +15,7 @@
     "./tsbundler": "./tsbundler.ts",
     "./console_log": "./console_log.ts",
     "./wasmbundle": "./wasmbundle.ts",
-    "./wasmmerge": "./wasmmerge.ts",
-    "./wtime": "./wtime.ts"
+    "./wasmmerge": "./wasmmerge.ts"
   },
   "publish": {
     "include": [

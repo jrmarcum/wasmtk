@@ -9,8 +9,6 @@
  * - `wasm2js`: JS porting
  * - `convert`: Format toggling
  * - `tsbundle`: TS bundling
- * - `cwasm`: AOT compile .wasm/.ts to machine-specific .cwasm via wasmtime
- * - `run`: also handles .cwasm via wasmtime backend
  */
 
 import { parseArgs } from "@std/cli/parse-args";
@@ -74,8 +72,7 @@ Usage:
   wasmtk modc <file.ts>                   Compile a TypeScript file to a WASM library
   wasmtk wasic <file.ts|.wat>             Compile to a standalone WASI module (no JS runtime, smaller output)
   wasmtk javyc <file.ts>                  Compile a TypeScript file to a WASI module via Javy/QuickJS
-  wasmtk cwasm <file.ts|.wasm>            AOT compile to machine-specific .cwasm via wasmtime (faster startup)
-  wasmtk run <file>                       Run a .wasm, .cwasm, .wat, .js, or .ts file
+  wasmtk run <file>                       Run a .wasm, .wat, .js, or .ts file
   wasmtk mod <file> [fn] [...]            Call a function in a WASM library module (no fn = list functions)
   wasmtk info <file>                      Show callable WASM functions in .wasm or .wat library/module
   wasmtk wasm2js <file.wasm>              Convert .wasm -> .js based script
@@ -86,13 +83,11 @@ Usage:
 Options:
   -v, -V, --version            Show version information
   -h, --help                   Show this help message
-  -n, --name <path>            Output file path (e.g. dist/mymodule.cwasm)
+  -n, --name <path>            Output file path (e.g. dist/mymodule.wasm)
       --on-conflict=prefix     (wasmbundle) Auto-prefix conflicting exports with module name
       --on-conflict=alias      (wasmbundle) Auto-prefix conflicting exports with --alias values
       --on-conflict=exclude    (wasmbundle) Auto-exclude conflicting exports
       --alias a.wasm=x,...     (wasmbundle) Alias prefixes for conflict resolution
-
-Note: .cwasm files are machine-specific (CPU + OS) and are not portable across machines.
     `);
     return;
   }
@@ -108,28 +103,8 @@ Note: .cwasm files are machine-specific (CPU + OS) and are not portable across m
       await compileJavy(target, outPath);
       break;
     case "run":
-      if (target.endsWith(".cwasm")) {
-        const { runCwasm } = await import("./wtime.ts");
-        await runCwasm(target);
-      } else {
-        await runWasi(target, []);
-      }
+      await runWasi(target, []);
       break;
-    case "cwasm": {
-      const { compileCwasm } = await import("./wtime.ts");
-      if (target.endsWith(".ts")) {
-        // Two-step: wasic compile → .wasm, then wasmtime compile → .cwasm
-        const wasmOut = target.replace(/\.ts$/, ".wasm");
-        await compileWasi(target);
-        await compileCwasm(wasmOut, outPath);
-      } else if (target.endsWith(".wasm")) {
-        await compileCwasm(target, outPath);
-      } else {
-        console.error("❌ cwasm requires a .ts or .wasm input file.");
-        Deno.exit(1);
-      }
-      break;
-    }
     case "mod": {
       const fn = args._[2] as string | undefined;
       if (fn) {

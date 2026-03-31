@@ -345,40 +345,6 @@ export function multiply(a: f64, b: f64): f64 {
 
 ---
 
-### `wasmtk cwasm` — AOT Compile to Machine-Specific Executable
-
-Ahead-Of-Time compiles a `.wasm` (or `.ts`) file to a **`.cwasm`** — a pre-compiled native binary for the current machine — using the [wasmtime](https://wasmtime.dev) runtime. The resulting file starts faster than a regular `.wasm` because the JIT compilation step has already been done.
-
-```bash
-# Compile an existing .wasm to .cwasm
-wasmtk cwasm myprogram.wasm
-
-# Compile from TypeScript directly (wasic → .wasm, then wasmtime → .cwasm)
-wasmtk cwasm myprogram.ts
-
-# Custom output path
-wasmtk cwasm myprogram.wasm --name dist/myprogram.cwasm
-
-# Run the AOT-compiled result
-wasmtk run myprogram.cwasm
-```
-
-**What it produces:** A `.cwasm` file — wasmtime's AOT-compiled format — that can be run with `wasmtk run` (which uses the wasmtime backend automatically) or directly with `wasmtime run`.
-
-> **⚠️ Machine-specific:** `.cwasm` files are **tied to the CPU architecture, OS, and wasmtime version** of the machine that compiled them. They **cannot be transferred to or run on a different machine**. Do not commit `.cwasm` files to version control or distribute them. They are a local execution optimization only.
-
-**Best suited for:**
-
-- Programs you run repeatedly on the same machine where startup latency matters
-- Benchmarking or performance-sensitive WASI workloads
-- Cases where the JIT warm-up cost is noticeable
-
-**wasmtime binary management:**
-
-wasmtime is downloaded automatically on first use from the [Bytecode Alliance GitHub releases](https://github.com/bytecodealliance/wasmtime/releases) and cached at `~/.deno/bin/wasmtime`. No manual installation is required. If wasmtime is already on your `PATH` it will be used directly.
-
----
-
 ### `wasmtk wasmbundle` — Multi-WASM Bundler
 
 Merges multiple pre-compiled `.wasm` files into a **single combined `.wasm` library** — no TypeScript source required. Useful for packaging independently compiled modules for distribution as one artifact.
@@ -425,9 +391,6 @@ import { mergeWasmWat, extractExportNames }         from "@jrmarcum/wasmtk/wasmm
 | `compileJavy(path, outPath?)` | `./javyc` | Compile `.ts` to a WASI module via Javy/QuickJS |
 | `bundleImports(entryPath)` | `./tsbundler` | Resolve and merge relative imports into a single source string |
 | `runWasmBundle(inputs, out, onConflict?, aliases?)` | `./wasmbundle` | Bundle multiple `.wasm` files into a single `.wasm` library |
-| `compileCwasm(inputPath, outputPath?)` | `./wtime` | AOT compile `.wasm` → machine-specific `.cwasm` via wasmtime |
-| `runCwasm(filePath)` | `./wtime` | Run a `.cwasm` file via the wasmtime backend |
-| `ensureWasmtime()` | `./wtime` | Download and cache the wasmtime binary if not already present |
 | `mergeWasmWat(wat, prefix, dataReloc, overrides?)` | `./wasmmerge` | Merge one WAT module into a parent with prefix mangling and data relocation; returns `exportMap` |
 | `extractExportNames(wat)` | `./wasmmerge` | Return bare export names from a WAT module (for conflict detection) |
 
@@ -447,7 +410,6 @@ import { mergeWasmWat, extractExportNames }         from "@jrmarcum/wasmtk/wasmm
 | WASM library for Deno/Node/browser consumption | `modc` |
 | Combine multiple `.wasm` files into one library | `wasmbundle` |
 | Distribute a set of compiled modules as a single artifact | `wasmbundle` |
-| Faster startup on the same machine (no JIT at runtime) | `cwasm` |
 
 ---
 
@@ -488,7 +450,6 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | 18 | WASM import bundling | `tsbundler.ts` detects `.wasm` specifiers in ESM imports and `wasmImport()` loader calls; new `wasmmerge.ts` module performs WAT-level merge with module-prefix name mangling; `_start`, `proc_exit`, `args_get/sizes_get`, `environ_get/sizes_get` stripped with notice; WASI imports deduplicated; data segments relocated by `mainModule.dataOffset`; static-data pointer `i32.const` values conservatively relocated; `WasicTranspiler` gains `externalFuncs` constructor param so call sites type-check before WAT merge; `iovBase`/`scratchBase` promoted to instance variables for collision-free merge of `fd_write` scratch areas; `bundleImportsEx()` returns `{ source, wasmImports }` alongside backward-compat `bundleImports()` |
 | 19 | `wasmbundle` CLI | New `wasmbundle.ts` + `wasmtk wasmbundle` command bundles multiple `.wasm` files into a single combined `.wasm` library; cross-module export conflict detection; interactive per-conflict prompt or `--on-conflict=prefix\|exclude` flag; non-conflicting exports keep bare names; conflicting exports prefixed or excluded; sequential `mergeWasmWat` with tracked `dataOffset`; master WAT assembled with WASI imports (14 common signatures), auto-sized `(memory N)`, and explicit `(export ...)` declarations; `extractExportNames()` added to `wasmmerge.ts`; `exportOverrides` parameter added to `mergeWasmWat` for export name control |
 | 20 | Export name transparency + `tsbundle` rename | `wasmmerge.ts`: `mergeWasmWat` emits `(export "add" (func $mathlib_add))` — original export name preserved, internal mangling unchanged; `WatMergeResult` gains `exportMap: Map<string, string>` (`originalName → $mangledName`); `wasmbundle.ts`: conflict resolution upgraded to 4-option interactive prompt (prefix / alias / exclude / stop) + `--alias file=name` and `--on-conflict=alias` non-interactive flags; `bundle` CLI command renamed to `tsbundle` |
-| 21 | `cwasm` — wasmtime AOT compiler | New `wtime.ts` module downloads and caches the wasmtime CLI binary (Bytecode Alliance, v43.0.0); `compileCwasm(wasm, out?)` AOT-compiles `.wasm` → `.cwasm`; `runCwasm(path)` runs `.cwasm` via wasmtime; `wasmtk cwasm` accepts `.ts` (wasic + wasmtime) or `.wasm` (wasmtime only); `wasmtk run` auto-detects `.cwasm` extension and routes to wasmtime backend; `.cwasm` files are machine-specific (CPU + OS + wasmtime version) and non-portable |
 
 ---
 
@@ -697,71 +658,6 @@ The TypeScript-to-JS bundler command is renamed from `bundle` to `tsbundle` to c
 
 ---
 
----
-
-#### Phase 21 — `cwasm` AOT Compiler (wasmtime backend)
-
-Phase 21 adds a native Ahead-Of-Time compilation path using the [wasmtime](https://wasmtime.dev) runtime. AOT-compiled `.cwasm` files skip the JIT step at startup, giving faster execution for programs run repeatedly on the same machine.
-
-**CLI usage:**
-
-```bash
-# From an existing .wasm file
-wasmtk cwasm myprogram.wasm
-
-# From TypeScript — wasic compiles to .wasm first, then wasmtime AOT compiles to .cwasm
-wasmtk cwasm myprogram.ts
-
-# Custom output path
-wasmtk cwasm myprogram.wasm --name dist/myprogram.cwasm
-
-# Run — .cwasm extension triggers automatic wasmtime backend selection
-wasmtk run myprogram.cwasm
-```
-
-**Machine-specificity:**
-
-> **⚠️ `.cwasm` files are not portable.** They are compiled for the specific CPU architecture, operating system, and wasmtime version of the machine that produced them. Running a `.cwasm` on a different machine or a different wasmtime version will fail. Do not distribute or commit `.cwasm` files — they are a local startup-speed optimization only.
-
-| Property | Value |
-| --- | --- |
-| Tied to CPU architecture | Yes — `x86_64` and `aarch64` produce different files |
-| Tied to OS | Yes — Linux, macOS, Windows each produce incompatible files |
-| Tied to wasmtime version | Yes — upgrading wasmtime requires recompiling `.cwasm` |
-| Portable across machines | No |
-| Safe to distribute | No |
-
-**Pipeline:**
-
-```text
-.ts source
-  ↓ wasic  (wasic compiler — same as wasmtk wasic)
-  .wasm
-  ↓ wasmtime compile -o output.cwasm
-  .cwasm  (machine-specific AOT binary)
-
-.wasm (pre-compiled)
-  ↓ wasmtime compile -o output.cwasm
-  .cwasm  (machine-specific AOT binary)
-```
-
-**wasmtime binary management:**
-
-wasmtime is downloaded automatically from the Bytecode Alliance GitHub releases on first use:
-
-| Platform | Asset |
-| --- | --- |
-| Linux x86_64 | `wasmtime-v43.0.0-x86_64-linux.tar.xz` |
-| Linux aarch64 | `wasmtime-v43.0.0-aarch64-linux.tar.xz` |
-| macOS x86_64 | `wasmtime-v43.0.0-x86_64-macos.tar.xz` |
-| macOS aarch64 (Apple Silicon) | `wasmtime-v43.0.0-aarch64-macos.tar.xz` |
-| Windows x86_64 | `wasmtime-v43.0.0-x86_64-windows.zip` |
-| Windows aarch64 | `wasmtime-v43.0.0-aarch64-windows.zip` |
-
-The binary is cached at `~/.deno/bin/wasmtime`. If wasmtime is already on your `PATH`, the cached download is skipped entirely.
-
----
-
 ### Planned Phases
 
-> No phases currently planned. Phase 21 completed the roadmap. Future work tracked separately.
+> No phases currently planned. Future work tracked separately.
