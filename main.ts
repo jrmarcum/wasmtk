@@ -8,7 +8,9 @@
  * - `info`: Module inspection
  * - `wasm2js`: JS porting
  * - `convert`: Format toggling
- * - `bundle`: TS bundling
+ * - `tsbundle`: TS bundling
+ * - `cwasm`: AOT compile .wasm/.ts to machine-specific .cwasm via wasmtime
+ * - `run`: also handles .cwasm via wasmtime backend
  */
 
 import { parseArgs } from "@std/cli/parse-args";
@@ -52,7 +54,7 @@ async function main(): Promise<void> {
       n: "name",
     },
     boolean: ["version", "help"],
-    string: ["name", "on-conflict"],
+    string: ["name", "on-conflict", "alias"],
   });
 
   if (args.version) {
@@ -69,23 +71,28 @@ async function main(): Promise<void> {
 wasmtk - WebAssembly Development Toolkit v${VERSION}
 
 Usage:
-  wasmtk modc <file.ts>                   Compile a TypeScript file to a WASM library (asc)
+  wasmtk modc <file.ts>                   Compile a TypeScript file to a WASM library
   wasmtk wasic <file.ts|.wat>             Compile to a standalone WASI module (no JS runtime, smaller output)
   wasmtk javyc <file.ts>                  Compile a TypeScript file to a WASI module via Javy/QuickJS
-  wasmtk run <file>                       Run a standalone .wasm, .wat, .js, or .ts WASI module
+  wasmtk cwasm <file.ts|.wasm>            AOT compile to machine-specific .cwasm via wasmtime (faster startup)
+  wasmtk run <file>                       Run a .wasm, .cwasm, .wat, .js, or .ts file
   wasmtk mod <file> [fn] [...]            Call a function in a WASM library module (no fn = list functions)
   wasmtk info <file>                      Show callable WASM functions in .wasm or .wat library/module
   wasmtk wasm2js <file.wasm>              Convert .wasm -> .js based script
   wasmtk convert <file>                   Convert .wasm -> .wat and .wat -> .wasm
-  wasmtk bundle <file.ts>                 Bundle a .ts project to a single .js file
+  wasmtk tsbundle <file.ts>               Bundle a .ts project to a single .js file
   wasmtk wasmbundle <a.wasm> [b.wasm...]  Bundle multiple .wasm files into a single library
 
 Options:
   -v, -V, --version            Show version information
   -h, --help                   Show this help message
-  -n, --name <path>            Output file path (e.g. dist/mymodule.wasm)
-      --on-conflict=prefix     (wasmbundle) Auto-prefix conflicting exports
+  -n, --name <path>            Output file path (e.g. dist/mymodule.cwasm)
+      --on-conflict=prefix     (wasmbundle) Auto-prefix conflicting exports with module name
+      --on-conflict=alias      (wasmbundle) Auto-prefix conflicting exports with --alias values
       --on-conflict=exclude    (wasmbundle) Auto-exclude conflicting exports
+      --alias a.wasm=x,...     (wasmbundle) Alias prefixes for conflict resolution
+
+Note: .cwasm files are machine-specific (CPU + OS) and are not portable across machines.
     `);
     return;
   }
@@ -101,8 +108,28 @@ Options:
       await compileJavy(target, outPath);
       break;
     case "run":
-      await runWasi(target, []);
+      if (target.endsWith(".cwasm")) {
+        const { runCwasm } = await import("./wtime.ts");
+        await runCwasm(target);
+      } else {
+        await runWasi(target, []);
+      }
       break;
+    case "cwasm": {
+      const { compileCwasm } = await import("./wtime.ts");
+      if (target.endsWith(".ts")) {
+        // Two-step: wasic compile → .wasm, then wasmtime compile → .cwasm
+        const wasmOut = target.replace(/\.ts$/, ".wasm");
+        await compileWasi(target);
+        await compileCwasm(wasmOut, outPath);
+      } else if (target.endsWith(".wasm")) {
+        await compileCwasm(target, outPath);
+      } else {
+        console.error("❌ cwasm requires a .ts or .wasm input file.");
+        Deno.exit(1);
+      }
+      break;
+    }
     case "mod": {
       const fn = args._[2] as string | undefined;
       if (fn) {
@@ -122,7 +149,7 @@ Options:
     case "convert":
       await convertFile(target, outPath);
       break;
-    case "bundle":
+    case "tsbundle":
       await bundleTs(target, outPath ?? target.replace(/\.ts$/, ".js"));
       break;
     case "wasmbundle": {
@@ -131,8 +158,18 @@ Options:
       const bundleOut = outPath ?? "combined.wasm";
       const conflictFlag = args["on-conflict"] as string | undefined;
       const onConflict =
-        conflictFlag === "prefix" || conflictFlag === "exclude" ? conflictFlag : undefined;
-      await runWasmBundle(inputFiles, bundleOut, onConflict);
+        conflictFlag === "prefix" || conflictFlag === "alias" || conflictFlag === "exclude"
+          ? (conflictFlag as "prefix" | "alias" | "exclude")
+          : undefined;
+      const aliasStr = args["alias"] as string | undefined;
+      const aliases = new Map<string, string>();
+      if (aliasStr) {
+        for (const pair of aliasStr.split(",")) {
+          const eqIdx = pair.indexOf("=");
+          if (eqIdx > 0) aliases.set(pair.slice(0, eqIdx).trim(), pair.slice(eqIdx + 1).trim());
+        }
+      }
+      await runWasmBundle(inputFiles, bundleOut, onConflict, aliases);
       break;
     }
     default:

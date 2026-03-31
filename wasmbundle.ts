@@ -5,14 +5,24 @@
  * Merges N standalone .wasm modules (WASI executables or pure libraries) into one
  * combined .wasm that exports all their functions under a unified namespace.
  *
- * ## Conflict resolution
+ * ## Conflict resolution (Phase 20)
  *
  * When two or more input modules export a function with the same name, wasmbundle
- * detects the conflict and resolves it one of three ways:
+ * detects the conflict and resolves it. Internal WAT symbol names are always mangled
+ * for uniqueness ($mathlib_add); only the WASM export string uses the clean name
+ * ("add"), so consumers always see original, predictable function names.
  *
- *  - Interactive (default): prompts the user to choose prefix or exclude per conflict.
- *  - --on-conflict=prefix : automatically prefixes both sides (e.g. math1_add, math2_add).
- *  - --on-conflict=exclude: automatically drops both conflicting exports.
+ * Resolution options:
+ *
+ *  - Interactive (default): four-option prompt per conflict:
+ *      [1] Prefix with module name  →  mathlib_add, utils_add
+ *      [2] Prefix with alias        →  m_add, u_add  (requires --alias)
+ *      [3] Exclude both
+ *      [4] Stop compile             →  rename in source and recompile
+ *  - --on-conflict=prefix : auto-prefix all conflicts with module filename.
+ *  - --on-conflict=alias  : auto-prefix all conflicts with --alias values.
+ *  - --on-conflict=exclude: auto-exclude all conflicting exports.
+ *  - --alias a.wasm=m,b.wasm=n : supply alias prefixes for interactive or alias mode.
  *
  * Non-conflicting exports always keep their bare name in the output.
  *
@@ -71,24 +81,43 @@ function modulePrefix(filePath: string): string {
 
 /**
  * Prompt the user interactively for a single conflict resolution.
- * Returns "prefix" or "exclude".
+ * Returns "prefix" | "alias" | "exclude" | "stop".
+ * Option [2] (alias) is shown with examples when all conflicting files have an
+ * alias in the provided map; otherwise it is shown with a usage hint.
  */
-async function promptConflict(name: string, files: string[]): Promise<"prefix" | "exclude"> {
+async function promptConflict(
+  name: string,
+  files: string[],
+  aliases: Map<string, string>,
+): Promise<"prefix" | "alias" | "exclude" | "stop"> {
   const fileNames = files.map((f) => basename(f));
   const prefixExamples = files.map((f) => `${modulePrefix(f)}_${name}`).join(", ");
+
+  const fileAliases = files.map((f) => aliases.get(basename(f)) ?? aliases.get(f));
+  const allHaveAliases = fileAliases.every((a) => a !== undefined);
+  const aliasLine = allHaveAliases
+    ? `  [2]  Prefix with alias         →  ${fileAliases.map((a) => `${a}_${name}`).join(", ")}\n`
+    : `  [2]  Prefix with alias         →  (use --alias ${fileNames.map((f) => `${f}=<name>`).join(",")})\n`;
+
   const encoder = new TextEncoder();
   await Deno.stdout.write(
     encoder.encode(
       `\nConflict: "${name}" exported by: ${fileNames.join(", ")}\n` +
-        `  [p]  Prefix each  →  ${prefixExamples}\n` +
-        `  [e]  Exclude both\n` +
-        `  Choice (p/e): `,
+        `  [1]  Prefix with module name  →  ${prefixExamples}\n` +
+        aliasLine +
+        `  [3]  Exclude both\n` +
+        `  [4]  Stop compile             →  rename the function in source and recompile\n` +
+        `  Choice (1/2/3/4): `,
     ),
   );
   const buf = new Uint8Array(16);
   const n = await Deno.stdin.read(buf);
-  const choice = n ? new TextDecoder().decode(buf.subarray(0, n)).trim().toLowerCase() : "e";
-  return choice.startsWith("p") ? "prefix" : "exclude";
+  const choice = n ? new TextDecoder().decode(buf.subarray(0, n)).trim() : "4";
+
+  if (choice === "1") return "prefix";
+  if (choice === "2") return allHaveAliases ? "alias" : "prefix";
+  if (choice === "3") return "exclude";
+  return "stop";
 }
 
 /**
@@ -137,12 +166,14 @@ interface ModuleEntry {
  *
  * @param inputs      Absolute or relative paths to the input .wasm files.
  * @param outputPath  Path for the output .wasm (default: combined.wasm).
- * @param onConflict  "prefix" | "exclude" for non-interactive use; omit to prompt.
+ * @param onConflict  Auto-resolve mode: "prefix" | "alias" | "exclude"; omit to prompt.
+ * @param aliases     Map of basename (or full path) → alias prefix for conflict resolution.
  */
 export async function runWasmBundle(
   inputs: string[],
   outputPath: string,
-  onConflict?: "prefix" | "exclude",
+  onConflict?: "prefix" | "alias" | "exclude",
+  aliases: Map<string, string> = new Map(),
 ): Promise<void> {
   if (inputs.length === 0) {
     console.error("❌ No input files specified.");
@@ -186,19 +217,48 @@ export async function runWasmBundle(
   }
 
   // ── Resolve conflicts ────────────────────────────────────────────────────
-  // resolutionKey: "filePath::exportName" → "prefix" | "exclude"
-  const resolutionKey = new Map<string, "prefix" | "exclude">();
+  // resolutionMap: "filePath::exportName" → output export name string, or null (exclude)
+  const resolutionMap = new Map<string, string | null>();
   for (const [name, files] of conflictNames) {
-    let resolution: "prefix" | "exclude";
-    if (onConflict) {
+    let resolution: "prefix" | "alias" | "exclude" | "stop";
+
+    if (onConflict === "prefix" || onConflict === "exclude") {
       resolution = onConflict;
       const fileNames = files.map((f) => basename(f)).join(", ");
       console.log(`  "${name}" (${fileNames}): → ${resolution}`);
+    } else if (onConflict === "alias") {
+      const missing = files.filter((f) => !(aliases.get(basename(f)) ?? aliases.get(f)));
+      if (missing.length > 0) {
+        console.error(
+          `\n❌ --on-conflict=alias requires --alias for every conflicting module.\n` +
+            `   Missing alias for: ${missing.map((f) => basename(f)).join(", ")}`,
+        );
+        Deno.exit(1);
+      }
+      resolution = "alias";
+      const fileNames = files.map((f) => basename(f)).join(", ");
+      console.log(`  "${name}" (${fileNames}): → alias prefix`);
     } else {
-      resolution = await promptConflict(name, files);
+      resolution = await promptConflict(name, files, aliases);
     }
+
+    if (resolution === "stop") {
+      console.error(
+        `\n❌ Compile stopped. Rename "${name}" in your source and recompile.`,
+      );
+      Deno.exit(1);
+    }
+
     for (const file of files) {
-      resolutionKey.set(`${file}::${name}`, resolution);
+      if (resolution === "exclude") {
+        resolutionMap.set(`${file}::${name}`, null);
+      } else if (resolution === "prefix") {
+        resolutionMap.set(`${file}::${name}`, `${modulePrefix(file)}_${name}`);
+      } else {
+        // alias
+        const alias = aliases.get(basename(file)) ?? aliases.get(file) ?? modulePrefix(file);
+        resolutionMap.set(`${file}::${name}`, `${alias}_${name}`);
+      }
     }
   }
 
@@ -213,19 +273,13 @@ export async function runWasmBundle(
 
   for (const mod of modules) {
     // Build exportOverrides for this module:
-    //   null   → excluded
-    //   string → the public name to use in (export "...")
+    //   null        → excluded from output
+    //   string      → the public export name in (export "..."); may differ from $internal
+    // Non-conflicting exports keep their original bare name (Phase 20: clean exports).
     const overrides = new Map<string, string | null>();
     for (const exp of mod.exports) {
-      const key = `${mod.filePath}::${exp}`;
-      const resolution = resolutionKey.get(key);
-      if (resolution === "exclude") {
-        overrides.set(exp, null);
-      } else if (resolution === "prefix") {
-        overrides.set(exp, `${mod.prefix}_${exp}`);
-      } else {
-        overrides.set(exp, exp); // non-conflicting: keep bare name
-      }
+      const resolved = resolutionMap.get(`${mod.filePath}::${exp}`);
+      overrides.set(exp, resolved !== undefined ? resolved : exp);
     }
 
     const result = mergeWasmWat(mod.wat, mod.prefix, dataOffset, overrides);

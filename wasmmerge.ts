@@ -82,6 +82,13 @@ export interface WatMergeResult {
    * Each entry is like: (export "add" (func $math_add))
    */
   exportDecls: string[];
+  /**
+   * Mapping from original export name to mangled internal WAT symbol name.
+   * e.g. "add" → "$mathlib_add". Populated for all exports regardless of whether
+   * exportOverrides was passed. Callers can use this to understand the internal name
+   * mapping without reconstructing it from the prefix and export name.
+   */
+  exportMap: Map<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -317,21 +324,32 @@ export function mergeWasmWat(
     });
   }
 
+  // ── Build exportMap (original name → mangled internal name) ─────────────
+  //
+  // Populated for every exported function regardless of whether exportOverrides
+  // was supplied. e.g. "add" → "$mathlib_add". Callers can use this to
+  // understand the internal symbol mapping without re-deriving it.
+
+  const exportMap = new Map<string, string>();
+  for (const [idx, exportName] of exportFuncMap) {
+    if (importMap.has(idx)) continue;
+    const internalName = funcName.get(idx) ?? `$${prefix}__fn${idx}`;
+    exportMap.set(exportName, internalName);
+  }
+
   // ── Build export declarations (wasmbundle mode) ───────────────────────────
   //
   // When exportOverrides is supplied, emit (export "name" (func $internal)) lines.
   // The override value controls the exported name:
   //   null            → excluded (skip)
-  //   "some_name"     → use that as the public export name
-  //   (key absent)    → skip (same as null; caller should cover all exports)
+  //   "some_name"     → use that as the public export name (may differ from internal)
+  //   (key absent)    → skip (caller should cover all exports)
 
   const exportDecls: string[] = [];
   if (exportOverrides !== undefined) {
-    for (const [idx, originalName] of exportFuncMap) {
-      if (importMap.has(idx)) continue; // skip WASI re-exports
+    for (const [originalName, internalName] of exportMap) {
       const outputName = exportOverrides.get(originalName);
       if (outputName == null) continue; // null = excluded, undefined = not provided
-      const internalName = funcName.get(idx) ?? `$${prefix}__fn${idx}`;
       exportDecls.push(`(export "${outputName}" (func ${internalName}))`);
     }
   }
@@ -440,5 +458,6 @@ export function mergeWasmWat(
     exportedFuncs,
     notices,
     exportDecls,
+    exportMap,
   };
 }

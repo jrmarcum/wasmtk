@@ -345,6 +345,40 @@ export function multiply(a: f64, b: f64): f64 {
 
 ---
 
+### `wasmtk cwasm` — AOT Compile to Machine-Specific Executable
+
+Ahead-Of-Time compiles a `.wasm` (or `.ts`) file to a **`.cwasm`** — a pre-compiled native binary for the current machine — using the [wasmtime](https://wasmtime.dev) runtime. The resulting file starts faster than a regular `.wasm` because the JIT compilation step has already been done.
+
+```bash
+# Compile an existing .wasm to .cwasm
+wasmtk cwasm myprogram.wasm
+
+# Compile from TypeScript directly (wasic → .wasm, then wasmtime → .cwasm)
+wasmtk cwasm myprogram.ts
+
+# Custom output path
+wasmtk cwasm myprogram.wasm --name dist/myprogram.cwasm
+
+# Run the AOT-compiled result
+wasmtk run myprogram.cwasm
+```
+
+**What it produces:** A `.cwasm` file — wasmtime's AOT-compiled format — that can be run with `wasmtk run` (which uses the wasmtime backend automatically) or directly with `wasmtime run`.
+
+> **⚠️ Machine-specific:** `.cwasm` files are **tied to the CPU architecture, OS, and wasmtime version** of the machine that compiled them. They **cannot be transferred to or run on a different machine**. Do not commit `.cwasm` files to version control or distribute them. They are a local execution optimization only.
+
+**Best suited for:**
+
+- Programs you run repeatedly on the same machine where startup latency matters
+- Benchmarking or performance-sensitive WASI workloads
+- Cases where the JIT warm-up cost is noticeable
+
+**wasmtime binary management:**
+
+wasmtime is downloaded automatically on first use from the [Bytecode Alliance GitHub releases](https://github.com/bytecodealliance/wasmtime/releases) and cached at `~/.deno/bin/wasmtime`. No manual installation is required. If wasmtime is already on your `PATH` it will be used directly.
+
+---
+
 ### `wasmtk wasmbundle` — Multi-WASM Bundler
 
 Merges multiple pre-compiled `.wasm` files into a **single combined `.wasm` library** — no TypeScript source required. Useful for packaging independently compiled modules for distribution as one artifact.
@@ -352,9 +386,10 @@ Merges multiple pre-compiled `.wasm` files into a **single combined `.wasm` libr
 ```bash
 wasmtk wasmbundle math.wasm utils.wasm --name combined.wasm
 wasmtk wasmbundle math1.wasm math2.wasm --on-conflict=prefix
+wasmtk wasmbundle math1.wasm math2.wasm --alias math1.wasm=m1,math2.wasm=m2 --on-conflict=alias
 ```
 
-**What it produces:** A `.wasm` library with all exported functions from every input module, accessible under a unified namespace.
+**What it produces:** A `.wasm` library with all exported functions from every input module. Internal WAT symbol names are always mangled for uniqueness (`$mathlib_add`); exported names are always the original clean names (`"add"`) so consumers see a predictable public API.
 
 **Best suited for:**
 
@@ -363,7 +398,7 @@ wasmtk wasmbundle math1.wasm math2.wasm --on-conflict=prefix
 - Packaging platform-specific WASM alongside shared utilities
 - Reducing load overhead when a host needs functions from several modules
 
-See [Phase 19 — `wasmbundle` CLI](#phase-19--wasmbundle-cli) for full pipeline details and conflict resolution options.
+See [Phase 19 — `wasmbundle` CLI](#phase-19--wasmbundle-cli) and [Phase 20 — Export Name Transparency](#phase-20--export-name-transparency) for full pipeline and conflict resolution details.
 
 ---
 
@@ -389,8 +424,11 @@ import { mergeWasmWat, extractExportNames }         from "@jrmarcum/wasmtk/wasmm
 | `compileModule(path, outPath?)` | `./modc` | Compile `.ts` to a WASM library via wasic transpiler |
 | `compileJavy(path, outPath?)` | `./javyc` | Compile `.ts` to a WASI module via Javy/QuickJS |
 | `bundleImports(entryPath)` | `./tsbundler` | Resolve and merge relative imports into a single source string |
-| `runWasmBundle(inputs, out, onConflict?)` | `./wasmbundle` | Bundle multiple `.wasm` files into a single `.wasm` library |
-| `mergeWasmWat(wat, prefix, dataReloc, overrides?)` | `./wasmmerge` | Merge one WAT module into a parent with prefix mangling and data relocation |
+| `runWasmBundle(inputs, out, onConflict?, aliases?)` | `./wasmbundle` | Bundle multiple `.wasm` files into a single `.wasm` library |
+| `compileCwasm(inputPath, outputPath?)` | `./wtime` | AOT compile `.wasm` → machine-specific `.cwasm` via wasmtime |
+| `runCwasm(filePath)` | `./wtime` | Run a `.cwasm` file via the wasmtime backend |
+| `ensureWasmtime()` | `./wtime` | Download and cache the wasmtime binary if not already present |
+| `mergeWasmWat(wat, prefix, dataReloc, overrides?)` | `./wasmmerge` | Merge one WAT module into a parent with prefix mangling and data relocation; returns `exportMap` |
 | `extractExportNames(wat)` | `./wasmmerge` | Return bare export names from a WAT module (for conflict detection) |
 
 ---
@@ -409,6 +447,7 @@ import { mergeWasmWat, extractExportNames }         from "@jrmarcum/wasmtk/wasmm
 | WASM library for Deno/Node/browser consumption | `modc` |
 | Combine multiple `.wasm` files into one library | `wasmbundle` |
 | Distribute a set of compiled modules as a single artifact | `wasmbundle` |
+| Faster startup on the same machine (no JIT at runtime) | `cwasm` |
 
 ---
 
@@ -448,6 +487,8 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | 17 | wasic library mode | `WasicTranspiler` gains `mode: "wasi" \| "library"` constructor param; library mode skips `_start`, `proc_exit` import, and top-level statement processing; `compileLibTs()` public function mirrors `compileWasiTs()`; `modc.ts` backend replaced — AssemblyScript toolchain (`asc`), temp-file creation, and binary post-processor (`removeEnvAbortImport`) all removed; `compileModule` calls `compileLibTs` directly; supports full wasic TypeScript subset (no type restrictions) |
 | 18 | WASM import bundling | `tsbundler.ts` detects `.wasm` specifiers in ESM imports and `wasmImport()` loader calls; new `wasmmerge.ts` module performs WAT-level merge with module-prefix name mangling; `_start`, `proc_exit`, `args_get/sizes_get`, `environ_get/sizes_get` stripped with notice; WASI imports deduplicated; data segments relocated by `mainModule.dataOffset`; static-data pointer `i32.const` values conservatively relocated; `WasicTranspiler` gains `externalFuncs` constructor param so call sites type-check before WAT merge; `iovBase`/`scratchBase` promoted to instance variables for collision-free merge of `fd_write` scratch areas; `bundleImportsEx()` returns `{ source, wasmImports }` alongside backward-compat `bundleImports()` |
 | 19 | `wasmbundle` CLI | New `wasmbundle.ts` + `wasmtk wasmbundle` command bundles multiple `.wasm` files into a single combined `.wasm` library; cross-module export conflict detection; interactive per-conflict prompt or `--on-conflict=prefix\|exclude` flag; non-conflicting exports keep bare names; conflicting exports prefixed or excluded; sequential `mergeWasmWat` with tracked `dataOffset`; master WAT assembled with WASI imports (14 common signatures), auto-sized `(memory N)`, and explicit `(export ...)` declarations; `extractExportNames()` added to `wasmmerge.ts`; `exportOverrides` parameter added to `mergeWasmWat` for export name control |
+| 20 | Export name transparency + `tsbundle` rename | `wasmmerge.ts`: `mergeWasmWat` emits `(export "add" (func $mathlib_add))` — original export name preserved, internal mangling unchanged; `WatMergeResult` gains `exportMap: Map<string, string>` (`originalName → $mangledName`); `wasmbundle.ts`: conflict resolution upgraded to 4-option interactive prompt (prefix / alias / exclude / stop) + `--alias file=name` and `--on-conflict=alias` non-interactive flags; `bundle` CLI command renamed to `tsbundle` |
+| 21 | `cwasm` — wasmtime AOT compiler | New `wtime.ts` module downloads and caches the wasmtime CLI binary (Bytecode Alliance, v43.0.0); `compileCwasm(wasm, out?)` AOT-compiles `.wasm` → `.cwasm`; `runCwasm(path)` runs `.cwasm` via wasmtime; `wasmtk cwasm` accepts `.ts` (wasic + wasmtime) or `.wasm` (wasmtime only); `wasmtk run` auto-detects `.cwasm` extension and routes to wasmtime backend; `.cwasm` files are machine-specific (CPU + OS + wasmtime version) and non-portable |
 
 ---
 
@@ -516,11 +557,14 @@ Phase 19 adds a new `wasmtk wasmbundle` command that merges multiple standalone 
 # Bundle two modules — no conflicts
 wasmtk wasmbundle math.wasm utils.wasm --name combined.wasm
 
-# Bundle with overlapping export names — interactive prompt
+# Bundle with overlapping export names — interactive prompt (4 options)
 wasmtk wasmbundle math1.wasm math2.wasm
 
-# Non-interactive: auto-prefix all conflicts
+# Non-interactive: auto-prefix all conflicts with module filename
 wasmtk wasmbundle math1.wasm math2.wasm --on-conflict=prefix
+
+# Non-interactive: auto-prefix all conflicts with supplied aliases
+wasmtk wasmbundle math1.wasm math2.wasm --alias math1.wasm=m1,math2.wasm=m2 --on-conflict=alias
 
 # Non-interactive: auto-exclude all conflicts
 wasmtk wasmbundle math1.wasm math2.wasm --on-conflict=exclude
@@ -528,16 +572,22 @@ wasmtk wasmbundle math1.wasm math2.wasm --on-conflict=exclude
 
 **Conflict resolution:**
 
-When two or more input modules export a function with the same name, `wasmbundle` detects the conflict and resolves it interactively (default) or via `--on-conflict`:
+When two or more input modules export a function with the same name, `wasmbundle` detects the conflict. Non-conflicting exports always keep their bare names. For conflicts, the interactive prompt offers four options (upgraded in Phase 20):
 
 ```text
 Conflict: "add" exported by: math1.wasm, math2.wasm
-  [p]  Prefix each  →  math1_add, math2_add
-  [e]  Exclude both
-  Choice (p/e):
+  [1]  Prefix with module name  →  math1_add, math2_add
+  [2]  Prefix with alias         →  (use --alias math1.wasm=<name>,math2.wasm=<name>)
+  [3]  Exclude both
+  [4]  Stop compile             →  rename the function in source and recompile
+  Choice (1/2/3/4):
 ```
 
-Non-conflicting exports always keep their bare names in the output. Only the conflicting ones are affected.
+When `--alias` is provided, option 2 shows the resolved names directly:
+
+```text
+  [2]  Prefix with alias         →  m1_add, m2_add
+```
 
 **Bundle pipeline:**
 
@@ -551,10 +601,12 @@ Non-conflicting exports always keep their bare names in the output. Only the con
 8. Optimize with Binaryen `-Oz`
 9. Write output (default: `combined.wasm`)
 
-**`wasmmerge.ts` additions:**
+**`wasmmerge.ts` additions (Phase 19):**
 
 - `extractExportNames(wat)` — returns bare non-entry export names; used for conflict detection
-- `exportOverrides?: Map<string, string | null>` parameter on `mergeWasmWat` — controls output export names; `null` = exclude; populates new `exportDecls: string[]` in `WatMergeResult`
+- `exportOverrides?: Map<string, string | null>` parameter on `mergeWasmWat` — controls output export names; `null` = exclude; populates `exportDecls: string[]` in `WatMergeResult`
+
+See Phase 20 below for the `exportMap` addition and clean export name convention.
 
 **Key distinction from Phase 18 (wasic import bundling):**
 
@@ -562,6 +614,154 @@ Phase 18 merges `.wasm` at the TypeScript compile step — the calling `.ts` fil
 
 ---
 
+#### Phase 20 — Export Name Transparency
+
+Phase 20 cleanly separates internal WAT symbol names (mangled for uniqueness) from WASM export strings (original, consumer-facing names) across both bundling paths. Also renames the `bundle` CLI command to `tsbundle` for clarity alongside `wasmbundle`.
+
+**The core distinction:**
+
+WAT natively supports independent internal and export names:
+
+```wat
+;; Internal names are mangled — guaranteed unique in WAT body
+(func $mathlib_add      (param i32 i32) (result i32) ...)
+(func $utils_add        (param i32 i32) (result i32) ...)
+
+;; Export strings are independent — original names preserved for consumers
+(export "add"           (func $mathlib_add))   ;; conflict resolved: mathlib wins
+(export "format"        (func $utils_format))
+```
+
+Prior phases used the mangled internal name as both the WAT symbol *and* the export string (`"mathlib_add"`), exposing implementation details to consumers. Phase 20 fixes this.
+
+**Two affected paths:**
+
+| Path | File | Change |
+| --- | --- | --- |
+| TS-with-WASM-imports (Phase 18) | `wasmmerge.ts` | Export declarations use original names; `WatMergeResult` gains `exportMap` |
+| WASM-only bundling (Phase 19) | `wasmbundle.ts` | Conflict handling upgraded to 4-option interactive prompt + `--alias` / `--on-conflict=alias` |
+
+**`wasmmerge.ts` changes (shared core):**
+
+`mergeWasmWat` now emits export declarations using the original source name as the export string and the mangled symbol as the internal reference:
+
+```wat
+;; Before Phase 20
+(export "mathlib_add"   (func $mathlib_add))
+
+;; After Phase 20
+(export "add"           (func $mathlib_add))
+```
+
+`WatMergeResult` gains `exportMap: Map<string, string>` (`originalName → $mangledName`), populated for every export regardless of whether `exportOverrides` was passed. Both `wasic.ts` and `wasmbundle.ts` callers benefit automatically.
+
+**`wasmbundle.ts` conflict resolution upgrade:**
+
+The interactive prompt now offers four options:
+
+```text
+Conflict: "add" exported by: mathlib.wasm, utils.wasm
+  [1]  Prefix with module name  →  mathlib_add, utils_add
+  [2]  Prefix with alias         →  m_add, u_add
+  [3]  Exclude both
+  [4]  Stop compile             →  rename the function in source and recompile
+  Choice (1/2/3/4):
+```
+
+Option 2 shows resolved examples when `--alias` is supplied; otherwise it shows a usage hint. All options are also available non-interactively:
+
+```bash
+# Prefix with module filename
+wasmtk wasmbundle mathlib.wasm utils.wasm --on-conflict=prefix
+
+# Prefix with alias
+wasmtk wasmbundle mathlib.wasm utils.wasm --alias mathlib.wasm=m,utils.wasm=u --on-conflict=alias
+
+# Exclude conflicts
+wasmtk wasmbundle mathlib.wasm utils.wasm --on-conflict=exclude
+```
+
+**`bundle` → `tsbundle` CLI rename:**
+
+The TypeScript-to-JS bundler command is renamed from `bundle` to `tsbundle` to clearly distinguish it from the `wasmbundle` WASM bundler command.
+
+**TS module path vs WASM-only path — naming comparison:**
+
+| | TS module path (Phases 8/18) | WASM-only path (Phases 19/20) |
+| --- | --- | --- |
+| Mangling happens at | TS source level (`tsbundler.ts`) | WAT body level (`wasmmerge.ts`) |
+| Root module exports | Always clean — never mangled | Preserved explicitly via `exportMap` |
+| Internal references | Rewritten in TS before compile | Rewritten in WAT during merge |
+| Conflict surface | TS compiler (duplicate symbols) | `wasmbundle` (duplicate export strings) |
+| Consumer sees | Clean names from root module | Clean original names from all merged modules |
+
+---
+
+---
+
+#### Phase 21 — `cwasm` AOT Compiler (wasmtime backend)
+
+Phase 21 adds a native Ahead-Of-Time compilation path using the [wasmtime](https://wasmtime.dev) runtime. AOT-compiled `.cwasm` files skip the JIT step at startup, giving faster execution for programs run repeatedly on the same machine.
+
+**CLI usage:**
+
+```bash
+# From an existing .wasm file
+wasmtk cwasm myprogram.wasm
+
+# From TypeScript — wasic compiles to .wasm first, then wasmtime AOT compiles to .cwasm
+wasmtk cwasm myprogram.ts
+
+# Custom output path
+wasmtk cwasm myprogram.wasm --name dist/myprogram.cwasm
+
+# Run — .cwasm extension triggers automatic wasmtime backend selection
+wasmtk run myprogram.cwasm
+```
+
+**Machine-specificity:**
+
+> **⚠️ `.cwasm` files are not portable.** They are compiled for the specific CPU architecture, operating system, and wasmtime version of the machine that produced them. Running a `.cwasm` on a different machine or a different wasmtime version will fail. Do not distribute or commit `.cwasm` files — they are a local startup-speed optimization only.
+
+| Property | Value |
+| --- | --- |
+| Tied to CPU architecture | Yes — `x86_64` and `aarch64` produce different files |
+| Tied to OS | Yes — Linux, macOS, Windows each produce incompatible files |
+| Tied to wasmtime version | Yes — upgrading wasmtime requires recompiling `.cwasm` |
+| Portable across machines | No |
+| Safe to distribute | No |
+
+**Pipeline:**
+
+```text
+.ts source
+  ↓ wasic  (wasic compiler — same as wasmtk wasic)
+  .wasm
+  ↓ wasmtime compile -o output.cwasm
+  .cwasm  (machine-specific AOT binary)
+
+.wasm (pre-compiled)
+  ↓ wasmtime compile -o output.cwasm
+  .cwasm  (machine-specific AOT binary)
+```
+
+**wasmtime binary management:**
+
+wasmtime is downloaded automatically from the Bytecode Alliance GitHub releases on first use:
+
+| Platform | Asset |
+| --- | --- |
+| Linux x86_64 | `wasmtime-v43.0.0-x86_64-linux.tar.xz` |
+| Linux aarch64 | `wasmtime-v43.0.0-aarch64-linux.tar.xz` |
+| macOS x86_64 | `wasmtime-v43.0.0-x86_64-macos.tar.xz` |
+| macOS aarch64 (Apple Silicon) | `wasmtime-v43.0.0-aarch64-macos.tar.xz` |
+| Windows x86_64 | `wasmtime-v43.0.0-x86_64-windows.zip` |
+| Windows aarch64 | `wasmtime-v43.0.0-aarch64-windows.zip` |
+
+The binary is cached at `~/.deno/bin/wasmtime`. If wasmtime is already on your `PATH`, the cached download is skipped entirely.
+
+---
+
 ### Planned Phases
 
-> No phases currently planned. Phase 19 completed the roadmap. Future work tracked separately.
+> No phases currently planned. Phase 21 completed the roadmap. Future work tracked separately.
