@@ -113,7 +113,8 @@ import binaryen from "binaryen";
 import { basename, dirname } from "@std/path";
 import { bundleImports } from "./tsbundler.ts";
 import {
-  DATA_BASE,
+  IOV_BASE,
+  SCRATCH_BASE,
   parseConsoleLogArgs,
   emitConsoleLog,
   getHelperWat,
@@ -369,7 +370,12 @@ class WasicTranspiler {
 
   // String data section: message → [offset, byteLength]
   private dataMap: Map<string, [number, number]> = new Map();
-  private dataOffset = DATA_BASE;  // first DATA_BASE bytes reserved for iov/scratch/nwritten
+  // iovBase/scratchBase are the module-relative addresses of the fd_write scratch area.
+  // Initialized to the standard layout (iov at 0, scratch at 132); Phase 18 merge will
+  // allocate these above mainModule.dataOffset for imported modules so they never collide.
+  private iovBase: number = IOV_BASE;
+  private scratchBase: number = SCRATCH_BASE;
+  private dataOffset = this.scratchBase + 4 * 32;  // DATA_BASE = SCRATCH_BASE + SCRATCH_SLOTS*32 = 260
   private hasConsoleLog = false;
   private needsNumericHelpers = false;
   private needsStringHelpers = false;
@@ -2877,7 +2883,7 @@ class WasicTranspiler {
         return undefined;
       };
       const segments = parseConsoleLogArgs(logMatch[1], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFn);
-      const { statements, needsHelpers, needsStrGather } = emitConsoleLog(segments, allocator);
+      const { statements, needsHelpers, needsStrGather } = emitConsoleLog(segments, allocator, "    ", 1, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
       if (needsStrGather) this.needsStrGatherHelper = true;
       return statements.join("\n      ");
@@ -2940,7 +2946,7 @@ class WasicTranspiler {
         return undefined;
       };
       const segments = parseConsoleLogArgs(errMatch[2], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFnErr);
-      const { statements, needsHelpers, needsStrGather } = emitConsoleLog(segments, allocator, "    ", 2);
+      const { statements, needsHelpers, needsStrGather } = emitConsoleLog(segments, allocator, "    ", 2, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
       if (needsStrGather) this.needsStrGatherHelper = true;
       return statements.join("\n      ");

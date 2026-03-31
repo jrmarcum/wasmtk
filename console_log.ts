@@ -688,8 +688,11 @@ export function emitConsoleLog(
   segments: LogSegment[],
   allocString: DataAllocator,
   indent = "    ",
-  fd = 1
+  fd = 1,
+  iovBase = IOV_BASE,
+  scratchBase = SCRATCH_BASE,
 ): { statements: string[]; needsHelpers: boolean; needsStrGather: boolean } {
+  const nwrittenOffset = iovBase + (NWRITTEN_OFFSET - IOV_BASE); // = iovBase + 128
   // Step 1: merge consecutive literal segments to minimise iov count.
   // e.g. [{literal,"x: "},{literal," "},{literal,"\n"}] → [{literal,"x:  \n"}]
   const merged: LogSegment[] = [];
@@ -732,11 +735,11 @@ export function emitConsoleLog(
 
   if (useGather) {
     // ── Gather-buffer mode ────────────────────────────────────────────────────
-    // iov[0].ptr (IOV_BASE+0) = SCRATCH_BASE  (set once)
-    // iov[0].len (IOV_BASE+4) doubles as the running cursor into scratch.
-    const cursorAddr = IOV_BASE + 4;
+    // iov[0].ptr (iovBase+0) = scratchBase  (set once)
+    // iov[0].len (iovBase+4) doubles as the running cursor into scratch.
+    const cursorAddr = iovBase + 4;
     statements.push(
-      `${indent}(i32.store (i32.const ${IOV_BASE}) (i32.const ${SCRATCH_BASE}))`,
+      `${indent}(i32.store (i32.const ${iovBase}) (i32.const ${scratchBase}))`,
       `${indent}(i32.store (i32.const ${cursorAddr}) (i32.const 0))`,
     );
 
@@ -750,7 +753,7 @@ export function emitConsoleLog(
           // Compile-time position: fixed-address stores
           for (let j = 0; j < bytes.length; j++) {
             statements.push(
-              `${indent}(i32.store8 (i32.const ${SCRATCH_BASE + compileCursor + j}) (i32.const ${bytes[j]}))`,
+              `${indent}(i32.store8 (i32.const ${scratchBase + compileCursor + j}) (i32.const ${bytes[j]}))`,
             );
           }
           compileCursor += bytes.length;
@@ -758,7 +761,7 @@ export function emitConsoleLog(
           // Runtime position: cursor-relative stores then advance cursor
           for (let j = 0; j < bytes.length; j++) {
             statements.push(
-              `${indent}(i32.store8 (i32.add (i32.const ${SCRATCH_BASE}) (i32.add (i32.load (i32.const ${cursorAddr})) (i32.const ${j}))) (i32.const ${bytes[j]}))`,
+              `${indent}(i32.store8 (i32.add (i32.const ${scratchBase}) (i32.add (i32.load (i32.const ${cursorAddr})) (i32.const ${j}))) (i32.const ${bytes[j]}))`,
             );
           }
           if (bytes.length > 0) {
@@ -772,8 +775,8 @@ export function emitConsoleLog(
         // $__str_gather(src_ptr, src_len, dst_ptr) — a byte-copy loop helper, no bulk-memory needed
         needsStrGather = true;
         const destExpr = runtimeCursor
-          ? `(i32.add (i32.const ${SCRATCH_BASE}) (i32.load (i32.const ${cursorAddr})))`
-          : `(i32.const ${SCRATCH_BASE + compileCursor})`;
+          ? `(i32.add (i32.const ${scratchBase}) (i32.load (i32.const ${cursorAddr})))`
+          : `(i32.const ${scratchBase + compileCursor})`;
         statements.push(
           `${indent}(call $__str_gather (local.get $${seg.ptrLocal}) (local.get $${seg.lenLocal}) ${destExpr})`,
         );
@@ -794,8 +797,8 @@ export function emitConsoleLog(
         const [falseOff] = allocString("false");
         const val = `(local.get $${seg.name})`;
         const destExpr = runtimeCursor
-          ? `(i32.add (i32.const ${SCRATCH_BASE}) (i32.load (i32.const ${cursorAddr})))`
-          : `(i32.const ${SCRATCH_BASE + compileCursor})`;
+          ? `(i32.add (i32.const ${scratchBase}) (i32.load (i32.const ${cursorAddr})))`
+          : `(i32.const ${scratchBase + compileCursor})`;
         const srcExpr = `(if (result i32) ${val} (then (i32.const ${trueOff})) (else (i32.const ${falseOff})))`;
         const lenExpr = `(if (result i32) ${val} (then (i32.const 4)) (else (i32.const 5)))`;
         statements.push(
@@ -815,8 +818,8 @@ export function emitConsoleLog(
         // Numeric segment — convert directly into scratch at current cursor position
         needsHelpers = true;
         const destExpr = runtimeCursor
-          ? `(i32.add (i32.const ${SCRATCH_BASE}) (i32.load (i32.const ${cursorAddr})))`
-          : `(i32.const ${SCRATCH_BASE + compileCursor})`;
+          ? `(i32.add (i32.const ${scratchBase}) (i32.load (i32.const ${cursorAddr})))`
+          : `(i32.const ${scratchBase + compileCursor})`;
 
         let callExpr: string;
         if (seg.kind === "i32var") {
@@ -851,18 +854,18 @@ export function emitConsoleLog(
     // Inline the trailing newline into scratch
     if (canInlineNL) {
       statements.push(
-        `${indent}(i32.store8 (i32.add (i32.const ${SCRATCH_BASE}) (i32.load (i32.const ${cursorAddr}))) (i32.const 10))`,
+        `${indent}(i32.store8 (i32.add (i32.const ${scratchBase}) (i32.load (i32.const ${cursorAddr}))) (i32.const 10))`,
         `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.load (i32.const ${cursorAddr})) (i32.const 1)))`,
       );
     }
 
-    // Single fd_write — iov[0].ptr is SCRATCH_BASE, iov[0].len is the cursor value
+    // Single fd_write — iov[0].ptr is scratchBase, iov[0].len is the cursor value
     statements.push(
       `${indent}(drop (call $fd_write`,
       `${indent}  (i32.const ${fd})`,
-      `${indent}  (i32.const ${IOV_BASE})`,
+      `${indent}  (i32.const ${iovBase})`,
       `${indent}  (i32.const 1)`,
-      `${indent}  (i32.const ${NWRITTEN_OFFSET})))`,
+      `${indent}  (i32.const ${nwrittenOffset})))`,
     );
   } else {
     // ── Per-iov mode (single active segment, or strvar/bool segments) ─────────
@@ -872,8 +875,8 @@ export function emitConsoleLog(
 
     for (let i = 0; i < activeSegs.length; i++) {
       const seg = activeSegs[i];
-      const iovPtr = IOV_BASE + i * 8;      // iov[i].buf  (i32)
-      const iovLen = IOV_BASE + i * 8 + 4;  // iov[i].buf_len (i32)
+      const iovPtr = iovBase + i * 8;      // iov[i].buf  (i32)
+      const iovLen = iovBase + i * 8 + 4;  // iov[i].buf_len (i32)
 
       if (seg.kind === "literal") {
         const [offset, len] = allocString(seg.text);
@@ -902,7 +905,7 @@ export function emitConsoleLog(
         lastNumericIovLen  = -1;
       } else {
         // Numeric segment
-        if (numericSlot >= SCRATCH_SLOTS) {
+        if (numericSlot >= SCRATCH_SLOTS) {  // SCRATCH_SLOTS = 4 (constant)
           const [offset, len] = allocString("?");
           statements.push(
             `${indent}(i32.store (i32.const ${iovPtr}) (i32.const ${offset}))`,
@@ -912,7 +915,7 @@ export function emitConsoleLog(
         }
 
         needsHelpers = true;
-        const scratchPtr = SCRATCH_BASE + numericSlot * 32;
+        const scratchPtr = scratchBase + numericSlot * 32;
         numericSlot++;
 
         let callExpr: string;
@@ -950,9 +953,9 @@ export function emitConsoleLog(
     statements.push(
       `${indent}(drop (call $fd_write`,
       `${indent}  (i32.const ${fd})`,
-      `${indent}  (i32.const ${IOV_BASE})`,
+      `${indent}  (i32.const ${iovBase})`,
       `${indent}  (i32.const ${activeSegs.length})`,
-      `${indent}  (i32.const ${NWRITTEN_OFFSET})))`,
+      `${indent}  (i32.const ${nwrittenOffset})))`,
     );
   }
 
