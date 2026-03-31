@@ -52,7 +52,7 @@ async function main(): Promise<void> {
       n: "name",
     },
     boolean: ["version", "help"],
-    string: ["name"],
+    string: ["name", "on-conflict"],
   });
 
   if (args.version) {
@@ -64,25 +64,28 @@ async function main(): Promise<void> {
   const target = args._[1] as string;
   const outPath = args.name as string | undefined;
 
-  if (args.help || !command || !target) {
+  if (args.help || !command || (!target && command !== "wasmbundle")) {
     console.log(`
 wasmtk - WebAssembly Development Toolkit v${VERSION}
 
 Usage:
-  wasmtk modc <file.ts>        Compile a TypeScript file to a WASM library (asc)
-  wasmtk wasic <file.ts|.wat>  Compile to a standalone WASI module (no JS runtime, smaller output)
-  wasmtk javyc <file.ts>       Compile a TypeScript file to a WASI module via Javy/QuickJS
-  wasmtk run <file>            Run a standalone .wasm, .wat, .js, or .ts WASI module
-  wasmtk mod <file> [fn] [...] Call a function in a WASM library module (no fn = list functions)
-  wasmtk info <file>           Show callable WASM functions in .wasm or .wat library/module
-  wasmtk wasm2js <file.wasm>   Convert .wasm -> .js based script
-  wasmtk convert <file>        Convert .wasm -> .wat and .wat -> .wasm
-  wasmtk bundle <file.ts>      Bundle a .ts project to a single .js file
+  wasmtk modc <file.ts>                   Compile a TypeScript file to a WASM library (asc)
+  wasmtk wasic <file.ts|.wat>             Compile to a standalone WASI module (no JS runtime, smaller output)
+  wasmtk javyc <file.ts>                  Compile a TypeScript file to a WASI module via Javy/QuickJS
+  wasmtk run <file>                       Run a standalone .wasm, .wat, .js, or .ts WASI module
+  wasmtk mod <file> [fn] [...]            Call a function in a WASM library module (no fn = list functions)
+  wasmtk info <file>                      Show callable WASM functions in .wasm or .wat library/module
+  wasmtk wasm2js <file.wasm>              Convert .wasm -> .js based script
+  wasmtk convert <file>                   Convert .wasm -> .wat and .wat -> .wasm
+  wasmtk bundle <file.ts>                 Bundle a .ts project to a single .js file
+  wasmtk wasmbundle <a.wasm> [b.wasm...]  Bundle multiple .wasm files into a single library
 
 Options:
   -v, -V, --version            Show version information
   -h, --help                   Show this help message
   -n, --name <path>            Output file path (e.g. dist/mymodule.wasm)
+      --on-conflict=prefix     (wasmbundle) Auto-prefix conflicting exports
+      --on-conflict=exclude    (wasmbundle) Auto-exclude conflicting exports
     `);
     return;
   }
@@ -122,6 +125,16 @@ Options:
     case "bundle":
       await bundleTs(target, outPath ?? target.replace(/\.ts$/, ".js"));
       break;
+    case "wasmbundle": {
+      const { runWasmBundle } = await import("./wasmbundle.ts");
+      const inputFiles = args._.slice(1).map(String);
+      const bundleOut = outPath ?? "combined.wasm";
+      const conflictFlag = args["on-conflict"] as string | undefined;
+      const onConflict =
+        conflictFlag === "prefix" || conflictFlag === "exclude" ? conflictFlag : undefined;
+      await runWasmBundle(inputFiles, bundleOut, onConflict);
+      break;
+    }
     default:
       console.error(`❌ Unknown command: ${command}`);
       Deno.exit(1);

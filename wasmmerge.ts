@@ -76,6 +76,12 @@ export interface WatMergeResult {
   exportedFuncs: ExternalFuncDef[];
   /** Human-readable notices about stripped entry-only features. */
   notices: string[];
+  /**
+   * Export declarations ready to splice into a master module.
+   * Populated only when exportOverrides is passed to mergeWasmWat (wasmbundle mode).
+   * Each entry is like: (export "add" (func $math_add))
+   */
+  exportDecls: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +141,22 @@ function formKind(form: string): string {
   return form.match(/^\(\s*(\w+)/)?.[1] ?? "";
 }
 
+/**
+ * Returns the bare (non-prefixed) export names of functions in a WAT module,
+ * excluding entry-only names (_start, proc_exit, etc.).
+ * Used by wasmbundle to detect conflicting export names before merging.
+ */
+export function extractExportNames(wat: string): string[] {
+  const forms = extractForms(wat);
+  const names: string[] = [];
+  for (const form of forms) {
+    if (formKind(form) !== "export") continue;
+    const m = form.match(/\(export\s+"([^"]+)"\s+\(func\s+\d+\)\)/);
+    if (m && !ENTRY_ONLY_NAMES.has(m[1])) names.push(m[1]);
+  }
+  return names;
+}
+
 // ---------------------------------------------------------------------------
 // Type-table parsing
 // ---------------------------------------------------------------------------
@@ -177,6 +199,7 @@ export function mergeWasmWat(
   wat: string,
   prefix: string,
   dataReloc: number,
+  exportOverrides?: Map<string, string | null>,
 ): WatMergeResult {
   const forms = extractForms(wat);
   const typeTable = parseTypeTable(forms);
@@ -294,6 +317,25 @@ export function mergeWasmWat(
     });
   }
 
+  // ── Build export declarations (wasmbundle mode) ───────────────────────────
+  //
+  // When exportOverrides is supplied, emit (export "name" (func $internal)) lines.
+  // The override value controls the exported name:
+  //   null            → excluded (skip)
+  //   "some_name"     → use that as the public export name
+  //   (key absent)    → skip (same as null; caller should cover all exports)
+
+  const exportDecls: string[] = [];
+  if (exportOverrides !== undefined) {
+    for (const [idx, originalName] of exportFuncMap) {
+      if (importMap.has(idx)) continue; // skip WASI re-exports
+      const outputName = exportOverrides.get(originalName);
+      if (outputName == null) continue; // null = excluded, undefined = not provided
+      const internalName = funcName.get(idx) ?? `$${prefix}__fn${idx}`;
+      exportDecls.push(`(export "${outputName}" (func ${internalName}))`);
+    }
+  }
+
   // ── Helpers for body transformation ──────────────────────────────────────
 
   /** Replace `call N` / `call_indirect (type T)` index refs with named $refs. */
@@ -397,5 +439,6 @@ export function mergeWasmWat(
     wasiImportNames,
     exportedFuncs,
     notices,
+    exportDecls,
   };
 }

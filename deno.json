@@ -13,7 +13,9 @@
     "./wasic": "./wasic.ts",
     "./modc": "./modc.ts",
     "./tsbundler": "./tsbundler.ts",
-    "./console_log": "./console_log.ts"
+    "./console_log": "./console_log.ts",
+    "./wasmbundle": "./wasmbundle.ts",
+    "./wasmmerge": "./wasmmerge.ts"
   },
   "publish": {
     "include": [
