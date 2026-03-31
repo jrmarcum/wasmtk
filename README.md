@@ -255,7 +255,7 @@ export function _start() { ... }
 | `instance.field` | Field read/write via instance pointer in classVars |
 | Class instance params | Functions accepting `obj: Foo` receive an `i32` struct pointer |
 
-#### Limitations (Planned for Future Phases)
+#### Current Limitations
 
 | Feature | Status |
 | --- | --- |
@@ -328,7 +328,7 @@ export function multiply(a: f64, b: f64): f64 {
 }
 ```
 
-**Supported types:** The full wasic subset — `i32`, `i64`, `f32`, `f64`, `number` (→ `f64`), `boolean`, `string`, arrays, structs, generics, classes, and all Phase 1–16 features. No AssemblyScript toolchain required.
+**Supported types:** The full wasic subset — `i32`, `i64`, `f32`, `f64`, `number` (→ `f64`), `boolean`, `string`, arrays, structs, generics, classes, exceptions, and all completed phases. No AssemblyScript toolchain required.
 
 **Best suited for:**
 
@@ -345,6 +345,28 @@ export function multiply(a: f64, b: f64): f64 {
 
 ---
 
+### `wasmtk wasmbundle` — Multi-WASM Bundler
+
+Merges multiple pre-compiled `.wasm` files into a **single combined `.wasm` library** — no TypeScript source required. Useful for packaging independently compiled modules for distribution as one artifact.
+
+```bash
+wasmtk wasmbundle math.wasm utils.wasm --name combined.wasm
+wasmtk wasmbundle math1.wasm math2.wasm --on-conflict=prefix
+```
+
+**What it produces:** A `.wasm` library with all exported functions from every input module, accessible under a unified namespace.
+
+**Best suited for:**
+
+- Distributing multiple WASM modules as a single file
+- Combining `modc`-compiled libraries for a consumer who only wants one import
+- Packaging platform-specific WASM alongside shared utilities
+- Reducing load overhead when a host needs functions from several modules
+
+See [Phase 19 — `wasmbundle` CLI](#phase-19--wasmbundle-cli) for full pipeline details and conflict resolution options.
+
+---
+
 ## Programmatic API
 
 Each compiler is a standalone importable module. You can use them directly in Deno without going through the CLI:
@@ -354,6 +376,8 @@ import { compileWasiTs, compileWasi, compileLibTs } from "@jrmarcum/wasmtk/wasic
 import { compileModule }                            from "@jrmarcum/wasmtk/modc";
 import { compileJavy }                              from "@jrmarcum/wasmtk/javyc";
 import { bundleImports }                            from "@jrmarcum/wasmtk/tsbundler";
+import { runWasmBundle }                            from "@jrmarcum/wasmtk/wasmbundle";
+import { mergeWasmWat, extractExportNames }         from "@jrmarcum/wasmtk/wasmmerge";
 ```
 
 | Export | Module | Description |
@@ -365,6 +389,9 @@ import { bundleImports }                            from "@jrmarcum/wasmtk/tsbun
 | `compileModule(path, outPath?)` | `./modc` | Compile `.ts` to a WASM library via wasic transpiler |
 | `compileJavy(path, outPath?)` | `./javyc` | Compile `.ts` to a WASI module via Javy/QuickJS |
 | `bundleImports(entryPath)` | `./tsbundler` | Resolve and merge relative imports into a single source string |
+| `runWasmBundle(inputs, out, onConflict?)` | `./wasmbundle` | Bundle multiple `.wasm` files into a single `.wasm` library |
+| `mergeWasmWat(wat, prefix, dataReloc, overrides?)` | `./wasmmerge` | Merge one WAT module into a parent with prefix mangling and data relocation |
+| `extractExportNames(wat)` | `./wasmmerge` | Return bare export names from a WAT module (for conflict detection) |
 
 ---
 
@@ -380,12 +407,14 @@ import { bundleImports }                            from "@jrmarcum/wasmtk/tsbun
 | Numeric/systems code, tight loops, DSP, crypto | `wasic` |
 | Existing JS/TS codebase with complex runtime needs | `javyc` |
 | WASM library for Deno/Node/browser consumption | `modc` |
+| Combine multiple `.wasm` files into one library | `wasmbundle` |
+| Distribute a set of compiled modules as a single artifact | `wasmbundle` |
 
 ---
 
-## `wasic` Compiler Roadmap
+## wasmtk Toolkit Roadmap
 
-The `wasic` direct compiler is developed incrementally. Each phase adds a self-contained TypeScript feature that maps cleanly to WebAssembly primitives.
+The toolkit is developed incrementally. Core phases build out the `wasic` TypeScript compiler; later phases extend the toolchain with bundling and distribution capabilities.
 
 ### Completed Phases
 
@@ -418,6 +447,9 @@ The `wasic` direct compiler is developed incrementally. Each phase adds a self-c
 | 16 | Module system extras | Default imports (`import foo from "./lib.ts"`); namespace imports (`import * as ns from "./lib.ts"`) with `ns.name` → `lib_name` rewriting; named re-exports (`export { foo } from "./lib.ts"`); wildcard re-exports (`export * from "./lib.ts"`); `export default function`; `exportRenamesCache` to resolve re-export chains across already-visited files; `applyRenames` updated to escape regex metacharacters (enabling dotted-key `ns.foo` rewrites) |
 | 17 | wasic library mode | `WasicTranspiler` gains `mode: "wasi" \| "library"` constructor param; library mode skips `_start`, `proc_exit` import, and top-level statement processing; `compileLibTs()` public function mirrors `compileWasiTs()`; `modc.ts` backend replaced — AssemblyScript toolchain (`asc`), temp-file creation, and binary post-processor (`removeEnvAbortImport`) all removed; `compileModule` calls `compileLibTs` directly; supports full wasic TypeScript subset (no type restrictions) |
 | 18 | WASM import bundling | `tsbundler.ts` detects `.wasm` specifiers in ESM imports and `wasmImport()` loader calls; new `wasmmerge.ts` module performs WAT-level merge with module-prefix name mangling; `_start`, `proc_exit`, `args_get/sizes_get`, `environ_get/sizes_get` stripped with notice; WASI imports deduplicated; data segments relocated by `mainModule.dataOffset`; static-data pointer `i32.const` values conservatively relocated; `WasicTranspiler` gains `externalFuncs` constructor param so call sites type-check before WAT merge; `iovBase`/`scratchBase` promoted to instance variables for collision-free merge of `fd_write` scratch areas; `bundleImportsEx()` returns `{ source, wasmImports }` alongside backward-compat `bundleImports()` |
+| 19 | `wasmbundle` CLI | New `wasmbundle.ts` + `wasmtk wasmbundle` command bundles multiple `.wasm` files into a single combined `.wasm` library; cross-module export conflict detection; interactive per-conflict prompt or `--on-conflict=prefix\|exclude` flag; non-conflicting exports keep bare names; conflicting exports prefixed or excluded; sequential `mergeWasmWat` with tracked `dataOffset`; master WAT assembled with WASI imports (14 common signatures), auto-sized `(memory N)`, and explicit `(export ...)` declarations; `extractExportNames()` added to `wasmmerge.ts`; `exportOverrides` parameter added to `mergeWasmWat` for export name control |
+
+---
 
 #### Phase 18 — WASM Import Bundling
 
@@ -472,6 +504,64 @@ All other exported functions remain fully accessible. `modc` and `wasic` are a n
 
 `iovBase` and `scratchBase` are instance variables on `WasicTranspiler` (not hardcoded constants). Imported modules receive fresh scratch addresses above `mainModule.dataOffset`, so parallel `console.log` call paths in main and imported code never overwrite each other's iov buffers.
 
+---
+
+#### Phase 19 — `wasmbundle` CLI
+
+Phase 19 adds a new `wasmtk wasmbundle` command that merges multiple standalone `.wasm` files into a single combined `.wasm` library for distribution.
+
+**CLI usage:**
+
+```bash
+# Bundle two modules — no conflicts
+wasmtk wasmbundle math.wasm utils.wasm --name combined.wasm
+
+# Bundle with overlapping export names — interactive prompt
+wasmtk wasmbundle math1.wasm math2.wasm
+
+# Non-interactive: auto-prefix all conflicts
+wasmtk wasmbundle math1.wasm math2.wasm --on-conflict=prefix
+
+# Non-interactive: auto-exclude all conflicts
+wasmtk wasmbundle math1.wasm math2.wasm --on-conflict=exclude
+```
+
+**Conflict resolution:**
+
+When two or more input modules export a function with the same name, `wasmbundle` detects the conflict and resolves it interactively (default) or via `--on-conflict`:
+
+```text
+Conflict: "add" exported by: math1.wasm, math2.wasm
+  [p]  Prefix each  →  math1_add, math2_add
+  [e]  Exclude both
+  Choice (p/e):
+```
+
+Non-conflicting exports always keep their bare names in the output. Only the conflicting ones are affected.
+
+**Bundle pipeline:**
+
+1. Load each `.wasm` with wabt; disassemble to WAT text
+2. Extract export names via `extractExportNames()`; identify conflicts across all modules
+3. Resolve conflicts (interactive or `--on-conflict`)
+4. Build `exportOverrides` map for each module: bare name, prefixed name, or `null` (exclude)
+5. Merge each module's WAT with `mergeWasmWat(..., exportOverrides)`, tracking cumulative `dataOffset`
+6. Assemble master WAT with WASI imports, `(memory N)` (auto-sized), all fragments, and `(export ...)` declarations
+7. Compile master WAT → binary via wabt
+8. Optimize with Binaryen `-Oz`
+9. Write output (default: `combined.wasm`)
+
+**`wasmmerge.ts` additions:**
+
+- `extractExportNames(wat)` — returns bare non-entry export names; used for conflict detection
+- `exportOverrides?: Map<string, string | null>` parameter on `mergeWasmWat` — controls output export names; `null` = exclude; populates new `exportDecls: string[]` in `WatMergeResult`
+
+**Key distinction from Phase 18 (wasic import bundling):**
+
+Phase 18 merges `.wasm` at the TypeScript compile step — the calling `.ts` file drives the merge and function names are always prefixed. Phase 19 operates on raw `.wasm` inputs with no TypeScript source involved. Non-conflicting exports keep bare names, making the output a clean drop-in library.
+
+---
+
 ### Planned Phases
 
-> No phases currently planned. Phase 18 completed the initial roadmap. Future work tracked separately.
+> No phases currently planned. Phase 19 completed the roadmap. Future work tracked separately.
