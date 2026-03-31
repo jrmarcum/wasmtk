@@ -102,42 +102,6 @@ function modulePrefix(filePath: string): string {
   return basename(filePath).replace(/\.[^/.]+$/, "").replace(/\W+/g, "_");
 }
 
-/**
- * Parses the named-import clause of a single-line import statement and returns
- * a map from each **local name** (what the calling file uses) to the
- * **canonical prefixed name** (what will appear in the merged WAT output).
- *
- * Examples (prefix = "mathlib"):
- *   "{ add }"              →  Map { "add"    → "mathlib_add" }
- *   "{ add, multiply }"    →  Map { "add"    → "mathlib_add",
- *                                   "multiply" → "mathlib_multiply" }
- *   "{ add as mathAdd }"   →  Map { "mathAdd" → "mathlib_add" }
- *   "{ add as a, sub }"    →  Map { "a"      → "mathlib_add",
- *                                   "sub"    → "mathlib_sub" }
- *
- * @param clause - The text between `{` and `}` in the import statement.
- * @param prefix - The module prefix derived from the source file's basename.
- * @returns Map of localName → canonicalPrefixedName.
- */
-function parseNamedImports(clause: string, prefix: string): Map<string, string> {
-  const inner = clause.replace(/^\{|\}$/g, "").trim();
-  const map = new Map<string, string>();
-  if (!inner) return map;
-
-  for (const part of inner.split(",")) {
-    const spec = part.trim();
-    if (!spec) continue;
-    const asMatch = spec.match(/^(\w+)\s+as\s+(\w+)$/);
-    if (asMatch) {
-      // "original as alias"  →  alias → prefix_original
-      map.set(asMatch[2], `${prefix}_${asMatch[1]}`);
-    } else {
-      // plain name  →  name → prefix_name
-      map.set(spec, `${prefix}_${spec}`);
-    }
-  }
-  return map;
-}
 
 /**
  * Parses a named clause `{ foo, bar as baz }` and returns a map of

@@ -4,7 +4,7 @@
  * binary inspection via Binaryen, and multi-runtime execution logic.
  */
 
-import { basename, join, dirname } from "@std/path";
+import { basename, dirname } from "@std/path";
 import wasm2js_compiler from "wasm2js";
 import binaryen from "binaryen";
 import wabt from "wabt";

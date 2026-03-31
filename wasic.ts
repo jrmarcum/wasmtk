@@ -121,7 +121,6 @@ import {
   getHelperWat,
   type DataAllocator,
   type FuncLookup,
-  type ArrayLookup,
   type StructFieldLookup,
   type DotCallLookup,
 } from "./console_log.ts";
@@ -4640,15 +4639,15 @@ class WasicTranspiler {
  * @param wabtMod      Initialised wabt instance (already loaded by caller)
  * @returns            { mergedWat, notices, exportedFuncs }
  */
-async function mergeOneWasmImport(
+function mergeOneWasmImport(
   wat: string,
   wasmBytes: Uint8Array,
   prefix: string,
   dataOffset: number,
   wabtMod: WabtModule,
-): Promise<{ mergedWat: string; notices: string[]; exportedFuncs: ExternalFuncDef[] }> {
+): { mergedWat: string; notices: string[]; exportedFuncs: ExternalFuncDef[] } {
   // Disassemble the binary to WAT text
-  const importedMod = wabtMod.readWasm(wasmBytes.buffer, { readDebugNames: true });
+  const importedMod = wabtMod.readWasm(wasmBytes.buffer as ArrayBuffer, { readDebugNames: true });
   const importedWat = importedMod.toText({ foldExprs: false });
   importedMod.destroy();
 
@@ -4718,7 +4717,7 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
     try {
       const bytes = await Deno.readFile(entry.filePath);
       wasmBytesMap.set(entry.filePath, bytes);
-      const mod = wabtMod.readWasm(bytes.buffer, { readDebugNames: true });
+      const mod = wabtMod.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: true });
       const importedWat = mod.toText({ foldExprs: false });
       mod.destroy();
       const preResult = mergeWasmWat(importedWat, entry.prefix, 0);
@@ -4749,7 +4748,7 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
   for (const entry of wasmImports) {
     const bytes = wasmBytesMap.get(entry.filePath);
     if (!bytes) continue;
-    const { mergedWat, notices } = await mergeOneWasmImport(wat, bytes, entry.prefix, dataOffset, wabtMod);
+    const { mergedWat, notices } = mergeOneWasmImport(wat, bytes, entry.prefix, dataOffset, wabtMod);
     for (const notice of notices) {
       console.log(`  ⚠️  Imported "${entry.filePath}": ${notice}`);
     }
@@ -4757,7 +4756,7 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
     // Advance dataOffset so the next imported module's data lands above this one.
     // A second pass with mergeWasmWat(dataReloc=0) gives us the imported module's own
     // dataOffset, which we use as the relocation size.
-    const mod2 = wabtMod.readWasm(bytes.buffer, { readDebugNames: false });
+    const mod2 = wabtMod.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: false });
     const wat2 = mod2.toText({ foldExprs: false });
     mod2.destroy();
     // Advance dataOffset by the imported module's static footprint
@@ -4821,7 +4820,7 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
     try {
       const bytes = await Deno.readFile(entry.filePath);
       wasmBytesMap2.set(entry.filePath, bytes);
-      const mod = wabtMod2.readWasm(bytes.buffer, { readDebugNames: true });
+      const mod = wabtMod2.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: true });
       const importedWat = mod.toText({ foldExprs: false });
       mod.destroy();
       const preResult2 = mergeWasmWat(importedWat, entry.prefix, 0);
@@ -4850,12 +4849,12 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
   for (const entry of wasmImports) {
     const bytes = wasmBytesMap2.get(entry.filePath);
     if (!bytes) continue;
-    const { mergedWat, notices } = await mergeOneWasmImport(wat, bytes, entry.prefix, dataOffset2, wabtMod2);
+    const { mergedWat, notices } = mergeOneWasmImport(wat, bytes, entry.prefix, dataOffset2, wabtMod2);
     for (const notice of notices) {
       console.log(`  ⚠️  Imported "${entry.filePath}": ${notice}`);
     }
     wat = mergedWat;
-    const mod2 = wabtMod2.readWasm(bytes.buffer, { readDebugNames: false });
+    const mod2 = wabtMod2.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: false });
     const wat2 = mod2.toText({ foldExprs: false });
     mod2.destroy();
     const heapM = wat2.match(/\(global\s+\(;0;\)\s+\(mut i32\)\s+\(i32\.const\s+(\d+)\)\)/);
