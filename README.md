@@ -417,59 +417,61 @@ The `wasic` direct compiler is developed incrementally. Each phase adds a self-c
 | 15 | Exception handling | `throw new Error("msg")` / `throw str` → `(throw $__exn_tag ptr len)`; `try/catch(e)/finally` via WAT exceptions proposal; `(tag $__exn_tag (param i32 i32))` payload carries `(ptr, len)` string pair; `e` / `e.message` in catch bound as string locals; `exceptions: true` in wabt options; `binMod.setFeatures(Features.All)` before Binaryen `-Oz` to preserve exception sections |
 | 16 | Module system extras | Default imports (`import foo from "./lib.ts"`); namespace imports (`import * as ns from "./lib.ts"`) with `ns.name` → `lib_name` rewriting; named re-exports (`export { foo } from "./lib.ts"`); wildcard re-exports (`export * from "./lib.ts"`); `export default function`; `exportRenamesCache` to resolve re-export chains across already-visited files; `applyRenames` updated to escape regex metacharacters (enabling dotted-key `ns.foo` rewrites) |
 | 17 | wasic library mode | `WasicTranspiler` gains `mode: "wasi" \| "library"` constructor param; library mode skips `_start`, `proc_exit` import, and top-level statement processing; `compileLibTs()` public function mirrors `compileWasiTs()`; `modc.ts` backend replaced — AssemblyScript toolchain (`asc`), temp-file creation, and binary post-processor (`removeEnvAbortImport`) all removed; `compileModule` calls `compileLibTs` directly; supports full wasic TypeScript subset (no type restrictions) |
-
-### Planned Phases
-
-| Phase | Feature | Description |
-| --- | --- | --- |
-| 18 | WASM import bundling | Detect `.wasm` specifiers in ESM imports (`import { fn } from "./math.wasm"`) and `wasmImport("./path.wasm")` loader calls; WAT-level merge with module-prefix mangling; rename alias support; `_start` exclusion notice |
+| 18 | WASM import bundling | `tsbundler.ts` detects `.wasm` specifiers in ESM imports and `wasmImport()` loader calls; new `wasmmerge.ts` module performs WAT-level merge with module-prefix name mangling; `_start`, `proc_exit`, `args_get/sizes_get`, `environ_get/sizes_get` stripped with notice; WASI imports deduplicated; data segments relocated by `mainModule.dataOffset`; static-data pointer `i32.const` values conservatively relocated; `WasicTranspiler` gains `externalFuncs` constructor param so call sites type-check before WAT merge; `iovBase`/`scratchBase` promoted to instance variables for collision-free merge of `fd_write` scratch areas; `bundleImportsEx()` returns `{ source, wasmImports }` alongside backward-compat `bundleImports()` |
 
 #### Phase 18 — WASM Import Bundling
 
-Phase 18 extends `tsbundler.ts` to detect `.wasm` import specifiers and inline the exported functions into the merged WAT output — no runtime loader required.
+Phase 18 extends the compiler pipeline to merge pre-compiled `.wasm` modules directly into the WAT output — no runtime loader required.
 
-**Detected import forms (in priority order):**
+**Detected import forms:**
 
 ```typescript
-// 1. Direct ESM import (Deno natively supports this; tsbundler handles it at compile time)
+// 1. Direct ESM import
 import { add, multiply } from "./math.wasm";
 
-// 2. universal-wasm-loader pattern (wasmImport call + destructuring)
+// 2. universal-wasm-loader pattern
 import { wasmImport } from "./universal-wasm-loader.js";
 const { calculate: runMath, version: wasmVer } = await wasmImport("./math.wasm");
-
-// 3. WebAssembly.instantiateStreaming / instantiate (Browsers, Node, Bun — lower priority)
-const { instance } = await WebAssembly.instantiateStreaming(fetch("./math.wasm"));
 ```
 
-Forms 1 and 2 are statically analysable and the primary target for Phase 18. Rename aliases (`{ calculate: runMath }`) use the same `parseClauseNames` logic as `.ts` imports. Form 3 is dynamic and lower priority.
+Both forms support rename aliases. Call sites in the TypeScript source are rewritten to the canonical prefixed name (`math_add`) before transpilation.
 
-**WAT merge pipeline (when a `.wasm` specifier is detected):**
+**WAT merge pipeline:**
 
-1. **Disassemble** — wabt converts the `.wasm` to WAT (wabt is already in the pipeline)
-2. **Validate** — reject any module that exports a `_start` function with a clear error (see below)
-3. **Extract** — parse exported function signatures and bodies from the WAT
-4. **Mangle** — apply the same module-prefix naming used for `.ts` imports: `math.wasm` exports `add` → `math_add`
-5. **Register** — inject the signatures into `WasicTranspiler`'s function table so call sites type-check correctly
-6. **Merge** — append the prefixed function bodies into the final WAT output before the wabt compile step
+1. **Detect** — `tsbundler.ts` recognises `.wasm` specifiers; records them in `WasmImportEntry[]`; applies call-site renames in the merged TS source
+2. **Pre-register** — wabt disassembles each `.wasm`; `ExternalFuncDef` signatures are injected into `WasicTranspiler` so the transpiler types call expressions correctly before merge
+3. **Transpile** — main TS source compiled to WAT normally; merged module has no knowledge of the import at WAT level yet
+4. **Disassemble & parse** — `wasmmerge.ts` extracts all top-level WAT forms using a parenthesis-depth scanner
+5. **Strip entry-only features** — `_start`, `proc_exit`, `args_get/sizes_get`, `environ_get/sizes_get` dropped with notice
+6. **Mangle** — all `$funcname` and `$globalN` references prefixed; `call N` index references rewritten to `call $prefix_name`
+7. **Relocate** — data segment base addresses shifted by `mainModule.dataOffset`; `i32.const >= 260` values in function bodies conservatively shifted as static-data pointers
+8. **Deduplicate WASI** — `fd_write` and other WASI imports used by the imported module are not re-declared; main module's declarations suffice
+9. **Splice** — mangled functions, globals, and data segments inserted before the closing `)` of the main WAT module
+10. **Optimise** — Binaryen `-Oz` eliminates any dead code introduced by the merge
 
-**Supported cases (incrementally):**
+**Supported complexity tiers:**
 
-| Case | Complexity | Notes |
+| Case | Status | Notes |
 | --- | --- | --- |
-| Pure computation (no memory, no imports) | Low | Hash functions, math libs, encoders — clean merge |
-| Modules with globals | Medium | Globals get prefix mangling like functions |
-| Modules sharing WASI imports | Medium | `fd_write` etc. deduplicated against main module's imports |
-| Modules with memory / data segments | High | Requires data-offset relocation relative to `DATA_BASE` |
+| Pure computation (no memory, no imports) | ✅ | Hash functions, math libs, encoders |
+| Modules with globals | ✅ | Prefixed like functions; heap-pointer global skipped |
+| Modules sharing WASI imports | ✅ | `fd_write` etc. deduplicated |
+| Modules with memory / data segments | ✅ | Conservative pointer relocation (values ≥ 260 shifted) |
 
-**`_start` exclusion:**
+**Entry-only notice (WASI executables as imports):**
 
-Any `.wasm` module — including WASI executables — can be imported. However, `_start` is **always excluded** from the merge. A compiled program can only have one `_start` entry point; merging a second would produce a WAT compile error or silently override the program's entry. `tsbundler.ts` detects the presence of `_start` and drops it, emitting an informational notice so the user knows what happened:
+Any `.wasm` — including a `wasic`-compiled WASI program — can be imported as a library. Entry-only features are stripped automatically:
 
 ```text
-⚠️  Imported "./myprogram.wasm": _start excluded from merge.
-    WASI entry points cannot be imported as callable functions.
-    All other exports from this module are available normally.
+⚠️  Imported "engine.wasm": entry-only features excluded: _start, proc_exit. Module converted to library mode.
 ```
 
-This means WASI executables compiled with `wasmtk wasic` can still be imported as utility libraries — their exported helper functions are fully accessible; only the entry point is withheld. This pairing makes `wasmtk modc` and `wasmtk wasic` a natural matched set: `modc` produces clean importable libraries, `wasic` can consume both `modc` output and other `wasic` modules equally.
+All other exported functions remain fully accessible. `modc` and `wasic` are a natural matched set: `modc` produces clean library modules; `wasic` programs can consume both.
+
+**`fd_write` scratch area — collision-free merge:**
+
+`iovBase` and `scratchBase` are instance variables on `WasicTranspiler` (not hardcoded constants). Imported modules receive fresh scratch addresses above `mainModule.dataOffset`, so parallel `console.log` call paths in main and imported code never overwrite each other's iov buffers.
+
+### Planned Phases
+
+> No phases currently planned. Phase 18 completed the initial roadmap. Future work tracked separately.
