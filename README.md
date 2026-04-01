@@ -660,4 +660,158 @@ The TypeScript-to-JS bundler command is renamed from `bundle` to `tsbundle` to c
 
 ### Planned Phases
 
-> No phases currently planned. Future work tracked separately.
+Phases 21–39 extend `wasic` incrementally. Early phases add compile-time conveniences and core language features; middle phases build out the runtime data model; later phases complete the type system. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
+
+| Phase | Feature | Strategy |
+| --- | --- | --- |
+| 21 | `never`, `void` (complete), `readonly` | `never` → WASM `unreachable`; `void` formalized in `mapType`; `readonly` as compile-time write guard — zero WAT change |
+| 22 | Compile-time convenience additions | `const enum` inlined at call sites; Math constants (`Math.PI`, `Math.E`, `Math.LN2`, `Math.SQRT2`, etc.) → `f64.const`; `**` → `Math.pow`; `as` assertion → WASM `trunc`/`reinterpret`; non-null `!` and `satisfies` stripped at compile time |
+| 23 | Tuple types `[A, B, C]` | Anonymous fixed-layout struct in linear memory; positional fields `_0`, `_1`, …; element access `t[0]` → `i32.load offset=0`; destructuring `const [a, b] = t` reuses struct destructuring path |
+| 24 | `null` / `undefined` as values; nullable `T \| null` | Sentinel `i32 = 0` for pointer types; null-check → `(i32.eqz)`; functions returning `T \| null` emit a pointer that may be 0 |
+| 25 | Optional chaining, nullish coalescing, logical assignment | `obj?.prop` → null-guard + load; `x ?? y` → `(if (i32.eqz x) y else x)`; `??=` `\|\|=` `&&=` expanded to conditional assignment — all depend on Phase 24 |
+| 26 | `for...of`, array destructuring, default / nested destructuring | `for...of` over arrays desugars to indexed `for`; `const [a, b] = arr` → indexed loads; `const { x = 0 } = obj` → null/zero check + conditional load; nested `{ a: { b } }` → chained field offsets |
+| 27 | Extended string methods | `charCodeAt`, `charAt`, `String.fromCharCode`, `startsWith`, `endsWith`, `substring`, `lastIndexOf`, `trim`/`trimStart`/`trimEnd`, `toUpperCase`/`toLowerCase` (ASCII), `padStart`/`padEnd`, `repeat`, `replace`/`replaceAll`, `split` → dynamic `string[]` |
+| 28 | Extended array methods | `every(fn)`, `some(fn)`, `findIndex(fn)`, `lastIndexOf(val)`, `at(i)`, `reverse()`, `fill(val)`, `join(sep)`, `sort(compareFn?)` — all extend the Phase 12 `call_indirect` callback infrastructure |
+| 29 | Class enhancements | Static class fields → named WASM globals; `get`/`set` accessors → desugared to `ClassName_get_x` / `ClassName_set_x` functions; `private`/`protected`/`public` enforced at compile time; string enums → i32 constants with string lookup table |
+| 30 | Struct / object enhancements + `namespace` | Struct arrays `Vec2[]` → dynamic array of i32 pointers; string arrays `string[]` → interleaved ptr+len `i32[]`; spread in object literals `{ ...base, x: 1 }` → field-by-field copy; `namespace Foo { }` → desugared to prefixed functions (same as module mangling) |
+| 31 | TypedArrays | `Int32Array`, `Float64Array`, `Uint8Array`, `Int16Array`, etc. → typed views over `$__malloc` regions; constructor, `.subarray()`, `.fill()`, `.copyWithin()`, `.sort()` methods; reuse Phase 28 array infrastructure with fixed element widths |
+| 32 | Discriminated union types | Tagged union: `tag: i32` + data region sized to largest variant; numeric literal unions as enum constants; string literal unions as compile-time i32 map; struct unions as tagged-union layout — benefits from Phase 30 struct infrastructure |
+| 33 | Intersection types `A & B` | Compile-time struct field merge; field name conflict is a compile error — depends on Phase 30 struct infrastructure |
+| 34 | Type predicates `x is T` | For Phase 32 tagged unions: emit `(i32.eq (i32.load $x) (i32.const TAG_FOO))`; predicate returns bool |
+| 35 | `typeof` (type position) / `keyof T` | `typeof x` resolved to known `WatType` at compile time; `keyof T` yields string-literal union of struct field names (usable with Phase 32 string literal unions) |
+| 36 | Simple conditional types | `T extends U ? X : Y` evaluated during `expandGenerics` monomorphization; complex recursive forms excluded |
+| 37 | `flat()` / `flatMap(fn)` | Flatten nested arrays; requires Phase 30 struct arrays and Phase 31 TypedArray infrastructure |
+| 38 | Extended math via external library | `Math.sin/cos/tan/asin/acos/atan/atan2`, `Math.log/log2/log10/exp/expm1/log1p`, `Math.hypot/cbrt/sinh/cosh/tanh`, `Math.random()` (WASI `random_get`) — imported as a pre-compiled `mathlib.wasm` via the Phase 18 bundler |
+| 39 | `jstyper` — JavaScript import pre-processor | Generates `.d.ts` from `.js` via `npm:typescript`; merges typed signatures with JS bodies to produce `.ts` for wasic; `.js` never modified; existing `.d.ts` / `@types/` used directly; sequenced last so all supported types are available as annotations |
+
+---
+
+#### Phase 39 — `jstyper`: JavaScript Import Pre-processor
+
+Phase 39 adds a new pipeline stage that sits upstream of `tsbundler` and `wasic`. When a `.ts` file imports from a `.js` module, `jstyper` produces a `.ts` equivalent that wasic can compile — without ever modifying the original `.js` file.
+
+The key design decision: type information comes from a **`.d.ts` declaration file**, not from inline annotation injection. The `.d.ts` is either generated automatically by the TypeScript compiler or supplied manually, and it remains a permanent, auditable, editable artefact alongside the `.js` source. It is sequenced last so that every type wasic supports is available as a valid annotation.
+
+**Pipeline:**
+
+```text
+Step 1 — Resolve type declarations
+  helper.d.ts exists?   →  use it directly (skip inference)
+  @types/helper exists? →  use it directly (skip inference)
+  neither exists?        →  run tsc (allowJs + declaration) to generate helper.d.ts
+
+Step 2 — Parse helper.d.ts
+  Extract typed function signatures: declare function add(a: number, b: number): number;
+  Extract typed variable declarations: declare const PI: number;
+  Hoist object literal shapes to named interface declarations
+
+Step 3 — Merge with helper.js bodies
+  For each declaration in .d.ts, find matching function body in .js
+  Replace untyped JS header with typed TS signature
+  Emit helper.ts  (types from .d.ts, bodies from .js)
+
+Step 4 — Feed helper.ts into existing tsbundler pipeline
+  wasic/modc pipeline unchanged
+```
+
+**Two usage modes:**
+
+```bash
+# Standalone — generate and inspect the .d.ts and .ts artefacts
+wasmtk jstyper helper.js                   # generates helper.d.ts + helper.ts
+wasmtk jstyper helper.js --dts-only        # generate helper.d.ts only for review/editing
+wasmtk jstyper helper.js --dry-run         # print merged .ts to stdout without writing
+wasmtk jstyper helper.js --any-policy skip # skip functions where type resolves to 'any'
+
+# Transparent — fires automatically during wasic/modc compilation
+import { add } from "./mathlib.js";        # jstyper runs on mathlib.js automatically
+wasmtk wasic entry.ts                      # no extra steps needed
+```
+
+**Manual refinement workflow:**
+
+Because `.d.ts` is a separate, editable file, developers can refine inferred types to precise WASM types that `tsc` can never infer on its own:
+
+```bash
+wasmtk jstyper mathlib.js --dts-only   # generates mathlib.d.ts with inferred types
+```
+
+```typescript
+// mathlib.d.ts — auto-generated, then hand-edited
+// Before: declare function add(a: number, b: number): number;
+// After:
+declare function add(a: i32, b: i32): i32;          // precise integer type
+declare function lerp(a: f32, b: f32, t: f32): f32; // precise float type
+```
+
+```bash
+wasmtk wasic entry.ts   # jstyper sees mathlib.d.ts, skips inference, uses hand-edited types
+```
+
+**Type mapping:**
+
+| `.d.ts` declared type | Merged `.ts` annotation | wasic result | Requires phase |
+| --- | --- | --- | --- |
+| `number` | `: number` | `f64` | None |
+| `string` | `: string` | `string` | None |
+| `boolean` | `: boolean` | `bool` | None |
+| `bigint` | `: bigint` | `i64` | None |
+| `i32`, `i64`, `f32`, `f64` (hand-edited) | exact annotation | exact WASM type | None |
+| `T[]` | `: T[]` | `i32` (pointer) | None |
+| `void` | `: void` | `void` | Phase 21 |
+| `never` | `: never` | `never` | Phase 21 |
+| `T \| null` | `: T \| null` | `T` (null stripped) | Phase 24 for runtime correctness |
+| `{ x: number; y: number }` | hoisted `interface` + `: Name` | `i32` (struct pointer) | None |
+| `any` | `: number` + warning | `f64` | None (configurable via `--any-policy`) |
+| `[A, B]` | warning + skip | — | Phase 23 (still limited from inference) |
+| `Promise<T>`, `Generator<...>` | warning + skip | — | Out of scope |
+
+**Phases 21–38 benefit as they land:**
+
+| Phase | jstyper benefit after landing |
+| --- | --- |
+| 21 (`void`, `never`, `readonly`) | `: void` on zero-return functions correct; `readonly` stripped |
+| 22 (compile-time ops) | `const enum` members usable as annotation values; `as` assertions passthrough |
+| 23 (tuples) | tsc rarely infers true tuples from raw JS; hand-edited `.d.ts` can declare them |
+| 24 (`null`/`undefined`) | High — `T \| null` already survives the merge; Phase 24 makes runtime behaviour correct |
+| 25 (optional chaining / nullish) | Transparent — appears in function bodies, not signatures |
+| 26 (for...of / destructuring) | Transparent — body patterns, not type annotations |
+| 27–28 (string/array methods) | Transparent — method calls in bodies, not signatures |
+| 29 (class enhancements) | String enum member types usable in `.d.ts` annotations |
+| 30 (struct arrays) | `Vec2[]` and `string[]` become valid annotation types in `.d.ts` |
+| 31 (TypedArrays) | `Int32Array` etc. usable as annotation types |
+| 32 (discriminated unions) | Hand-edited `.d.ts` can declare tagged union shapes |
+| 33–34 (intersections, predicates) | Hand-editable in `.d.ts` after those phases land |
+| 35 (`typeof`/`keyof`) | Transparent — tsc resolves to concrete type in `.d.ts` output |
+| 36 (conditional types) | Not inferred from raw JS |
+| 37–38 (flat/math) | Transparent — body calls, not signature types |
+
+**Out-of-scope JS patterns (warning + skip):**
+
+- CommonJS (`module.exports`, `require()`)
+- `async function` / `function*`
+- Prototype-based methods (`.prototype` assignments)
+- `arguments` object usage
+- Recursive object types
+- `Symbol`, `Map`, `Set`, `WeakMap`, `Promise`, `Generator`
+
+**New files:** `jstyper.ts`
+
+**Changed files:** `deno.json` (add `npm:typescript` import + `./jstyper` export), `tsbundler.ts` (`.js` detection hook between lines 319–321), `main.ts` (`case "jstyper"` + help text)
+
+---
+
+#### Types Requiring `javyc`
+
+The following TypeScript types require a dynamic runtime and cannot be compiled by `wasic`. Use `wasmtk javyc` for programs that need them:
+
+| Type | Reason |
+| --- | --- |
+| `any` | Requires runtime type tagging and dynamic dispatch — WASM is fully statically typed |
+| `unknown` | Same as `any` — requires runtime type checking before use |
+| `symbol` | Requires a global runtime registry to guarantee uniqueness across calls |
+| `object` (generic) | Arbitrary property access requires a heap-managed property map |
+| Mapped types `{ [K in keyof T]: ... }` | Require full type system iteration — beyond a static code generator |
+| Template literal types `` `${string}foo` `` | Type-level string manipulation requires a type checker, not a code generator |
+| Complex recursive conditional types (`Awaited<T>`, `ReturnType<T>`) | Require deep type inference infrastructure |
+| Prototype / dynamic `this` typing | Runtime object identity — antithetical to WASM's flat memory model |
