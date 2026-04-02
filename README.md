@@ -98,6 +98,8 @@ wasmtk run myprogram.wasm
 | Float types | `f32`, `f64` |
 | BigInt literals | `42n` → i64 |
 | Numeric enums | `enum Dir { Up = 0, Down = 1 }` — members fold to i32 constants |
+| `never` return type | Marks a function that never returns — no WAT result clause; `(unreachable)` appended to body |
+| `void` return type | Explicit zero-return annotation — no WAT result clause (fully supported) |
 
 ##### Strings
 
@@ -148,6 +150,7 @@ wasmtk run myprogram.wasm
 | Struct definitions | `interface Vec2 { x: f64; y: f64; }` or `type` alias |
 | Struct literals | `const v: Vec2 = { x: 1.0, y: 2.0 }` — static allocation |
 | Field access | `v.x`, `v.y = 3.0` |
+| Readonly fields | `readonly x: f64` — compile-time write guard; writes outside a class constructor emit a diagnostic |
 | Struct parameters | Passed as i32 pointer |
 | Object destructuring | `const { x, y } = vec` → i32.load / f64.load at field offsets |
 | Renamed destructuring | `const { x: vx, y: vy } = vec` |
@@ -450,6 +453,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | 18 | WASM import bundling | `tsbundler.ts` detects `.wasm` specifiers in ESM imports and `wasmImport()` loader calls; new `wasmmerge.ts` module performs WAT-level merge with module-prefix name mangling; `_start`, `proc_exit`, `args_get/sizes_get`, `environ_get/sizes_get` stripped with notice; WASI imports deduplicated; data segments relocated by `mainModule.dataOffset`; static-data pointer `i32.const` values conservatively relocated; `WasicTranspiler` gains `externalFuncs` constructor param so call sites type-check before WAT merge; `iovBase`/`scratchBase` promoted to instance variables for collision-free merge of `fd_write` scratch areas; `bundleImportsEx()` returns `{ source, wasmImports }` alongside backward-compat `bundleImports()` |
 | 19 | `wasmbundle` CLI | New `wasmbundle.ts` + `wasmtk wasmbundle` command bundles multiple `.wasm` files into a single combined `.wasm` library; cross-module export conflict detection; interactive per-conflict prompt or `--on-conflict=prefix\|exclude` flag; non-conflicting exports keep bare names; conflicting exports prefixed or excluded; sequential `mergeWasmWat` with tracked `dataOffset`; master WAT assembled with WASI imports (14 common signatures), auto-sized `(memory N)`, and explicit `(export ...)` declarations; `extractExportNames()` added to `wasmmerge.ts`; `exportOverrides` parameter added to `mergeWasmWat` for export name control |
 | 20 | Export name transparency + `tsbundle` rename | `wasmmerge.ts`: `mergeWasmWat` emits `(export "add" (func $mathlib_add))` — original export name preserved, internal mangling unchanged; `WatMergeResult` gains `exportMap: Map<string, string>` (`originalName → $mangledName`); `wasmbundle.ts`: conflict resolution upgraded to 4-option interactive prompt (prefix / alias / exclude / stop) + `--alias file=name` and `--on-conflict=alias` non-interactive flags; `bundle` CLI command renamed to `tsbundle` |
+| 21 | `never` type, `void` (complete), `readonly` | `"never"` added to `WatType`; `mapType("never")` returns `"never"`; `never`-return functions emit no WAT `(result ...)` and get `(unreachable)` appended to the body; all call-statement `drop` sites guarded against never/string results; `StructField.readonly?` flag; interface and class field parsing captures `readonly` modifier; `this.field = val` writes blocked outside the constructor; `obj.field = val` writes blocked for readonly struct/class fields; `currentMethodName` instance variable added |
 
 ---
 
@@ -660,11 +664,10 @@ The TypeScript-to-JS bundler command is renamed from `bundle` to `tsbundle` to c
 
 ### Planned Phases
 
-Phases 21–39 extend `wasic` incrementally. Early phases add compile-time conveniences and core language features; middle phases build out the runtime data model; later phases complete the type system. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
+Phases 22–39 extend `wasic` incrementally. Early phases add compile-time conveniences and core language features; middle phases build out the runtime data model; later phases complete the type system. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
 
 | Phase | Feature | Strategy |
 | --- | --- | --- |
-| 21 | `never`, `void` (complete), `readonly` | `never` → WASM `unreachable`; `void` formalized in `mapType`; `readonly` as compile-time write guard — zero WAT change |
 | 22 | Compile-time convenience additions | `const enum` inlined at call sites; Math constants (`Math.PI`, `Math.E`, `Math.LN2`, `Math.SQRT2`, etc.) → `f64.const`; `**` → `Math.pow`; `as` assertion → WASM `trunc`/`reinterpret`; non-null `!` and `satisfies` stripped at compile time |
 | 23 | Tuple types `[A, B, C]` | Anonymous fixed-layout struct in linear memory; positional fields `_0`, `_1`, …; element access `t[0]` → `i32.load offset=0`; destructuring `const [a, b] = t` reuses struct destructuring path |
 | 24 | `null` / `undefined` as values; nullable `T \| null` | Sentinel `i32 = 0` for pointer types; null-check → `(i32.eqz)`; functions returning `T \| null` emit a pointer that may be 0 |
@@ -758,8 +761,8 @@ wasmtk wasic entry.ts   # jstyper sees mathlib.d.ts, skips inference, uses hand-
 | `bigint` | `: bigint` | `i64` | None |
 | `i32`, `i64`, `f32`, `f64` (hand-edited) | exact annotation | exact WASM type | None |
 | `T[]` | `: T[]` | `i32` (pointer) | None |
-| `void` | `: void` | `void` | Phase 21 |
-| `never` | `: never` | `never` | Phase 21 |
+| `void` | `: void` | `void` | ✅ Phase 21 |
+| `never` | `: never` | `never` | ✅ Phase 21 |
 | `T \| null` | `: T \| null` | `T` (null stripped) | Phase 24 for runtime correctness |
 | `{ x: number; y: number }` | hoisted `interface` + `: Name` | `i32` (struct pointer) | None |
 | `any` | `: number` + warning | `f64` | None (configurable via `--any-policy`) |
@@ -770,7 +773,7 @@ wasmtk wasic entry.ts   # jstyper sees mathlib.d.ts, skips inference, uses hand-
 
 | Phase | jstyper benefit after landing |
 | --- | --- |
-| 21 (`void`, `never`, `readonly`) | `: void` on zero-return functions correct; `readonly` stripped |
+| ✅ 21 (`void`, `never`, `readonly`) | `: void` on zero-return functions correct; `readonly` stripped |
 | 22 (compile-time ops) | `const enum` members usable as annotation values; `as` assertions passthrough |
 | 23 (tuples) | tsc rarely infers true tuples from raw JS; hand-edited `.d.ts` can declare them |
 | 24 (`null`/`undefined`) | High — `T \| null` already survives the merge; Phase 24 makes runtime behaviour correct |

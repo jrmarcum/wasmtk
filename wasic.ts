@@ -41,6 +41,8 @@
  * Numeric Types
  *   - i32, i64 (BigInt literals: 42n), f32, f64, number, boolean
  *   - Enums (numeric):  enum Dir { Up = 0, Down = 1 }  → i32 constants
+ *   - never:            function return type → no WAT result clause + (unreachable) appended (Phase 21)
+ *   - void:             function return type → no WAT result clause (complete, Phase 21)
  *
  * Strings
  *   - String literals stored in linear memory as ptr+len pairs
@@ -78,6 +80,7 @@
  *   - Struct function parameters (passed as i32 pointer)
  *   - Object destructuring:  const { x, y } = vec  → i32.load / f64.load
  *   - Renamed destructuring: const { x: vx } = vec
+ *   - readonly fields:   compile-time write guard; writes outside constructor emit a diagnostic (Phase 21)
  *
  * Math
  *   - Math.sqrt, Math.abs, Math.pow, Math.floor, Math.ceil, Math.round
@@ -213,12 +216,14 @@ export async function compileWat(watPath: string, outPath?: string): Promise<Was
 // TypeScript subset transpiler
 // ---------------------------------------------------------------------------
 
-/** WAT numeric types plus "string" and "bool" as compiler-level pseudo-types. */
-type WatType = "i32" | "i64" | "f32" | "f64" | "string" | "bool";
+/** WAT numeric types plus "string" and "bool" as compiler-level pseudo-types.
+ *  "never" marks functions that never return (Phase 21): no WAT result; body ends with unreachable. */
+type WatType = "i32" | "i64" | "f32" | "f64" | "string" | "bool" | "never";
 
-/** Maps a compiler WatType to the concrete WAT numeric type (bool → i32, string → i32). */
+/** Maps a compiler WatType to the concrete WAT numeric type (bool → i32, string → i32).
+ *  "never" should never reach this function (guarded at call sites), but returns i32 as a safe default. */
 function watBaseType(t: WatType): "i32" | "i64" | "f32" | "f64" {
-  if (t === "bool" || t === "string") return "i32";
+  if (t === "bool" || t === "string" || t === "never") return "i32";
   return t as "i32" | "i64" | "f32" | "f64";
 }
 
@@ -237,6 +242,8 @@ interface StructField {
   type: WatType;
   offset: number;
   size: number;
+  /** Phase 21: field declared with `readonly` modifier — writes are a compile-time error. */
+  readonly?: boolean;
 }
 
 interface StructDef {
@@ -263,7 +270,8 @@ interface FuncDef {
   className?: string;
 }
 
-/** Maps TypeScript type annotation strings to WAT types (or the "string" pseudo-type). */
+/** Maps TypeScript type annotation strings to WAT types (or the "string"/"never" pseudo-types).
+ *  "void" is handled by callers before mapType is invoked and never reaches this function. */
 function mapType(ts: string): WatType {
   // Strip union null/undefined modifiers: "string | null" → "string", "T | undefined" → "T"
   const stripped = ts.split("|").map(p => p.trim()).filter(p => p !== "null" && p !== "undefined");
@@ -271,6 +279,8 @@ function mapType(ts: string): WatType {
   // Array type annotation T[] → i32 pointer
   if (base.endsWith("[]")) return "i32";
   const t = base.toLowerCase();
+  if (t === "never") return "never";                    // Phase 21: never → unreachable at end of body
+  // Note: "void" is intercepted at each call site before mapType is invoked; it never reaches here.
   if (t === "i32" || t === "int") return "i32";
   if (t === "i64") return "i64";
   if (t === "f32") return "f32";
@@ -423,6 +433,8 @@ class WasicTranspiler {
   private classVars: Map<string, { className: string; ptr: number }> = new Map();
   // Set to the class name when emitting an instance method body (for `this.field` resolution).
   private currentMethodClass: string | null = null;
+  // Set to the WAT function name of the method currently being emitted (Phase 21: constructor check).
+  private currentMethodName: string | null = null;
 
   // Tracks which Math.* WAT helper functions are needed (emitted on demand)
   private mathHelpers: Set<string> = new Set();
@@ -1246,16 +1258,17 @@ class WasicTranspiler {
         const body = m[2];
         const fields: StructField[] = [];
         let offset = 0;
-        // Match "fieldName: typeName;" or "fieldName?: typeName;"
-        const fieldRe = /(\w+)\??:\s*([\w\[\]]+)/g;
+        // Match optional "readonly" prefix, then "fieldName: typeName;" or "fieldName?: typeName;"
+        const fieldRe = /(?:(readonly)\s+)?(\w+)\??:\s*([\w\[\]]+)/g;
         let fm: RegExpExecArray | null;
         while ((fm = fieldRe.exec(body)) !== null) {
-          const fieldName = fm[1];
-          const type = mapType(fm[2]);
+          const isReadonly = fm[1] === "readonly";
+          const fieldName = fm[2];
+          const type = mapType(fm[3]);
           const size = (type === "f64" || type === "i64") ? 8 : 4;
           // Natural alignment: round offset up to a multiple of size
           if (offset % size !== 0) offset = Math.ceil(offset / size) * size;
-          fields.push({ name: fieldName, type, offset, size });
+          fields.push({ name: fieldName, type, offset, size, ...(isReadonly ? { readonly: true } : {}) });
           offset += size;
         }
         if (fields.length > 0) {
@@ -1306,12 +1319,14 @@ class WasicTranspiler {
         const closes = (rawLine.match(/\}/g) ?? []).length;
 
         if (fieldDepth === 0 && line && !line.includes("(") && !/\bstatic\b/.test(line)) {
+          // Phase 21: capture readonly modifier before stripping all access modifiers
+          const isReadonly = /\breadonly\b/.test(line);
           const fm = line.match(/^(?:(?:private|protected|public|readonly)\s+)*(\w+)\s*[!?]?\s*:\s*([\w\[\]]+)/);
           if (fm) {
             const type = mapType(fm[2]);
             const size = (type === "f64" || type === "i64") ? 8 : 4;
             if (fieldOffset % size !== 0) fieldOffset = Math.ceil(fieldOffset / size) * size;
-            fields.push({ name: fm[1], type, offset: fieldOffset, size });
+            fields.push({ name: fm[1], type, offset: fieldOffset, size, ...(isReadonly ? { readonly: true } : {}) });
             fieldOffset += size;
           }
         }
@@ -2709,6 +2724,12 @@ class WasicTranspiler {
       const cd = this.classDefs.get(this.currentMethodClass);
       const field = cd?.struct.fields.find(f => f.name === thisWriteMatch[1]);
       if (field) {
+        // Phase 21: readonly guard — only allow writes inside the constructor
+        if (field.readonly && this.currentMethodName !== `${this.currentMethodClass}_constructor`) {
+          this.diagnostics.push(
+            `Cannot assign to readonly field '${thisWriteMatch[1]}' of '${this.currentMethodClass}'`
+          );
+        }
         const storeOp = field.type === "f64" ? "f64.store"
                       : field.type === "i64" ? "i64.store" : "i32.store";
         const valWat = this.emitExpr(thisWriteMatch[2], locals, field.type);
@@ -2725,6 +2746,12 @@ class WasicTranspiler {
         const wCd = this.classDefs.get(wCv.className);
         const wField = wCd?.struct.fields.find(f => f.name === structWriteMatch[2]);
         if (wField) {
+          // Phase 21: readonly guard for class instance fields accessed via variable
+          if (wField.readonly) {
+            this.diagnostics.push(
+              `Cannot assign to readonly field '${structWriteMatch[2]}' of '${wCv.className}'`
+            );
+          }
           const storeOp = wField.type === "f64" ? "f64.store"
                         : wField.type === "i64" ? "i64.store" : "i32.store";
           const baseWat = wCv.ptr === -1 ? `(local.get $${structWriteMatch[1]})` : `(i32.const ${wCv.ptr})`;
@@ -2736,6 +2763,12 @@ class WasicTranspiler {
       if (sv) {
         const field = sv.def.fields.find(f => f.name === structWriteMatch[2]);
         if (field) {
+          // Phase 21: readonly guard for struct fields
+          if (field.readonly) {
+            this.diagnostics.push(
+              `Cannot assign to readonly field '${structWriteMatch[2]}' of struct '${sv.def.name}'`
+            );
+          }
           const storeOp = field.type === "f64" ? "f64.store"
                         : field.type === "i64" ? "i64.store" : "i32.store";
           const baseWat = sv.ptr === -1
@@ -3014,7 +3047,8 @@ class WasicTranspiler {
             return [this.emitExpr(a, locals, pt)];
           });
           const call = `(call $${funcName} (local.get $__self) ${emittedArgs.join(" ")})`.trim();
-          return fn.result ? `(drop ${call})` : call;
+          const hasResult1 = fn.result !== null && fn.result !== "never" && fn.result !== "string";
+          return hasResult1 ? `(drop ${call})` : call;
         }
       }
 
@@ -3029,7 +3063,8 @@ class WasicTranspiler {
             return [this.emitExpr(a, locals, pt)];
           });
           const call = `(call $${funcName} ${baseWat} ${emittedArgs.join(" ")})`.trim();
-          return fn.result ? `(drop ${call})` : call;
+          const hasResult2 = fn.result !== null && fn.result !== "never" && fn.result !== "string";
+          return hasResult2 ? `(drop ${call})` : call;
         }
       }
 
@@ -3067,7 +3102,8 @@ class WasicTranspiler {
               this.emitExpr(a, locals, sig.params[idx] ?? "i32" as WatType)
             );
             const callWat = `(call_indirect (type ${typeName}) ${emittedArgs.join(" ")} (local.get $${callee}))`.trim();
-            return sig.result ? `(drop ${callWat})` : callWat;
+            const hasIndResult = sig.result !== null && sig.result !== "never" && sig.result !== "string";
+            return hasIndResult ? `(drop ${callWat})` : callWat;
           }
           this.diagnostics.push(`Unknown function '${callee}' — not declared in this module`);
           return "(unreachable)";
@@ -3093,7 +3129,9 @@ class WasicTranspiler {
           }
         }
         const call = `(call $${callee} ${emittedArgsList.join(" ")})`.trim();
-        return fn.result ? `(drop ${call})` : call;
+        // never and string produce no WAT result value — omit the drop wrapper
+        const hasWatResult = fn.result !== null && fn.result !== "never" && fn.result !== "string";
+        return hasWatResult ? `(drop ${call})` : call;
       }
     }
 
@@ -4162,6 +4200,7 @@ class WasicTranspiler {
     this.structVars = new Map();
     this.classVars  = new Map();
     this.currentMethodClass = fn.className ?? null;
+    this.currentMethodName  = fn.name;
 
     const locals = new Map<string, WatType>();
     for (const p of fn.params) {
@@ -4195,7 +4234,9 @@ class WasicTranspiler {
       )
       .join(" ");
     // String/bool return types — string not yet supported (void), bool → i32
-    const watResult = fn.result === null || fn.result === "string" ? null : watBaseType(fn.result);
+    // never: no WAT result clause (function declared as non-returning)
+    const watResult = fn.result === null || fn.result === "string" || fn.result === "never"
+      ? null : watBaseType(fn.result);
     const result    = watResult ? `(result ${watResult})` : "";
     // _start is always exported (IIFE pattern parses it with exported=false, but WASI requires it)
     const exportAttr = (fn.exported || fn.name === "_start") ? `(export "${fn.name}") ` : "";
@@ -4381,12 +4422,17 @@ class WasicTranspiler {
       .map(([n, t]) => `    (local $${n} ${watBaseType(t)})`)
       .join("\n");
 
-    const body = this.emitBlock(fn.bodyLines, locals, fn.result);
+    // For never-returning functions pass null so return statements emit (return) with no value.
+    const blockResult = fn.result === "never" ? null : fn.result;
+    const body = this.emitBlock(fn.bodyLines, locals, blockResult);
+    // Phase 21: append (unreachable) for never-typed functions — signals to the WASM validator
+    // that control never reaches the end of this function.
+    const neverSuffix = fn.result === "never" ? "\n    (unreachable)" : "";
 
     return [
       `  (func $${fn.name} ${exportAttr}${params} ${result}`,
       localDecls ? localDecls : "",
-      body,
+      body + neverSuffix,
       `  )`,
     ].filter(l => l.trim() !== "").join("\n");
   }
