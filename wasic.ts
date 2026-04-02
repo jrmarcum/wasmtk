@@ -43,6 +43,11 @@
  *   - Enums (numeric):  enum Dir { Up = 0, Down = 1 }  → i32 constants
  *   - never:            function return type → no WAT result clause + (unreachable) appended (Phase 21)
  *   - void:             function return type → no WAT result clause (complete, Phase 21)
+ *   - `**` operator:    exponentiation → Math.pow (right-associative, Phase 22)
+ *   - `as` assertion:   type cast → WASM trunc/convert/promote/demote/wrap/extend (Phase 22)
+ *   - Postfix `!`:      non-null assertion stripped at compile time (Phase 22)
+ *   - `satisfies`:      compile-time type hint stripped at compile time (Phase 22)
+ *   - `const enum`:     identical to numeric enum — members inlined as i32 constants (Phase 22)
  *
  * Strings
  *   - String literals stored in linear memory as ptr+len pairs
@@ -1810,7 +1815,34 @@ class WasicTranspiler {
   ): string {
     // bool is i32 at the WAT level; normalize so all emission uses i32
     if (defaultType === "bool") defaultType = "i32";
-    const expr = raw.trim();
+    let expr = raw.trim();
+
+    // Phase 22: strip TypeScript non-null assertion postfix `expr!` → `expr`
+    // Guard against != and !== which also end with !
+    if (expr.endsWith("!") && !expr.endsWith("!=") && !expr.endsWith("!==")) {
+      expr = expr.slice(0, -1).trim();
+    }
+
+    // Phase 22: strip `satisfies` operator — `expr satisfies T` → `expr`
+    // `satisfies` is a compile-time type-checking hint with no WAT equivalent.
+    {
+      const satIdx = this.findDepth0Keyword(expr, " satisfies ");
+      if (satIdx !== -1) expr = expr.slice(0, satIdx).trim();
+    }
+
+    // Phase 22: `as` type assertion — `expr as T` → appropriate WASM conversion
+    // Scan right-to-left at depth 0 (lowest-precedence, like a unary postfix suffix).
+    {
+      const asIdx = this.findDepth0Keyword(expr, " as ");
+      if (asIdx !== -1) {
+        const inner = expr.slice(0, asIdx).trim();
+        const targetTypeStr = expr.slice(asIdx + 4).trim().split(/[\s<]/)[0]; // first word (strip generics)
+        const targetType = mapType(targetTypeStr);
+        const srcType: WatType = /^\w+$/.test(inner) && locals.has(inner)
+          ? locals.get(inner)! : defaultType;
+        return this.emitTypeCast(inner, srcType, targetType, locals);
+      }
+    }
 
     // Parenthesised group
     if (expr.startsWith("(") && expr.endsWith(")")) {
@@ -2333,6 +2365,18 @@ class WasicTranspiler {
       return `(i32.sub (i32.const 0) ${this.emitExpr(inner, locals, "i32")})`;
     }
 
+    // Phase 22: exponentiation `a ** b` → Math.pow(a, b)
+    // Right-associative: use LTR scan so `a ** b ** c` → pow(a, pow(b, c)).
+    {
+      const powIdx = this.findDepth0LTR(expr, "**");
+      if (powIdx !== -1) {
+        this.mathHelpers.add("math_pow");
+        const lhs = expr.slice(0, powIdx).trim();
+        const rhs = expr.slice(powIdx + 2).trim();
+        return `(call $__math_pow ${this.emitExpr(lhs, locals, "f64")} ${this.emitExpr(rhs, locals, "f64")})`;
+      }
+    }
+
     // Binary operators — scanned in ascending-precedence order so the lowest-precedence
     // operator is matched first, producing correctly-grouped s-expressions.
     // [op, i32-suffix, f64-suffix, alwaysI32]
@@ -2428,12 +2472,73 @@ class WasicTranspiler {
         if (op === "!=" && after === "=")                                 continue; // avoid !== match
         if (op === "&"  && (after === "&" || before === "&"))             continue;
         if (op === "|"  && (after === "|" || before === "|"))             continue;
+        if (op === "*"  && (after === "*" || before === "*"))             continue; // skip **
         if (op === ">>" && (after === ">" || before === ">"))             continue;
         if (op === "?"  && after === ".")                                  continue; // optional chaining ?.
         return i;
       }
     }
     return -1;
+  }
+
+  /** Finds the first (leftmost) occurrence of `needle` at paren depth 0 (left-to-right scan).
+   *  Used for right-associative operators like `**`. */
+  private findDepth0LTR(expr: string, needle: string): number {
+    let depth = 0;
+    for (let i = 0; i <= expr.length - needle.length; i++) {
+      const ch = expr[i];
+      if (ch === "(" || ch === "[") { depth++; continue; }
+      if (ch === ")" || ch === "]") { depth--; continue; }
+      if (depth === 0 && expr.slice(i, i + needle.length) === needle) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /** Finds the last (rightmost) occurrence of `needle` (as a whole-word keyword with surrounding
+   *  spaces) at paren depth 0. Used for `as` and `satisfies`. */
+  private findDepth0Keyword(expr: string, needle: string): number {
+    let depth = 0;
+    for (let i = expr.length - needle.length; i >= 0; i--) {
+      const ch = expr[i];
+      if (ch === ")" || ch === "]") depth++;
+      else if (ch === "(" || ch === "[") depth--;
+      if (depth === 0 && expr.slice(i, i + needle.length) === needle) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /** Emits a WAT type-conversion expression for `expr as targetType`.
+   *  Applies the appropriate WASM numeric conversion instruction.
+   *  Phase 22: `as` type assertion support. */
+  private emitTypeCast(
+    inner: string,
+    src: WatType,
+    target: WatType,
+    locals: Map<string, WatType>
+  ): string {
+    const srcBase = watBaseType(src);
+    const tgtBase = watBaseType(target);
+    // Same base type — just re-emit with target context (no instruction needed)
+    if (srcBase === tgtBase) return this.emitExpr(inner, locals, target);
+    // Integer literal: emit directly with target type to avoid redundant trunc
+    if (/^-?\d+$/.test(inner.trim())) return `(${tgtBase}.const ${inner.trim()})`;
+    const innerWat = this.emitExpr(inner, locals, src);
+    if (tgtBase === "i32" && srcBase === "f64") return `(i32.trunc_f64_s ${innerWat})`;
+    if (tgtBase === "i32" && srcBase === "f32") return `(i32.trunc_f32_s ${innerWat})`;
+    if (tgtBase === "i32" && srcBase === "i64") return `(i32.wrap_i64 ${innerWat})`;
+    if (tgtBase === "f64" && srcBase === "i32") return `(f64.convert_i32_s ${innerWat})`;
+    if (tgtBase === "f64" && srcBase === "f32") return `(f64.promote_f32 ${innerWat})`;
+    if (tgtBase === "f64" && srcBase === "i64") return `(f64.convert_i64_s ${innerWat})`;
+    if (tgtBase === "f32" && srcBase === "f64") return `(f32.demote_f64 ${innerWat})`;
+    if (tgtBase === "f32" && srcBase === "i32") return `(f32.convert_i32_s ${innerWat})`;
+    if (tgtBase === "i64" && srcBase === "i32") return `(i64.extend_i32_s ${innerWat})`;
+    if (tgtBase === "i64" && srcBase === "f64") return `(i64.trunc_f64_s ${innerWat})`;
+    // Fallback — emit inner directly with target type
+    return this.emitExpr(inner, locals, target);
   }
 
   /** Splits a comma-separated argument list, respecting nested parens and string quotes. */

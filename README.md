@@ -100,6 +100,11 @@ wasmtk run myprogram.wasm
 | Numeric enums | `enum Dir { Up = 0, Down = 1 }` — members fold to i32 constants |
 | `never` return type | Marks a function that never returns — no WAT result clause; `(unreachable)` appended to body |
 | `void` return type | Explicit zero-return annotation — no WAT result clause (fully supported) |
+| `const enum` | Identical to numeric enum — members inlined as `i32` constants at every use site |
+| `**` operator | Exponentiation — right-associative; `a ** b ** c` → `pow(a, pow(b, c))` |
+| `as` type assertion | Numeric type cast → WASM conversion instruction (trunc, convert, promote, demote, wrap, extend) |
+| Postfix `!` | Non-null assertion stripped at compile time (no WAT equivalent needed) |
+| `satisfies` | Compile-time type hint stripped at compile time (no WAT equivalent needed) |
 
 ##### Strings
 
@@ -454,6 +459,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | 19 | `wasmbundle` CLI | New `wasmbundle.ts` + `wasmtk wasmbundle` command bundles multiple `.wasm` files into a single combined `.wasm` library; cross-module export conflict detection; interactive per-conflict prompt or `--on-conflict=prefix\|exclude` flag; non-conflicting exports keep bare names; conflicting exports prefixed or excluded; sequential `mergeWasmWat` with tracked `dataOffset`; master WAT assembled with WASI imports (14 common signatures), auto-sized `(memory N)`, and explicit `(export ...)` declarations; `extractExportNames()` added to `wasmmerge.ts`; `exportOverrides` parameter added to `mergeWasmWat` for export name control |
 | 20 | Export name transparency + `tsbundle` rename | `wasmmerge.ts`: `mergeWasmWat` emits `(export "add" (func $mathlib_add))` — original export name preserved, internal mangling unchanged; `WatMergeResult` gains `exportMap: Map<string, string>` (`originalName → $mangledName`); `wasmbundle.ts`: conflict resolution upgraded to 4-option interactive prompt (prefix / alias / exclude / stop) + `--alias file=name` and `--on-conflict=alias` non-interactive flags; `bundle` CLI command renamed to `tsbundle` |
 | 21 | `never` type, `void` (complete), `readonly` | `"never"` added to `WatType`; `mapType("never")` returns `"never"`; `never`-return functions emit no WAT `(result ...)` and get `(unreachable)` appended to the body; all call-statement `drop` sites guarded against never/string results; `StructField.readonly?` flag; interface and class field parsing captures `readonly` modifier; `this.field = val` writes blocked outside the constructor; `obj.field = val` writes blocked for readonly struct/class fields; `currentMethodName` instance variable added |
+| 22 | Compile-time convenience additions | `const enum` — identical to numeric enum (already parsed); Math constants (`Math.PI`, `Math.E`, `Math.LN2`, `Math.LOG2E`, `Math.LOG10E`, `Math.SQRT2`, `Math.SQRT1_2`, `Math.LN10`) → `f64.const` (already done); `**` exponentiation operator → `Math.pow` via right-associative LTR scan + `*` guard in `findBinaryOp`; `as` type assertion → `emitTypeCast` (trunc/convert/promote/demote/wrap/extend); postfix `!` non-null assertion stripped; `satisfies` operator stripped; `findDepth0LTR` + `findDepth0Keyword` + `emitTypeCast` helpers added |
 
 ---
 
@@ -664,11 +670,11 @@ The TypeScript-to-JS bundler command is renamed from `bundle` to `tsbundle` to c
 
 ### Planned Phases
 
-Phases 22–39 extend `wasic` incrementally. Early phases add compile-time conveniences and core language features; middle phases build out the runtime data model; later phases complete the type system. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
+Phases 23–39 extend `wasic` incrementally. Early phases add compile-time conveniences and core language features; middle phases build out the runtime data model; later phases complete the type system. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
 
 | Phase | Feature | Strategy |
 | --- | --- | --- |
-| 22 | Compile-time convenience additions | `const enum` inlined at call sites; Math constants (`Math.PI`, `Math.E`, `Math.LN2`, `Math.SQRT2`, etc.) → `f64.const`; `**` → `Math.pow`; `as` assertion → WASM `trunc`/`reinterpret`; non-null `!` and `satisfies` stripped at compile time |
+| 23 | Tuple types `[A, B, C]` | `const enum` inlined at call sites; Math constants (`Math.PI`, `Math.E`, `Math.LN2`, `Math.SQRT2`, etc.) → `f64.const`; `**` → `Math.pow`; `as` assertion → WASM `trunc`/`reinterpret`; non-null `!` and `satisfies` stripped at compile time |
 | 23 | Tuple types `[A, B, C]` | Anonymous fixed-layout struct in linear memory; positional fields `_0`, `_1`, …; element access `t[0]` → `i32.load offset=0`; destructuring `const [a, b] = t` reuses struct destructuring path |
 | 24 | `null` / `undefined` as values; nullable `T \| null` | Sentinel `i32 = 0` for pointer types; null-check → `(i32.eqz)`; functions returning `T \| null` emit a pointer that may be 0 |
 | 25 | Optional chaining, nullish coalescing, logical assignment | `obj?.prop` → null-guard + load; `x ?? y` → `(if (i32.eqz x) y else x)`; `??=` `\|\|=` `&&=` expanded to conditional assignment — all depend on Phase 24 |
