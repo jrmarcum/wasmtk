@@ -3309,20 +3309,26 @@ class WasicTranspiler {
       }
 
       // Nested arrow function declaration — already lifted to module level, skip its body.
-      // Exception: if the variable is registered as a funcref (funcTypeVars), fall through
-      // to emitStatement so it emits (local.set $name (i32.const tableIdx)).
+      // If the variable is registered as a funcref (funcTypeVars), emit the table-index
+      // assignment (local.set $name (i32.const idx)) and then skip the block body so
+      // inner lines are not erroneously emitted in the outer function's context.
+      // Single-line blocks (const f = () => { }) have both { and } on one line and do
+      // not need extractBlock — only multi-line blocks require consuming subsequent lines.
       if (/^(?:export\s+)?(?:const|let)\s+\w+\s*=\s*\(/.test(line) && line.includes("=>")) {
         const fnName = line.match(/^(?:export\s+)?(?:const|let)\s+(\w+)/)?.[1];
-        if (!fnName || !this.funcTypeVars.has(fnName)) {
-          if (line.includes("{")) {
-            const [, consumed] = this.extractBlock(lines, i + 1);
-            i += consumed + 1;
-          } else {
-            i++;
-          }
-          continue;
+        const isFuncref = fnName != null && this.funcTypeVars.has(fnName);
+        if (isFuncref) {
+          out.push(`${indent}${this.emitStatement(line, locals, funcResult)}`);
         }
-        // funcref variable — fall through to emitStatement
+        const braceIdx = line.indexOf("{");
+        const isMultiLineBlock = braceIdx !== -1 && line.indexOf("}", braceIdx) === -1;
+        if (isMultiLineBlock) {
+          const [, consumed] = this.extractBlock(lines, i + 1);
+          i += consumed + 1;
+        } else {
+          i++;
+        }
+        continue;
       }
 
       // if (cond) { ... } or if (cond) singleStatement;
@@ -4562,11 +4568,16 @@ class WasicTranspiler {
     ]);
 
     for (const af of this.functions) {
-      // Find the outer function whose bodyLines declare this arrow function
-      const outer = this.functions.find(f =>
-        f !== af &&
-        f.bodyLines.some(l => new RegExp(`\\bconst\\s+${af.name}\\s*=`).test(l))
-      );
+      // Find the INNERMOST outer function whose bodyLines declare this arrow function.
+      // We scan all functions and keep the last match: nested functions appear later in
+      // this.functions than the outer ones that contain them verbatim, so the last match
+      // is always the closest (innermost) enclosing scope.
+      let outer: FuncDef | undefined;
+      for (const f of this.functions) {
+        if (f !== af && f.bodyLines.some(l => new RegExp(`\\bconst\\s+${af.name}\\s*=`).test(l))) {
+          outer = f;
+        }
+      }
       if (!outer) continue;
 
       // Build outer scope: params + locally declared variables

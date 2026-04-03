@@ -63,9 +63,11 @@ wasmtk run myprogram.wasm
 | Default parameters | `function f(x: i32 = 0)` |
 | Optional parameters | `function f(x?: i32)` |
 | Arrow functions | `const fn = (x: i32): i32 => x * 2` |
+| Void arrows | `const noOp = (): void => { }` — no return value |
 | First-class function variables | `const op: (a: i32, b: i32) => i32 = add` |
 | Higher-order / callbacks | `function apply(f: (x: i32) => i32, v: i32): i32` |
 | Closure capture | Outer-scope variables injected as hidden parameters |
+| Nested closures | Multi-level capture: inner arrow captures from outer arrow's scope |
 | Variable declarations | `let`, `const`, `var` with optional type annotations |
 
 ##### Control Flow
@@ -437,7 +439,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | Core | Console output | `console.log/error/warn` — mixed-type args, numbers, strings, BigInt, templates |
 | 5b | Default parameters | `function f(x: i32 = 0)` |
 | 5c | Optional parameters | `function f(x?: i32)` |
-| 5e | First-class functions | funcref table, `call_indirect`, named arrow variables, callbacks, closure capture, IIFE entry pattern |
+| 5e | First-class functions | funcref table, `call_indirect`, named arrow variables, callbacks, closure capture, IIFE entry pattern, nested closures, void arrows, mixed-signature branches |
 | 6a | Numeric arrays | `i32[]`, `f64[]` — static allocation, element read/write, `.length`, array params |
 | 6b | Structs / objects | `interface` and `type` as fixed-layout structs, field read/write, struct params |
 | 6c | Object destructuring | `const { x, y } = vec` → `i32.load` / `f64.load` at field offsets; renamed destructuring |
