@@ -2,14 +2,132 @@
   (import "wasi_snapshot_preview1" "proc_exit" (func $proc_exit (param i32)))
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
   (memory (export "memory") 2)
-  (global $__heap_ptr (mut i32) (i32.const 260))
-  (type $ftype_i32_i32_r_i32 (func (param i32) (param i32) (result i32)))
+  (global $__heap_ptr (mut i32) (i32.const 269))
   ;; Bump allocator — advances __heap_ptr and returns the old value
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
     (local.set $ptr (global.get $__heap_ptr))
     (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))
     (local.get $ptr)
+  )
+
+  ;; ── str_gather: copy len bytes from src to dst (byte-copy loop, no bulk-memory) ──
+  ;; Used by gather-buffer mode in console.log for strvar/boolvar segments.
+  (func $__str_gather (param $src i32) (param $slen i32) (param $dst i32)
+    (local $i i32)
+    (block $done
+      (loop $loop
+        (br_if $done (i32.ge_u (local.get $i) (local.get $slen)))
+        (i32.store8
+          (i32.add (local.get $dst) (local.get $i))
+          (i32.load8_u (i32.add (local.get $src) (local.get $i)))
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop)
+      )
+    )
+  )
+
+  ;; ── str_concat: heap-allocate new string = a ++ b ───────────────────────────
+  ;; Copies bytes of a then b into a malloc'd buffer. Returns (ptr, len).
+  ;; Old buffers become dead memory (bump allocator has no free).
+  (func $__str_concat
+    (param $aptr i32) (param $alen i32) (param $bptr i32) (param $blen i32)
+    (result i32 i32)
+    (local $newptr i32) (local $newlen i32) (local $i i32)
+    (local.set $newlen (i32.add (local.get $alen) (local.get $blen)))
+    (local.set $newptr (call $__malloc (local.get $newlen)))
+    ;; copy a
+    (local.set $i (i32.const 0))
+    (block $done_a
+      (loop $copy_a
+        (br_if $done_a (i32.ge_u (local.get $i) (local.get $alen)))
+        (i32.store8
+          (i32.add (local.get $newptr) (local.get $i))
+          (i32.load8_u (i32.add (local.get $aptr) (local.get $i)))
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $copy_a)
+      )
+    )
+    ;; copy b
+    (local.set $i (i32.const 0))
+    (block $done_b
+      (loop $copy_b
+        (br_if $done_b (i32.ge_u (local.get $i) (local.get $blen)))
+        (i32.store8
+          (i32.add (local.get $newptr) (i32.add (local.get $alen) (local.get $i)))
+          (i32.load8_u (i32.add (local.get $bptr) (local.get $i)))
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $copy_b)
+      )
+    )
+    (local.get $newptr)
+    (local.get $newlen)
+  )
+
+  ;; ── str_slice: return sub-range of existing string (no allocation) ───────────
+  ;; Clamps start/end to [0, len]. Returns (ptr+start, end-start).
+  (func $__str_slice
+    (param $ptr i32) (param $len i32) (param $start i32) (param $end i32)
+    (result i32 i32)
+    (local $cs i32) (local $ce i32)
+    ;; clamp start to [0, len]
+    (local.set $cs
+      (select (i32.const 0) (local.get $start) (i32.lt_s (local.get $start) (i32.const 0)))
+    )
+    (if (i32.gt_s (local.get $cs) (local.get $len))
+      (then (local.set $cs (local.get $len)))
+    )
+    ;; clamp end to [cs, len]
+    (local.set $ce
+      (select (local.get $len) (local.get $end) (i32.gt_s (local.get $end) (local.get $len)))
+    )
+    (if (i32.lt_s (local.get $ce) (local.get $cs))
+      (then (local.set $ce (local.get $cs)))
+    )
+    (i32.add (local.get $ptr) (local.get $cs))
+    (i32.sub (local.get $ce) (local.get $cs))
+  )
+
+  ;; ── str_indexof: first occurrence of sub in str, or -1 ──────────────────────
+  (func $__str_indexof
+    (param $ptr i32) (param $len i32) (param $subptr i32) (param $sublen i32)
+    (result i32)
+    (local $i i32) (local $j i32) (local $max i32) (local $ok i32)
+    ;; empty substring always found at position 0
+    (if (i32.eqz (local.get $sublen)) (then (return (i32.const 0))))
+    ;; if sub is longer than str, impossible
+    (local.set $max (i32.sub (local.get $len) (local.get $sublen)))
+    (if (i32.lt_s (local.get $max) (i32.const 0)) (then (return (i32.const -1))))
+    (block $found_none
+      (loop $outer
+        (br_if $found_none (i32.gt_s (local.get $i) (local.get $max)))
+        (local.set $j (i32.const 0))
+        (local.set $ok (i32.const 1))
+        (block $inner_done
+          (loop $inner
+            (br_if $inner_done (i32.ge_u (local.get $j) (local.get $sublen)))
+            (if (i32.ne
+              (i32.load8_u (i32.add (local.get $ptr) (i32.add (local.get $i) (local.get $j))))
+              (i32.load8_u (i32.add (local.get $subptr) (local.get $j)))
+            )
+              (then
+                (local.set $ok (i32.const 0))
+                (br $inner_done)
+              )
+            )
+            (local.set $j (i32.add (local.get $j) (i32.const 1)))
+            (br $inner)
+          )
+        )
+        (if (local.get $ok) (then (return (local.get $i))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $outer)
+      )
+    )
+    (i32.const -1)
   )
 
   ;; ── i32 → decimal string ──────────────────────────────────────────────────
@@ -214,26 +332,14 @@
     ;; Return total length (including leading '-' and trailing 'n')
     (i32.sub (local.get $end) (local.get $orig))
   )
-  (func $createScaler__inner (param $val i32) (param $multiplier i32) (result i32)
-    (return (i32.mul (local.get $val) (local.get $multiplier)))
-  )
-
-  (func $createScaler (param $multiplier i32) (result i32)
-    (local $__closure_ptr i32)
-    (local.set $__closure_ptr (call $__malloc (i32.const 8)))
-    (i32.store (local.get $__closure_ptr) (i32.const 0))
-    (i32.store offset=4 (local.get $__closure_ptr) (local.get $multiplier))
-    (local.get $__closure_ptr)
-  )
-
-  (func $createScaler__trampoline (param $__closure_ptr i32) (param $val i32) (result i32)
-    (local $__cap_multiplier i32)
-    (local.set $__cap_multiplier (i32.load offset=4 (local.get $__closure_ptr)))
-    (call_indirect (type $ftype_i32_i32_r_i32) (local.get $val) (local.get $__cap_multiplier) (i32.load (local.get $__closure_ptr)))
-  )
-  (func $_start (export "_start")
-        (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__i32_to_str (call $createScaler__trampoline (call $createScaler (i32.const 2)) (i32.const 5)) (i32.const 132)))
+  (func $testBigIntComparisons (export "testBigIntComparisons") (param $val i64) 
+    (local $limit i64)
+    (local $isLarge i32)
+    (local.set $limit (i64.const 5000000000))
+    (if (i64.eq (local.get $val) (local.get $limit))
+      (then
+          (i32.store (i32.const 0) (i32.const 132))
+          (i32.store (i32.const 4) (call $__i64_to_str (i64.const 1) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -241,8 +347,51 @@
             (i32.const 0)
             (i32.const 1)
             (i32.const 128)))
+      )
+    )
+    (if (i64.gt_s (local.get $val) (i64.const 0))
+      (then
+          (i32.store (i32.const 0) (i32.const 132))
+          (i32.store (i32.const 4) (call $__i64_to_str (i64.const 2) (i32.const 132)))
+          (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
+          (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
+          (drop (call $fd_write
+            (i32.const 1)
+            (i32.const 0)
+            (i32.const 1)
+            (i32.const 128)))
+      )
+    )
+    (if (i64.lt_s (local.get $val) (i64.const -100))
+      (then
+          (i32.store (i32.const 0) (i32.const 132))
+          (i32.store (i32.const 4) (call $__i64_to_str (i64.const 3) (i32.const 132)))
+          (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
+          (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
+          (drop (call $fd_write
+            (i32.const 1)
+            (i32.const 0)
+            (i32.const 1)
+            (i32.const 128)))
+      )
+    )
+    (local.set $isLarge (i64.ge_s (local.get $val) (local.get $limit)))
+        (i32.store (i32.const 0) (i32.const 132))
+          (i32.store (i32.const 4) (i32.const 0))
+          (call $__str_gather (if (result i32) (local.get $isLarge) (then (i32.const 260)) (else (i32.const 264))) (if (result i32) (local.get $isLarge) (then (i32.const 4)) (else (i32.const 5))) (i32.const 132))
+          (i32.store (i32.const 4) (i32.add (i32.const 0) (if (result i32) (local.get $isLarge) (then (i32.const 4)) (else (i32.const 5)))))
+          (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
+          (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
+          (drop (call $fd_write
+            (i32.const 1)
+            (i32.const 0)
+            (i32.const 1)
+            (i32.const 128)))
+  )
+  (func $_start (export "_start")
+    (call $testBigIntComparisons (i64.const 6000000000))
     (call $proc_exit (i32.const 0))
   )
-  (table 1 funcref)
-  (elem (i32.const 0) $createScaler__inner)
+  (data (i32.const 260) "\74\72\75\65")
+  (data (i32.const 264) "\66\61\6c\73\65")
 )

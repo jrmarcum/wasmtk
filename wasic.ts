@@ -273,6 +273,12 @@ interface FuncDef {
   closureCaptures?: string[];
   /** Class name this function is an instance method of (Phase 9). */
   className?: string;
+  /** True if this function returns a heap-allocated closure object (Phase 5f). */
+  isClosureFactory?: boolean;
+  /** The lifted inner arrow returned by this closure factory (Phase 5f). */
+  returnedArrow?: FuncDef;
+  /** Name of the closure factory whose body returns this arrow (Phase 5f). */
+  returnedByFactory?: string;
 }
 
 /** Maps TypeScript type annotation strings to WAT types (or the "string"/"never" pseudo-types).
@@ -821,8 +827,79 @@ class WasicTranspiler {
         .map(l => l.trim())
         .filter(l => l.length > 0);
 
-      this.functions.push({ name, params: this.parseParams(rawParams), result, exported, bodyLines });
+      // Phase 5f: detect closure factory — body is `return (params) => expr;`
+      const returnedArrow = this.parseReturnArrow(name, bodyLines);
+      if (returnedArrow) this.functions.push(returnedArrow);
+      this.functions.push({
+        name, params: this.parseParams(rawParams),
+        result: returnedArrow ? "i32" : result,
+        exported, bodyLines,
+        isClosureFactory: !!returnedArrow,
+        returnedArrow: returnedArrow ?? undefined,
+      });
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Pass 1a-extra – parse the arrow returned by a closure factory (Phase 5f)
+  // -------------------------------------------------------------------------
+  /**
+   * If any body line is `return (params): retType => expr;`, lifts the returned
+   * arrow as `${factoryName}__inner` and returns its FuncDef.  Returns undefined
+   * if this function is not a closure factory.
+   */
+  private parseReturnArrow(factoryName: string, bodyLines: string[]): FuncDef | undefined {
+    const retLine = bodyLines.find(l => /^return\s+\(/.test(l) && l.includes("=>"));
+    if (!retLine) return undefined;
+
+    // Strip `return ` prefix and trailing `;`
+    const body = retLine.replace(/^return\s+/, "").replace(/;$/, "").trim();
+    if (!body.startsWith("(")) return undefined;
+
+    const [rawParams, afterClose] = WasicTranspiler.extractParamBlock(body, 0);
+    const restMatch = body.slice(afterClose).match(/^\s*(?::\s*(\w+))?\s*=>/);
+    if (!restMatch) return undefined;
+
+    const rawResult = (restMatch[1] ?? "").trim();
+    let result: WatType | null = rawResult === "void" || rawResult === "" ? null : mapType(rawResult);
+
+    let bodyStart = afterClose + restMatch[0].length;
+    while (bodyStart < body.length && body[bodyStart] === " ") bodyStart++;
+
+    let innerBodyLines: string[];
+    if (body[bodyStart] === "{") {
+      let depth = 1;
+      let ci = bodyStart + 1;
+      while (ci < body.length && depth > 0) {
+        if (body[ci] === "{") depth++;
+        else if (body[ci] === "}") depth--;
+        ci++;
+      }
+      const rawBody = body.slice(bodyStart + 1, ci - 1);
+      innerBodyLines = rawBody.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+    } else {
+      const rawExpr = body.slice(bodyStart).trim().replace(/;$/, "");
+      // Infer result type when no explicit annotation was given (e.g. `(val: i32) => val * x`).
+      // Build a minimal locals map from the parsed params so inferInitType can resolve identifiers.
+      if (result === null) {
+        const paramLocals = new Map<string, WatType>();
+        for (const p of this.parseParams(rawParams)) paramLocals.set(p.name, p.type);
+        result = inferInitType(rawExpr, paramLocals, this.enumValues, this.functions);
+      }
+      innerBodyLines = result !== null ? [`return ${rawExpr};`] : [`${rawExpr};`];
+    }
+
+    const innerName = `${factoryName}__inner`;
+    if (this.functions.find(f => f.name === innerName)) return undefined; // already added
+
+    return {
+      name: innerName,
+      params: this.parseParams(rawParams),
+      result,
+      exported: false,
+      bodyLines: innerBodyLines,
+      returnedByFactory: factoryName,
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -2272,6 +2349,33 @@ class WasicTranspiler {
       }
     }
 
+    // Phase 5f: chained call — factoryFn(outerArgs)(innerArgs) closure factory invocation
+    {
+      const chainHead = expr.match(/^(\w+)\s*\(/)?.[1];
+      if (chainHead) {
+        const factoryFn = this.functions.find(f => f.name === chainHead && f.isClosureFactory);
+        if (factoryFn?.returnedArrow) {
+          const openParen1 = expr.indexOf("(");
+          const [rawOuterArgs, afterOuter] = WasicTranspiler.extractParamBlock(expr, openParen1);
+          const rest = expr.slice(afterOuter).trimStart();
+          if (rest.startsWith("(")) {
+            const [rawInnerArgs] = WasicTranspiler.extractParamBlock(rest, 0);
+            const inner = factoryFn.returnedArrow;
+            const innerCallParams = inner.params.filter(p => !(inner.closureCaptures ?? []).includes(p.name));
+            const outerArgs = rawOuterArgs.trim() ? this.splitArgs(rawOuterArgs) : [];
+            const outerEmitted = outerArgs.map((a, i) =>
+              this.emitExpr(a, locals, factoryFn.params[i]?.type ?? "i32")
+            );
+            const innerArgs = rawInnerArgs.trim() ? this.splitArgs(rawInnerArgs) : [];
+            const innerEmitted = innerArgs.map((a, i) =>
+              this.emitExpr(a, locals, innerCallParams[i]?.type ?? "i32")
+            );
+            return `(call $${chainHead}__trampoline (call $${chainHead} ${outerEmitted.join(" ")}) ${innerEmitted.join(" ")})`.trim();
+          }
+        }
+      }
+    }
+
     // Function call: name(arg1, arg2, ...)
     const callMatch = expr.match(/^(\w+)\s*\((.*)?\)$/);
     if (callMatch) {
@@ -3186,6 +3290,35 @@ class WasicTranspiler {
             });
             const call = `(call $${funcName} ${emittedArgs.join(" ")})`.trim();
             return fn.result ? `(drop ${call})` : call;
+          }
+        }
+      }
+    }
+
+    // Phase 5f: standalone chained call — factoryFn(outerArgs)(innerArgs);
+    {
+      const chainHead = line.match(/^(\w+)\s*\(/)?.[1];
+      if (chainHead && chainHead !== "console") {
+        const factoryFn = this.functions.find(f => f.name === chainHead && f.isClosureFactory);
+        if (factoryFn?.returnedArrow) {
+          const openParen1 = line.indexOf("(");
+          const [rawOuterArgs, afterOuter] = WasicTranspiler.extractParamBlock(line, openParen1);
+          const rest = line.slice(afterOuter).trimStart().replace(/;$/, "").trimStart();
+          if (rest.startsWith("(")) {
+            const [rawInnerArgs] = WasicTranspiler.extractParamBlock(rest, 0);
+            const inner = factoryFn.returnedArrow;
+            const innerCallParams = inner.params.filter(p => !(inner.closureCaptures ?? []).includes(p.name));
+            const outerArgs = rawOuterArgs.trim() ? this.splitArgs(rawOuterArgs) : [];
+            const outerEmitted = outerArgs.map((a, i) =>
+              this.emitExpr(a, locals, factoryFn.params[i]?.type ?? "i32")
+            );
+            const innerArgs = rawInnerArgs.trim() ? this.splitArgs(rawInnerArgs) : [];
+            const innerEmitted = innerArgs.map((a, i) =>
+              this.emitExpr(a, locals, innerCallParams[i]?.type ?? "i32")
+            );
+            const callWat = `(call $${chainHead}__trampoline (call $${chainHead} ${outerEmitted.join(" ")}) ${innerEmitted.join(" ")})`.trim();
+            const hasResult = inner.result !== null && inner.result !== "never" && inner.result !== "string";
+            return hasResult ? `(drop ${callWat})` : callWat;
           }
         }
       }
@@ -4306,6 +4439,9 @@ class WasicTranspiler {
   }
 
   private emitFunction(fn: FuncDef): string {
+    // Phase 5f: closure factory — emit heap-alloc body + trampoline, skip normal body emit
+    if (fn.isClosureFactory && fn.returnedArrow) return this.emitClosureFactory(fn);
+
     // Reset per-function array and struct tracking
     this.arrayVars  = new Map();
     this.structVars = new Map();
@@ -4549,6 +4685,89 @@ class WasicTranspiler {
   }
 
   // -------------------------------------------------------------------------
+  // Phase 5f – emit closure factory + trampoline
+  // -------------------------------------------------------------------------
+  /**
+   * Emits two WAT functions for a closure factory:
+   *
+   *   1. The factory itself: allocates a closure struct {table_idx, captures...}
+   *      on the heap and returns its i32 pointer.
+   *
+   *   2. A trampoline `$name__trampoline(closure_ptr, ...call_params)` that loads
+   *      the captured values from the struct and dispatches via call_indirect.
+   */
+  private emitClosureFactory(fn: FuncDef): string {
+    const inner = fn.returnedArrow!;
+    const captures = inner.closureCaptures ?? [];
+
+    // Build per-capture layout: {name, type, byte-offset-in-struct}
+    let structSize = 4; // first 4 bytes = i32 table index
+    const captureLayout: { name: string; type: WatType; offset: number }[] = [];
+    for (const cap of captures) {
+      const capParam = inner.params.find(p => p.name === cap);
+      const capType: WatType = capParam?.type ?? "i32";
+      captureLayout.push({ name: cap, type: capType, offset: structSize });
+      structSize += (capType === "f64" || capType === "i64") ? 8 : 4;
+    }
+
+    // Ensure the inner function is in the funcref table
+    const tableIdx = this.getFuncTableIdx(inner.name);
+
+    const exportAttr = fn.exported ? `(export "${fn.name}") ` : "";
+    const factoryParams = fn.params
+      .map(p => `(param $${p.name} ${watBaseType(p.type)})`)
+      .join(" ");
+
+    // ── Factory function ─────────────────────────────────────────────────────
+    const factoryLines: string[] = [];
+    factoryLines.push(`  (func $${fn.name} ${exportAttr}${factoryParams} (result i32)`.trimEnd());
+    factoryLines.push(`    (local $__closure_ptr i32)`);
+    factoryLines.push(`    (local.set $__closure_ptr (call $__malloc (i32.const ${structSize})))`);
+    factoryLines.push(`    (i32.store (local.get $__closure_ptr) (i32.const ${tableIdx}))`);
+    for (const { name, type, offset } of captureLayout) {
+      const storeOp = type === "f64" ? "f64.store" : type === "i64" ? "i64.store" : "i32.store";
+      factoryLines.push(`    (${storeOp} offset=${offset} (local.get $__closure_ptr) (local.get $${name}))`);
+    }
+    factoryLines.push(`    (local.get $__closure_ptr)`);
+    factoryLines.push(`  )`);
+
+    // ── Trampoline function ───────────────────────────────────────────────────
+    // Params: closure_ptr + the inner function's NON-captured params (the "real" call args)
+    const innerCallParams = inner.params.filter(p => !captures.includes(p.name));
+    const trampolineParamStr = [
+      `(param $__closure_ptr i32)`,
+      ...innerCallParams.map(p => `(param $${p.name} ${watBaseType(p.type)})`),
+    ].join(" ");
+
+    const watResult = inner.result === null || inner.result === "never" ? null : watBaseType(inner.result);
+    const resultClause = watResult ? `(result ${watResult})` : "";
+
+    // Register the functype for the full inner signature (call params + captures)
+    const innerParamTypes = inner.params.map(p => p.type);
+    const innerTypeName = this.getOrCreateFuncType(innerParamTypes, inner.result);
+
+    const trampolineLines: string[] = [];
+    trampolineLines.push(`  (func $${fn.name}__trampoline ${trampolineParamStr} ${resultClause}`.trimEnd());
+    for (const { name, type } of captureLayout) {
+      trampolineLines.push(`    (local $__cap_${name} ${watBaseType(type)})`);
+    }
+    for (const { name, type, offset } of captureLayout) {
+      const loadOp = type === "f64" ? "f64.load" : type === "i64" ? "i64.load" : "i32.load";
+      trampolineLines.push(`    (local.set $__cap_${name} (${loadOp} offset=${offset} (local.get $__closure_ptr)))`);
+    }
+    // call_indirect args: real call params, then captures, then table index (last)
+    const callArgs = [
+      ...innerCallParams.map(p => `(local.get $${p.name})`),
+      ...captureLayout.map(c => `(local.get $__cap_${c.name})`),
+      `(i32.load (local.get $__closure_ptr))`,
+    ].join(" ");
+    trampolineLines.push(`    (call_indirect (type ${innerTypeName}) ${callArgs})`);
+    trampolineLines.push(`  )`);
+
+    return [...factoryLines, "", ...trampolineLines].join("\n");
+  }
+
+  // -------------------------------------------------------------------------
   // Pass 1c – inject hidden parameters for closure captures
   // -------------------------------------------------------------------------
   /**
@@ -4577,6 +4796,11 @@ class WasicTranspiler {
         if (f !== af && f.bodyLines.some(l => new RegExp(`\\bconst\\s+${af.name}\\s*=`).test(l))) {
           outer = f;
         }
+      }
+      // Phase 5f: for returned arrows, the factory function is the outer scope directly
+      // (no `const name =` pattern exists in the factory body — it's a `return (...)=>` line).
+      if (!outer && af.returnedByFactory) {
+        outer = this.functions.find(f => f.name === af.returnedByFactory);
       }
       if (!outer) continue;
 

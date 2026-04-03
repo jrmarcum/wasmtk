@@ -58,7 +58,10 @@ export const DATA_BASE = SCRATCH_BASE + SCRATCH_SLOTS * 32; // 260
  */
 export type FuncLookup = (name: string) => {
   params: Array<{ type: string; defaultValue?: string }>;
+  result?: string | null;
   closureCaptures?: string[];
+  /** Phase 5f: true if this function returns a heap-allocated closure (closure factory). */
+  isClosureFactory?: boolean;
 } | undefined;
 
 /**
@@ -124,6 +127,31 @@ function splitTopLevelArgs(raw: string): string[] {
   }
   args.push(raw.slice(start).trim());
   return args.filter(a => a.length > 0);
+}
+
+/**
+ * Phase 5f: paren-aware extraction of `factoryFn(outerArgs)(innerArgs)`.
+ * Returns { outerRaw, innerRaw } if the pattern is present, otherwise null.
+ */
+function extractChainedCallParts(expr: string): { outerRaw: string; innerRaw: string } | null {
+  const firstParen = expr.indexOf("(");
+  if (firstParen === -1) return null;
+  let depth = 0, i = firstParen;
+  while (i < expr.length) {
+    if (expr[i] === "(") depth++;
+    else if (expr[i] === ")") { depth--; if (depth === 0) break; }
+    i++;
+  }
+  const outerRaw = expr.slice(firstParen + 1, i);
+  const rest = expr.slice(i + 1).trimStart();
+  if (!rest.startsWith("(")) return null;
+  let depth2 = 0, j = 0;
+  while (j < rest.length) {
+    if (rest[j] === "(") depth2++;
+    else if (rest[j] === ")") { depth2--; if (depth2 === 0) break; }
+    j++;
+  }
+  return { outerRaw, innerRaw: rest.slice(1, j) };
 }
 
 /** Parses a single argument token into LogSegments. */
@@ -233,6 +261,37 @@ function parseSingleArg(
       const kind = result.type === "f64" || result.type === "f32" ? "f64expr" as const
                  : result.type === "i64" ? "i64expr" as const : "i32expr" as const;
       return [{ kind, wat: result.wat }];
+    }
+  }
+
+  // ── Phase 5f: chained call — factoryFn(outerArgs)(innerArgs) closure factory
+  {
+    const factoryHead = token.match(/^(\w+)\s*\(/)?.[1];
+    if (factoryHead) {
+      const factorySig = funcLookup?.(factoryHead);
+      if (factorySig?.isClosureFactory) {
+        const parts = extractChainedCallParts(token);
+        if (parts) {
+          const outerArgList = parts.outerRaw ? splitTopLevelArgs(parts.outerRaw) : [];
+          const outerWat = outerArgList.map((a, i) => {
+            const ptype = factorySig.params[i]?.type ?? "i32";
+            return exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup);
+          }).join(" ");
+          const innerSig = funcLookup?.(`${factoryHead}__inner`);
+          const captureCount = innerSig?.closureCaptures?.length ?? 0;
+          const innerCallParams = innerSig ? innerSig.params.slice(0, innerSig.params.length - captureCount) : [];
+          const innerArgList = parts.innerRaw ? splitTopLevelArgs(parts.innerRaw) : [];
+          const innerWat = innerArgList.map((a, i) => {
+            const ptype = innerCallParams[i]?.type ?? "i32";
+            return exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup);
+          }).join(" ");
+          const wat = `(call $${factoryHead}__trampoline (call $${factoryHead} ${outerWat}) ${innerWat})`.trim();
+          const innerResult = innerSig?.result;
+          const kind = innerResult === "f64" || innerResult === "f32" ? "f64expr" as const
+                     : innerResult === "i64" ? "i64expr" as const : "i32expr" as const;
+          return [{ kind, wat }];
+        }
+      }
     }
   }
 
@@ -491,6 +550,33 @@ function exprToWat(
 
   // Simple identifier — only emit local.get if it is actually a declared local
   if (/^\w+$/.test(expr) && locals.has(expr)) return `(local.get $${expr})`;
+
+  // Phase 5f: chained call — factoryFn(outerArgs)(innerArgs) closure factory
+  {
+    const factoryHead = expr.match(/^(\w+)\s*\(/)?.[1];
+    if (factoryHead) {
+      const factorySig = funcLookup?.(factoryHead);
+      if (factorySig?.isClosureFactory) {
+        const parts = extractChainedCallParts(expr);
+        if (parts) {
+          const outerArgList = parts.outerRaw ? splitTopLevelArgs(parts.outerRaw) : [];
+          const outerWat = outerArgList.map((a, i) => {
+            const ptype = factorySig.params[i]?.type ?? "i32";
+            return exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup);
+          }).join(" ");
+          const innerSig = funcLookup?.(`${factoryHead}__inner`);
+          const captureCount = innerSig?.closureCaptures?.length ?? 0;
+          const innerCallParams = innerSig ? innerSig.params.slice(0, innerSig.params.length - captureCount) : [];
+          const innerArgList = parts.innerRaw ? splitTopLevelArgs(parts.innerRaw) : [];
+          const innerWat = innerArgList.map((a, i) => {
+            const ptype = innerCallParams[i]?.type ?? "i32";
+            return exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup);
+          }).join(" ");
+          return `(call $${factoryHead}__trampoline (call $${factoryHead} ${outerWat}) ${innerWat})`.trim();
+        }
+      }
+    }
+  }
 
   // Nested function call: name(args)
   const callMatch = expr.match(/^(\w+)\s*\((.*)?\)$/);

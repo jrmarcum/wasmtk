@@ -3,7 +3,6 @@
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
   (memory (export "memory") 2)
   (global $__heap_ptr (mut i32) (i32.const 260))
-  (type $ftype_i32_i32_r_i32 (func (param i32) (param i32) (result i32)))
   ;; Bump allocator — advances __heap_ptr and returns the old value
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
@@ -214,26 +213,60 @@
     ;; Return total length (including leading '-' and trailing 'n')
     (i32.sub (local.get $end) (local.get $orig))
   )
-  (func $createScaler__inner (param $val i32) (param $multiplier i32) (result i32)
-    (return (i32.mul (local.get $val) (local.get $multiplier)))
-  )
-
-  (func $createScaler (param $multiplier i32) (result i32)
-    (local $__closure_ptr i32)
-    (local.set $__closure_ptr (call $__malloc (i32.const 8)))
-    (i32.store (local.get $__closure_ptr) (i32.const 0))
-    (i32.store offset=4 (local.get $__closure_ptr) (local.get $multiplier))
-    (local.get $__closure_ptr)
-  )
-
-  (func $createScaler__trampoline (param $__closure_ptr i32) (param $val i32) (result i32)
-    (local $__cap_multiplier i32)
-    (local.set $__cap_multiplier (i32.load offset=4 (local.get $__closure_ptr)))
-    (call_indirect (type $ftype_i32_i32_r_i32) (local.get $val) (local.get $__cap_multiplier) (i32.load (local.get $__closure_ptr)))
+  (func $testLoops (export "testLoops") (param $n i32) (result i32)
+    (local $total i32)
+    (local $i i32)
+    (local $j i32)
+    (local $x i32)
+    (local $y i32)
+    (local.set $total (i32.const 0))
+    (local.set $i (i32.const 0))
+    (block $break_0
+      (loop $loop_0
+        (br_if $break_0 (i32.eqz (i32.lt_s (local.get $i) (local.get $n))))
+        (block $cont_0
+          (local.set $total (i32.add (local.get $total) (local.get $i)))
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop_0)
+      )
+    )
+    (local.set $j (i32.const 0))
+    (block $break_1
+      (loop $loop_1
+        (block $cont_1
+          (local.set $total (i32.add (local.get $total) (i32.const 1)))
+          (local.set $j (i32.add (local.get $j) (i32.const 1)))
+        )
+        (br_if $loop_1 (i32.lt_s (local.get $j) (i32.const 5)))
+      )
+    )
+    (local.set $x (i32.const 0))
+    (block $break_2
+      (loop $loop_2
+        (br_if $break_2 (i32.eqz (i32.lt_s (local.get $x) (i32.const 3))))
+        (block $cont_2
+          (local.set $y (i32.const 0))
+          (block $break_3
+            (loop $loop_3
+              (br_if $break_3 (i32.eqz (i32.lt_s (local.get $y) (i32.const 3))))
+              (block $cont_3
+                (local.set $total (i32.add (local.get $total) (i32.const 1)))
+              )
+              (local.set $y (i32.add (local.get $y) (i32.const 1)))
+              (br $loop_3)
+            )
+          )
+        )
+        (local.set $x (i32.add (local.get $x) (i32.const 1)))
+        (br $loop_2)
+      )
+    )
+    (return (local.get $total))
   )
   (func $_start (export "_start")
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__i32_to_str (call $createScaler__trampoline (call $createScaler (i32.const 2)) (i32.const 5)) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__i32_to_str (call $testLoops (i32.const 10)) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -243,6 +276,4 @@
             (i32.const 128)))
     (call $proc_exit (i32.const 0))
   )
-  (table 1 funcref)
-  (elem (i32.const 0) $createScaler__inner)
 )

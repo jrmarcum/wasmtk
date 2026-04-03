@@ -440,6 +440,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | 5b | Default parameters | `function f(x: i32 = 0)` |
 | 5c | Optional parameters | `function f(x?: i32)` |
 | 5e | First-class functions | funcref table, `call_indirect`, named arrow variables, callbacks, closure capture, IIFE entry pattern, nested closures, void arrows, mixed-signature branches |
+| 5f | Heap-allocated closures | Closure factories — functions that `return (params) => expr` produce a heap struct `{table_idx, captures...}`; `factoryFn(a)(b)` dispatches via a generated trampoline (`$fn__trampoline`); supported in `console.log` args and all expression/statement contexts |
 | 6a | Numeric arrays | `i32[]`, `f64[]` — static allocation, element read/write, `.length`, array params |
 | 6b | Structs / objects | `interface` and `type` as fixed-layout structs, field read/write, struct params |
 | 6c | Object destructuring | `const { x, y } = vec` → `i32.load` / `f64.load` at field offsets; renamed destructuring |
