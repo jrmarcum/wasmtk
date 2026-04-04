@@ -2542,7 +2542,14 @@ class WasicTranspiler {
         const isFloat  = baseType === "f64" || baseType === "f32";
         const suffix   = isFloat ? f64suf : i32suf;
         const watOp    = `${baseType}.${suffix}`;
-        return `(${watOp} ${this.emitExpr(lhs, locals, lhsType)} ${this.emitExpr(rhs, locals, lhsType)})`;
+        const innerWat = `(${watOp} ${this.emitExpr(lhs, locals, lhsType)} ${this.emitExpr(rhs, locals, lhsType)})`;
+        // Mixed-type promotion: if context needs f64/i64 but arithmetic ran in i32, convert.
+        if (!alwaysI32 && baseType === "i32") {
+          const ctxBase = watBaseType(defaultType as WatType);
+          if (ctxBase === "f64") return `(f64.convert_i32_s ${innerWat})`;
+          if (ctxBase === "i64") return `(i64.extend_i32_s ${innerWat})`;
+        }
+        return innerWat;
       }
     }
 

@@ -215,7 +215,7 @@
     (i32.sub (local.get $end) (local.get $orig))
   )
   (func $multiCapture__inner (param $val i32) (param $a i32) (param $b f64) (result f64)
-    (return (f64.mul (i32.add (local.get $val) (local.get $a)) (local.get $b)))
+    (return (f64.mul (f64.convert_i32_s (i32.add (local.get $val) (local.get $a))) (local.get $b)))
   )
 
   (func $multiCapture (param $a i32) (param $b f64) (result i32)
