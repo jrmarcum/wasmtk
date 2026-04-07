@@ -224,7 +224,7 @@
     (local $counter1 f64)
     (local $counter2 f64)
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__i32_to_str (call $createCounter (;? ).inc(;) (i32.const 0)) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__i32_to_str (call $createCounter (;? ).inc( ;) (i32.const 0)) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -233,7 +233,7 @@
             (i32.const 1)
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__i32_to_str (call $createCounter (;? ).dec(;) (i32.const 0)) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__i32_to_str (call $createCounter (;? ).dec( ;) (i32.const 0)) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -243,7 +243,7 @@
             (i32.const 128)))
     (local.set $counter1 (call $createCounter ))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__f64_to_str (;? counter1.inc();) (f64.const 0) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (;? counter1.inc() ;) (f64.const 0) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -252,7 +252,7 @@
             (i32.const 1)
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__f64_to_str (;? counter1.inc();) (f64.const 0) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (;? counter1.inc() ;) (f64.const 0) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -262,7 +262,7 @@
             (i32.const 128)))
     (local.set $counter2 (call $createCounter ))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__f64_to_str (;? counter2.inc();) (f64.const 0) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (;? counter2.inc() ;) (f64.const 0) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -271,7 +271,7 @@
             (i32.const 1)
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__f64_to_str (;? counter1.dec();) (f64.const 0) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (;? counter1.dec() ;) (f64.const 0) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -280,7 +280,7 @@
             (i32.const 1)
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__f64_to_str (;? counter2.dec();) (f64.const 0) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (;? counter2.dec() ;) (f64.const 0) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write

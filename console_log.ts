@@ -684,7 +684,8 @@ function exprToWat(
 
   // Fallback: emit a comment and a zero of the expected type
   const zeroType = isFloat ? expectedType : expectedType === "i64" ? "i64" : "i32";
-  return `(;? ${expr};) (${zeroType}.const 0)`;
+  const safeExpr = expr.replace(/\(;/g, "( ;").replace(/;\)/g, "; )") + " ";
+  return `(;? ${safeExpr};) (${zeroType}.const 0)`;
 }
 
 /**

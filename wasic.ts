@@ -2690,8 +2690,11 @@ class WasicTranspiler {
       return zeroOf(defaultType);
     }
 
-    // Fallback: emit a comment and a zero so compilation succeeds
-    return `(;? ${expr};) ${zeroOf(defaultType)}`;
+    // Fallback: emit a comment and a zero so compilation succeeds.
+    // Escape (;  and ;) inside expr to avoid malformed WAT nested block comments.
+    // Also add a trailing space so a bare ( at the end of expr can't merge with ;) to form (;.
+    const safeExpr = expr.replace(/\(;/g, "( ;").replace(/;\)/g, "; )") + " ";
+    return `(;? ${safeExpr};) ${zeroOf(defaultType)}`;
   }
 
   /** Finds an operator in an expression while respecting paren nesting.
