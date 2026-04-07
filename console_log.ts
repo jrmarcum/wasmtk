@@ -163,13 +163,14 @@ function parseSingleArg(
   enumLookup?: (key: string) => number | undefined,
   arrayLookup?: ArrayLookup,
   structLookup?: StructFieldLookup,
-  dotCallLookup?: DotCallLookup
+  dotCallLookup?: DotCallLookup,
+  globals?: Map<string, string>
 ): LogSegment[] {
   token = token.trim();
 
   // ── Template literal: `text ${expr} text ...`
   if (token.startsWith("`") && token.endsWith("`")) {
-    return parseTemplateLiteral(token.slice(1, -1), locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup);
+    return parseTemplateLiteral(token.slice(1, -1), locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals);
   }
 
   // ── Double-quoted string literal
@@ -198,8 +199,8 @@ function parseSingleArg(
     const rhsIsStr = /^["'`]/.test(rhs) || locals.get(rhs) === "string";
     if (lhsIsStr || rhsIsStr) {
       return [
-        ...parseSingleArg(lhs, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup),
-        ...parseSingleArg(rhs, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup),
+        ...parseSingleArg(lhs, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals),
+        ...parseSingleArg(rhs, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals),
       ];
     }
     // Arithmetic + — fall through to the expression handler below
@@ -217,6 +218,14 @@ function parseSingleArg(
 
   // ── Simple identifier
   if (/^\w+$/.test(token)) {
+    // Module-level globals: emit global.get instead of local.get
+    if (globals?.has(token)) {
+      const gType = globals.get(token)!;
+      const wat = `(global.get $${token})`;
+      if (gType === "i64") return [{ kind: "i64expr", wat }];
+      if (gType === "f64" || gType === "f32") return [{ kind: "f64expr", wat }];
+      return [{ kind: "i32expr", wat }];
+    }
     const wtype = locals.get(token);
     if (wtype === "string") return [{ kind: "strvar", ptrLocal: `${token}_ptr`, lenLocal: `${token}_len` }];
     if (wtype === "i64") return [{ kind: "i64var", name: token }];
@@ -390,7 +399,8 @@ function parseTemplateLiteral(
   enumLookup?: (key: string) => number | undefined,
   arrayLookup?: ArrayLookup,
   structLookup?: StructFieldLookup,
-  dotCallLookup?: DotCallLookup
+  dotCallLookup?: DotCallLookup,
+  globals?: Map<string, string>
 ): LogSegment[] {
   const segments: LogSegment[] = [];
   let i = 0;
@@ -409,7 +419,7 @@ function parseTemplateLiteral(
         j++;
       }
       const expr = body.slice(i + 2, j - 1).trim();
-      segments.push(...parseSingleArg(expr, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup));
+      segments.push(...parseSingleArg(expr, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals));
       i = j;
       textStart = j;
     } else {
@@ -736,14 +746,15 @@ export function parseConsoleLogArgs(
   enumLookup?: (key: string) => number | undefined,
   arrayLookup?: ArrayLookup,
   structLookup?: StructFieldLookup,
-  dotCallLookup?: DotCallLookup
+  dotCallLookup?: DotCallLookup,
+  globals?: Map<string, string>
 ): LogSegment[] {
   const args = splitTopLevelArgs(argsStr);
   const segments: LogSegment[] = [];
 
   for (let i = 0; i < args.length; i++) {
     if (i > 0) segments.push({ kind: "literal", text: " " }); // space between args
-    segments.push(...parseSingleArg(args[i], locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup));
+    segments.push(...parseSingleArg(args[i], locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals));
   }
 
   // Always terminate with a newline (console.log behaviour)

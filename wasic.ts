@@ -506,6 +506,9 @@ class WasicTranspiler {
   // Top-level statements that become the _start body (patterns 2–4)
   private startBodyLines: string[] = [];
 
+  // Module-level scalar globals (const/let/var at top level): varName → { type, mutable, initExpr }
+  private moduleGlobals = new Map<string, { type: WatType; mutable: boolean; initExpr: string }>();
+
   constructor(source: string, mode: "wasi" | "library" = "wasi", externalFuncs: ExternalFuncDef[] = []) {
     this.src = stripComments(source);
     this.mode = mode;
@@ -920,7 +923,8 @@ class WasicTranspiler {
       const [rawParams, afterClose] = WasicTranspiler.extractParamBlock(src, openParen);
 
       // After `)` expect optional `: returnType` then `{`
-      const restMatch = src.slice(afterClose).match(/^\s*(?::\s*(\w+))?\s*\{/);
+      // Return type may include array suffix: i32[], i32[][], ClassName, etc.
+      const restMatch = src.slice(afterClose).match(/^\s*(?::\s*([\w]+(?:\[\])*))?\s*\{/);
       if (!restMatch) continue; // malformed header — skip
 
       const rawResult = (restMatch[1] ?? "void").trim();
@@ -973,7 +977,7 @@ class WasicTranspiler {
     if (!body.startsWith("(")) return undefined;
 
     const [rawParams, afterClose] = WasicTranspiler.extractParamBlock(body, 0);
-    const restMatch = body.slice(afterClose).match(/^\s*(?::\s*(\w+))?\s*=>/);
+    const restMatch = body.slice(afterClose).match(/^\s*(?::\s*([\w]+(?:\[\])*))?\s*=>/);
     if (!restMatch) return undefined;
 
     const rawResult = (restMatch[1] ?? "").trim();
@@ -1065,7 +1069,7 @@ class WasicTranspiler {
       const [rawParams, afterClose] = WasicTranspiler.extractParamBlock(src, openParen);
 
       // After `)` expect optional `: retType` then `=>` — if not present, not an arrow function
-      const restMatch = src.slice(afterClose).match(/^\s*(?::\s*(\w+))?\s*=>/);
+      const restMatch = src.slice(afterClose).match(/^\s*(?::\s*([\w]+(?:\[\])*))?\s*=>/);
       if (!restMatch) continue;
 
       const rawResult = (restMatch[1] ?? "").trim();
@@ -1215,6 +1219,53 @@ class WasicTranspiler {
         if (depth === 0) collectInner = false;
       }
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Pass 2b – extract module-level scalar globals from startBodyLines
+  // -------------------------------------------------------------------------
+  /**
+   * Scans startBodyLines for simple scalar const/let/var declarations and moves
+   * them into moduleGlobals so they become WASM (global ...) entries rather than
+   * WAT locals in the generated _start body.  Arrays, objects, and arrow-function
+   * initialisers are left in startBodyLines for normal processing.
+   */
+  private parseModuleGlobals(): void {
+    const remaining: string[] = [];
+    for (const line of this.startBodyLines) {
+      const m = line.match(/^(?:export\s+)?(const|let|var)\s+(\w+)\s*(?::\s*(\w+))?\s*=\s*(.+?);?$/);
+      if (m) {
+        const keyword  = m[1];
+        const name     = m[2];
+        const typeStr  = m[3] ?? "";
+        const initExpr = m[4].trim();
+        // Skip arrows, arrays, objects, and multi-word initialisers we can't constant-fold
+        if (initExpr.includes("=>") || initExpr.startsWith("[") || initExpr.startsWith("{")) {
+          remaining.push(line);
+          continue;
+        }
+        // Only accept pure constant initialisers valid in WAT global init expressions:
+        //   numeric/bigint literals  e.g. 0, 3.14, -5, 42n
+        //   known enum member refs   e.g. Color.Red
+        const isNumericLit = /^-?\d+(\.\d+)?n?$/.test(initExpr);
+        const isEnumRef    = /^\w+\.\w+$/.test(initExpr) && this.enumValues.has(initExpr);
+        if (!isNumericLit && !isEnumRef) {
+          remaining.push(line); // complex init (function call, etc.) — leave in startBodyLines
+          continue;
+        }
+        const type = (typeStr
+          ? mapType(typeStr)
+          : inferInitType(initExpr, new Map(), this.enumValues, this.functions)) as WatType;
+        if (!type || type === "string") {
+          remaining.push(line); // string / unknown globals not yet supported
+          continue;
+        }
+        this.moduleGlobals.set(name, { type, mutable: keyword !== "const", initExpr });
+        continue;
+      }
+      remaining.push(line);
+    }
+    this.startBodyLines = remaining;
   }
 
   // -------------------------------------------------------------------------
@@ -2152,6 +2203,24 @@ class WasicTranspiler {
       return `(i32.ne (call $__str_indexof (local.get $${strIncludesMatch[1]}_ptr) (local.get $${strIncludesMatch[1]}_len) ${subPtrLen}) (i32.const -1))`;
     }
 
+    // Phase 6d: 2D array element read: arr[rowIdx][colIdx]
+    // Must come before the 1D check since the greedy 1D regex would swallow both brackets.
+    const bracket2DMatch = expr.match(/^(\w+)\[(.+?)\]\[(.+)\]$/);
+    if (bracket2DMatch) {
+      const outerInfo = this.arrayVars.get(bracket2DMatch[1]);
+      if (outerInfo?.is2D) {
+        const rowIdxWat = this.emitExpr(bracket2DMatch[2], locals, "i32");
+        const colIdxWat = this.emitExpr(bracket2DMatch[3], locals, "i32");
+        const elemType  = outerInfo.elemType;
+        const loadOp    = elemType === "f64" ? "f64.load" : elemType === "i64" ? "i64.load" : "i32.load";
+        const shift     = (elemType === "f64" || elemType === "i64") ? 3 : 2;
+        // Outer array: dynamic; row pointer is stored at outer + 8 + rowIdx * 4
+        const rowPtrWat = `(i32.load (i32.add (i32.add (local.get $${bracket2DMatch[1]}) (i32.const 8)) (i32.shl ${rowIdxWat} (i32.const 2))))`;
+        // Element is at rowPtr + 8 + colIdx * elemSize
+        return `(${loadOp} (i32.add (i32.add ${rowPtrWat} (i32.const 8)) (i32.shl ${colIdxWat} (i32.const ${shift}))))`;
+      }
+    }
+
     // Array element read: arr[idx]
     const bracketMatch = expr.match(/^(\w+)\[(.+)\]$/);
     if (bracketMatch) {
@@ -2447,6 +2516,9 @@ class WasicTranspiler {
         return `(local.get $${expr}_ptr)`;
       }
       if (localType) return `(local.get $${expr})`;
+      // Module global — emit global.get
+      const globalInfo = this.moduleGlobals.get(expr);
+      if (globalInfo) return `(global.get $${expr})`;
       // Known function name used as a value → funcref table index
       if (this.functions.find(f => f.name === expr)) {
         return `(i32.const ${this.getFuncTableIdx(expr)})`;
@@ -2885,6 +2957,27 @@ class WasicTranspiler {
     if (line.startsWith("return")) {
       const expr = line.replace(/^return\s*/, "").replace(/;$/, "").trim();
       if (!expr || funcResult === null) return "(return)";
+      // return [elem0, elem1, ...] — array literal: malloc + init + return pointer
+      const retArrMatch = expr.match(/^\[([^\]]*)\]$/);
+      if (retArrMatch && funcResult === "i32") {
+        const elements = retArrMatch[1].split(",").map(e => e.trim()).filter(Boolean);
+        const elemType: WatType = elements.some(e => /[.]/.test(e) && !/^-?\d+n?$/.test(e)) ? "f64" : "i32";
+        const storeOp = elemType === "f64" ? "f64.store" : "i32.store";
+        const elemSize = elemType === "f64" ? 8 : 4;
+        const capacity = Math.max(elements.length * 2, 8);
+        const byteSize = capacity * elemSize + 8;
+        const stmts: string[] = [
+          `(local.set $__arr_ret (call $__malloc (i32.const ${byteSize})))`,
+          `(i32.store (local.get $__arr_ret) (i32.const ${elements.length}))`,
+          `(i32.store offset=4 (local.get $__arr_ret) (i32.const ${capacity}))`,
+        ];
+        for (let i = 0; i < elements.length; i++) {
+          const valWat = this.emitExpr(elements[i], locals, elemType);
+          stmts.push(`(${storeOp} offset=${8 + i * elemSize} (local.get $__arr_ret) ${valWat})`);
+        }
+        stmts.push(`(return (local.get $__arr_ret))`);
+        return stmts.join("\n      ");
+      }
       return `(return ${this.emitExpr(expr, locals, funcResult)})`;
     }
 
@@ -2935,6 +3028,61 @@ class WasicTranspiler {
       const fn = this.functions.find(f => f.name === funcVarAssign[2]);
       if (fn) {
         return `(local.set $${funcVarAssign[1]} (i32.const ${this.getFuncTableIdx(funcVarAssign[2])}))`;
+      }
+    }
+
+    // Array destructuring with rest: const [a, b, ...rest] = srcArr
+    const arrDestructMatch = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\s*;?$/);
+    if (arrDestructMatch) {
+      const bindingsList = arrDestructMatch[1].split(",").map(b => b.trim()).filter(Boolean);
+      const srcName      = arrDestructMatch[2];
+      const srcInfo      = this.arrayVars.get(srcName);
+      if (srcInfo) {
+        const elemType = srcInfo.elemType;
+        const loadOp   = elemType === "f64" ? "f64.load" : elemType === "i64" ? "i64.load" : "i32.load";
+        const storeOp  = elemType === "f64" ? "f64.store" : elemType === "i64" ? "i64.store" : "i32.store";
+        const shift    = (elemType === "f64" || elemType === "i64") ? 3 : 2;
+        const elemSize = (elemType === "f64" || elemType === "i64") ? 8 : 4;
+        const stmts: string[] = [];
+        let simpleCount = 0;
+        let restName: string | null = null;
+        // Count simple bindings and find rest name
+        for (const b of bindingsList) {
+          if (b.startsWith("...")) restName = b.slice(3).trim();
+          else simpleCount++;
+        }
+        // Emit load for each simple binding
+        let idx = 0;
+        for (const b of bindingsList) {
+          if (b.startsWith("...")) break;
+          const loadWat = srcInfo.dynamic
+            ? `(${loadOp} (i32.add (i32.add (local.get $${srcName}) (i32.const 8)) (i32.shl (i32.const ${idx}) (i32.const ${shift}))))`
+            : `(${loadOp} (i32.const ${srcInfo.ptr + idx * elemSize}))`;
+          stmts.push(`(local.set $${b} ${loadWat})`);
+          idx++;
+        }
+        // Emit rest binding
+        if (restName) {
+          if (srcInfo.dynamic) {
+            // Slice from simpleCount to end using dynarr_slice helper
+            const key = `slice_${elemType}`;
+            this.dynArrHelpers.add(key);
+            stmts.push(`(local.set $${restName} (call $__dynarr_${key} (local.get $${srcName}) (i32.const ${simpleCount}) (i32.load (local.get $${srcName}))))`);
+          } else {
+            // Static source: malloc and copy remaining elements
+            const restLen  = Math.max(srcInfo.length - simpleCount, 0);
+            const capacity = Math.max(restLen * 2, 8);
+            const byteSize = capacity * elemSize + 8;
+            stmts.push(`(local.set $${restName} (call $__malloc (i32.const ${byteSize})))`);
+            stmts.push(`(i32.store (local.get $${restName}) (i32.const ${restLen}))`);
+            stmts.push(`(i32.store offset=4 (local.get $${restName}) (i32.const ${capacity}))`);
+            for (let i = 0; i < restLen; i++) {
+              const srcWat = `(${loadOp} (i32.const ${srcInfo.ptr + (simpleCount + i) * elemSize}))`;
+              stmts.push(`(${storeOp} offset=${8 + i * elemSize} (local.get $${restName}) ${srcWat})`);
+            }
+          }
+        }
+        return stmts.join("\n      ");
       }
     }
 
@@ -3114,9 +3262,10 @@ class WasicTranspiler {
 
     // Compound assignment: +=  -=  *=  /=  %=  &=  |=  ^=  <<=  >>=  >>>=
     const compoundMatch = line.match(/^(\w+)\s*(>>>=|>>=|<<=|\+=|-=|\*=|\/=|%=|&=|\|=|\^=)\s*(.+?);?$/);
-    if (compoundMatch && locals.has(compoundMatch[1])) {
+    if (compoundMatch && (locals.has(compoundMatch[1]) || this.moduleGlobals.has(compoundMatch[1]))) {
       const varName = compoundMatch[1];
-      const varType = locals.get(varName)!;
+      const isGlobal = !locals.has(varName) && this.moduleGlobals.has(varName);
+      const varType = isGlobal ? this.moduleGlobals.get(varName)!.type : locals.get(varName)!;
       const op      = compoundMatch[2];
       const rhs     = compoundMatch[3].trim();
       type CE = [fOp: string, iOp: string, alwaysI32: boolean];
@@ -3137,6 +3286,9 @@ class WasicTranspiler {
       const opType  = alwaysI32 ? "i32" : watBaseType(varType);
       const isFloat = opType === "f64" || opType === "f32";
       const suffix  = isFloat ? fOp : iOp;
+      if (isGlobal) {
+        return `(global.set $${varName} (${opType}.${suffix} (global.get $${varName}) ${this.emitExpr(rhs, locals, opType)}))`;
+      }
       return `(local.set $${varName} (${opType}.${suffix} (local.get $${varName}) ${this.emitExpr(rhs, locals, opType)}))`;
     }
 
@@ -3303,6 +3455,12 @@ class WasicTranspiler {
       const varType = locals.get(varName)!;
       return `(local.set $${varName} ${this.emitExpr(assignMatch[2].trim(), locals, varType)})`;
     }
+    // Simple assignment to module global
+    if (assignMatch && this.moduleGlobals.has(assignMatch[1])) {
+      const varName = assignMatch[1];
+      const gInfo = this.moduleGlobals.get(varName)!;
+      return `(global.set $${varName} ${this.emitExpr(assignMatch[2].trim(), locals, gInfo.type)})`;
+    }
 
     // console.log(...) — delegate to console_log.ts for full argument support
     const logMatch = line.match(/^console\.log\s*\((.+)\)\s*;?$/);
@@ -3383,7 +3541,8 @@ class WasicTranspiler {
         }
         return undefined;
       };
-      const segments = parseConsoleLogArgs(logMatch[1], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFn);
+      const globalsMap = new Map([...this.moduleGlobals.entries()].map(([k, v]) => [k, watBaseType(v.type)]));
+      const segments = parseConsoleLogArgs(logMatch[1], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFn, globalsMap);
       const { statements, needsHelpers, needsStrGather } = emitConsoleLog(segments, allocator, "    ", 1, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
       if (needsStrGather) this.needsStrGatherHelper = true;
@@ -3446,7 +3605,8 @@ class WasicTranspiler {
         }
         return undefined;
       };
-      const segments = parseConsoleLogArgs(errMatch[2], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFnErr);
+      const globalsMapErr = new Map([...this.moduleGlobals.entries()].map(([k, v]) => [k, watBaseType(v.type)]));
+      const segments = parseConsoleLogArgs(errMatch[2], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFnErr, globalsMapErr);
       const { statements, needsHelpers, needsStrGather } = emitConsoleLog(segments, allocator, "    ", 2, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
       if (needsStrGather) this.needsStrGatherHelper = true;
@@ -4860,6 +5020,42 @@ class WasicTranspiler {
           continue;
         }
       }
+      // Phase 6d: 2D array literal declaration: const matrix: i32[][] = [[...], [...]]
+      // Must come before the 1D array check since i32[][] contains [].
+      const arr2DPre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\w+)\[\]\[\]\s*=\s*(.+?);?$/);
+      if (arr2DPre) {
+        const varName2D  = arr2DPre[1];
+        const elemType2D = mapType(arr2DPre[2]) as WatType;
+        const rows2D     = parse2DArrayLiteral(arr2DPre[3]);
+        this.arrayVars.set(varName2D, { elemType: elemType2D, ptr: -2, length: rows2D.length, dynamic: true, is2D: true, rows: rows2D });
+        declaredLocals.push([varName2D, "i32"]);
+        locals.set(varName2D, "i32");
+        if (!locals.has("__2d_tmp")) {
+          declaredLocals.push(["__2d_tmp", "i32"]);
+          locals.set("__2d_tmp", "i32");
+        }
+        continue;
+      }
+      // Array destructuring with rest: const [a, b, ...rest] = srcArr
+      const arrDestructPre = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\s*;?$/);
+      if (arrDestructPre) {
+        const bindingsListPre = arrDestructPre[1].split(",").map(b => b.trim()).filter(Boolean);
+        const srcNamePre      = arrDestructPre[2];
+        const srcInfoPre      = this.arrayVars.get(srcNamePre);
+        const elemTypePre: WatType = srcInfoPre?.elemType ?? "i32";
+        for (const b of bindingsListPre) {
+          if (b.startsWith("...")) {
+            const restNamePre = b.slice(3).trim();
+            this.arrayVars.set(restNamePre, { elemType: elemTypePre, ptr: -2, length: 0, dynamic: true });
+            declaredLocals.push([restNamePre, "i32"]);
+            locals.set(restNamePre, "i32");
+          } else {
+            declaredLocals.push([b, elemTypePre]);
+            locals.set(b, elemTypePre);
+          }
+        }
+        continue;
+      }
       // Spread array literal: const merged = [...a, ...b]
       const spreadArrPre = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+)\[\])?\s*=\s*\[([^\]]*)\]/);
       if (spreadArrPre && spreadArrPre[3]?.includes("...")) {
@@ -4902,6 +5098,11 @@ class WasicTranspiler {
         declaredLocals.push([varName, "i32"]);
         locals.set(varName, "i32");
         continue;
+      }
+      // return [elem, ...] — array literal return: needs a $__arr_ret helper local
+      if (/^return\s*\[/.test(line) && !locals.has("__arr_ret")) {
+        declaredLocals.push(["__arr_ret", "i32"]);
+        locals.set("__arr_ret", "i32");
       }
       // Object destructuring: const { x, y } = structVar  or  const { x: localX } = structVar
       const destructPre = line.match(/^(?:var|let|const)\s*\{([^}]+)\}\s*=\s*(\w+)\s*;?$/);
@@ -5235,6 +5436,7 @@ class WasicTranspiler {
     this.injectClosureCaptures();
     this.liftInlineArrows();
     this.parseTopLevel();
+    this.parseModuleGlobals();
 
     // Phase 5g: pre-populate closureTypedVars for all functions so inner functions emitted
     // before their factory parents can still resolve closure pointer call sites.
@@ -5276,6 +5478,26 @@ class WasicTranspiler {
           if (!startLocals.has("__2d_tmp")) {
             startLocals.set("__2d_tmp", "i32");
             startDeclaredLocals.push(["__2d_tmp", "i32"]);
+          }
+          continue;
+        }
+        // Array destructuring with rest — mirrors emitFunction pre-scan
+        const arrDestructPre2 = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\s*;?$/);
+        if (arrDestructPre2) {
+          const bindingsListPre2 = arrDestructPre2[1].split(",").map(b => b.trim()).filter(Boolean);
+          const srcNamePre2      = arrDestructPre2[2];
+          const srcInfoPre2      = this.arrayVars.get(srcNamePre2);
+          const elemTypePre2: WatType = srcInfoPre2?.elemType ?? "i32";
+          for (const b of bindingsListPre2) {
+            if (b.startsWith("...")) {
+              const restNamePre2 = b.slice(3).trim();
+              this.arrayVars.set(restNamePre2, { elemType: elemTypePre2, ptr: -2, length: 0, dynamic: true });
+              startLocals.set(restNamePre2, "i32");
+              startDeclaredLocals.push([restNamePre2, "i32"]);
+            } else {
+              startLocals.set(b, elemTypePre2);
+              startDeclaredLocals.push([b, elemTypePre2]);
+            }
           }
           continue;
         }
@@ -5388,11 +5610,19 @@ class WasicTranspiler {
     const funcTypesWat = this.emitFuncTypes();
     const funcTableWat = this.emitFuncrefTable();
 
+    const moduleGlobalDecls = [...this.moduleGlobals.entries()].map(([name, { type, mutable, initExpr }]) => {
+      const baseType = watBaseType(type);
+      const initWat  = this.emitExpr(initExpr, new Map(), type);
+      const typeDecl = mutable ? `(mut ${baseType})` : baseType;
+      return `  (global $${name} ${typeDecl} ${initWat})`;
+    });
+
     return [
       `(module`,
       imports,
       `  (memory (export "memory") ${memoryPages})`,
       `  (global $__heap_ptr (mut i32) (i32.const ${heapStart}))`,
+      ...moduleGlobalDecls,
       this.needsExceptionTag ? `  (tag $__exn_tag (param i32 i32))` : "",
       funcTypesWat,
       ``,
