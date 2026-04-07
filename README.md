@@ -68,6 +68,8 @@ wasmtk run myprogram.wasm
 | Higher-order / callbacks | `function apply(f: (x: i32) => i32, v: i32): i32` |
 | Closure capture | Outer-scope variables injected as hidden parameters |
 | Nested closures | Multi-level capture: inner arrow captures from outer arrow's scope |
+| Heap-allocated closures | Factory functions `function f(x) { return (y) => x*y; }` — inner arrow lifted to `f__inner`; factory mallocs `{table_idx, captures}` struct; `$f__trampoline` dispatches via `call_indirect` |
+| Named function type aliases | `type Scaler = (val: i32) => i32` — inline capturing arrows heap-allocated as `__anon_N__factory`; closure pointers dispatchable via named-type trampolines |
 | Variable declarations | `let`, `const`, `var` with optional type annotations |
 
 ##### Control Flow
@@ -149,6 +151,7 @@ wasmtk run myprogram.wasm
 | Rest parameters | `function f(...args: i32[])` — receives an i32 pointer to a dynamic array; caller builds temp heap array from literal args |
 | Spread call | `f(...arr)` — passes an existing dynamic array pointer directly to a rest-param function |
 | Spread array literal | `const merged = [...a, ...b]` — heap-allocates a new array via `$__dynarr_concat_T`; source arrays are automatically promoted to dynamic layout |
+| Multi-dimensional arrays | `i32[][]` — nested dynamic array; `const m: i32[][] = [[1,2],[3,4]]` allocates outer + row arrays; `m[i].push(val)` updates the outer slot after possible row growth; `console.log(m)` prints `[ [ 1, 2 ], ... ]` (Deno format) |
 
 ##### Structs & Objects
 
@@ -270,6 +273,8 @@ export function _start() { ... }
 | Feature | Status |
 | --- | --- |
 | Class inheritance (`extends`) | Deferred — virtual dispatch via vtable requires heap |
+| Object literals with closure methods | Phase 5h — `{ inc: () => ..., dec: () => ... }` pattern with shared captured state not yet supported |
+| Multi-dimensional arrays beyond `i32[][]` | Phase 6d covers `i32[][]`; `f64[][]` and deeper nesting not yet implemented |
 
 > **Why the limitations?** `wasic` compiles directly to raw WAT with no runtime. Dynamic allocation, garbage collection, and prototype semantics cannot be expressed without an embedded runtime library. Use `wasmtk javyc` for programs that need them today.
 
