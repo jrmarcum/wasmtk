@@ -315,6 +315,27 @@ function encodeF64LE(val: number): string {
   return Array.from(new Uint8Array(buf)).map(b => `\\${b.toString(16).padStart(2, "0")}`).join("");
 }
 
+/** Phase 6d: Parses a nested array literal "[[1,2],[3,4]]" → [["1","2"],["3","4"]]. */
+function parse2DArrayLiteral(str: string): string[][] {
+  const s = str.trim();
+  if (!s.startsWith("[")) return [];
+  const inner = s.slice(1, s.lastIndexOf("]")).trim();
+  const rows: string[][] = [];
+  let depth = 0;
+  let rowStart = -1;
+  for (let i = 0; i < inner.length; i++) {
+    if (inner[i] === "[") { if (depth === 0) rowStart = i + 1; depth++; }
+    else if (inner[i] === "]") {
+      depth--;
+      if (depth === 0 && rowStart !== -1) {
+        rows.push(inner.slice(rowStart, i).split(",").map(e => e.trim()).filter(e => e.length > 0));
+        rowStart = -1;
+      }
+    }
+  }
+  return rows;
+}
+
 /** Returns the WAT zero-literal for a given type. */
 function zeroOf(t: WatType): string {
   if (t === "string" || t === "bool") return "(i32.const 0)";
@@ -407,6 +428,7 @@ class WasicTranspiler {
   private needsStringHelpers = false;
   private needsStringOpHelpers = false;
   private needsStrGatherHelper = false;
+  private needsMatrix2DPrintHelper = false;   // Phase 6d
 
   // String data section: message → [offset, byteLength]
   // Raw (non-string) data segments for arrays etc.
@@ -417,6 +439,7 @@ class WasicTranspiler {
   private arrayVars: Map<string, {
     elemType: WatType; ptr: number; length: number;
     dynamic?: boolean; capacity?: number; initElements?: string[];
+    is2D?: boolean; rows?: string[][];   // Phase 6d: i32[][] multi-dimensional array
   }> = new Map();
 
   // Tracks which dynamic-array WAT helper functions are needed for this module.
@@ -1715,6 +1738,9 @@ class WasicTranspiler {
       // Method calls that require heap layout
       const m = line.match(/\b(\w+)\.(push|pop|shift|unshift|indexOf|includes|slice|forEach|map|filter|find|reduce)\s*\(/);
       if (m) dynamic.add(m[1]);
+      // Phase 6d: subscript method call: matrix[i].push(...) — outer array must be dynamic
+      const subM = line.match(/\b(\w+)\[.+?\]\.(push|pop|shift|unshift)\s*\(/);
+      if (subM) dynamic.add(subM[1]);
       // Spread usages: ...arrName in calls or array literals — source must have heap layout
       for (const sm of line.matchAll(/\.\.\.\s*(\w+)/g)) {
         dynamic.add(sm[1]);
@@ -1750,6 +1776,45 @@ class WasicTranspiler {
         valExpr = `(i32.const ${parseInt(raw, 10) || 0})`;
       }
       stmts.push(`(${storeOp} offset=${byteOffset} (local.get $${varName}) ${valExpr})`);
+    }
+    return stmts.join("\n      ");
+  }
+
+  /** Phase 6d: Emits WAT to malloc + init a 2D dynamic array (outer stores i32 row-ptrs). */
+  private emitDynArray2DInit(varName: string, info: {
+    elemType: WatType; rows: string[][];
+  }): string {
+    const outerLen  = info.rows.length;
+    const outerCap  = Math.max(outerLen * 2, 8);
+    const outerSize = outerCap * 4 + 8;  // outer elements are i32 ptrs (4 bytes each)
+    const elemSize  = (info.elemType === "f64" || info.elemType === "i64") ? 8 : 4;
+    const storeOp   = info.elemType === "f64" ? "f64.store"
+                    : info.elemType === "i64" ? "i64.store" : "i32.store";
+    const stmts: string[] = [];
+
+    // Allocate outer array
+    stmts.push(`(local.set $${varName} (call $__malloc (i32.const ${outerSize})))`);
+    stmts.push(`(i32.store (local.get $${varName}) (i32.const ${outerLen}))`);
+    stmts.push(`(i32.store offset=4 (local.get $${varName}) (i32.const ${outerCap}))`);
+
+    // For each row: allocate, init, and store its pointer in the outer array
+    for (let i = 0; i < info.rows.length; i++) {
+      const row    = info.rows[i];
+      const rowCap = Math.max(row.length * 2, 8);
+      const rowSz  = rowCap * elemSize + 8;
+      const outerSlotOffset = 8 + i * 4;
+      // tee $__2d_tmp so we can init the row immediately after storing its ptr
+      stmts.push(`(i32.store offset=${outerSlotOffset} (local.get $${varName}) (local.tee $__2d_tmp (call $__malloc (i32.const ${rowSz}))))`);
+      stmts.push(`(i32.store (local.get $__2d_tmp) (i32.const ${row.length}))`);
+      stmts.push(`(i32.store offset=4 (local.get $__2d_tmp) (i32.const ${rowCap}))`);
+      for (let j = 0; j < row.length; j++) {
+        const raw = row[j].trim();
+        const off = 8 + j * elemSize;
+        const val = info.elemType === "f64" ? `(f64.const ${parseFloat(raw) || 0})`
+                  : info.elemType === "i64" ? `(i64.const ${parseInt(raw.replace(/n$/, ""), 10) || 0})`
+                  : `(i32.const ${parseInt(raw, 10) || 0})`;
+        stmts.push(`(${storeOp} offset=${off} (local.get $__2d_tmp) ${val})`);
+      }
     }
     return stmts.join("\n      ");
   }
@@ -2885,6 +2950,13 @@ class WasicTranspiler {
       return this.emitSpreadArrayInit(varName, spreads, elemType);
     }
 
+    // Phase 6d: 2D array literal declaration: const matrix: i32[][] = [[...], [...]]
+    const arr2DLetMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*\w+\[\]\[\]\s*=\s*(.+?);?$/);
+    if (arr2DLetMatch) {
+      const info = this.arrayVars.get(arr2DLetMatch[1]);
+      if (info?.is2D && info.rows) return this.emitDynArray2DInit(arr2DLetMatch[1], info);
+    }
+
     // Array literal declaration: const arr: T[] = [...] or const arr = [...]
     const arrLetMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*\w+\[\])?\s*=\s*\[/);
     if (arrLetMatch) {
@@ -3130,6 +3202,22 @@ class WasicTranspiler {
       }
     }
 
+    // Phase 6d: 2D subscript push: matrix[i].push(val) — statement form
+    const subscriptPushStmt = line.match(/^(\w+)\[(.+?)\]\.(push)\s*\((.+?)\)\s*;?$/);
+    if (subscriptPushStmt) {
+      const outerName = subscriptPushStmt[1];
+      const outerInfo = this.arrayVars.get(outerName);
+      if (outerInfo?.dynamic && outerInfo.is2D) {
+        const idxWat  = this.emitExpr(subscriptPushStmt[2], locals, "i32");
+        const valWat  = this.emitExpr(subscriptPushStmt[4], locals, outerInfo.elemType);
+        const addrWat = `(i32.add (i32.add (local.get $${outerName}) (i32.const 8)) (i32.shl ${idxWat} (i32.const 2)))`;
+        this.dynArrHelpers.add(`push_${outerInfo.elemType}`);
+        // Load inner ptr, push (returns possibly-grown ptr), store back — address evaluated twice
+        // but it's pure arithmetic so safe.
+        return `(i32.store ${addrWat} (call $__dynarr_push_${outerInfo.elemType} (i32.load ${addrWat}) ${valWat}))`;
+      }
+    }
+
     // Dynamic array methods: arr.push(val), arr.pop(), arr.shift(), arr.unshift(val) — statement form
     const dynArrStmt = line.match(/^(\w+)\.(push|pop|shift|unshift)\s*\((.*?)\)\s*;?$/);
     if (dynArrStmt) {
@@ -3220,6 +3308,21 @@ class WasicTranspiler {
     const logMatch = line.match(/^console\.log\s*\((.+)\)\s*;?$/);
     if (logMatch) {
       this.hasConsoleLog = true;
+      // Phase 6d: console.log of a 2D i32 array variable → call $__print_2d_i32_arr helper
+      const log2DArg = logMatch[1].trim();
+      const log2DInfo = this.arrayVars.get(log2DArg);
+      if (log2DInfo?.is2D && log2DInfo.elemType === "i32") {
+        this.needsMatrix2DPrintHelper = true;
+        this.needsNumericHelpers = true;
+        const sb = this.scratchBase;
+        return [
+          `    (i32.store (i32.const ${this.iovBase}) (i32.const ${sb}))`,
+          `    (i32.store (i32.const ${this.iovBase + 4}) (call $__print_2d_i32_arr (local.get $${log2DArg}) (i32.const ${sb})))`,
+          `    (i32.store8 (i32.add (i32.const ${sb}) (i32.load (i32.const ${this.iovBase + 4}))) (i32.const 10))`,
+          `    (i32.store (i32.const ${this.iovBase + 4}) (i32.add (i32.load (i32.const ${this.iovBase + 4})) (i32.const 1)))`,
+          `    (drop (call $fd_write (i32.const 1) (i32.const ${this.iovBase}) (i32.const 1) (i32.const ${this.iovBase + 128})))`,
+        ].join("\n");
+      }
       const allocator: DataAllocator = (text) => this.allocString(text);
       const lookup: FuncLookup = (name) => this.functions.find(f => f.name === name);
       const enumLookup = (key: string) => this.enumValues.get(key);
@@ -4012,6 +4115,7 @@ class WasicTranspiler {
     if (this.needsNumericHelpers)  parts.push(getHelperWat());
     if (this.mathHelpers.size > 0) parts.push(this.emitMathHelpers());
     if (this.dynArrHelpers.size > 0) parts.push(this.emitDynArrHelpers());
+    if (this.needsMatrix2DPrintHelper) parts.push(this.emitMatrix2DPrintHelper());
     return parts.join("\n");
   }
 
@@ -4053,6 +4157,66 @@ class WasicTranspiler {
     (local.get $result)
   )`,
     ].join("\n\n");
+  }
+
+  /** Phase 6d: Emits $__print_2d_i32_arr — writes "[ [ 1, 2 ], [ 3, 4 ] ]" to buf, returns bytes written. */
+  private emitMatrix2DPrintHelper(): string {
+    return `  ;; Phase 6d: print a 2D i32 array as "[ [ e, ... ], ... ]", returns bytes written.
+  (func $__print_2d_i32_arr (param $arr i32) (param $buf i32) (result i32)
+    (local $ptr i32)
+    (local $outerLen i32)
+    (local $i i32)
+    (local $inner i32)
+    (local $innerLen i32)
+    (local $j i32)
+    (local $elem i32)
+    (local.set $ptr (local.get $buf))
+    (local.set $outerLen (i32.load (local.get $arr)))
+    (i32.store8 (local.get $ptr) (i32.const 91))
+    (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+    (i32.store8 (local.get $ptr) (i32.const 32))
+    (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+    (local.set $i (i32.const 0))
+    (block $outer_done
+      (loop $outer_loop
+        (br_if $outer_done (i32.ge_u (local.get $i) (local.get $outerLen)))
+        (local.set $inner (i32.load (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const 2)))))
+        (local.set $innerLen (i32.load (local.get $inner)))
+        (i32.store8 (local.get $ptr) (i32.const 91))
+        (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+        (i32.store8 (local.get $ptr) (i32.const 32))
+        (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+        (local.set $j (i32.const 0))
+        (block $inner_done
+          (loop $inner_loop
+            (br_if $inner_done (i32.ge_u (local.get $j) (local.get $innerLen)))
+            (local.set $elem (i32.load (i32.add (i32.add (local.get $inner) (i32.const 8)) (i32.shl (local.get $j) (i32.const 2)))))
+            (local.set $ptr (i32.add (local.get $ptr) (call $__i32_to_str (local.get $elem) (local.get $ptr))))
+            (if (i32.lt_u (i32.add (local.get $j) (i32.const 1)) (local.get $innerLen))
+              (then
+                (i32.store8 (local.get $ptr) (i32.const 44))
+                (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+                (i32.store8 (local.get $ptr) (i32.const 32))
+                (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))))
+            (local.set $j (i32.add (local.get $j) (i32.const 1)))
+            (br $inner_loop)))
+        (i32.store8 (local.get $ptr) (i32.const 32))
+        (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+        (i32.store8 (local.get $ptr) (i32.const 93))
+        (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+        (if (i32.lt_u (i32.add (local.get $i) (i32.const 1)) (local.get $outerLen))
+          (then
+            (i32.store8 (local.get $ptr) (i32.const 44))
+            (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+            (i32.store8 (local.get $ptr) (i32.const 32))
+            (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $outer_loop)))
+    (i32.store8 (local.get $ptr) (i32.const 32))
+    (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+    (i32.store8 (local.get $ptr) (i32.const 93))
+    (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
+    (i32.sub (local.get $ptr) (local.get $buf)))`;
   }
 
   private emitDynArrHelpers(): string {
@@ -5100,6 +5264,21 @@ class WasicTranspiler {
       const startLocals = new Map<string, WatType>();
       const startDeclaredLocals: [string, WatType][] = [];
       for (const line of this.startBodyLines) {
+        // Phase 6d: 2D array literal declaration: const matrix: i32[][] = [[...], [...]]
+        const arr2DPre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\w+)\[\]\[\]\s*=\s*(.+?);?$/);
+        if (arr2DPre) {
+          const varName2D = arr2DPre[1];
+          const elemType2D = mapType(arr2DPre[2]) as WatType;
+          const rows2D = parse2DArrayLiteral(arr2DPre[3]);
+          this.arrayVars.set(varName2D, { elemType: elemType2D, ptr: -2, length: rows2D.length, dynamic: true, is2D: true, rows: rows2D });
+          startLocals.set(varName2D, "i32");
+          startDeclaredLocals.push([varName2D, "i32"]);
+          if (!startLocals.has("__2d_tmp")) {
+            startLocals.set("__2d_tmp", "i32");
+            startDeclaredLocals.push(["__2d_tmp", "i32"]);
+          }
+          continue;
+        }
         // Spread array literal — mirrors emitFunction pre-scan
         const spreadArrPre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+)\[\])?\s*=\s*\[([^\]]*)\]/);
         if (spreadArrPre2 && spreadArrPre2[3]?.includes("...")) {
