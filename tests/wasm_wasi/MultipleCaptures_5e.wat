@@ -3,7 +3,6 @@
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
   (memory (export "memory") 2)
   (global $__heap_ptr (mut i32) (i32.const 260))
-  (type $ftype_i32_i32_f64_r_f64 (func (param i32) (param i32) (param f64) (result f64)))
   ;; Bump allocator — advances __heap_ptr and returns the old value
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
@@ -232,7 +231,7 @@
     (local $__cap_b f64)
     (local.set $__cap_a (i32.load offset=4 (local.get $__closure_ptr)))
     (local.set $__cap_b (f64.load offset=8 (local.get $__closure_ptr)))
-    (call_indirect (type $ftype_i32_i32_f64_r_f64) (local.get $val) (local.get $__cap_a) (local.get $__cap_b) (i32.load (local.get $__closure_ptr)))
+    (call $multiCapture__inner (local.get $val) (local.get $__cap_a) (local.get $__cap_b))
   )
   (func $_start (export "_start")
         (i32.store (i32.const 0) (i32.const 132))
@@ -247,5 +246,5 @@
     (call $proc_exit (i32.const 0))
   )
   (table 1 funcref)
-  (elem (i32.const 0) $multiCapture__inner)
+  (elem (i32.const 0) $multiCapture__trampoline)
 )

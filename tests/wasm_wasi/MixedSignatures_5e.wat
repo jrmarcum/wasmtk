@@ -3,6 +3,8 @@
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
   (memory (export "memory") 2)
   (global $__heap_ptr (mut i32) (i32.const 260))
+  (type $ftype_i32_i32_r_i32 (func (param i32) (param i32) (result i32)))
+  (type $ftype_i32_r_i32 (func (param i32) (result i32)))
   ;; Bump allocator — advances __heap_ptr and returns the old value
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
@@ -219,20 +221,20 @@
     (if (i32.eq (local.get $op) (i32.const 1))
       (then
       (local.set $add (i32.const 0))
-      (return (call $add (i32.const 10) (i32.const 5)))
+      (return (call_indirect (type $ftype_i32_i32_r_i32) (i32.const 10) (i32.const 5) (local.get $add)))
       )
       (else
       (local.set $negate (i32.const 1))
-      (return (call $negate (i32.const 10)))
+      (return (call_indirect (type $ftype_i32_r_i32) (i32.const 10) (local.get $negate)))
       )
     )
   )
 
-  (func $add (param $a i32) (param $b i32) (result i32)
+  (func $__anon_0 (param $a i32) (param $b i32) (result i32)
     (return (i32.add (local.get $a) (local.get $b)))
   )
 
-  (func $negate (param $n i32) (result i32)
+  (func $__anon_1 (param $n i32) (result i32)
     (return (i32.sub (i32.const 0) (local.get $n)))
   )
   (func $_start (export "_start")
@@ -257,5 +259,5 @@
     (call $proc_exit (i32.const 0))
   )
   (table 2 funcref)
-  (elem (i32.const 0) $add $negate)
+  (elem (i32.const 0) $__anon_0 $__anon_1)
 )

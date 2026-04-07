@@ -797,6 +797,7 @@ wasmtk wasic entry.ts   # jstyper sees mathlib.d.ts, skips inference, uses hand-
 | 35 (`typeof`/`keyof`) | Transparent — tsc resolves to concrete type in `.d.ts` output |
 | 36 (conditional types) | Not inferred from raw JS |
 | 37–38 (flat/math) | Transparent — body calls, not signature types |
+| 40 (wasm bundling into base 64 for javascipt build and javy compile)|
 
 **Out-of-scope JS patterns (warning + skip):**
 

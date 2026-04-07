@@ -455,6 +455,11 @@ class WasicTranspiler {
   // Tracks variable names declared with a function type (e.g. let f: (a: i32) => i32)
   // Stored as Map<name, signature> — the i32 local holds the funcref table index.
   private funcTypeVars: Map<string, { params: WatType[]; result: WatType | null }> = new Map();
+  // Named function type aliases: "Scaler" → {params:[i32], result:i32}  (from `type Scaler = (v:i32)=>i32`)
+  private namedFuncTypeAliases: Map<string, { params: WatType[]; result: WatType | null }> = new Map();
+  // Closure-typed locals/params: variables that hold heap-allocated closure struct pointers (not bare funcrefs).
+  // Dispatch via trampoline: call_indirect (type $tramp) ptr args (i32.load ptr)
+  private closureTypedVars: Map<string, { params: WatType[]; result: WatType | null }> = new Map();
   // funcref table: function name → table slot index (assigned lazily as functions are used as values)
   private funcTable: Map<string, number> = new Map();
   // Unique function type signatures for call_indirect: "i32,i32->i32" → "$ftype_i32_i32_r_i32"
@@ -501,10 +506,13 @@ class WasicTranspiler {
 
   /** Returns the WAT type name for a unique function signature, creating it if needed. */
   private getOrCreateFuncType(params: WatType[], result: WatType | null): string {
-    const key = (params.length ? params.join(",") : "void") + "->" + (result ?? "void");
+    // Normalize pseudo-types (bool, string, never) to concrete WAT types
+    const normParams = params.map(p => (p === "bool" || p === "string" || p === "never") ? "i32" : p);
+    const normResult = result === "bool" || result === "string" ? "i32" : result === "never" ? null : result;
+    const key = (normParams.length ? normParams.join(",") : "void") + "->" + (normResult ?? "void");
     if (!this.funcTypes.has(key)) {
-      const pStr = params.length ? params.join("_") : "void";
-      this.funcTypes.set(key, `$ftype_${pStr}_r_${result ?? "void"}`);
+      const pStr = normParams.length ? normParams.join("_") : "void";
+      this.funcTypes.set(key, `$ftype_${pStr}_r_${normResult ?? "void"}`);
     }
     return this.funcTypes.get(key)!;
   }
@@ -526,6 +534,15 @@ class WasicTranspiler {
     return { params, result };
   }
 
+  /** Scans source for `type Alias = (params) => RetType` and populates namedFuncTypeAliases. */
+  private parseNamedFuncTypeAliases(): void {
+    const re = /type\s+(\w+)\s*=\s*(\([^)]*\)\s*=>\s*\w+)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(this.src)) !== null) {
+      this.namedFuncTypeAliases.set(m[1], this.parseFuncTypeSig(m[2]));
+    }
+  }
+
   /**
    * Pre-pass: scans all function bodies and startBodyLines for inline arrow literals
    * used as arguments to function calls. Each one is lifted to a synthetic module-level
@@ -541,23 +558,32 @@ class WasicTranspiler {
         const m = line.match(/^(?:let|const|var)\s+(\w+)\s*:\s*(\([^)]*\)\s*=>\s*\w+)/);
         if (m) bodyFuncTypes.set(m[1], this.parseFuncTypeSig(m[2]));
       }
-      fn.bodyLines = fn.bodyLines.map(line => this.substituteOneArrow(line, bodyFuncTypes));
+      fn.bodyLines = fn.bodyLines.map(line => this.substituteOneArrow(line, bodyFuncTypes, fn));
     }
     this.startBodyLines = this.startBodyLines.map(line => this.substituteOneArrow(line, new Map()));
   }
 
   private substituteOneArrow(
     line: string,
-    bodyFuncTypes: Map<string, { params: WatType[]; result: WatType | null }> = new Map()
+    bodyFuncTypes: Map<string, { params: WatType[]; result: WatType | null }> = new Map(),
+    enclosingFn?: FuncDef
   ): string {
     if (!line.includes("=>")) return line;
 
     // Find the first `=>` in the line
     const arrowIdx = line.indexOf("=>");
 
-    // Scan left of `=>` to find the `)` closing the arrow's param list
+    // Scan left of `=>` to find the `)` closing the arrow's param list.
+    // Skip optional `: ReturnType` annotation that may appear between `)` and `=>`.
     let i = arrowIdx - 1;
     while (i >= 0 && line[i] === " ") i--;
+    // If we landed on a word character, try to skip a `: Type` annotation
+    if (i >= 0 && /\w/.test(line[i])) {
+      while (i >= 0 && /\w/.test(line[i])) i--;  // skip type name
+      while (i >= 0 && line[i] === " ") i--;
+      if (i >= 0 && line[i] === ":") i--;         // skip ':'
+      while (i >= 0 && line[i] === " ") i--;
+    }
     if (i < 0 || line[i] !== ")") return line;
 
     // Find the matching `(` — this is the start of the arrow params
@@ -658,7 +684,7 @@ class WasicTranspiler {
     // Parse optional return type annotation between `)` and `=>`
     const betweenParenArrow = line.slice(i + 1, arrowIdx).trim();
     const retAnnotation = betweenParenArrow.match(/^:\s*(\w+)/)?.[1];
-    const anonResult: WatType | null = retAnnotation
+    let anonResult: WatType | null = retAnnotation
       ? (retAnnotation === "void" ? null : mapType(retAnnotation) as WatType)
       : (paramInfo?.result ?? null);
 
@@ -669,13 +695,72 @@ class WasicTranspiler {
       const inner = bodyRaw.slice(1, bodyRaw.endsWith("}") ? -1 : undefined).trim();
       bodyLines = inner.split(";").map(l => l.trim()).filter(Boolean).map(l => l.endsWith(";") ? l : l + ";");
     } else {
+      // Infer result type from body expression when no annotation was given
+      if (anonResult === null) {
+        const paramLocals = new Map<string, WatType>();
+        for (const p of paramList) paramLocals.set(p.name, p.type);
+        anonResult = inferInitType(bodyRaw, paramLocals, this.enumValues, this.functions);
+      }
       bodyLines = anonResult !== null ? [`return ${bodyRaw};`] : [`${bodyRaw};`];
     }
 
     const anonName = `__anon_${this.anonArrowCounter++}`;
-    this.functions.push({ name: anonName, params: paramList, result: anonResult, exported: false, bodyLines });
-    this.getFuncTableIdx(anonName);
+    const anonDef: FuncDef = { name: anonName, params: paramList, result: anonResult, exported: false, bodyLines };
+    this.functions.push(anonDef);
 
+    // Phase 5g: if we have an enclosing function, detect captures and heap-allocate this arrow.
+    if (enclosingFn) {
+      const KWORDS = new Set(["return","if","else","while","for","do","switch","case","default",
+        "break","continue","const","let","var","true","false","null","undefined"]);
+      // Build outer scope: params + declared locals of the enclosing function
+      const outerScope = new Map<string, WatType>();
+      for (const p of enclosingFn.params) outerScope.set(p.name, p.type);
+      for (const bl of enclosingFn.bodyLines) {
+        const lm = bl.match(/^(?:const|let|var)\s+(\w+)\s*(?::\s*(\w+))?\s*=\s*(.+?)?;?$/);
+        if (lm && !lm[3]?.includes("=>")) {
+          const t: WatType = lm[2]
+            ? mapType(lm[2]) as WatType
+            : (inferInitType(lm[3] ?? "", outerScope, this.enumValues, this.functions) ?? "i32");
+          if (t !== "string") outerScope.set(lm[1], t);
+        }
+      }
+      // Collect identifiers used in the arrow body
+      const ownParams = new Set(paramList.map(p => p.name));
+      const used = new Set<string>();
+      for (const bl of bodyLines) {
+        for (const ref of bl.matchAll(/\b([a-zA-Z_]\w*)\b/g)) used.add(ref[1]);
+      }
+      const captures: string[] = [];
+      for (const id of used) {
+        if (!ownParams.has(id) && !KWORDS.has(id) && outerScope.has(id)) captures.push(id);
+      }
+
+      if (captures.length > 0) {
+        // Inject captures as extra params on the anon (inner) function
+        anonDef.closureCaptures = captures;
+        for (const cap of captures) anonDef.params.push({ name: cap, type: outerScope.get(cap)! });
+
+        // Create a factory FuncDef that allocates the closure struct and returns a ptr
+        const factoryName = `${anonName}__factory`;
+        const factoryDef: FuncDef = {
+          name: factoryName,
+          params: captures.map(cap => ({ name: cap, type: outerScope.get(cap)! })),
+          result: "i32" as WatType,
+          exported: false,
+          bodyLines: [],
+          isClosureFactory: true,
+          returnedArrow: anonDef,
+        };
+        this.functions.push(factoryDef);
+
+        // Replace the inline arrow expression with a factory call: factoryName(cap1, cap2, ...)
+        const captureArgs = captures.join(", ");
+        return line.slice(0, paramsStart) + `${factoryName}(${captureArgs})` + line.slice(arrowEnd);
+      }
+    }
+
+    // No captures (or no enclosing fn context): bare funcref in table, as before
+    this.getFuncTableIdx(anonName);
     return line.slice(0, paramsStart) + anonName + line.slice(arrowEnd);
   }
 
@@ -768,6 +853,13 @@ class WasicTranspiler {
       const name = isOptional ? rawName.slice(0, -1) : rawName;
       const afterColon = p.slice(colonIdx + 1).trim();
       const typeAnnotation = afterColon.replace(/\s*=.*$/, "").trim();
+      // Named function type alias: name: AliasName where AliasName = (p) => RetType
+      const funcAlias = this.namedFuncTypeAliases.get(typeAnnotation);
+      if (funcAlias) {
+        this.funcTypeVars.set(name, funcAlias);
+        this.closureTypedVars.set(name, funcAlias);
+        return { name, type: "i32" as WatType, funcTypeInfo: funcAlias };
+      }
       const paramType = mapType(typeAnnotation);
       // Detect array param: T[] → i32 pointer with element type T
       const arrElemMatch = typeAnnotation.match(/^(\w+)\[\]$/);
@@ -828,10 +920,11 @@ class WasicTranspiler {
         .filter(l => l.length > 0);
 
       // Phase 5f: detect closure factory — body is `return (params) => expr;`
-      const returnedArrow = this.parseReturnArrow(name, bodyLines);
+      const factoryParams = this.parseParams(rawParams);
+      const returnedArrow = this.parseReturnArrow(name, bodyLines, factoryParams);
       if (returnedArrow) this.functions.push(returnedArrow);
       this.functions.push({
-        name, params: this.parseParams(rawParams),
+        name, params: factoryParams,
         result: returnedArrow ? "i32" : result,
         exported, bodyLines,
         isClosureFactory: !!returnedArrow,
@@ -848,7 +941,7 @@ class WasicTranspiler {
    * arrow as `${factoryName}__inner` and returns its FuncDef.  Returns undefined
    * if this function is not a closure factory.
    */
-  private parseReturnArrow(factoryName: string, bodyLines: string[]): FuncDef | undefined {
+  private parseReturnArrow(factoryName: string, bodyLines: string[], factoryParams?: Array<{ name: string; type: WatType }>): FuncDef | undefined {
     const retLine = bodyLines.find(l => /^return\s+\(/.test(l) && l.includes("=>"));
     if (!retLine) return undefined;
 
@@ -884,6 +977,22 @@ class WasicTranspiler {
       if (result === null) {
         const paramLocals = new Map<string, WatType>();
         for (const p of this.parseParams(rawParams)) paramLocals.set(p.name, p.type);
+        // Also include factory params (captures) so identifiers like `original` resolve correctly
+        if (factoryParams) {
+          for (const p of factoryParams) if (!paramLocals.has(p.name)) paramLocals.set(p.name, p.type);
+        }
+        // Also include variables declared in the factory body (e.g. `const inner = (x) => ...`)
+        // Arrow-assigned variables are i32 closure pointers; other vars use inferInitType.
+        for (const bl of bodyLines) {
+          const bm = bl.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+))?\s*(?:=\s*(.+?))?;?$/);
+          if (!bm || paramLocals.has(bm[1])) continue;
+          const initE = (bm[3] ?? "").trim();
+          if (/^\s*\([^)]*\)\s*(?::\s*\w+)?\s*=>/.test(initE)) { paramLocals.set(bm[1], "i32"); }
+          else {
+            const t = bm[2] ? mapType(bm[2]) : inferInitType(initE, paramLocals, this.enumValues, this.functions);
+            if (t !== "string") paramLocals.set(bm[1], t);
+          }
+        }
         result = inferInitType(rawExpr, paramLocals, this.enumValues, this.functions);
       }
       innerBodyLines = result !== null ? [`return ${rawExpr};`] : [`${rawExpr};`];
@@ -919,6 +1028,13 @@ class WasicTranspiler {
     let m: RegExpExecArray | null;
 
     while ((m = headerRe.exec(src)) !== null) {
+      // Count brace depth to detect whether this arrow is inside a function body
+      let braceDepth = 0;
+      for (let bi = 0; bi < m.index; bi++) {
+        if (src[bi] === "{") braceDepth++;
+        else if (src[bi] === "}") braceDepth--;
+      }
+
       const name = m[1];
       const openParen = m.index + m[0].length - 1;
 
@@ -936,6 +1052,11 @@ class WasicTranspiler {
       // Find start of body (skip whitespace after =>)
       let bodyStart = afterClose + restMatch[0].length;
       while (bodyStart < src.length && src[bodyStart] === " ") bodyStart++;
+
+      // Expression-body arrows inside function bodies are handled by liftInlineArrows +
+      // substituteOneArrow (which can create closure factories for capturing arrows).
+      // Block-body arrows must always be handled here since substituteOneArrow is line-by-line.
+      if (braceDepth > 0 && src[bodyStart] !== "{") continue;
 
       let bodyLines: string[];
       if (src[bodyStart] === "{") {
@@ -2399,6 +2520,16 @@ class WasicTranspiler {
 
       const fn = this.functions.find(f => f.name === callee);
       if (!fn) {
+        // Phase 5g: closure pointer dispatch — call via trampoline stored in the struct
+        if (this.closureTypedVars.has(callee)) {
+          const sig = this.closureTypedVars.get(callee)!;
+          const trampolineParamTypes: WatType[] = ["i32" as WatType, ...sig.params as WatType[]];
+          const trampolineTypeName = this.getOrCreateFuncType(trampolineParamTypes, sig.result);
+          const emittedArgs = args.map((a, idx) =>
+            this.emitExpr(a, locals, sig.params[idx] ?? defaultType)
+          );
+          return `(call_indirect (type ${trampolineTypeName}) (local.get $${callee}) ${emittedArgs.join(" ")} (i32.load (local.get $${callee})))`.trim();
+        }
         if (this.funcTypeVars.has(callee)) {
           const sig = this.funcTypeVars.get(callee)!;
           const typeName = this.getOrCreateFuncType(sig.params, sig.result);
@@ -3340,6 +3471,18 @@ class WasicTranspiler {
         const args = rawArgs ? this.splitArgs(rawArgs) : [];
         const fn = this.functions.find(f => f.name === callee);
         if (!fn) {
+          // Phase 5g: closure pointer dispatch
+          if (this.closureTypedVars.has(callee)) {
+            const sig = this.closureTypedVars.get(callee)!;
+            const trampolineParamTypes: WatType[] = ["i32" as WatType, ...sig.params as WatType[]];
+            const trampolineTypeName = this.getOrCreateFuncType(trampolineParamTypes, sig.result);
+            const emittedArgs = args.map((a, idx) =>
+              this.emitExpr(a, locals, sig.params[idx] ?? "i32" as WatType)
+            );
+            const callWat = `(call_indirect (type ${trampolineTypeName}) (local.get $${callee}) ${emittedArgs.join(" ")} (i32.load (local.get $${callee})))`.trim();
+            const hasResult = sig.result !== null && sig.result !== "never" && sig.result !== "string";
+            return hasResult ? `(drop ${callWat})` : callWat;
+          }
           if (this.funcTypeVars.has(callee)) {
             const sig = this.funcTypeVars.get(callee)!;
             const typeName = this.getOrCreateFuncType(sig.params, sig.result);
@@ -4639,6 +4782,22 @@ class WasicTranspiler {
           locals.set(m[1], "i32");
           continue;
         }
+        // Phase 5g: closure factory result — const v = factoryFn(args) → v is a closure pointer
+        {
+          const fcm = initExpr.match(/^(\w+)\s*\(/);
+          if (fcm) {
+            const factoryFn = this.functions.find(f => f.name === fcm[1] && f.isClosureFactory && f.returnedArrow);
+            if (factoryFn) {
+              const innerFn = factoryFn.returnedArrow!;
+              const caps = innerFn.closureCaptures ?? [];
+              const extParams = innerFn.params.filter(p => !caps.includes(p.name)).map(p => p.type);
+              this.closureTypedVars.set(m[1], { params: extParams, result: innerFn.result });
+              declaredLocals.push([m[1], "i32"]);
+              locals.set(m[1], "i32");
+              continue;
+            }
+          }
+        }
         const t = typeStr ? mapType(typeStr) : inferInitType(initExpr, locals, this.enumValues, this.functions);
         if (t === "string") {
           declaredLocals.push([`${m[1]}_ptr`, "i32"], [`${m[1]}_len`, "i32"]);
@@ -4703,6 +4862,27 @@ class WasicTranspiler {
    *   2. A trampoline `$name__trampoline(closure_ptr, ...call_params)` that loads
    *      the captured values from the struct and dispatches via call_indirect.
    */
+  /** Pre-scan all function body lines for closure factory assignments and populate closureTypedVars.
+   *  This ensures inner functions (emitted before their factory parents) can resolve closure calls. */
+  private prePopulateClosureTypedVars(): void {
+    for (const fn of this.functions) {
+      for (const line of fn.bodyLines) {
+        const m = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*\w+)?\s*=\s*(.+?);?$/);
+        if (!m) continue;
+        const varName = m[1];
+        const initExpr = m[2].trim();
+        const fcm = initExpr.match(/^(\w+)\s*\(/);
+        if (!fcm) continue;
+        const factoryFn = this.functions.find(f => f.name === fcm[1] && f.isClosureFactory && f.returnedArrow);
+        if (!factoryFn) continue;
+        const innerFn = factoryFn.returnedArrow!;
+        const caps = innerFn.closureCaptures ?? [];
+        const extParams = innerFn.params.filter(p => !caps.includes(p.name)).map(p => p.type);
+        this.closureTypedVars.set(varName, { params: extParams, result: innerFn.result });
+      }
+    }
+  }
+
   private emitClosureFactory(fn: FuncDef): string {
     const inner = fn.returnedArrow!;
     const captures = inner.closureCaptures ?? [];
@@ -4717,18 +4897,40 @@ class WasicTranspiler {
       structSize += (capType === "f64" || capType === "i64") ? 8 : 4;
     }
 
-    // Ensure the inner function is in the funcref table
-    const tableIdx = this.getFuncTableIdx(inner.name);
+    // The TRAMPOLINE goes in the funcref table (not the inner function).
+    // This enables uniform closure-pointer dispatch: all closures of the same external signature
+    // are called via call_indirect (type $trampoline_type) ptr args (i32.load ptr).
+    const trampolineName = `${fn.name}__trampoline`;
+    const tableIdx = this.getFuncTableIdx(trampolineName);
 
     const exportAttr = fn.exported ? `(export "${fn.name}") ` : "";
+    const factoryParamNames = new Set(fn.params.map(p => p.name));
     const factoryParams = fn.params
       .map(p => `(param $${p.name} ${watBaseType(p.type)})`)
       .join(" ");
 
     // ── Factory function ─────────────────────────────────────────────────────
+    // Identify captures that are NOT factory params — they are locally computed in the body.
+    const locallyComputedCaptures = captureLayout.filter(c => !factoryParamNames.has(c.name));
+
+    // Build locals map and emit body lines that compute intermediate closure values.
+    // Skip the `return (params) => expr` line — that is the inner function (already handled).
+    const locals = new Map<string, WatType>();
+    for (const p of fn.params) locals.set(p.name, p.type);
+    const bodyStmts: string[] = [];
+    for (const line of fn.bodyLines) {
+      if (/^return\s+\(/.test(line) && line.includes("=>")) continue; // skip return-arrow line
+      const wat = this.emitStatement(line, locals, "i32");
+      if (wat) bodyStmts.push(`    ${wat}`);
+    }
+
     const factoryLines: string[] = [];
     factoryLines.push(`  (func $${fn.name} ${exportAttr}${factoryParams} (result i32)`.trimEnd());
     factoryLines.push(`    (local $__closure_ptr i32)`);
+    for (const { name, type } of locallyComputedCaptures) {
+      factoryLines.push(`    (local $${name} ${watBaseType(type)})`);
+    }
+    factoryLines.push(...bodyStmts);
     factoryLines.push(`    (local.set $__closure_ptr (call $__malloc (i32.const ${structSize})))`);
     factoryLines.push(`    (i32.store (local.get $__closure_ptr) (i32.const ${tableIdx}))`);
     for (const { name, type, offset } of captureLayout) {
@@ -4749,10 +4951,6 @@ class WasicTranspiler {
     const watResult = inner.result === null || inner.result === "never" ? null : watBaseType(inner.result);
     const resultClause = watResult ? `(result ${watResult})` : "";
 
-    // Register the functype for the full inner signature (call params + captures)
-    const innerParamTypes = inner.params.map(p => p.type);
-    const innerTypeName = this.getOrCreateFuncType(innerParamTypes, inner.result);
-
     const trampolineLines: string[] = [];
     trampolineLines.push(`  (func $${fn.name}__trampoline ${trampolineParamStr} ${resultClause}`.trimEnd());
     for (const { name, type } of captureLayout) {
@@ -4762,13 +4960,12 @@ class WasicTranspiler {
       const loadOp = type === "f64" ? "f64.load" : type === "i64" ? "i64.load" : "i32.load";
       trampolineLines.push(`    (local.set $__cap_${name} (${loadOp} offset=${offset} (local.get $__closure_ptr)))`);
     }
-    // call_indirect args: real call params, then captures, then table index (last)
-    const callArgs = [
+    // Direct call to the inner function (no call_indirect — trampoline knows the exact callee).
+    const directCallArgs = [
       ...innerCallParams.map(p => `(local.get $${p.name})`),
       ...captureLayout.map(c => `(local.get $__cap_${c.name})`),
-      `(i32.load (local.get $__closure_ptr))`,
     ].join(" ");
-    trampolineLines.push(`    (call_indirect (type ${innerTypeName}) ${callArgs})`);
+    trampolineLines.push(`    (call $${inner.name}${directCallArgs ? " " + directCallArgs : ""})`);
     trampolineLines.push(`  )`);
 
     return [...factoryLines, "", ...trampolineLines].join("\n");
@@ -4811,15 +5008,25 @@ class WasicTranspiler {
       }
       if (!outer) continue;
 
-      // Build outer scope: params + locally declared variables
+      // Build outer scope: params + locally declared variables at depth-0 of outer body.
+      // Track brace depth to exclude variables declared inside nested blocks (e.g. inner arrows).
       const outerScope = new Map<string, WatType>();
       for (const p of outer.params) outerScope.set(p.name, p.type);
+      let scopeDepth = 0;
       for (const line of outer.bodyLines) {
+        // Check depth BEFORE updating — only include top-level declarations (depth 0 at start of line)
+        const atTopLevel = scopeDepth === 0;
+        for (const ch of line) {
+          if (ch === "{") scopeDepth++;
+          else if (ch === "}") scopeDepth--;
+        }
+        if (!atTopLevel) continue;
         const m = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+))?\s*(?:=\s*(.+?))?;?$/);
         if (m) {
           const typeStr = m[2] ?? "";
           const initExpr = (m[3] ?? "").trim();
-          if (/^\s*\([^)]*\)\s*(?::\s*\w+)?\s*=>/.test(initExpr)) continue; // skip arrow decls
+          // Arrow declarations are expression-body closures — treated as i32 closure pointers
+          if (/^\s*\([^)]*\)\s*(?::\s*\w+)?\s*=>/.test(initExpr)) { outerScope.set(m[1], "i32"); continue; }
           const t = typeStr ? mapType(typeStr) : inferInitType(initExpr, outerScope, this.enumValues, this.functions);
           if (t !== "string") outerScope.set(m[1], t);
         }
@@ -4855,11 +5062,16 @@ class WasicTranspiler {
     this.parseEnums();
     this.parseStructs();
     this.parseClasses();
+    this.parseNamedFuncTypeAliases();   // Phase 5g: must precede parseFunctions so parseParams can resolve aliases
     this.parseFunctions();
     this.parseArrowFunctions();
     this.injectClosureCaptures();
     this.liftInlineArrows();
     this.parseTopLevel();
+
+    // Phase 5g: pre-populate closureTypedVars for all functions so inner functions emitted
+    // before their factory parents can still resolve closure pointer call sites.
+    this.prePopulateClosureTypedVars();
 
     // Emit all user functions first — this populates hasConsoleLog/needsNumericHelpers
     const funcWat = this.functions.map(f => this.emitFunction(f)).join("\n\n");

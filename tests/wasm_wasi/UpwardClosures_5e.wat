@@ -3,7 +3,6 @@
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
   (memory (export "memory") 2)
   (global $__heap_ptr (mut i32) (i32.const 260))
-  (type $ftype_i32_i32_r_i32 (func (param i32) (param i32) (result i32)))
   ;; Bump allocator — advances __heap_ptr and returns the old value
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
@@ -229,7 +228,7 @@
   (func $createScaler__trampoline (param $__closure_ptr i32) (param $val i32) (result i32)
     (local $__cap_multiplier i32)
     (local.set $__cap_multiplier (i32.load offset=4 (local.get $__closure_ptr)))
-    (call_indirect (type $ftype_i32_i32_r_i32) (local.get $val) (local.get $__cap_multiplier) (i32.load (local.get $__closure_ptr)))
+    (call $createScaler__inner (local.get $val) (local.get $__cap_multiplier))
   )
   (func $_start (export "_start")
         (i32.store (i32.const 0) (i32.const 132))
@@ -244,5 +243,5 @@
     (call $proc_exit (i32.const 0))
   )
   (table 1 funcref)
-  (elem (i32.const 0) $createScaler__inner)
+  (elem (i32.const 0) $createScaler__trampoline)
 )
