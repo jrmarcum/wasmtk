@@ -167,6 +167,13 @@ wasmtk run myprogram.wasm
 | Interface return types | `function createManager(): Manager` returns an i32 pointer to a heap-allocated struct of closure ptrs |
 | Interface method dispatch | `manager.addRow([6])` dispatches via `call_indirect` using the trampoline closure pattern — uniform dispatch whether or not the method captures outer variables |
 | `return { key: fn }` | Object-literal return emits interface struct; capturing arrows use a factory; non-capturing arrows are wrapped in a 4-byte `{table_idx}` mini-closure for uniform dispatch |
+| Tuple types | `const t: [i32, f64] = [3, 4.5]` — anonymous fixed-layout struct; positional fields `_0`, `_1`, … |
+| Named tuple aliases | `type Pair = [i32, i32]` — registers as a named struct; usable as parameter and return types |
+| Tuple element access | `t[0]`, `t[1]` — compiles to `i32.load`/`f64.load` at field offset |
+| Tuple element write | `t[0] = 99` — compiles to `i32.store`/`f64.store` at field offset |
+| Tuple destructuring | `const [a, b] = t` — each binding compiles to a field load |
+| Tuple return | `function minMax(a: i32, b: i32): [i32, i32] { return [a, b]; }` — heap-allocates struct via `$__malloc`, stores fields, returns pointer |
+| Tuple parameters | `function sumPair(p: Pair): i32 { return p[0] + p[1]; }` — received as i32 pointer; fields loaded at offsets |
 
 ##### Generics
 
@@ -475,6 +482,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | 20 | Export name transparency + `tsbundle` rename | `wasmmerge.ts`: `mergeWasmWat` emits `(export "add" (func $mathlib_add))` — original export name preserved, internal mangling unchanged; `WatMergeResult` gains `exportMap: Map<string, string>` (`originalName → $mangledName`); `wasmbundle.ts`: conflict resolution upgraded to 4-option interactive prompt (prefix / alias / exclude / stop) + `--alias file=name` and `--on-conflict=alias` non-interactive flags; `bundle` CLI command renamed to `tsbundle` |
 | 21 | `never` type, `void` (complete), `readonly` | `"never"` added to `WatType`; `mapType("never")` returns `"never"`; `never`-return functions emit no WAT `(result ...)` and get `(unreachable)` appended to the body; all call-statement `drop` sites guarded against never/string results; `StructField.readonly?` flag; interface and class field parsing captures `readonly` modifier; `this.field = val` writes blocked outside the constructor; `obj.field = val` writes blocked for readonly struct/class fields; `currentMethodName` instance variable added |
 | 22 | Compile-time convenience additions | `const enum` — identical to numeric enum (already parsed); Math constants (`Math.PI`, `Math.E`, `Math.LN2`, `Math.LOG2E`, `Math.LOG10E`, `Math.SQRT2`, `Math.SQRT1_2`, `Math.LN10`) → `f64.const` (already done); `**` exponentiation operator → `Math.pow` via right-associative LTR scan + `*` guard in `findBinaryOp`; `as` type assertion → `emitTypeCast` (trunc/convert/promote/demote/wrap/extend); postfix `!` non-null assertion stripped; `satisfies` operator stripped; `findDepth0LTR` + `findDepth0Keyword` + `emitTypeCast` helpers added |
+| 23 | Tuple types `[A, B, C]` | Anonymous fixed-layout struct in linear memory; positional fields `_0`, `_1`, …; `type Pair = [i32, i32]` alias parsed in `parseStructs()`; inline `[T1, T2]` annotations; `getOrCreateTupleDef()` / `makeTupleStructDef()` create synthetic `__Tuple_T1_T2` StructDef; `mapType` extended for `[` prefix and `__Tuple_` prefix → i32; tuple params register in structVars via `structType`; `emitStatement` handles tuple literal init, named alias init, destructuring, element write, `return [e0, e1]`; strict `tupleFieldMatch` regex in `emitExpr` avoids greedy-match confusion with arithmetic; dynamic-array fallback guarded by `!structVars.has(var)`; `console_log.ts` handles `t[N]` via `structLookup` for correct type inference |
 
 ---
 
@@ -685,12 +693,10 @@ The TypeScript-to-JS bundler command is renamed from `bundle` to `tsbundle` to c
 
 ### Planned Phases
 
-Phases 23–39 extend `wasic` incrementally. Early phases add compile-time conveniences and core language features; middle phases build out the runtime data model; later phases complete the type system. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
+Phases 24–39 extend `wasic` incrementally. Early phases add compile-time conveniences and core language features; middle phases build out the runtime data model; later phases complete the type system. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
 
 | Phase | Feature | Strategy |
 | --- | --- | --- |
-| 23 | Tuple types `[A, B, C]` | `const enum` inlined at call sites; Math constants (`Math.PI`, `Math.E`, `Math.LN2`, `Math.SQRT2`, etc.) → `f64.const`; `**` → `Math.pow`; `as` assertion → WASM `trunc`/`reinterpret`; non-null `!` and `satisfies` stripped at compile time |
-| 23 | Tuple types `[A, B, C]` | Anonymous fixed-layout struct in linear memory; positional fields `_0`, `_1`, …; element access `t[0]` → `i32.load offset=0`; destructuring `const [a, b] = t` reuses struct destructuring path |
 | 24 | `null` / `undefined` as values; nullable `T \| null` | Sentinel `i32 = 0` for pointer types; null-check → `(i32.eqz)`; functions returning `T \| null` emit a pointer that may be 0 |
 | 25 | Optional chaining, nullish coalescing, logical assignment | `obj?.prop` → null-guard + load; `x ?? y` → `(if (i32.eqz x) y else x)`; `??=` `\|\|=` `&&=` expanded to conditional assignment — all depend on Phase 24 |
 | 26 | `for...of`, array destructuring, default / nested destructuring | `for...of` over arrays desugars to indexed `for`; `const [a, b] = arr` → indexed loads; `const { x = 0 } = obj` → null/zero check + conditional load; nested `{ a: { b } }` → chained field offsets |
@@ -787,7 +793,7 @@ wasmtk wasic entry.ts   # jstyper sees mathlib.d.ts, skips inference, uses hand-
 | `T \| null` | `: T \| null` | `T` (null stripped) | Phase 24 for runtime correctness |
 | `{ x: number; y: number }` | hoisted `interface` + `: Name` | `i32` (struct pointer) | None |
 | `any` | `: number` + warning | `f64` | None (configurable via `--any-policy`) |
-| `[A, B]` | warning + skip | — | Phase 23 (still limited from inference) |
+| `[A, B]` | hand-edited `.d.ts` → `type T = [A, B]` alias | `i32` (tuple pointer) | Phase 23 complete — inline tuple annotations supported |
 | `Promise<T>`, `Generator<...>` | warning + skip | — | Out of scope |
 
 **Phases 21–38 benefit as they land:**
@@ -795,8 +801,8 @@ wasmtk wasic entry.ts   # jstyper sees mathlib.d.ts, skips inference, uses hand-
 | Phase | jstyper benefit after landing |
 | --- | --- |
 | ✅ 21 (`void`, `never`, `readonly`) | `: void` on zero-return functions correct; `readonly` stripped |
-| 22 (compile-time ops) | `const enum` members usable as annotation values; `as` assertions passthrough |
-| 23 (tuples) | tsc rarely infers true tuples from raw JS; hand-edited `.d.ts` can declare them |
+| ✅ 22 (compile-time ops) | `const enum` members usable as annotation values; `as` assertions passthrough |
+| ✅ 23 (tuples) | tsc rarely infers true tuples from raw JS; hand-edited `.d.ts` can declare `type T = [A, B]` → full tuple support |
 | 24 (`null`/`undefined`) | High — `T \| null` already survives the merge; Phase 24 makes runtime behaviour correct |
 | 25 (optional chaining / nullish) | Transparent — appears in function bodies, not signatures |
 | 26 (for...of / destructuring) | Transparent — body patterns, not type annotations |

@@ -341,6 +341,15 @@ function parseSingleArg(
 
   // ── Array element access: arr[idx]
   const bracketMatch = token.match(/^(\w+)\[(.+)\]$/);
+  // Phase 23: tuple element access t[N] where N is a numeric index → struct field _N
+  if (bracketMatch && structLookup && /^\d+$/.test(bracketMatch[2])) {
+    const fi = structLookup(bracketMatch[1], `_${bracketMatch[2]}`);
+    if (fi) {
+      const kind = fi.type === "f64" || fi.type === "f32" ? "f64expr" as const
+                 : fi.type === "i64" ? "i64expr" as const : "i32expr" as const;
+      return [{ kind, wat: fi.watLoad }];
+    }
+  }
   if (bracketMatch && arrayLookup) {
     const arrInfo = arrayLookup(bracketMatch[1]);
     if (arrInfo) {
@@ -504,6 +513,11 @@ function exprToWat(
 
   // Array element read: arr[idx]
   const bracketM = expr.match(/^(\w+)\[(.+)\]$/);
+  // Phase 23: tuple element access t[N] → struct field _N
+  if (bracketM && structLookup && /^\d+$/.test(bracketM[2])) {
+    const fi = structLookup(bracketM[1], `_${bracketM[2]}`);
+    if (fi) return fi.watLoad;
+  }
   if (bracketM && arrayLookup) {
     const ai = arrayLookup(bracketM[1]);
     if (ai) {

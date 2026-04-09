@@ -294,6 +294,8 @@ function mapType(ts: string): WatType {
   const base = (stripped[0] ?? ts).trim();
   // Array type annotation T[] → i32 pointer
   if (base.endsWith("[]")) return "i32";
+  // Phase 23: tuple type annotation [T1, T2, ...] → i32 pointer (struct layout)
+  if (base.startsWith("[")) return "i32";
   const t = base.toLowerCase();
   if (t === "never") return "never";                    // Phase 21: never → unreachable at end of body
   // Note: "void" is intercepted at each call site before mapType is invoked; it never reaches here.
@@ -303,6 +305,8 @@ function mapType(ts: string): WatType {
   if (t === "bigint") return "i64";
   if (t === "bool" || t === "boolean") return "bool";   // boolean → bool pseudo-type (WAT i32)
   if (t === "string" || t === "str")   return "string"; // pseudo-type: ptr+len i32 locals
+  // Phase 23: synthetic tuple StructDef name → i32 pointer
+  if (base.startsWith("__Tuple_")) return "i32";
   // PascalCase identifier = interface/class/struct pointer (i32). Guard known primitives.
   if (/^[A-Z]/.test(base) && base !== "Number" && base !== "Boolean" && base !== "String" && base !== "BigInt") return "i32";
   return "f64"; // number, f64, or unknown → f64
@@ -968,6 +972,18 @@ class WasicTranspiler {
         this.closureTypedVars.set(name, funcAlias);
         return { name, type: "i32" as WatType, funcTypeInfo: funcAlias };
       }
+      // Phase 23: detect tuple param: [T1, T2, ...] — register synthetic StructDef, treat as i32 pointer
+      if (typeAnnotation.startsWith("[") && typeAnnotation.endsWith("]")) {
+        const tupleDef = this.getOrCreateTupleDef(typeAnnotation);
+        if (tupleDef) {
+          const eqIdx2 = afterColon.indexOf("=");
+          const st = tupleDef.name;
+          if (eqIdx2 !== -1) {
+            return { name, type: "i32" as WatType, defaultValue: afterColon.slice(eqIdx2 + 1).trim(), structType: st };
+          }
+          return { name, type: "i32" as WatType, structType: st };
+        }
+      }
       const paramType = mapType(typeAnnotation);
       // Detect array param: T[] → i32 pointer with element type T
       const arrElemMatch = typeAnnotation.match(/^(\w+)\[\]$/);
@@ -1005,11 +1021,16 @@ class WasicTranspiler {
       const [rawParams, afterClose] = WasicTranspiler.extractParamBlock(src, openParen);
 
       // After `)` expect optional `: returnType` then `{`
-      // Return type may include array suffix: i32[], i32[][], ClassName, etc.
-      const restMatch = src.slice(afterClose).match(/^\s*(?::\s*([\w]+(?:\[\])*))?\s*\{/);
+      // Return type may include array suffix: i32[], i32[][], ClassName, tuple [T1,T2], etc.
+      const restMatch = src.slice(afterClose).match(/^\s*(?::\s*([\w]+(?:\[\])*|\[[^\]]*\]))?\s*\{/);
       if (!restMatch) continue; // malformed header — skip
 
-      const rawResult = (restMatch[1] ?? "void").trim();
+      let rawResult = (restMatch[1] ?? "void").trim();
+      // Phase 23: if return type is a tuple "[T1, T2, ...]", create/register the synthetic StructDef
+      if (rawResult.startsWith("[") && rawResult.endsWith("]")) {
+        const def = this.getOrCreateTupleDef(rawResult);
+        if (def) rawResult = def.name;
+      }
       const result: WatType | null =
         rawResult === "void" || rawResult === "" ? null : mapType(rawResult);
 
@@ -1082,10 +1103,15 @@ class WasicTranspiler {
     if (!body.startsWith("(")) return undefined;
 
     const [rawParams, afterClose] = WasicTranspiler.extractParamBlock(body, 0);
-    const restMatch = body.slice(afterClose).match(/^\s*(?::\s*([\w]+(?:\[\])*))?\s*=>/);
+    const restMatch = body.slice(afterClose).match(/^\s*(?::\s*([\w]+(?:\[\])*|\[[^\]]*\]))?\s*=>/);
     if (!restMatch) return undefined;
 
-    const rawResult = (restMatch[1] ?? "").trim();
+    let rawResultRA = (restMatch[1] ?? "").trim();
+    if (rawResultRA.startsWith("[") && rawResultRA.endsWith("]")) {
+      const def = this.getOrCreateTupleDef(rawResultRA);
+      if (def) rawResultRA = def.name;
+    }
+    const rawResult = rawResultRA;
     let result: WatType | null = rawResult === "void" || rawResult === "" ? null : mapType(rawResult);
 
     let bodyStart = afterClose + restMatch[0].length;
@@ -1174,10 +1200,16 @@ class WasicTranspiler {
       const [rawParams, afterClose] = WasicTranspiler.extractParamBlock(src, openParen);
 
       // After `)` expect optional `: retType` then `=>` — if not present, not an arrow function
-      const restMatch = src.slice(afterClose).match(/^\s*(?::\s*([\w]+(?:\[\])*))?\s*=>/);
+      const restMatch = src.slice(afterClose).match(/^\s*(?::\s*([\w]+(?:\[\])*|\[[^\]]*\]))?\s*=>/);
       if (!restMatch) continue;
 
-      const rawResult = (restMatch[1] ?? "").trim();
+      let rawResultAF = (restMatch[1] ?? "").trim();
+      // Phase 23: tuple return type on arrow function
+      if (rawResultAF.startsWith("[") && rawResultAF.endsWith("]")) {
+        const def = this.getOrCreateTupleDef(rawResultAF);
+        if (def) rawResultAF = def.name;
+      }
+      const rawResult = rawResultAF;
       const result: WatType | null =
         rawResult === "void" || rawResult === "" ? null : mapType(rawResult);
 
@@ -1682,6 +1714,58 @@ class WasicTranspiler {
         }
       }
     }
+    // Phase 23: tuple type aliases — type Pair = [i32, f64]
+    const tupleAliasRe = /(?:export\s+)?type\s+(\w+)\s*=\s*\[([^\]]+)\]/g;
+    let ta: RegExpExecArray | null;
+    while ((ta = tupleAliasRe.exec(this.src)) !== null) {
+      const name = ta[1];
+      if (this.structDefs.has(name)) continue; // already parsed as object-type alias
+      const def = this.makeTupleStructDef(name, ta[2]);
+      if (def.fields.length > 0) this.structDefs.set(name, def);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Phase 23: tuple struct builder
+  // -------------------------------------------------------------------------
+  /**
+   * Creates a StructDef with positional fields _0, _1, … from a comma-separated
+   * types string such as "i32, f64".  The returned name is whatever the caller passes.
+   */
+  private makeTupleStructDef(name: string, innerTypesStr: string): StructDef {
+    const typeList = innerTypesStr.split(",").map(t => t.trim()).filter(Boolean);
+    const fields: StructField[] = [];
+    let offset = 0;
+    for (let i = 0; i < typeList.length; i++) {
+      const type = mapType(typeList[i]) as WatType;
+      const size = (type === "f64" || type === "i64") ? 8 : 4;
+      if (offset % size !== 0) offset = Math.ceil(offset / size) * size;
+      fields.push({ name: `_${i}`, type, offset, size });
+      offset += size;
+    }
+    return { name, fields, totalSize: offset };
+  }
+
+  /** Returns a canonical synthetic name for an inline tuple type annotation like "[i32, f64]". */
+  private tupleTypeName(innerTypesStr: string): string {
+    const parts = innerTypesStr.split(",").map(t => mapType(t.trim()));
+    return `__Tuple_${parts.join("_")}`;
+  }
+
+  /** Ensures a StructDef exists in structDefs for the given tuple type string "[T1, T2, ...]".
+   *  Returns the registered StructDef, or null if the string is not a tuple type. */
+  private getOrCreateTupleDef(typeAnnotation: string): StructDef | null {
+    const t = typeAnnotation.trim();
+    if (!t.startsWith("[") || !t.endsWith("]")) return null;
+    const inner = t.slice(1, -1).trim();
+    if (!inner) return null;
+    const tupleName = this.tupleTypeName(inner);
+    let def = this.structDefs.get(tupleName);
+    if (!def) {
+      def = this.makeTupleStructDef(tupleName, inner);
+      if (def.fields.length > 0) this.structDefs.set(tupleName, def);
+    }
+    return def.fields.length > 0 ? def : null;
   }
 
   // -------------------------------------------------------------------------
@@ -2419,9 +2503,35 @@ class WasicTranspiler {
       return `(block (result i32) ${pts.join(" ")})`;
     }
 
+    // Phase 23: tuple element read — t[N] where N is a bare integer literal (strict match, avoids greedy confusion)
+    const tupleFieldMatch = expr.match(/^(\w+)\[(\d+)\]$/);
+    if (tupleFieldMatch) {
+      const svTF = this.structVars.get(tupleFieldMatch[1]);
+      if (svTF) {
+        const fieldIdxTF = parseInt(tupleFieldMatch[2], 10);
+        const fieldTF = svTF.def.fields[fieldIdxTF];
+        if (fieldTF) {
+          const loadOpTF = fieldTF.type === "f64" ? "f64.load" : fieldTF.type === "i64" ? "i64.load" : "i32.load";
+          const baseWatTF = svTF.ptr === -1 ? `(local.get $${tupleFieldMatch[1]})` : `(i32.const ${svTF.ptr})`;
+          return `(${loadOpTF} (i32.add ${baseWatTF} (i32.const ${fieldTF.offset})))`;
+        }
+      }
+    }
+
     // Array element read: arr[idx]
     const bracketMatch = expr.match(/^(\w+)\[(.+)\]$/);
     if (bracketMatch) {
+      // Phase 23: fallback tuple element read (handles edge cases where bracketMatch fires)
+      const svE = this.structVars.get(bracketMatch[1]);
+      if (svE && /^\d+$/.test(bracketMatch[2])) {
+        const fieldIdx2 = parseInt(bracketMatch[2], 10);
+        const field2 = svE.def.fields[fieldIdx2];
+        if (field2) {
+          const loadOp2 = field2.type === "f64" ? "f64.load" : field2.type === "i64" ? "i64.load" : "i32.load";
+          const baseWat2 = svE.ptr === -1 ? `(local.get $${bracketMatch[1]})` : `(i32.const ${svE.ptr})`;
+          return `(${loadOp2} (i32.add ${baseWat2} (i32.const ${field2.offset})))`;
+        }
+      }
       const arrInfo = this.arrayVars.get(bracketMatch[1]);
       if (arrInfo) {
         const loadOp = arrInfo.elemType === "f64" ? "f64.load"
@@ -2438,7 +2548,8 @@ class WasicTranspiler {
         return `(${loadOp} (i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift}))))`;
       }
       // Phase 12: fallback — i32 local holding a dynamic i32[] array pointer (captured or assigned)
-      if (locals.get(bracketMatch[1]) === "i32") {
+      // Phase 23: skip if variable is a struct/tuple pointer (not a dynamic array)
+      if (locals.get(bracketMatch[1]) === "i32" && !this.structVars.has(bracketMatch[1])) {
         const idxWat = this.emitExpr(bracketMatch[2], locals, "i32");
         return `(i32.load (i32.add (i32.add (local.get $${bracketMatch[1]}) (i32.const 8)) (i32.shl ${idxWat} (i32.const 2))))`;
       }
@@ -3218,6 +3329,26 @@ class WasicTranspiler {
           }
         }
       }
+      // Phase 23: return [e0, e1, ...] — tuple literal: malloc struct, store positional fields, return ptr
+      if (expr.startsWith("[") && this.currentFuncResultTsName) {
+        const tupleDef = this.structDefs.get(this.currentFuncResultTsName);
+        if (tupleDef) {
+          const innerStr = expr.slice(1, expr.lastIndexOf("]")).trim();
+          const tupleElems = innerStr ? this.splitArgs(innerStr) : [];
+          const stmtsR: string[] = [
+            `(local.set $__obj_ret (call $__malloc (i32.const ${tupleDef.totalSize})))`,
+          ];
+          for (let i = 0; i < tupleElems.length; i++) {
+            const field = tupleDef.fields[i];
+            if (!field) continue;
+            const storeOp = field.type === "f64" ? "f64.store" : field.type === "i64" ? "i64.store" : "i32.store";
+            const valWat = this.emitExpr(tupleElems[i].trim(), locals, field.type);
+            stmtsR.push(`(${storeOp} offset=${field.offset} (local.get $__obj_ret) ${valWat})`);
+          }
+          stmtsR.push(`(return (local.get $__obj_ret))`);
+          return stmtsR.join("\n      ");
+        }
+      }
       // return [elem0, elem1, ...] — array literal: malloc + init + return pointer
       const retArrMatch = expr.match(/^\[([^\]]*)\]$/);
       if (retArrMatch && funcResult === "i32") {
@@ -3450,6 +3581,75 @@ class WasicTranspiler {
           return `(call $${fnName} ${[...normalEmitted, `(local.get $${arrName})`].join(" ")})`.trim();
         }
         return this.emitRestParamCall(fnName, rawArgs, locals, null);
+      }
+    }
+
+    // Phase 23: named tuple alias with bracket initializer: const p: Pair = [e0, e1]
+    // Must come before the generic letMatch which would mishandle the bracket value.
+    const namedTupleLitStmt = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\[/);
+    if (namedTupleLitStmt) {
+      const sv = this.structVars.get(namedTupleLitStmt[1]);
+      if (sv && sv.def.fields.every(f => /^_\d+$/.test(f.name))) {
+        if (sv.ptr >= 0) return `(local.set $${namedTupleLitStmt[1]} (i32.const ${sv.ptr}))`;
+        // Runtime allocation
+        const eqBI3 = line.indexOf("= [");
+        const vBody3 = eqBI3 !== -1 ? line.slice(eqBI3 + 3).replace(/\]\s*;?\s*$/, "") : "";
+        const elems4 = vBody3 ? this.splitArgs(vBody3) : [];
+        const stmtsN: string[] = [`(local.set $${namedTupleLitStmt[1]} (call $__malloc (i32.const ${sv.def.totalSize})))`];
+        for (let i = 0; i < elems4.length; i++) {
+          const field = sv.def.fields[i];
+          if (!field) continue;
+          const storeOp = field.type === "f64" ? "f64.store" : field.type === "i64" ? "i64.store" : "i32.store";
+          stmtsN.push(`(${storeOp} offset=${field.offset} (local.get $${namedTupleLitStmt[1]}) ${this.emitExpr(elems4[i].trim(), locals, field.type)})`);
+        }
+        return stmtsN.join("\n      ");
+      }
+    }
+
+    // Phase 23: tuple literal init: const t: [i32, f64] = [e0, e1, ...]
+    // Must come before array and struct checks since the type annotation contains brackets.
+    const tupleLitStmt = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\[[^\]]+\])\s*=\s*\[/);
+    if (tupleLitStmt) {
+      const sv = this.structVars.get(tupleLitStmt[1]);
+      if (sv) {
+        if (sv.ptr >= 0) {
+          return `(local.set $${tupleLitStmt[1]} (i32.const ${sv.ptr}))`;
+        }
+        // Runtime allocation: malloc, store each element, set local
+        const eqBI2 = line.indexOf("= [");
+        const vBody2 = eqBI2 !== -1 ? line.slice(eqBI2 + 3).replace(/\]\s*;?\s*$/, "") : "";
+        const elems3 = vBody2 ? this.splitArgs(vBody2) : [];
+        const stmtsT: string[] = [
+          `(local.set $${tupleLitStmt[1]} (call $__malloc (i32.const ${sv.def.totalSize})))`,
+        ];
+        for (let i = 0; i < elems3.length; i++) {
+          const field = sv.def.fields[i];
+          if (!field) continue;
+          const storeOp = field.type === "f64" ? "f64.store" : field.type === "i64" ? "i64.store" : "i32.store";
+          const valWat = this.emitExpr(elems3[i].trim(), locals, field.type);
+          stmtsT.push(`(${storeOp} offset=${field.offset} (local.get $${tupleLitStmt[1]}) ${valWat})`);
+        }
+        return stmtsT.join("\n      ");
+      }
+    }
+
+    // Phase 23: tuple destructuring: const [a, b] = tupleVar (when source is a structVar/tuple)
+    const tupleArrDestructStmt = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\s*;?$/);
+    if (tupleArrDestructStmt) {
+      const sv = this.structVars.get(tupleArrDestructStmt[2]);
+      if (sv) {
+        const bindings2 = tupleArrDestructStmt[1].split(",").map(b => b.trim()).filter(Boolean);
+        const stmts2: string[] = [];
+        for (let i = 0; i < bindings2.length; i++) {
+          const b = bindings2[i];
+          if (b.startsWith("...")) continue;
+          const field = sv.def.fields[i];
+          if (!field) continue;
+          const loadOp = field.type === "f64" ? "f64.load" : field.type === "i64" ? "i64.load" : "i32.load";
+          const baseWat = sv.ptr === -1 ? `(local.get $${tupleArrDestructStmt[2]})` : `(i32.const ${sv.ptr})`;
+          stmts2.push(`(local.set $${b} (${loadOp} (i32.add ${baseWat} (i32.const ${field.offset}))))`);
+        }
+        return stmts2.join("\n      ");
       }
     }
 
@@ -3717,6 +3917,18 @@ class WasicTranspiler {
     // Array element write: arr[idx] = val
     const arrWriteMatch = line.match(/^(\w+)\s*\[(.+?)\]\s*=\s*(.+?);?$/);
     if (arrWriteMatch) {
+      // Phase 23: tuple element write — t[N] = val (N must be a compile-time integer literal)
+      const svW = this.structVars.get(arrWriteMatch[1]);
+      if (svW && /^\d+$/.test(arrWriteMatch[2])) {
+        const fieldIdx = parseInt(arrWriteMatch[2], 10);
+        const field = svW.def.fields[fieldIdx];
+        if (field) {
+          const storeOp = field.type === "f64" ? "f64.store" : field.type === "i64" ? "i64.store" : "i32.store";
+          const baseWat = svW.ptr === -1 ? `(local.get $${arrWriteMatch[1]})` : `(i32.const ${svW.ptr})`;
+          const valWat = this.emitExpr(arrWriteMatch[3], locals, field.type);
+          return `(${storeOp} (i32.add ${baseWat} (i32.const ${field.offset})) ${valWat})`;
+        }
+      }
       const arrInfo = this.arrayVars.get(arrWriteMatch[1]);
       if (arrInfo) {
         const storeOp = arrInfo.elemType === "f64" ? "f64.store"
@@ -5374,6 +5586,74 @@ class WasicTranspiler {
         }
       }
 
+      // Phase 23: tuple literal: const t: [i32, f64] = [1, 2.0]
+      // Must come before struct and array checks since the type annotation contains brackets.
+      const tupleLitPre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\[[^\]]+\])\s*=\s*\[/);
+      if (tupleLitPre) {
+        const varName = tupleLitPre[1];
+        const typeAnnotation = tupleLitPre[2];
+        const tupleDef = this.getOrCreateTupleDef(typeAnnotation);
+        if (tupleDef) {
+          // Extract value elements from the RHS "[e0, e1, ...]"
+          const eqBrackIdx = line.indexOf("= [");
+          const valueBody = eqBrackIdx !== -1 ? line.slice(eqBrackIdx + 3).replace(/\]\s*;?\s*$/, "") : "";
+          const elements = valueBody ? valueBody.split(",").map(e => e.trim()).filter(Boolean) : [];
+          const isLiteralOnly = elements.every(e => /^-?\d+(\.\d+)?n?$|^true$|^false$/.test(e));
+          if (isLiteralOnly) {
+            const initFields: Record<string, string> = {};
+            for (let i = 0; i < elements.length; i++) initFields[`_${i}`] = elements[i];
+            const ptr = this.allocStructData(tupleDef, initFields);
+            this.structVars.set(varName, { def: tupleDef, ptr });
+          } else {
+            // Runtime allocation — ptr=-1 signals local holds the pointer
+            this.structVars.set(varName, { def: tupleDef, ptr: -1 });
+          }
+          declaredLocals.push([varName, "i32"]);
+          locals.set(varName, "i32");
+          continue;
+        }
+      }
+      // Phase 23: named tuple alias with bracket initializer: const p: Pair = [6, 7]
+      const namedTuplePre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\[/);
+      if (namedTuplePre) {
+        const typeName = namedTuplePre[2];
+        const def = this.structDefs.get(typeName);
+        if (def && def.fields.length > 0 && def.fields.every(f => /^_\d+$/.test(f.name))) {
+          const eqBI = line.indexOf("= [");
+          const vBody = eqBI !== -1 ? line.slice(eqBI + 3).replace(/\]\s*;?\s*$/, "") : "";
+          const elems = vBody ? vBody.split(",").map(e => e.trim()).filter(Boolean) : [];
+          const isLitOnly = elems.every(e => /^-?\d+(\.\d+)?n?$|^true$|^false$/.test(e));
+          if (isLitOnly) {
+            const initF: Record<string, string> = {};
+            for (let i = 0; i < elems.length; i++) initF[`_${i}`] = elems[i];
+            const ptr = this.allocStructData(def, initF);
+            this.structVars.set(namedTuplePre[1], { def, ptr });
+          } else {
+            this.structVars.set(namedTuplePre[1], { def, ptr: -1 });
+          }
+          declaredLocals.push([namedTuplePre[1], "i32"]);
+          locals.set(namedTuplePre[1], "i32");
+          continue;
+        }
+      }
+      // Phase 23: tuple destructuring: const [a, b] = tupleVar (when source is a tuple in structVars)
+      const tupleDestructPre = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\s*;?$/);
+      if (tupleDestructPre) {
+        const sv = this.structVars.get(tupleDestructPre[2]);
+        if (sv) {
+          const bindingsTD = tupleDestructPre[1].split(",").map(b => b.trim()).filter(Boolean);
+          for (let i = 0; i < bindingsTD.length; i++) {
+            const b = bindingsTD[i];
+            if (b.startsWith("...")) continue;
+            const field = sv.def.fields[i];
+            if (field) {
+              declaredLocals.push([b, field.type]);
+              locals.set(b, field.type);
+            }
+          }
+          continue;
+        }
+      }
       // Struct object literal: const p: Point = { x: 1.5, y: 2.5 }
       const structPre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\{([^}]*)\}/);
       if (structPre) {
@@ -5476,7 +5756,9 @@ class WasicTranspiler {
         continue;
       }
       // return [elem, ...] — array literal return: needs a $__arr_ret helper local
-      if (/^return\s*\[/.test(line) && !locals.has("__arr_ret")) {
+      // Phase 23: skip if this is a tuple-returning function (uses __obj_ret instead)
+      const isTupleRetFn = !!(fn.resultTsName && this.structDefs.has(fn.resultTsName));
+      if (/^return\s*\[/.test(line) && !locals.has("__arr_ret") && !isTupleRetFn) {
         declaredLocals.push(["__arr_ret", "i32"]);
         locals.set("__arr_ret", "i32");
       }
@@ -5540,10 +5822,16 @@ class WasicTranspiler {
               locals.set(m[1], "i32");
               continue;
             }
-            // Phase 12: interface-typed return — const x = interfaceFn(args) → x is an interface pointer
+            // Phase 12/23: struct/interface/tuple-typed return — const x = fn(args) → x is a struct pointer
             const calledFn = this.functions.find(f => f.name === fcm[1]);
-            if (calledFn?.resultTsName && /^[A-Z]/.test(calledFn.resultTsName) && this.structDefs.has(calledFn.resultTsName)) {
-              this.interfaceVars.set(m[1], calledFn.resultTsName);
+            if (calledFn?.resultTsName && this.structDefs.has(calledFn.resultTsName)) {
+              const retDef = this.structDefs.get(calledFn.resultTsName)!;
+              if (calledFn.resultTsName.startsWith("__Tuple_")) {
+                // Phase 23: tuple return — register in structVars (ptr=-1) so t[N] field access works
+                this.structVars.set(m[1], { def: retDef, ptr: -1 });
+              } else {
+                this.interfaceVars.set(m[1], calledFn.resultTsName);
+              }
               declaredLocals.push([m[1], "i32"]);
               locals.set(m[1], "i32");
               continue;
@@ -5584,7 +5872,10 @@ class WasicTranspiler {
       locals.set("__rest_ptr", "i32");
     }
     // Phase 12: add $__obj_ret if any line has `return {` (object literal return)
-    if (fn.bodyLines.some(l => /^return\s*\{/.test(l)) && !locals.has("__obj_ret")) {
+    // Phase 23: also add for tuple returns — `return [...]` when fn has a tuple resultTsName
+    const hasTupleReturn = !!(fn.resultTsName?.startsWith("__Tuple_") || this.structDefs.has(fn.resultTsName ?? ""))
+      && fn.bodyLines.some(l => /^return\s*\[/.test(l));
+    if ((fn.bodyLines.some(l => /^return\s*\{/.test(l)) || hasTupleReturn) && !locals.has("__obj_ret")) {
       declaredLocals.push(["__obj_ret", "i32"]);
       locals.set("__obj_ret", "i32");
     }
@@ -5882,6 +6173,70 @@ class WasicTranspiler {
       const startLocals = new Map<string, WatType>();
       const startDeclaredLocals: [string, WatType][] = [];
       for (const line of this.startBodyLines) {
+        // Phase 23: tuple literal — const t: [i32, f64] = [1, 2.0] (mirrors emitFunction pre-scan)
+        const tupleLitPre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\[[^\]]+\])\s*=\s*\[/);
+        if (tupleLitPre2) {
+          const varNameT = tupleLitPre2[1];
+          const tupleDef2 = this.getOrCreateTupleDef(tupleLitPre2[2]);
+          if (tupleDef2) {
+            const eqBI = line.indexOf("= [");
+            const vBody = eqBI !== -1 ? line.slice(eqBI + 3).replace(/\]\s*;?\s*$/, "") : "";
+            const elems2 = vBody ? vBody.split(",").map(e => e.trim()).filter(Boolean) : [];
+            const isLit2 = elems2.every(e => /^-?\d+(\.\d+)?n?$|^true$|^false$/.test(e));
+            if (isLit2) {
+              const initF2: Record<string, string> = {};
+              for (let i = 0; i < elems2.length; i++) initF2[`_${i}`] = elems2[i];
+              const ptr2 = this.allocStructData(tupleDef2, initF2);
+              this.structVars.set(varNameT, { def: tupleDef2, ptr: ptr2 });
+            } else {
+              this.structVars.set(varNameT, { def: tupleDef2, ptr: -1 });
+            }
+            startLocals.set(varNameT, "i32");
+            startDeclaredLocals.push([varNameT, "i32"]);
+            continue;
+          }
+        }
+        // Phase 23: named tuple alias with bracket initializer: const p: Pair = [6, 7]
+        const namedTuplePre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\[/);
+        if (namedTuplePre2) {
+          const typeNameT2 = namedTuplePre2[2];
+          const defT2 = this.structDefs.get(typeNameT2);
+          if (defT2 && defT2.fields.length > 0 && defT2.fields.every(f => /^_\d+$/.test(f.name))) {
+            const eqBI2 = line.indexOf("= [");
+            const vBodyT2 = eqBI2 !== -1 ? line.slice(eqBI2 + 3).replace(/\]\s*;?\s*$/, "") : "";
+            const elemsT2 = vBodyT2 ? vBodyT2.split(",").map(e => e.trim()).filter(Boolean) : [];
+            const isLitT2 = elemsT2.every(e => /^-?\d+(\.\d+)?n?$|^true$|^false$/.test(e));
+            if (isLitT2) {
+              const initFT2: Record<string, string> = {};
+              for (let i = 0; i < elemsT2.length; i++) initFT2[`_${i}`] = elemsT2[i];
+              const ptrT2 = this.allocStructData(defT2, initFT2);
+              this.structVars.set(namedTuplePre2[1], { def: defT2, ptr: ptrT2 });
+            } else {
+              this.structVars.set(namedTuplePre2[1], { def: defT2, ptr: -1 });
+            }
+            startLocals.set(namedTuplePre2[1], "i32");
+            startDeclaredLocals.push([namedTuplePre2[1], "i32"]);
+            continue;
+          }
+        }
+        // Phase 23: tuple destructuring — const [a, b] = tupleVar (mirrors emitFunction pre-scan)
+        const tupleDestructPre2 = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\s*;?$/);
+        if (tupleDestructPre2) {
+          const sv2 = this.structVars.get(tupleDestructPre2[2]);
+          if (sv2) {
+            const blist2 = tupleDestructPre2[1].split(",").map(b => b.trim()).filter(Boolean);
+            for (let i = 0; i < blist2.length; i++) {
+              const b = blist2[i];
+              if (b.startsWith("...")) continue;
+              const field2 = sv2.def.fields[i];
+              if (field2) {
+                startLocals.set(b, field2.type);
+                startDeclaredLocals.push([b, field2.type]);
+              }
+            }
+            continue;
+          }
+        }
         // Phase 6d: 2D array literal declaration: const matrix: i32[][] = [[...], [...]]
         const arr2DPre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\w+)\[\]\[\]\s*=\s*(.+?);?$/);
         if (arr2DPre) {
@@ -5964,6 +6319,18 @@ class WasicTranspiler {
           const initExpr = (m[3] ?? "").trim();
           // Skip arrow function declarations — lifted to module level, not WAT locals
           if (/^\s*\([^)]*\)\s*(?::\s*\w+)?\s*=>/.test(initExpr)) continue;
+          // Phase 23: tuple-returning function call — register in structVars for t[N] access
+          const fcmS = initExpr.match(/^(\w+)\s*\(/);
+          if (fcmS) {
+            const calledFnS = this.functions.find(f => f.name === fcmS[1]);
+            if (calledFnS?.resultTsName?.startsWith("__Tuple_") && this.structDefs.has(calledFnS.resultTsName)) {
+              const retDefS = this.structDefs.get(calledFnS.resultTsName)!;
+              this.structVars.set(m[1], { def: retDefS, ptr: -1 });
+              startLocals.set(m[1], "i32");
+              startDeclaredLocals.push([m[1], "i32"]);
+              continue;
+            }
+          }
           const t = typeStr ? mapType(typeStr) : inferInitType(initExpr, startLocals, this.enumValues, this.functions);
           if (t === "string") {
             startLocals.set(`${m[1]}_ptr`, "i32");
