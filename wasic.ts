@@ -3385,7 +3385,7 @@ class WasicTranspiler {
     const arr2DLetMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*\w+\[\]\[\]\s*=\s*(.+?);?$/);
     if (arr2DLetMatch) {
       const info = this.arrayVars.get(arr2DLetMatch[1]);
-      if (info?.is2D && info.rows) return this.emitDynArray2DInit(arr2DLetMatch[1], info);
+      if (info?.is2D && info.rows) return this.emitDynArray2DInit(arr2DLetMatch[1], { elemType: info.elemType, rows: info.rows });
     }
 
     // Array literal declaration: const arr: T[] = [...] or const arr = [...]
