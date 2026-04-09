@@ -247,6 +247,7 @@
     (local $p i32)
     (local $charge i32)
     (local $active i32)
+    (local $__iface_tmp i32)
     (local.set $v (i32.const 260))
     (local.set $x (f64.load (i32.add (i32.const 260) (i32.const 0))))
       (local.set $y (f64.load (i32.add (i32.const 260) (i32.const 8))))

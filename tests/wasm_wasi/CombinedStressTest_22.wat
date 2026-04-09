@@ -217,6 +217,7 @@
     (local $bigVal i64)
     (local $multiplier i64)
     (local $result i64)
+    (local $__iface_tmp i32)
     (local.set $bigVal (i64.const 150))
     (local.set $multiplier (i64.const 2))
     (local.set $result (i64.mul (local.get $bigVal) (local.get $multiplier)))

@@ -10,6 +10,7 @@
     (local.get $ptr)
   )
   (func $testExternalCall (export "testExternalCall") (param $msgPtr i32) 
+    (local $__iface_tmp i32)
     (;; logger.log(msgPtr);;)
   )
   (func $_start (export "_start")

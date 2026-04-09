@@ -235,6 +235,7 @@
   (func $_start (export "_start")  
     (local $triple i32)
     (local $result i32)
+    (local $__iface_tmp i32)
     (local.set $triple (call $createMultiplier (i32.const 3)))
     (local.set $result (call_indirect (type $ftype_i32_i32_r_i32) (local.get $triple) (i32.const 10) (i32.load (local.get $triple))))
         (i32.store (i32.const 0) (i32.const 132))

@@ -336,7 +336,11 @@
   (func $divide (param $a i32) (param $b i32) (result i32)
     (if (i32.eq (local.get $b) (i32.const 0))
       (then
-      (throw $__exn_tag (i32.const 260) (i32.const 16))
+      (i32.store (i32.const 0) (i32.const 260))
+      (i32.store (i32.const 4) (i32.const 16))
+      (drop (call $fd_write (i32.const 2) (i32.const 0) (i32.const 1) (i32.const 8)))
+      (call $proc_exit (i32.const 0))
+      (unreachable)
       )
     )
     (return (i32.div_s (local.get $a) (local.get $b)))
@@ -346,6 +350,7 @@
     (local $result i32)
     (local $e_ptr i32)
     (local $e_len i32)
+    (local $__iface_tmp i32)
     (local.set $result (i32.const -1))
     (try
       (do
@@ -373,11 +378,16 @@
   (func $withFinally (param $x i32) 
     (local $e_ptr i32)
     (local $e_len i32)
+    (local $__iface_tmp i32)
     (try
       (do
         (if (i32.lt_s (local.get $x) (i32.const 0))
           (then
-          (throw $__exn_tag (i32.const 276) (i32.const 8))
+          (i32.store (i32.const 0) (i32.const 276))
+      (i32.store (i32.const 4) (i32.const 8))
+      (drop (call $fd_write (i32.const 2) (i32.const 0) (i32.const 1) (i32.const 8)))
+      (call $proc_exit (i32.const 0))
+      (unreachable)
           )
         )
             (i32.store (i32.const 0) (i32.const 284))
@@ -435,11 +445,16 @@
     (local $msg_len i32)
     (local $e_ptr i32)
     (local $e_len i32)
+    (local $__iface_tmp i32)
     (local.set $msg_ptr (i32.const 300))
       (local.set $msg_len (i32.const 12))
     (try
       (do
-        (throw $__exn_tag (local.get $msg_ptr) (local.get $msg_len))
+        (i32.store (i32.const 0) (local.get $msg_ptr))
+      (i32.store (i32.const 4) (local.get $msg_len))
+      (drop (call $fd_write (i32.const 2) (i32.const 0) (i32.const 1) (i32.const 8)))
+      (call $proc_exit (i32.const 0))
+      (unreachable)
       )
       (catch $__exn_tag
         (local.set $e_len)

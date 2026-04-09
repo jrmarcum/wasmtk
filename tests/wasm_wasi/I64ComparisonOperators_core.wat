@@ -335,6 +335,7 @@
   (func $testBigIntComparisons (export "testBigIntComparisons") (param $val i64) 
     (local $limit i64)
     (local $isLarge i32)
+    (local $__iface_tmp i32)
     (local.set $limit (i64.const 5000000000))
     (if (i64.eq (local.get $val) (local.get $limit))
       (then

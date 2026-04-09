@@ -214,6 +214,7 @@
     (i32.sub (local.get $end) (local.get $orig))
   )
   (func $magnitude (param $v i32) (result f64)
+    (local $__iface_tmp i32)
     (return (f64.sqrt (f64.add (f64.mul (f64.load (i32.add (local.get $v) (i32.const 0))) (f64.load (i32.add (local.get $v) (i32.const 0)))) (f64.mul (f64.load (i32.add (local.get $v) (i32.const 8))) (f64.load (i32.add (local.get $v) (i32.const 8)))))))
   )
 
@@ -224,6 +225,7 @@
   (func $_start (export "_start")  
     (local $v i32)
     (local $p i32)
+    (local $__iface_tmp i32)
     (local.set $v (i32.const 260))
         (i32.store (i32.const 0) (i32.const 132))
           (i32.store (i32.const 4) (call $__f64_to_str (f64.load (i32.add (i32.const 260) (i32.const 0))) (i32.const 132)))

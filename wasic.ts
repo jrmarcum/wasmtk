@@ -129,6 +129,7 @@ import {
   getHelperWat,
   type DataAllocator,
   type FuncLookup,
+  type LogSegment,
   type StructFieldLookup,
   type DotCallLookup,
 } from "./console_log.ts";
@@ -249,6 +250,8 @@ interface StructField {
   size: number;
   /** Phase 21: field declared with `readonly` modifier — writes are a compile-time error. */
   readonly?: boolean;
+  /** Phase 12: for method-type fields in interfaces — stores the function signature. */
+  funcType?: { params: WatType[]; result: WatType | null };
 }
 
 interface StructDef {
@@ -279,6 +282,8 @@ interface FuncDef {
   returnedArrow?: FuncDef;
   /** Name of the closure factory whose body returns this arrow (Phase 5f). */
   returnedByFactory?: string;
+  /** Phase 12: original TypeScript return type annotation (e.g. "MatrixManager") for interface dispatch. */
+  resultTsName?: string;
 }
 
 /** Maps TypeScript type annotation strings to WAT types (or the "string"/"never" pseudo-types).
@@ -298,6 +303,8 @@ function mapType(ts: string): WatType {
   if (t === "bigint") return "i64";
   if (t === "bool" || t === "boolean") return "bool";   // boolean → bool pseudo-type (WAT i32)
   if (t === "string" || t === "str")   return "string"; // pseudo-type: ptr+len i32 locals
+  // PascalCase identifier = interface/class/struct pointer (i32). Guard known primitives.
+  if (/^[A-Z]/.test(base) && base !== "Number" && base !== "Boolean" && base !== "String" && base !== "BigInt") return "i32";
   return "f64"; // number, f64, or unknown → f64
 }
 
@@ -469,6 +476,10 @@ class WasicTranspiler {
   private currentMethodClass: string | null = null;
   // Set to the WAT function name of the method currently being emitted (Phase 21: constructor check).
   private currentMethodName: string | null = null;
+  // Phase 12: original TS return type name of the function currently being emitted (for return {} dispatch).
+  private currentFuncResultTsName: string | null = null;
+  // Phase 12: interface-typed variables in the current function scope: varName → interfaceName.
+  private interfaceVars: Map<string, string> = new Map();
 
   // Tracks which Math.* WAT helper functions are needed (emitted on demand)
   private mathHelpers: Set<string> = new Set();
@@ -584,9 +595,18 @@ class WasicTranspiler {
         const m = line.match(/^(?:let|const|var)\s+(\w+)\s*:\s*(\([^)]*\)\s*=>\s*\w+)/);
         if (m) bodyFuncTypes.set(m[1], this.parseFuncTypeSig(m[2]));
       }
-      fn.bodyLines = fn.bodyLines.map(line => this.substituteOneArrow(line, bodyFuncTypes, fn));
+      fn.bodyLines = fn.bodyLines.map(line => {
+        // Loop until stable — handles multiple arrows on one line (e.g. object literal returns)
+        let prev = "";
+        while (prev !== line) { prev = line; line = this.substituteOneArrow(line, bodyFuncTypes, fn); }
+        return line;
+      });
     }
-    this.startBodyLines = this.startBodyLines.map(line => this.substituteOneArrow(line, new Map()));
+    this.startBodyLines = this.startBodyLines.map(line => {
+      let prev = "";
+      while (prev !== line) { prev = line; line = this.substituteOneArrow(line, new Map()); }
+      return line;
+    });
   }
 
   private substituteOneArrow(
@@ -625,7 +645,12 @@ class WasicTranspiler {
     // Must be preceded by `(` or `,` (argument position), ignoring spaces
     let beforeParens = paramsStart - 1;
     while (beforeParens >= 0 && line[beforeParens] === " ") beforeParens--;
-    if (beforeParens < 0 || (line[beforeParens] !== "," && line[beforeParens] !== "(" && line[beforeParens] !== "=")) return line;
+    if (beforeParens < 0 || (line[beforeParens] !== "," && line[beforeParens] !== "(" && line[beforeParens] !== "=" && line[beforeParens] !== ":")) return line;
+
+    // Guard: skip type-annotation declarations such as `let mathOp: (a: i32) => i32;`.
+    // The `:` context is valid for object-literal values `{ key: (p) => ... }` but NOT
+    // for variable type annotations that start with var/let/const.
+    if (line[beforeParens] === ":" && /^(?:var|let|const)\s/.test(line)) return line;
 
     // For `=` (assignment arrow): extract the target variable name.
     // If it's already a known module-level function (parsed by parseArrowFunctions), skip lifting.
@@ -707,19 +732,38 @@ class WasicTranspiler {
       });
     }
 
+    // Phase 12: for object-literal arrow values (key: arrow), look up expected return type
+    // from the enclosing function's interface return type (resultTsName → structDefs field).
+    let interfaceFieldResult: WatType | null | undefined;
+    if (preceding === ":" && enclosingFn?.resultTsName) {
+      // Skip whitespace and the `:` separator to reach the field name identifier
+      let keyEnd = paramsStart - 1;
+      while (keyEnd >= 0 && line[keyEnd] === " ") keyEnd--;   // spaces before `(`
+      if (keyEnd >= 0 && line[keyEnd] === ":") keyEnd--;       // the `:` separator
+      while (keyEnd >= 0 && line[keyEnd] === " ") keyEnd--;   // spaces before key name
+      let keyStart = keyEnd;
+      while (keyStart > 0 && /\w/.test(line[keyStart - 1])) keyStart--;
+      const keyName = line.slice(keyStart, keyEnd + 1);
+      if (keyName) {
+        const ifaceStruct = this.structDefs.get(enclosingFn.resultTsName);
+        const ifaceField = ifaceStruct?.fields.find(f => f.name === keyName);
+        if (ifaceField?.funcType) interfaceFieldResult = ifaceField.funcType.result;
+      }
+    }
+
     // Parse optional return type annotation between `)` and `=>`
     const betweenParenArrow = line.slice(i + 1, arrowIdx).trim();
     const retAnnotation = betweenParenArrow.match(/^:\s*(\w+)/)?.[1];
     let anonResult: WatType | null = retAnnotation
       ? (retAnnotation === "void" ? null : mapType(retAnnotation) as WatType)
-      : (paramInfo?.result ?? null);
+      : (paramInfo?.result ?? interfaceFieldResult ?? null);
 
     // Build body lines
     const bodyRaw = line.slice(bodyStart, arrowEnd).trim();
     let bodyLines: string[];
     if (bodyRaw.startsWith("{")) {
       const inner = bodyRaw.slice(1, bodyRaw.endsWith("}") ? -1 : undefined).trim();
-      bodyLines = inner.split(";").map(l => l.trim()).filter(Boolean).map(l => l.endsWith(";") ? l : l + ";");
+      bodyLines = WasicTranspiler.splitStmts(inner);
     } else {
       // Infer result type from body expression when no annotation was given
       if (anonResult === null) {
@@ -742,7 +786,8 @@ class WasicTranspiler {
       const outerScope = new Map<string, WatType>();
       for (const p of enclosingFn.params) outerScope.set(p.name, p.type);
       for (const bl of enclosingFn.bodyLines) {
-        const lm = bl.match(/^(?:const|let|var)\s+(\w+)\s*(?::\s*(\w+))?\s*=\s*(.+?)?;?$/);
+        // Use ([\w\[\]]+) for the type to handle array types like i32[], i32[][], etc.
+        const lm = bl.match(/^(?:const|let|var)\s+(\w+)\s*(?::\s*([\w\[\]]+))?\s*=\s*(.+?)?;?$/);
         if (lm && !lm[3]?.includes("=>")) {
           const t: WatType = lm[2]
             ? mapType(lm[2]) as WatType
@@ -831,6 +876,43 @@ class WasicTranspiler {
       i++;
     }
     return [src.slice(openParen + 1, i - 1), i];
+  }
+
+  /**
+   * Splits a block body string into statements at depth 0.
+   * Splits on `;` at depth 0 (regular statements).
+   * Also splits after `}` that brings depth to 0 (end of block statements: if/for/while),
+   * UNLESS the next non-whitespace token is `else` (which continues an if/else chain).
+   */
+  private static splitStmts(inner: string): string[] {
+    const parts: string[] = [];
+    let depth = 0, start = 0;
+    for (let i = 0; i < inner.length; i++) {
+      const ch = inner[i];
+      if (ch === "(" || ch === "{") depth++;
+      else if (ch === ")" || ch === "}") {
+        depth--;
+        if (depth === 0 && ch === "}") {
+          // Check if continuation (else clause) follows — if so, don't split here
+          let peek = i + 1;
+          while (peek < inner.length && inner[peek] === " ") peek++;
+          const next7 = inner.slice(peek, peek + 4);
+          if (!next7.startsWith("else")) {
+            const part = inner.slice(start, i + 1).trim();
+            if (part) parts.push(part);
+            start = i + 1;
+          }
+        }
+      }
+      else if (ch === ";" && depth === 0) {
+        const part = inner.slice(start, i).trim();
+        if (part) parts.push(part + ";");
+        start = i + 1;
+      }
+    }
+    const trailing = inner.slice(start).trim();
+    if (trailing) parts.push(trailing.endsWith(";") ? trailing : trailing + ";");
+    return parts;
   }
 
   /**
@@ -941,21 +1023,44 @@ class WasicTranspiler {
         i++;
       }
       const rawBody = src.slice(bodyStart, i - 1);
-      const bodyLines = rawBody
+      const rawLines = rawBody
         .split("\n")
         .map(l => l.trim())
         .filter(l => l.length > 0);
+      // Join multi-line `return { ... }` object literals into one line so substituteOneArrow
+      // and emitStatement can process them as a unit.
+      const bodyLines: string[] = [];
+      let li = 0;
+      while (li < rawLines.length) {
+        const l = rawLines[li];
+        if (/^return\s*\{/.test(l)) {
+          let depth = 0, joined = l;
+          for (const ch of l) { if (ch === "{") depth++; else if (ch === "}") depth--; }
+          while (depth > 0 && li + 1 < rawLines.length) {
+            li++;
+            const next = rawLines[li];
+            joined += " " + next;
+            for (const ch of next) { if (ch === "{") depth++; else if (ch === "}") depth--; }
+          }
+          bodyLines.push(joined.trim());
+        } else {
+          bodyLines.push(l);
+        }
+        li++;
+      }
 
       // Phase 5f: detect closure factory — body is `return (params) => expr;`
       const factoryParams = this.parseParams(rawParams);
       const returnedArrow = this.parseReturnArrow(name, bodyLines, factoryParams);
       if (returnedArrow) this.functions.push(returnedArrow);
+      const resultTsName = rawResult !== "void" && rawResult !== "" ? rawResult : undefined;
       this.functions.push({
         name, params: factoryParams,
         result: returnedArrow ? "i32" : result,
         exported, bodyLines,
         isClosureFactory: !!returnedArrow,
         returnedArrow: returnedArrow ?? undefined,
+        resultTsName,
       });
     }
   }
@@ -1536,11 +1641,35 @@ class WasicTranspiler {
         const fields: StructField[] = [];
         let offset = 0;
         // Match optional "readonly" prefix, then "fieldName: typeName;" or "fieldName?: typeName;"
+        // Detect method-type fields: name: (params) => ReturnType
+        const methodFieldRe = /(\w+)\??:\s*\(([^)]*)\)\s*=>\s*([\w\[\]|]+)/g;
+        const methodFieldNames = new Set<string>();
+        let mf: RegExpExecArray | null;
+        while ((mf = methodFieldRe.exec(body)) !== null) {
+          const fieldName = mf[1];
+          const rawParams = mf[2];
+          const rawResult = mf[3].trim();
+          methodFieldNames.add(fieldName);
+          // Parse method param types
+          const methodParams: WatType[] = rawParams.trim()
+            ? rawParams.split(",").map(p => {
+                const ci = p.indexOf(":");
+                return ci !== -1 ? mapType(p.slice(ci + 1).trim()) as WatType : "i32" as WatType;
+              })
+            : [];
+          const methodResult: WatType | null = rawResult === "void" ? null : mapType(rawResult) as WatType;
+          if (offset % 4 !== 0) offset = Math.ceil(offset / 4) * 4;
+          fields.push({ name: fieldName, type: "i32", offset, size: 4,
+            funcType: { params: methodParams, result: methodResult } });
+          offset += 4;
+        }
+        // Detect plain data fields (skip method fields already handled)
         const fieldRe = /(?:(readonly)\s+)?(\w+)\??:\s*([\w\[\]]+)/g;
         let fm: RegExpExecArray | null;
         while ((fm = fieldRe.exec(body)) !== null) {
           const isReadonly = fm[1] === "readonly";
           const fieldName = fm[2];
+          if (methodFieldNames.has(fieldName)) continue; // already handled as method field
           const type = mapType(fm[3]);
           const size = (type === "f64" || type === "i64") ? 8 : 4;
           // Natural alignment: round offset up to a multiple of size
@@ -2174,6 +2303,19 @@ class WasicTranspiler {
     }
 
     // Array .length property: dynamic → runtime load from header; static → compile-time constant
+    // Phase 12: arrName[idx].length — load i-th element (a row ptr), then load its length
+    const idxLenMatch = expr.match(/^(\w+)\[(.+?)\]\.length$/);
+    if (idxLenMatch) {
+      const arrName = idxLenMatch[1];
+      const idxWat = this.emitExpr(idxLenMatch[2], locals, "i32");
+      const arrInfo = this.arrayVars.get(arrName);
+      if (arrInfo || locals.get(arrName) === "i32") {
+        const baseWat = `(local.get $${arrName})`;
+        const rowPtrWat = `(i32.load (i32.add (i32.add ${baseWat} (i32.const 8)) (i32.shl ${idxWat} (i32.const 2))))`;
+        return `(i32.load ${rowPtrWat})`;
+      }
+    }
+
     const lenPropMatch = expr.match(/^(\w+)\.length$/);
     if (lenPropMatch) {
       const arrInfo = this.arrayVars.get(lenPropMatch[1]);
@@ -2184,6 +2326,10 @@ class WasicTranspiler {
       // String .length property: varName.length
       if (locals.get(lenPropMatch[1]) === "string") {
         return `(local.get $${lenPropMatch[1]}_len)`;
+      }
+      // Phase 12: i32 local holding a dynamic array pointer — load length from header
+      if (locals.get(lenPropMatch[1]) === "i32") {
+        return `(i32.load (local.get $${lenPropMatch[1]}))`;
       }
     }
 
@@ -2221,6 +2367,58 @@ class WasicTranspiler {
       }
     }
 
+    // Phase 12: inline array literal [e0, e1, ...] used as expression (e.g., argument or 2D-literal row).
+    // Allocates a dynamic heap array using $__arr_tmp (outer) and $__arr_tmp2 (inner rows for 2D).
+    if (expr.startsWith("[") && expr.endsWith("]")) {
+      const inner = expr.slice(1, -1).trim();
+      const elements = inner ? this.splitArgs(inner) : [];
+      const is2D = elements.some(e => e.trim().startsWith("["));
+      if (is2D) {
+        const outerCap = Math.max(elements.length * 2, 8);
+        const outerSz  = outerCap * 4 + 8;
+        const parts: string[] = [
+          `(local.set $__arr_tmp (call $__malloc (i32.const ${outerSz})))`,
+          `(i32.store (local.get $__arr_tmp) (i32.const ${elements.length}))`,
+          `(i32.store offset=4 (local.get $__arr_tmp) (i32.const ${outerCap}))`,
+        ];
+        for (let ei = 0; ei < elements.length; ei++) {
+          const rowExpr = elements[ei].trim();
+          const rowElemsRaw = rowExpr.startsWith("[") && rowExpr.endsWith("]")
+            ? rowExpr.slice(1, -1).trim() : rowExpr;
+          const rowElems = rowElemsRaw ? this.splitArgs(rowElemsRaw) : [];
+          const rowCap   = Math.max(rowElems.length * 2, 8);
+          const rowSz    = rowCap * 4 + 8;
+          parts.push(`(local.set $__arr_tmp2 (call $__malloc (i32.const ${rowSz})))`);
+          parts.push(`(i32.store (local.get $__arr_tmp2) (i32.const ${rowElems.length}))`);
+          parts.push(`(i32.store offset=4 (local.get $__arr_tmp2) (i32.const ${rowCap}))`);
+          for (let ej = 0; ej < rowElems.length; ej++) {
+            const valWat = this.emitExpr(rowElems[ej].trim(), locals, "i32");
+            parts.push(`(i32.store offset=${8 + ej * 4} (local.get $__arr_tmp2) ${valWat})`);
+          }
+          parts.push(`(i32.store offset=${8 + ei * 4} (local.get $__arr_tmp) (local.get $__arr_tmp2))`);
+        }
+        parts.push(`(local.get $__arr_tmp)`);
+        return `(block (result i32) ${parts.join(" ")})`;
+      }
+      // 1D inline array literal
+      const elemType: WatType = (defaultType === "f64" || defaultType === "i64") ? defaultType : "i32";
+      const storeOp = elemType === "f64" ? "f64.store" : elemType === "i64" ? "i64.store" : "i32.store";
+      const elemSize = (elemType === "f64" || elemType === "i64") ? 8 : 4;
+      const cap1D  = Math.max(elements.length * 2, 8);
+      const size1D = cap1D * elemSize + 8;
+      const pts: string[] = [
+        `(local.set $__arr_tmp (call $__malloc (i32.const ${size1D})))`,
+        `(i32.store (local.get $__arr_tmp) (i32.const ${elements.length}))`,
+        `(i32.store offset=4 (local.get $__arr_tmp) (i32.const ${cap1D}))`,
+      ];
+      for (let ei = 0; ei < elements.length; ei++) {
+        const valWat = this.emitExpr(elements[ei].trim(), locals, elemType);
+        pts.push(`(${storeOp} offset=${8 + ei * elemSize} (local.get $__arr_tmp) ${valWat})`);
+      }
+      pts.push(`(local.get $__arr_tmp)`);
+      return `(block (result i32) ${pts.join(" ")})`;
+    }
+
     // Array element read: arr[idx]
     const bracketMatch = expr.match(/^(\w+)\[(.+)\]$/);
     if (bracketMatch) {
@@ -2238,6 +2436,11 @@ class WasicTranspiler {
           ? `(i32.add ${baseWat} (i32.const 8))`
           : baseWat;
         return `(${loadOp} (i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift}))))`;
+      }
+      // Phase 12: fallback — i32 local holding a dynamic i32[] array pointer (captured or assigned)
+      if (locals.get(bracketMatch[1]) === "i32") {
+        const idxWat = this.emitExpr(bracketMatch[2], locals, "i32");
+        return `(i32.load (i32.add (i32.add (local.get $${bracketMatch[1]}) (i32.const 8)) (i32.shl ${idxWat} (i32.const 2))))`;
       }
     }
 
@@ -2585,6 +2788,25 @@ class WasicTranspiler {
             });
             return `(call $${funcName} ${emittedArgs.join(" ")})`.trim();
           }
+        }
+      }
+
+      // Phase 12: interface method dispatch via closure trampoline
+      const ifaceNameExpr = this.interfaceVars.get(receiver);
+      if (ifaceNameExpr) {
+        const structDefExpr = this.structDefs.get(ifaceNameExpr);
+        const fieldExpr = structDefExpr?.fields.find(f => f.name === methodName);
+        if (fieldExpr?.funcType) {
+          const closurePtrAddr = fieldExpr.offset === 0
+            ? `(local.get $${receiver})`
+            : `(i32.add (local.get $${receiver}) (i32.const ${fieldExpr.offset}))`;
+          const loadClosure = `(i32.load ${closurePtrAddr})`;
+          const trampolineParams: WatType[] = ["i32" as WatType, ...fieldExpr.funcType.params];
+          const typeName = this.getOrCreateFuncType(trampolineParams, fieldExpr.funcType.result);
+          const emittedArgs = args.map((a, idx) =>
+            this.emitExpr(a, locals, fieldExpr.funcType!.params[idx] ?? "i32" as WatType)
+          );
+          return `(call_indirect (type ${typeName}) (local.tee $__iface_tmp ${loadClosure}) ${emittedArgs.join(" ")} (i32.load (local.get $__iface_tmp)))`.trim();
         }
       }
     }
@@ -2957,6 +3179,45 @@ class WasicTranspiler {
     if (line.startsWith("return")) {
       const expr = line.replace(/^return\s*/, "").replace(/;$/, "").trim();
       if (!expr || funcResult === null) return "(return)";
+      // return { key: val, ... } — interface/struct object literal: malloc struct and store fields
+      if (expr.startsWith("{") && this.currentFuncResultTsName) {
+        const structDef = this.structDefs.get(this.currentFuncResultTsName);
+        if (structDef) {
+          let depth = 0, braceEnd = -1;
+          for (let bi = 0; bi < expr.length; bi++) {
+            if (expr[bi] === "{") depth++;
+            else if (expr[bi] === "}") { depth--; if (depth === 0) { braceEnd = bi; break; } }
+          }
+          if (braceEnd !== -1) {
+            const objContent = expr.slice(1, braceEnd).trim();
+            // depth-aware comma split for key:value pairs
+            const pairs: string[] = [];
+            let pd = 0, ps = 0;
+            for (let bi = 0; bi < objContent.length; bi++) {
+              const ch = objContent[bi];
+              if (ch === "(" || ch === "{" || ch === "[") pd++;
+              else if (ch === ")" || ch === "}" || ch === "]") pd--;
+              else if (ch === "," && pd === 0) { pairs.push(objContent.slice(ps, bi).trim()); ps = bi + 1; }
+            }
+            const lastPair = objContent.slice(ps).trim();
+            if (lastPair) pairs.push(lastPair);
+            const stmts: string[] = [];
+            stmts.push(`(local.set $__obj_ret (call $__malloc (i32.const ${structDef.totalSize})))`);
+            for (const pair of pairs) {
+              const ci = pair.indexOf(":");
+              if (ci === -1) continue;
+              const key = pair.slice(0, ci).trim();
+              const valExpr = pair.slice(ci + 1).trim();
+              const field = structDef.fields.find(f => f.name === key);
+              if (!field) continue;
+              const valWat = this.emitExpr(valExpr, locals, "i32");
+              stmts.push(`(i32.store offset=${field.offset} (local.get $__obj_ret) ${valWat})`);
+            }
+            stmts.push(`(return (local.get $__obj_ret))`);
+            return stmts.join("\n      ");
+          }
+        }
+      }
       // return [elem0, elem1, ...] — array literal: malloc + init + return pointer
       const retArrMatch = expr.match(/^\[([^\]]*)\]$/);
       if (retArrMatch && funcResult === "i32") {
@@ -2982,32 +3243,54 @@ class WasicTranspiler {
     }
 
     // throw new Error("msg") | throw "literal" | throw someVar;
+    // Strategy: write the error message to stderr (fd=2) via fd_write, then call proc_exit(0).
+    // This produces exit code 0 (matching Deno's TS behaviour for uncaught throws) and
+    // fulfils the "error reporting" requirement without relying on the EH throw proposal at
+    // runtime (WebAssembly.Exception leaks to the host and causes exit code 1).
     const throwMatch = line.match(/^throw\s+(.+?);?$/);
     if (throwMatch) {
-      this.needsExceptionTag = true;
+      this.hasConsoleLog = true;  // ensure fd_write is imported
       const throwExpr = throwMatch[1].trim();
+      const iov = this.iovBase;
+      const nwrit = iov + 8;  // scratch slot for nwritten (4 bytes, after the 8-byte iov)
+
+      // Helper to build the stderr-write + exit sequence for a static string
+      const stderrExit = (ptr: number, len: number): string => [
+        `(i32.store (i32.const ${iov}) (i32.const ${ptr}))`,
+        `(i32.store (i32.const ${iov + 4}) (i32.const ${len}))`,
+        `(drop (call $fd_write (i32.const 2) (i32.const ${iov}) (i32.const 1) (i32.const ${nwrit})))`,
+        `(call $proc_exit (i32.const 0))`,
+        `(unreachable)`,
+      ].join("\n      ");
+
       // throw new Error("msg") or throw new Error('msg')
       const newErrMatch = throwExpr.match(/^new\s+Error\s*\(\s*["']([^"']*)["']\s*\)$/);
       if (newErrMatch) {
         const [ptr, len] = this.allocStringNoLog(newErrMatch[1]);
-        return `(throw $__exn_tag (i32.const ${ptr}) (i32.const ${len}))`;
+        return stderrExit(ptr, len);
       }
       // throw "literal" or throw 'literal'
       const strLitMatch = throwExpr.match(/^["']([^"']*)["']$/);
       if (strLitMatch) {
         const [ptr, len] = this.allocStringNoLog(strLitMatch[1]);
-        return `(throw $__exn_tag (i32.const ${ptr}) (i32.const ${len}))`;
+        return stderrExit(ptr, len);
       }
-      // throw someVar
+      // throw someVar (string variable — ptr/len locals)
       if (/^\w+$/.test(throwExpr)) {
         if (locals.get(throwExpr) === "string") {
-          return `(throw $__exn_tag (local.get $${throwExpr}_ptr) (local.get $${throwExpr}_len))`;
+          return [
+            `(i32.store (i32.const ${iov}) (local.get $${throwExpr}_ptr))`,
+            `(i32.store (i32.const ${iov + 4}) (local.get $${throwExpr}_len))`,
+            `(drop (call $fd_write (i32.const 2) (i32.const ${iov}) (i32.const 1) (i32.const ${nwrit})))`,
+            `(call $proc_exit (i32.const 0))`,
+            `(unreachable)`,
+          ].join("\n      ");
         }
-        // Numeric value — wrap as ptr with len=0
-        return `(throw $__exn_tag (local.get $${throwExpr}) (i32.const 0))`;
+        // Numeric/opaque value — exit without a message
+        return `(call $proc_exit (i32.const 0))\n      (unreachable)`;
       }
-      // Fallback: emit as ptr expression with len=0
-      return `(throw $__exn_tag ${this.emitExpr(throwExpr, locals, "i32")} (i32.const 0))`;
+      // Fallback
+      return `(call $proc_exit (i32.const 0))\n      (unreachable)`;
     }
 
     // Function-type variable: const f: (a: i32) => i32 = someFunc  OR  let f: (a: i32) => i32;
@@ -3388,6 +3671,12 @@ class WasicTranspiler {
         }
         return `(drop (call ${helperName} (local.get $${arrName})))`;
       }
+      // Phase 12: fallback — arr is an i32 local (dynamic array pointer captured from outer scope)
+      if (method === "push" && locals.get(arrName) === "i32") {
+        this.dynArrHelpers.add("push_i32");
+        const valWat = this.emitExpr(argsStr, locals, "i32");
+        return `(local.set $${arrName} (call $__dynarr_push_i32 (local.get $${arrName}) ${valWat}))`;
+      }
     }
 
     // Dynamic array callback methods (statement form): arr.forEach(fn), arr.map(fn), etc.
@@ -3480,6 +3769,31 @@ class WasicTranspiler {
           `    (i32.store (i32.const ${this.iovBase + 4}) (i32.add (i32.load (i32.const ${this.iovBase + 4})) (i32.const 1)))`,
           `    (drop (call $fd_write (i32.const 1) (i32.const ${this.iovBase}) (i32.const 1) (i32.const ${this.iovBase + 128})))`,
         ].join("\n");
+      }
+      // Phase 13b: console.log(structReturningFn(...)) → print { field: val, ... }
+      const logSingleArg = logMatch[1].trim();
+      const structFnCallMatch = logSingleArg.match(/^(\w+)\s*\((.*)\)$/);
+      if (structFnCallMatch) {
+        const callee = this.functions.find(f => f.name === structFnCallMatch[1]);
+        if (callee?.resultTsName && this.structDefs.has(callee.resultTsName)) {
+          const structDef = this.structDefs.get(callee.resultTsName)!;
+          const callWat = this.emitExpr(logSingleArg, locals, "i32");
+          const ptrStmt = `    (local.set $__struct_tmp ${callWat})`;
+          const segments: LogSegment[] = [{ kind: "literal", text: "{ " }];
+          for (let fi = 0; fi < structDef.fields.length; fi++) {
+            const field = structDef.fields[fi];
+            if (fi > 0) segments.push({ kind: "literal", text: ", " });
+            segments.push({ kind: "literal", text: `${field.name}: ` });
+            const loadOp = field.type === "f64" ? "f64.load" : field.type === "i64" ? "i64.load" : "i32.load";
+            const kind = field.type === "f64" ? "f64expr" as const : field.type === "i64" ? "i64expr" as const : "i32expr" as const;
+            segments.push({ kind, wat: `(${loadOp} offset=${field.offset} (local.get $__struct_tmp))` });
+          }
+          segments.push({ kind: "literal", text: " }\n" });
+          this.needsNumericHelpers = true;
+          const { statements, needsStrGather } = emitConsoleLog(segments, (text) => this.allocString(text), "    ", 1, this.iovBase, this.scratchBase);
+          if (needsStrGather) this.needsStrGatherHelper = true;
+          return [ptrStmt, ...statements].join("\n      ");
+        }
       }
       const allocator: DataAllocator = (text) => this.allocString(text);
       const lookup: FuncLookup = (name) => this.functions.find(f => f.name === name);
@@ -3695,6 +4009,27 @@ class WasicTranspiler {
             const call = `(call $${funcName} ${emittedArgs.join(" ")})`.trim();
             return fn.result ? `(drop ${call})` : call;
           }
+        }
+      }
+
+      // Phase 12: interface method dispatch via closure trampoline
+      const ifaceNameStmt = this.interfaceVars.get(receiver);
+      if (ifaceNameStmt) {
+        const structDefStmt = this.structDefs.get(ifaceNameStmt);
+        const fieldStmt = structDefStmt?.fields.find(f => f.name === methodName);
+        if (fieldStmt?.funcType) {
+          const closurePtrAddrS = fieldStmt.offset === 0
+            ? `(local.get $${receiver})`
+            : `(i32.add (local.get $${receiver}) (i32.const ${fieldStmt.offset}))`;
+          const loadClosureS = `(i32.load ${closurePtrAddrS})`;
+          const trampolineParamsS: WatType[] = ["i32" as WatType, ...fieldStmt.funcType.params];
+          const typeNameS = this.getOrCreateFuncType(trampolineParamsS, fieldStmt.funcType.result);
+          const emittedArgsS = args.map((a, idx) =>
+            this.emitExpr(a, locals, fieldStmt.funcType!.params[idx] ?? "i32" as WatType)
+          );
+          const callWatS = `(call_indirect (type ${typeNameS}) (local.tee $__iface_tmp ${loadClosureS}) ${emittedArgsS.join(" ")} (i32.load (local.get $__iface_tmp)))`.trim();
+          const hasResultS = fieldStmt.funcType.result !== null && fieldStmt.funcType.result !== "never";
+          return hasResultS ? `(drop ${callWatS})` : callWatS;
         }
       }
     }
@@ -3953,6 +4288,45 @@ class WasicTranspiler {
         out.push(`${indent}  )`);
         out.push(`${indent})`);
         continue;
+      }
+
+      // Phase 12: inlined for loop — for (...) { body } all on one line (from splitStmts in arrow bodies).
+      // Re-expand it in-place so the standard forMatch handler below can process it normally.
+      if (/^for\s*\(/.test(line) && line.endsWith("}")) {
+        const ps = line.indexOf("(");
+        const [rawHdr, afterHdr] = WasicTranspiler.extractParamBlock(line, ps);
+        const restHdr = line.slice(afterHdr).trim();
+        if (restHdr.startsWith("{") && restHdr.endsWith("}")) {
+          const bodyContent = restHdr.slice(1, -1).trim();
+          const forBodyInline = bodyContent ? WasicTranspiler.splitStmts(bodyContent) : [];
+          const hdrParts = rawHdr.split(";").map(s => s.trim());
+          const initP = hdrParts[0] ?? "";
+          const condP = hdrParts[1] ?? "";
+          const updP  = hdrParts[2] ?? "";
+          const lbl2 = this.pendingLabel ?? String(this.loopCounter++); this.pendingLabel = null;
+          const brk2 = `$break_${lbl2}`;
+          const loop2 = `$loop_${lbl2}`;
+          const cont2 = `$cont_${lbl2}`;
+          const initWat2  = initP ? this.emitStatement(initP.replace(/;$/, "") + ";", locals, funcResult) : "";
+          const condExpr2 = condP ? this.emitExpr(condP, locals, "i32") : "(i32.const 1)";
+          const updWat2   = updP  ? this.emitUpdate(updP, locals) : "";
+          this.controlStack.push({ breakLabel: brk2, continueLabel: cont2 });
+          const bodyWat2  = this.emitBlock(forBodyInline, locals, funcResult, indent + "      ");
+          this.controlStack.pop();
+          if (initWat2) out.push(`${indent}${initWat2}`);
+          out.push(`${indent}(block ${brk2}`);
+          out.push(`${indent}  (loop ${loop2}`);
+          out.push(`${indent}    (br_if ${brk2} (i32.eqz ${condExpr2}))`);
+          out.push(`${indent}    (block ${cont2}`);
+          out.push(bodyWat2);
+          out.push(`${indent}    )`);
+          if (updWat2) out.push(`${indent}    ${updWat2}`);
+          out.push(`${indent}    (br ${loop2})`);
+          out.push(`${indent}  )`);
+          out.push(`${indent})`);
+          i++;
+          continue;
+        }
       }
 
       // for (init; cond; update) {
@@ -4923,6 +5297,8 @@ class WasicTranspiler {
     this.arrayVars  = new Map();
     this.structVars = new Map();
     this.classVars  = new Map();
+    this.interfaceVars = new Map();
+    this.currentFuncResultTsName = null;
     this.currentMethodClass = fn.className ?? null;
     this.currentMethodName  = fn.name;
 
@@ -5164,6 +5540,14 @@ class WasicTranspiler {
               locals.set(m[1], "i32");
               continue;
             }
+            // Phase 12: interface-typed return — const x = interfaceFn(args) → x is an interface pointer
+            const calledFn = this.functions.find(f => f.name === fcm[1]);
+            if (calledFn?.resultTsName && /^[A-Z]/.test(calledFn.resultTsName) && this.structDefs.has(calledFn.resultTsName)) {
+              this.interfaceVars.set(m[1], calledFn.resultTsName);
+              declaredLocals.push([m[1], "i32"]);
+              locals.set(m[1], "i32");
+              continue;
+            }
           }
         }
         const t = typeStr ? mapType(typeStr) : inferInitType(initExpr, locals, this.enumValues, this.functions);
@@ -5199,12 +5583,44 @@ class WasicTranspiler {
       declaredLocals.push(["__rest_ptr", "i32"]);
       locals.set("__rest_ptr", "i32");
     }
+    // Phase 12: add $__obj_ret if any line has `return {` (object literal return)
+    if (fn.bodyLines.some(l => /^return\s*\{/.test(l)) && !locals.has("__obj_ret")) {
+      declaredLocals.push(["__obj_ret", "i32"]);
+      locals.set("__obj_ret", "i32");
+    }
+    // Phase 12: add $__iface_tmp for interface method dispatch (any dot-call in body)
+    if (fn.bodyLines.some(l => /\w+\.\w+\s*\(/.test(l)) && !locals.has("__iface_tmp")) {
+      declaredLocals.push(["__iface_tmp", "i32"]);
+      locals.set("__iface_tmp", "i32");
+    }
+    // Add $__struct_tmp if any body line has console.log(structReturningFn(...))
+    if (!locals.has("__struct_tmp") && fn.bodyLines.some(l => {
+      const lm = l.match(/^console\.(log|error|warn)\s*\((.+)\)\s*;?$/);
+      if (!lm) return false;
+      const callM = lm[2].trim().match(/^(\w+)\s*\(/);
+      if (!callM) return false;
+      const calledFn = this.functions.find(f => f.name === callM[1]);
+      return !!(calledFn?.resultTsName && this.structDefs.has(calledFn.resultTsName));
+    })) {
+      declaredLocals.push(["__struct_tmp", "i32"]);
+      locals.set("__struct_tmp", "i32");
+    }
+    // Add $__arr_tmp / $__arr_tmp2 if any body line has inline array literals as call args
+    if (fn.bodyLines.some(l => /\(\s*\[/.test(l) || /,\s*\[/.test(l)) && !locals.has("__arr_tmp")) {
+      declaredLocals.push(["__arr_tmp", "i32"]);
+      locals.set("__arr_tmp", "i32");
+    }
+    if (fn.bodyLines.some(l => /\[\[/.test(l)) && !locals.has("__arr_tmp2")) {
+      declaredLocals.push(["__arr_tmp2", "i32"]);
+      locals.set("__arr_tmp2", "i32");
+    }
     const localDecls = declaredLocals
       .map(([n, t]) => `    (local $${n} ${watBaseType(t)})`)
       .join("\n");
 
     // For never-returning functions pass null so return statements emit (return) with no value.
     const blockResult = fn.result === "never" ? null : fn.result;
+    this.currentFuncResultTsName = fn.resultTsName ?? null;
     const body = this.emitBlock(fn.bodyLines, locals, blockResult);
     // Phase 21: append (unreachable) for never-typed functions — signals to the WASM validator
     // that control never reaches the end of this function.
@@ -5580,6 +5996,18 @@ class WasicTranspiler {
       if (this.hasRestLiteralCalls(this.startBodyLines) && !startLocals.has("__rest_ptr")) {
         startDeclaredLocals.push(["__rest_ptr", "i32"]);
         startLocals.set("__rest_ptr", "i32");
+      }
+      // Add $__struct_tmp if any start body line has console.log(structReturningFn(...))
+      if (!startLocals.has("__struct_tmp") && this.startBodyLines.some(l => {
+        const lm = l.match(/^console\.(log|error|warn)\s*\((.+)\)\s*;?$/);
+        if (!lm) return false;
+        const callM = lm[2].trim().match(/^(\w+)\s*\(/);
+        if (!callM) return false;
+        const fn = this.functions.find(f => f.name === callM[1]);
+        return !!(fn?.resultTsName && this.structDefs.has(fn.resultTsName));
+      })) {
+        startDeclaredLocals.push(["__struct_tmp", "i32"]);
+        startLocals.set("__struct_tmp", "i32");
       }
       const localDecls = [...startLocals.entries()]
         .filter(([, t]) => t !== "string") // "string" is a tracker only

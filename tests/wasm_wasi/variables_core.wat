@@ -216,6 +216,7 @@
   (func $main  
     (local $x f64)
     (local $y f64)
+    (local $__iface_tmp i32)
     (local.set $x (f64.const 5))
     (local.set $y (f64.add (local.get $x) (f64.const 10)))
         (i32.store (i32.const 0) (i32.const 132))

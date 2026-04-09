@@ -164,6 +164,9 @@ wasmtk run myprogram.wasm
 | Struct parameters | Passed as i32 pointer |
 | Object destructuring | `const { x, y } = vec` → i32.load / f64.load at field offsets |
 | Renamed destructuring | `const { x: vx, y: vy } = vec` |
+| Interface return types | `function createManager(): Manager` returns an i32 pointer to a heap-allocated struct of closure ptrs |
+| Interface method dispatch | `manager.addRow([6])` dispatches via `call_indirect` using the trampoline closure pattern — uniform dispatch whether or not the method captures outer variables |
+| `return { key: fn }` | Object-literal return emits interface struct; capturing arrows use a factory; non-capturing arrows are wrapped in a 4-byte `{table_idx}` mini-closure for uniform dispatch |
 
 ##### Generics
 
@@ -185,9 +188,9 @@ wasmtk run myprogram.wasm
 
 | Feature | Notes |
 | --- | --- |
-| `throw new Error("msg")` | Allocates message string in data section; emits `(throw $__exn_tag ptr len)` |
-| `throw "literal"` | Same — string literal as throw payload |
-| `throw someStringVar` | Passes existing string variable's `(ptr, len)` as payload |
+| `throw new Error("msg")` | Writes the message to **stderr** (fd=2) via `fd_write` then calls `proc_exit(0)` + `unreachable` — produces a clean exit code matching Deno's behaviour for uncaught errors |
+| `throw "literal"` | Same stderr-write + `proc_exit(0)` path |
+| `throw someStringVar` | Writes the string variable's content to stderr, then `proc_exit(0)` |
 | `try { } catch (e) { }` | WAT `(try (do ...) (catch $__exn_tag ...))` — catches all `$__exn_tag` exceptions |
 | `try { } finally { }` | `finally` body inlined in the `do` block (success path) and in a `catch_all` + `rethrow` (exception path) |
 | `try { } catch (e) { } finally { }` | Combined form — `finally` runs on success, catch success, and unhandled exception paths |
@@ -444,11 +447,14 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | Core | Console output | `console.log/error/warn` — mixed-type args, numbers, strings, BigInt, templates |
 | 5b | Default parameters | `function f(x: i32 = 0)` |
 | 5c | Optional parameters | `function f(x?: i32)` |
-| 5e | First-class functions | funcref table, `call_indirect`, named arrow variables, callbacks, closure capture, IIFE entry pattern, nested closures, void arrows, mixed-signature branches |
+| 5e | First-class functions | funcref table, `call_indirect`, named arrow variables, callbacks, closure capture, IIFE entry pattern, nested closures, void arrows, mixed-signature branches; bug fix: type annotation declarations (`let f: (a) => b`) correctly skipped by arrow-substitution pass |
 | 5f | Heap-allocated closures | Closure factories — functions that `return (params) => expr` produce a heap struct `{table_idx, captures...}`; `factoryFn(a)(b)` dispatches via a generated trampoline (`$fn__trampoline`); supported in `console.log` args and all expression/statement contexts |
+| 5g | Closures as first-class values | Named function-type aliases; inline capturing arrows heap-allocated as `__anon_N__factory`; closure pointer dispatch via `closureTypedVars` + trampoline; bug fix: outer-scope regex extended to match array types (`i32[][]`) so 2D-array captures are detected correctly |
 | 6a | Numeric arrays | `i32[]`, `f64[]` — static allocation, element read/write, `.length`, array params |
 | 6b | Structs / objects | `interface` and `type` as fixed-layout structs, field read/write, struct params |
 | 6c | Object destructuring | `const { x, y } = vec` → `i32.load` / `f64.load` at field offsets; renamed destructuring |
+| 6d | Multi-dimensional arrays | `i32[][]` — nested dynamic arrays; `const m: i32[][] = [[1,2],[3,4]]` allocates outer + inner row arrays; `m[i].push(val)` updates slot after possible row growth; `console.log(m)` prints Deno-format `[ [ 1, 2 ], ... ]` |
+| 12b | Interface dispatch | `interface` types used as return values + method call sites: `createManager()` returns a struct of closure ptrs; `manager.addRow([6])` dispatches via `call_indirect` trampoline pattern; `stats.length` on i32 dynamic-array locals in `console.log`; `return { key: fn }` object literal emits interface struct with factory closure ptrs; trivial closures (no captures) auto-wrapped in a 4-byte `{table_idx}` mini-closure so dispatch is uniform |
 | 7a | Math intrinsics | `Math.sqrt/abs/pow/floor/ceil/round/min/max/sign/trunc` → native WASM ops |
 | 7b | Stderr output | `console.error` / `console.warn` → WASI fd=2 |
 | 8 | Import bundler (`tsbundler.ts`) | Relative import resolution, module-prefix name mangling, alias (`as`) rewriting, chained imports, deduplication |
@@ -459,8 +465,9 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | 11 | String operations | `str + str` concat (chained, heap-allocated); `str.slice(start, end)` (sub-range, no alloc); `str.indexOf(sub)` → i32; `str.includes(sub)` → bool; `String(n)` / `n.toString()` (number-to-string via heap); gather-buffer mode in `console.log` extended to handle string and bool variables |
 | 12 | Array methods | `arr.indexOf(val)` → i32; `arr.includes(val)` → bool; `arr.slice(start, end)` → new array; `arr.forEach(fn)`; `arr.map(fn)` → new array; `arr.filter(fn)` → new array; `arr.find(fn)` → element; `arr.reduce(fn, init)` → value; dynamic arrays only; `const r: T[] = arr.map(fn)` pattern supported; `findDynamicArrays` extended to auto-detect arrays used with Phase 12 methods |
 | 13 | Rest parameters / spread | `function f(...args: i32[])` — rest param receives heap array pointer; literal call sites build temp array via `$__malloc`; `f(...arr)` passes existing dynamic array pointer directly; `[...a, ...b]` concat via `$__dynarr_concat_T`; spread-source arrays auto-promoted to dynamic layout by `findDynamicArrays` |
+| 13b | `console.log` of struct-returning calls | `console.log(tryDivide(10, 2))` where `tryDivide` returns an interface type prints `{ value: 5, hasError: 0 }` — struct pointer stored to `$__struct_tmp`, fields loaded by offset and formatted as `{ fieldName: value, ... }`; `$__struct_tmp` local injected by pre-scan of `_start` and `emitFunction` body lines; `LogSegment` array built directly in `emitStatement` and passed to `emitConsoleLog` |
 | 14 | Generics (monomorphization) | `function f<T>(x: T): T` — one concrete copy per distinct type; `interface Box<T> { value: T; }` → `Box_i32`, `Box_f64`, etc.; explicit type args (`f<i32>(x)`) and single-T literal inference (`f(42)` → `f_i32`); generic struct refs in function signatures rewritten automatically; source-level `expandGenerics()` pre-pass runs before all other parsing |
-| 15 | Exception handling | `throw new Error("msg")` / `throw str` → `(throw $__exn_tag ptr len)`; `try/catch(e)/finally` via WAT exceptions proposal; `(tag $__exn_tag (param i32 i32))` payload carries `(ptr, len)` string pair; `e` / `e.message` in catch bound as string locals; `exceptions: true` in wabt options; `binMod.setFeatures(Features.All)` before Binaryen `-Oz` to preserve exception sections |
+| 15 | Exception handling | `throw new Error("msg")` / `throw str` → writes message to **stderr** (fd=2) via `fd_write` then calls `proc_exit(0)` — clean exit code matches Deno's behaviour for uncaught errors; `try/catch(e)/finally` via WAT exceptions proposal; `(tag $__exn_tag (param i32 i32))` payload carries `(ptr, len)` string pair; `e` / `e.message` in catch bound as string locals; `exceptions: true` in wabt options; `binMod.setFeatures(Features.All)` before Binaryen `-Oz` to preserve exception sections |
 | 16 | Module system extras | Default imports (`import foo from "./lib.ts"`); namespace imports (`import * as ns from "./lib.ts"`) with `ns.name` → `lib_name` rewriting; named re-exports (`export { foo } from "./lib.ts"`); wildcard re-exports (`export * from "./lib.ts"`); `export default function`; `exportRenamesCache` to resolve re-export chains across already-visited files; `applyRenames` updated to escape regex metacharacters (enabling dotted-key `ns.foo` rewrites) |
 | 17 | wasic library mode | `WasicTranspiler` gains `mode: "wasi" \| "library"` constructor param; library mode skips `_start`, `proc_exit` import, and top-level statement processing; `compileLibTs()` public function mirrors `compileWasiTs()`; `modc.ts` backend replaced — AssemblyScript toolchain (`asc`), temp-file creation, and binary post-processor (`removeEnvAbortImport`) all removed; `compileModule` calls `compileLibTs` directly; supports full wasic TypeScript subset (no type restrictions) |
 | 18 | WASM import bundling | `tsbundler.ts` detects `.wasm` specifiers in ESM imports and `wasmImport()` loader calls; new `wasmmerge.ts` module performs WAT-level merge with module-prefix name mangling; `_start`, `proc_exit`, `args_get/sizes_get`, `environ_get/sizes_get` stripped with notice; WASI imports deduplicated; data segments relocated by `mainModule.dataOffset`; static-data pointer `i32.const` values conservatively relocated; `WasicTranspiler` gains `externalFuncs` constructor param so call sites type-check before WAT merge; `iovBase`/`scratchBase` promoted to instance variables for collision-free merge of `fd_write` scratch areas; `bundleImportsEx()` returns `{ source, wasmImports }` alongside backward-compat `bundleImports()` |

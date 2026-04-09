@@ -377,6 +377,7 @@
     (local $box1 i32)
     (local $box2 i32)
     (local $bv i32)
+    (local $__iface_tmp i32)
     (local.set $a1 (call $identity_i32 (i32.const 42)))
         (i32.store (i32.const 0) (i32.const 132))
           (i32.store (i32.const 4) (call $__i32_to_str (local.get $a1) (i32.const 132)))

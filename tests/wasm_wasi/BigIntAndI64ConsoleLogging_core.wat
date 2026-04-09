@@ -219,6 +219,7 @@
     (local $zero i64)
     (local $a i64)
     (local $b i64)
+    (local $__iface_tmp i32)
     (local.set $positive (i64.const 9223372036854775807))
     (local.set $negative (i64.const -9223372036854775808))
     (local.set $zero (i64.const 0))

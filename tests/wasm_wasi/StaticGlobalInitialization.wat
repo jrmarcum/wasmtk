@@ -216,6 +216,7 @@
     (i32.sub (local.get $end) (local.get $orig))
   )
   (func $_start (export "_start")  
+    (local $__iface_tmp i32)
     (global.set $counter (i32.add (global.get $counter) (i32.const 1)))
         (i32.store (i32.const 0) (i32.const 132))
           (i32.store (i32.const 4) (call $__f64_to_str (global.get $PI) (i32.const 132)))

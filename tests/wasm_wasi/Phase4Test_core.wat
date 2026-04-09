@@ -221,6 +221,7 @@
     (local $val i32)
     (local $evens i32)
     (local $j i32)
+    (local $__iface_tmp i32)
     (local.set $sum (i32.const 0))
     (local.set $i (i32.const 0))
     (block $break_0

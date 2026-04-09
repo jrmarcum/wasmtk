@@ -216,6 +216,7 @@
   (func $testEnums (export "testEnums")  
     (local $currentStatus i32)
     (local $myColor i32)
+    (local $__iface_tmp i32)
     (local.set $currentStatus (i32.const 6))
     (if (i32.eq (local.get $currentStatus) (i32.const 6))
       (then

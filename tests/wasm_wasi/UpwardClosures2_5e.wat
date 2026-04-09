@@ -235,6 +235,7 @@
   (func $_start (export "_start")  
     (local $addFive i32)
     (local $result i32)
+    (local $__iface_tmp i32)
     (local.set $addFive (call $createAdder (i32.const 5)))
     (local.set $result (call_indirect (type $ftype_i32_i32_r_i32) (local.get $addFive) (i32.const 10) (i32.load (local.get $addFive))))
         (i32.store (i32.const 0) (i32.const 132))

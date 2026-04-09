@@ -360,13 +360,17 @@ function parseSingleArg(
 
   // ── Array .length: dynamic → runtime i32 load from header; static → compile-time constant
   const dotLenMatch = token.match(/^(\w+)\.length$/);
-  if (dotLenMatch && arrayLookup) {
-    const arrInfo = arrayLookup(dotLenMatch[1]);
+  if (dotLenMatch) {
+    const arrInfo = arrayLookup?.(dotLenMatch[1]);
     if (arrInfo) {
       const wat = arrInfo.dynamic
         ? `(i32.load (local.get $${dotLenMatch[1]}))`
         : `(i32.const ${arrInfo.length})`;
       return [{ kind: "i32expr", wat }];
+    }
+    // Phase 12: i32 local holding a dynamic array pointer — load length from header
+    if (locals.get(dotLenMatch[1]) === "i32") {
+      return [{ kind: "i32expr", wat: `(i32.load (local.get $${dotLenMatch[1]}))` }];
     }
   }
 
@@ -491,9 +495,11 @@ function exprToWat(
 
   // Array .length: dynamic → runtime i32 load from header; static → compile-time constant
   const dotLenM = expr.match(/^(\w+)\.length$/);
-  if (dotLenM && arrayLookup) {
-    const ai = arrayLookup(dotLenM[1]);
+  if (dotLenM) {
+    const ai = arrayLookup?.(dotLenM[1]);
     if (ai) return ai.dynamic ? `(i32.load (local.get $${dotLenM[1]}))` : `(i32.const ${ai.length})`;
+    // Phase 12: i32 local holding a dynamic array pointer
+    if (locals.get(dotLenM[1]) === "i32") return `(i32.load (local.get $${dotLenM[1]}))`;
   }
 
   // Array element read: arr[idx]

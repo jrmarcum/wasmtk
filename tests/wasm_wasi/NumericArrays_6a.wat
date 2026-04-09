@@ -234,6 +234,7 @@
   (func $_start (export "_start")  
     (local $nums i32)
     (local $vals i32)
+    (local $__iface_tmp i32)
     (local.set $nums (i32.const 260))
         (i32.store (i32.const 0) (i32.const 132))
           (i32.store (i32.const 4) (call $__i32_to_str (i32.const 5) (i32.const 132)))

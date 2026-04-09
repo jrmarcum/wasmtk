@@ -252,6 +252,7 @@
     (local $doubled i32)
     (local $p i32)
     (local $distSq f64)
+    (local $__iface_tmp i32)
     (local.set $c (i32.const 260))
       (call $Counter_constructor (i32.const 260) (i32.const 10))
     (call $Counter_increment (i32.const 260) )
