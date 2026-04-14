@@ -3,7 +3,7 @@
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
   (memory (export "memory") 2)
   (global $__heap_ptr (mut i32) (i32.const 290))
-  (tag $__exn_tag (param i32 i32))
+  (tag $__exn_tag (export "__exn_tag") (param i32 i32))
   (type $ftype_i32_i32_i32_r_void (func (param i32) (param i32) (param i32)))
   (type $ftype_i32_i32_r_i32 (func (param i32) (param i32) (result i32)))
   ;; Bump allocator — advances __heap_ptr and returns the old value

@@ -6704,7 +6704,7 @@ class WasicTranspiler {
       `  (memory (export "memory") ${memoryPages})`,
       `  (global $__heap_ptr (mut i32) (i32.const ${heapStart}))`,
       ...moduleGlobalDecls,
-      this.needsExceptionTag ? `  (tag $__exn_tag (param i32 i32))` : "",
+      this.needsExceptionTag ? `  (tag $__exn_tag (export "__exn_tag") (param i32 i32))` : "",
       funcTypesWat,
       ``,
       helpers,

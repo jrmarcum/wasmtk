@@ -197,7 +197,7 @@ wasmtk run myprogram.wasm
 
 | Feature | Notes |
 | --- | --- |
-| `throw new Error("msg")` | Emits `(throw $__exn_tag ptr len)` — message stored in linear memory; catchable by any enclosing `try/catch`; uncaught exceptions propagate to the host |
+| `throw new Error("msg")` | Emits `(throw $__exn_tag ptr len)` — message stored in linear memory; catchable by any enclosing `try/catch`; uncaught exceptions print `error: Uncaught (in Wasm) Error: <msg>` to stderr and exit `wasmtk run` cleanly (mirrors TypeScript behavior) |
 | `throw "literal"` | Same `(throw $__exn_tag ptr len)` path — string literal stored in data segment |
 | `throw someStringVar` | `(throw $__exn_tag (local.get $v_ptr) (local.get $v_len))` — passes the string variable's ptr/len pair as the exception payload |
 | `try { } catch (e) { }` | WAT `(try (do ...) (catch $__exn_tag ...))` — catches all `$__exn_tag` exceptions |

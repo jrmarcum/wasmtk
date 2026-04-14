@@ -232,6 +232,21 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
         (init as WasmCallable)();
       } catch (err) {
         if (err instanceof WebAssembly.RuntimeError && err.message.includes("exit:0")) return;
+        if (err instanceof WebAssembly.Exception) {
+          // Unhandled WASM throw — print message to stderr (mirrors TypeScript uncaught error), then exit cleanly.
+          try {
+            const tag = wasiInstance?.exports.__exn_tag as WebAssembly.Tag | undefined;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (tag && (err as any).is(tag)) {
+              const ptr = (err as any).getArg(tag, 0) as number;
+              const len = (err as any).getArg(tag, 1) as number;
+              const memory = wasiInstance?.exports.memory as WebAssembly.Memory;
+              const msg = new TextDecoder().decode(new Uint8Array(memory.buffer, ptr, len));
+              Deno.stderr.writeSync(new TextEncoder().encode(`error: Uncaught (in Wasm) Error: ${msg}\n`));
+            }
+          } catch { /* ignore tag extraction errors */ }
+          return;
+        }
         throw err;
       }
     }
