@@ -291,6 +291,7 @@ export function _start() { ... }
 | --- | --- |
 | Class inheritance (`extends`) | Deferred — virtual dispatch via vtable requires heap |
 | Multi-dimensional arrays beyond `i32[][]` | Phase 6d covers `i32[][]`; `f64[][]` and deeper nesting not yet implemented |
+| External interface mapping | Calls to an undefined external object (e.g. `logger.log(ptr)`) produce `ReferenceError: logger is not defined` at runtime — no WIT / custom-section binding yet; see `tests/wasm_wasi/ExternalMapping_11b.ts` for the reference error output |
 
 > **Why the limitations?** `wasic` compiles directly to raw WAT with no runtime. Dynamic allocation, garbage collection, and prototype semantics cannot be expressed without an embedded runtime library. Use `wasmtk javyc` for programs that need them today.
 
@@ -722,6 +723,7 @@ Phases 24–39 extend `wasic` incrementally. Early phases add compile-time conve
 | 37 | `flat()` / `flatMap(fn)` | Flatten nested arrays; requires Phase 30 struct arrays and Phase 31 TypedArray infrastructure |
 | 38 | Extended math via external library | `Math.sin/cos/tan/asin/acos/atan/atan2`, `Math.log/log2/log10/exp/expm1/log1p`, `Math.hypot/cbrt/sinh/cosh/tanh`, `Math.random()` (WASI `random_get`) — imported as a pre-compiled `mathlib.wasm` via the Phase 18 bundler |
 | 39 | `jstyper` — JavaScript import pre-processor | Generates `.d.ts` from `.js` via `npm:typescript`; merges typed signatures with JS bodies to produce `.ts` for wasic; `.js` never modified; existing `.d.ts` / `@types/` used directly; sequenced last so all supported types are available as annotations |
+| 40 | External interface mapping (WIT / custom section) | `modc` / `wasic` accept a `.wit` file or WASM custom section declaring an external interface (e.g. `interface Logger { log(msgPtr: i32): void; }`); compiler verifies call sites match the declared signature; host provides the concrete implementation at link time — replaces the current `ReferenceError: logger is not defined` runtime failure with a compile-time binding check; see `tests/wasm_wasi/ExternalMapping_11b.ts` for the reference error this phase eliminates |
 
 ---
 
