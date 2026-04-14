@@ -127,6 +127,7 @@ import {
   parseConsoleLogArgs,
   emitConsoleLog,
   getHelperWat,
+  getArrPrintHelperWat,
   type DataAllocator,
   type FuncLookup,
   type LogSegment,
@@ -443,6 +444,7 @@ class WasicTranspiler {
   private needsStringHelpers = false;
   private needsStringOpHelpers = false;
   private needsStrGatherHelper = false;
+  private needsArrPrintHelper = false;
   private needsMatrix2DPrintHelper = false;   // Phase 6d
 
   // String data section: message → [offset, byteLength]
@@ -4213,8 +4215,9 @@ class WasicTranspiler {
           }
           segments.push({ kind: "literal", text: " }\n" });
           this.needsNumericHelpers = true;
-          const { statements, needsStrGather } = emitConsoleLog(segments, (text) => this.allocString(text), "    ", 1, this.iovBase, this.scratchBase);
+          const { statements, needsStrGather, needsArrPrintHelper } = emitConsoleLog(segments, (text) => this.allocString(text), "    ", 1, this.iovBase, this.scratchBase);
           if (needsStrGather) this.needsStrGatherHelper = true;
+          if (needsArrPrintHelper) this.needsArrPrintHelper = true;
           return [ptrStmt, ...statements].join("\n      ");
         }
       }
@@ -4228,8 +4231,9 @@ class WasicTranspiler {
             { kind: "i32expr" as const, wat: chainedWat },
             { kind: "literal" as const, text: "\n" },
           ];
-          const { statements: cs, needsStrGather: csg } = emitConsoleLog(chainedSegs, (text) => this.allocString(text), "    ", 1, this.iovBase, this.scratchBase);
+          const { statements: cs, needsStrGather: csg, needsArrPrintHelper: caph } = emitConsoleLog(chainedSegs, (text) => this.allocString(text), "    ", 1, this.iovBase, this.scratchBase);
           if (csg) this.needsStrGatherHelper = true;
+          if (caph) this.needsArrPrintHelper = true;
           return cs.join("\n      ");
         }
       }
@@ -4304,9 +4308,10 @@ class WasicTranspiler {
       };
       const globalsMap = new Map([...this.moduleGlobals.entries()].map(([k, v]) => [k, watBaseType(v.type)]));
       const segments = parseConsoleLogArgs(logMatch[1], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFn, globalsMap);
-      const { statements, needsHelpers, needsStrGather } = emitConsoleLog(segments, allocator, "    ", 1, this.iovBase, this.scratchBase);
+      const { statements, needsHelpers, needsStrGather, needsArrPrintHelper } = emitConsoleLog(segments, allocator, "    ", 1, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
       if (needsStrGather) this.needsStrGatherHelper = true;
+      if (needsArrPrintHelper) this.needsArrPrintHelper = true;
       return statements.join("\n      ");
     }
 
@@ -4378,9 +4383,10 @@ class WasicTranspiler {
       };
       const globalsMapErr = new Map([...this.moduleGlobals.entries()].map(([k, v]) => [k, watBaseType(v.type)]));
       const segments = parseConsoleLogArgs(errMatch[2], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFnErr, globalsMapErr);
-      const { statements, needsHelpers, needsStrGather } = emitConsoleLog(segments, allocator, "    ", 2, this.iovBase, this.scratchBase);
+      const { statements, needsHelpers, needsStrGather, needsArrPrintHelper: errAph } = emitConsoleLog(segments, allocator, "    ", 2, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
       if (needsStrGather) this.needsStrGatherHelper = true;
+      if (errAph) this.needsArrPrintHelper = true;
       return statements.join("\n      ");
     }
 
@@ -5121,6 +5127,7 @@ class WasicTranspiler {
     if (this.needsStringHelpers)   parts.push(this.getStringHelperWat());
     if (this.needsStringOpHelpers || this.needsStrGatherHelper) parts.push(this.getStringOpHelperWat());
     if (this.needsNumericHelpers)  parts.push(getHelperWat());
+    if (this.needsArrPrintHelper)  parts.push(getArrPrintHelperWat());
     if (this.mathHelpers.size > 0) parts.push(this.emitMathHelpers());
     if (this.dynArrHelpers.size > 0) parts.push(this.emitDynArrHelpers());
     if (this.needsMatrix2DPrintHelper) parts.push(this.emitMatrix2DPrintHelper());

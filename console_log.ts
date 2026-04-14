@@ -62,6 +62,8 @@ export type FuncLookup = (name: string) => {
   closureCaptures?: string[];
   /** Phase 5f: true if this function returns a heap-allocated closure (closure factory). */
   isClosureFactory?: boolean;
+  /** Original TypeScript return type annotation (e.g. "i32[]", "MatrixManager"). */
+  resultTsName?: string;
 } | undefined;
 
 /**
@@ -99,7 +101,8 @@ export type LogSegment =
   | { kind: "f64expr"; wat: string }                         // arbitrary WAT expression yielding f64
   | { kind: "strvar"; ptrLocal: string; lenLocal: string }   // string variable (ptr + len i32 locals)
   | { kind: "boolvar"; name: string }                        // bool-typed local (i32, 0=false 1=true)
-  | { kind: "boolexpr"; wat: string };                       // arbitrary WAT expression yielding bool i32
+  | { kind: "boolexpr"; wat: string }                        // arbitrary WAT expression yielding bool i32
+  | { kind: "arrptr"; wat: string; elemType: string };       // WAT expression yielding a dynamic array ptr
 
 // ---------------------------------------------------------------------------
 // Argument parser
@@ -331,7 +334,13 @@ function parseSingleArg(
       }
     }
     const wat = watArgsList.length > 0 ? `(call $${callee} ${watArgsList.join(" ")})` : `(call $${callee})`;
-    // Return type of the call: use the result type from signature if available, else i32expr
+    // Return type of the call: check resultTsName first (preserves array/interface annotation),
+    // then fall back to the normalized WatType.
+    const retTsName = sig?.resultTsName;
+    if (retTsName && /\[\]$/.test(retTsName)) {
+      const elemType = retTsName.replace(/\[\]$/, "");
+      return [{ kind: "arrptr" as const, wat, elemType }];
+    }
     const retType = (sig as { result?: string } | undefined)?.result;
     if (retType === "bool")                    return [{ kind: "boolexpr", wat }];
     if (retType === "i64")                     return [{ kind: "i64expr",  wat }];
@@ -814,7 +823,7 @@ export function emitConsoleLog(
   fd = 1,
   iovBase = IOV_BASE,
   scratchBase = SCRATCH_BASE,
-): { statements: string[]; needsHelpers: boolean; needsStrGather: boolean } {
+): { statements: string[]; needsHelpers: boolean; needsStrGather: boolean; needsArrPrintHelper: boolean } {
   const nwrittenOffset = iovBase + (NWRITTEN_OFFSET - IOV_BASE); // = iovBase + 128
   // Step 1: merge consecutive literal segments to minimise iov count.
   // e.g. [{literal,"x: "},{literal," "},{literal,"\n"}] → [{literal,"x:  \n"}]
@@ -847,14 +856,16 @@ export function emitConsoleLog(
   // strvar uses memory.copy into scratch; boolvar uses conditional memory.copy.
   // boolexpr (arbitrary WAT) stays in per-iov mode (evaluated multiple times would be unsafe).
   const gatherable = (s: LogSegment) =>
-    s.kind === "literal" || numericKinds.has(s.kind) || s.kind === "strvar" || s.kind === "boolvar";
-  // Single strvar/boolvar segments also use gather so the newline can be inlined.
+    s.kind === "literal" || numericKinds.has(s.kind) || s.kind === "strvar" || s.kind === "boolvar" || s.kind === "arrptr";
+  const arrptrKinds = new Set(["arrptr"]);
+  // Single strvar/boolvar/arrptr segments also use gather so the newline can be inlined.
   const useGather = activeSegs.every(gatherable) &&
-    (activeSegs.length > 1 || strBoolKinds.has(activeSegs[0]?.kind ?? ""));
+    (activeSegs.length > 1 || strBoolKinds.has(activeSegs[0]?.kind ?? "") || arrptrKinds.has(activeSegs[0]?.kind ?? ""));
 
   const statements: string[] = [];
   let needsHelpers = false;
   let needsStrGather = false;
+  let needsArrPrintHelper = false;
 
   if (useGather) {
     // ── Gather-buffer mode ────────────────────────────────────────────────────
@@ -937,6 +948,23 @@ export function emitConsoleLog(
             `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.load (i32.const ${cursorAddr})) ${lenExpr}))`,
           );
         }
+      } else if (seg.kind === "arrptr") {
+        // Array pointer — write "[ elem, ... ]" into scratch via helper
+        needsArrPrintHelper = true;
+        needsHelpers = true; // $__write_i32arr_to_scratch depends on $__i32_to_str
+        // Flush compile-time cursor to memory before calling helper
+        if (!runtimeCursor) {
+          statements.push(
+            `${indent}(i32.store (i32.const ${cursorAddr}) (i32.const ${compileCursor}))`,
+          );
+          runtimeCursor = true;
+        }
+        const helperName = seg.elemType === "f64" ? "$__write_f64arr_to_scratch"
+                         : seg.elemType === "i64" ? "$__write_i64arr_to_scratch"
+                         : "$__write_i32arr_to_scratch";
+        statements.push(
+          `${indent}(call ${helperName} ${seg.wat} (i32.const ${scratchBase}) (i32.const ${cursorAddr}))`,
+        );
       } else {
         // Numeric segment — convert directly into scratch at current cursor position
         needsHelpers = true;
@@ -1082,7 +1110,7 @@ export function emitConsoleLog(
     );
   }
 
-  return { statements, needsHelpers, needsStrGather };
+  return { statements, needsHelpers, needsStrGather, needsArrPrintHelper };
 }
 
 // ---------------------------------------------------------------------------
@@ -1302,4 +1330,64 @@ export function getHelperWat(): string {
     (i32.sub (local.get $end) (local.get $orig))
   )
 `.trimEnd();
+}
+
+/**
+ * Returns a WAT helper function that writes a dynamic i32 array's contents
+ * into the scratch gather buffer in "[ elem, elem, ... ]" format.
+ *
+ * Signature: $__write_i32arr_to_scratch(arr_ptr: i32, scratch_base: i32, cursor_addr: i32)
+ *   arr_ptr     – pointer to [length:i32, capacity:i32, elem0:i32, ...]
+ *   scratch_base – start address of the scratch buffer (i32.const scratchBase)
+ *   cursor_addr  – address of the i32 cursor (running byte offset from scratch_base)
+ * Depends on: $__i32_to_str (from getHelperWat)
+ */
+export function getArrPrintHelperWat(): string {
+  return `
+  ;; ── write i32[] to scratch ────────────────────────────────────────────────
+  ;; Appends "[ elem, elem, ... ]" into the gather buffer.
+  ;; arr_ptr layout: [length:i32, capacity:i32, elem0:i32, elem1:i32, ...]
+  (func $__write_i32arr_to_scratch (param $arr_ptr i32) (param $scratch_base i32) (param $cursor_addr i32)
+    (local $len i32)
+    (local $idx i32)
+    (local $cur i32)
+    (local $elem i32)
+    (local $slen i32)
+    (local.set $len (i32.load (local.get $arr_ptr)))
+    (local.set $cur (i32.load (local.get $cursor_addr)))
+    ;; Write "[ "
+    (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 91))
+    (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+    (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 32))
+    (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+    ;; Loop over elements
+    (local.set $idx (i32.const 0))
+    (block $done
+      (loop $loop
+        (br_if $done (i32.ge_u (local.get $idx) (local.get $len)))
+        ;; Write ", " separator between elements
+        (if (i32.gt_u (local.get $idx) (i32.const 0))
+          (then
+            (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 44))
+            (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+            (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 32))
+            (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+          )
+        )
+        ;; Load element at arr_ptr+8+idx*4 and convert to decimal string
+        (local.set $elem (i32.load (i32.add (i32.add (local.get $arr_ptr) (i32.const 8)) (i32.shl (local.get $idx) (i32.const 2)))))
+        (local.set $slen (call $__i32_to_str (local.get $elem) (i32.add (local.get $scratch_base) (local.get $cur))))
+        (local.set $cur (i32.add (local.get $cur) (local.get $slen)))
+        (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
+        (br $loop)
+      )
+    )
+    ;; Write " ]"
+    (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 32))
+    (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+    (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 93))
+    (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+    ;; Update cursor
+    (i32.store (local.get $cursor_addr) (local.get $cur))
+  )`;
 }

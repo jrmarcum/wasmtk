@@ -119,7 +119,7 @@ wasmtk run myprogram.wasm
 | `.length` | Returns character count as i32 |
 | Comparisons | `===`, `!==`, `<`, `>`, `<=`, `>=` — lexicographic |
 | Template literals | `` `x=${x} y=${y}` `` — numeric and string interpolation |
-| `console.log` | Mixed-type argument lists (numbers, strings, booleans, BigInt, template literals) |
+| `console.log` | Mixed-type argument lists (numbers, strings, booleans, BigInt, template literals, arrays) |
 | `console.error` / `console.warn` | Same as `console.log` but writes to stderr (fd=2) |
 | `str + str` | Concatenation — heap-allocates a new string; chains left-to-right (e.g. `a + b + c`) |
 | `str.slice(start, end)` | Returns a sub-range pointer with clamped bounds (no allocation) |
@@ -153,6 +153,7 @@ wasmtk run myprogram.wasm
 | Spread call | `f(...arr)` — passes an existing dynamic array pointer directly to a rest-param function |
 | Spread array literal | `const merged = [...a, ...b]` — heap-allocates a new array via `$__dynarr_concat_T`; source arrays are automatically promoted to dynamic layout |
 | Multi-dimensional arrays | `i32[][]` — nested dynamic array; `const m: i32[][] = [[1,2],[3,4]]` allocates outer + row arrays; `m[i].push(val)` updates the outer slot after possible row growth; `console.log(m)` prints `[ [ 1, 2 ], ... ]` (Deno format) |
+| `console.log` of array-returning calls | `console.log("scores:", getScores())` where `getScores(): i32[]` prints `scores: [ 95, 88, 72 ]` — the `arrptr` LogSegment dispatches to a `$__write_i32arr_to_scratch` WAT helper that walks the dynamic-array header and formats elements in `[ a, b, c ]` style |
 
 ##### Structs & Objects
 
@@ -474,6 +475,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | 12 | Array methods | `arr.indexOf(val)` → i32; `arr.includes(val)` → bool; `arr.slice(start, end)` → new array; `arr.forEach(fn)`; `arr.map(fn)` → new array; `arr.filter(fn)` → new array; `arr.find(fn)` → element; `arr.reduce(fn, init)` → value; dynamic arrays only; `const r: T[] = arr.map(fn)` pattern supported; `findDynamicArrays` extended to auto-detect arrays used with Phase 12 methods |
 | 13 | Rest parameters / spread | `function f(...args: i32[])` — rest param receives heap array pointer; literal call sites build temp array via `$__malloc`; `f(...arr)` passes existing dynamic array pointer directly; `[...a, ...b]` concat via `$__dynarr_concat_T`; spread-source arrays auto-promoted to dynamic layout by `findDynamicArrays` |
 | 13b | `console.log` of struct-returning calls | `console.log(tryDivide(10, 2))` where `tryDivide` returns an interface type prints `{ value: 5, hasError: 0 }` — struct pointer stored to `$__struct_tmp`, fields loaded by offset and formatted as `{ fieldName: value, ... }`; `$__struct_tmp` local injected by pre-scan of `_start` and `emitFunction` body lines; `LogSegment` array built directly in `emitStatement` and passed to `emitConsoleLog` |
+| bug fix | `console.log` of array-returning calls | `console.log("scores:", getScores())` where `getScores(): i32[]` was printing the raw heap pointer; fix: `FuncLookup` now exposes `resultTsName`; `parseSingleArg` checks for `[]` suffix → new `arrptr` LogSegment; gather mode calls `$__write_i32arr_to_scratch` which loops the dynamic-array header and writes `[ a, b, c ]`; `getArrPrintHelperWat()` emits the WAT helper; `wasic.ts` tracks `needsArrPrintHelper` flag |
 | 14 | Generics (monomorphization) | `function f<T>(x: T): T` — one concrete copy per distinct type; `interface Box<T> { value: T; }` → `Box_i32`, `Box_f64`, etc.; explicit type args (`f<i32>(x)`) and single-T literal inference (`f(42)` → `f_i32`); generic struct refs in function signatures rewritten automatically; source-level `expandGenerics()` pre-pass runs before all other parsing |
 | 15 | Exception handling | `throw new Error("msg")` / `throw "lit"` / `throw strVar` → `(throw $__exn_tag ptr len)` — WASM exception tag carries a `(ptr i32, len i32)` string payload; catchable by any enclosing `try/catch`; `try/catch(e)/finally` via WAT exceptions proposal; `(tag $__exn_tag (param i32 i32))` declared once per module when any throw is emitted; `e` / `e.message` in catch bound as string locals; `exceptions: true` in wabt options; `binMod.setFeatures(Features.All)` before Binaryen `-Oz` to preserve exception sections |
 | 16 | Module system extras | Default imports (`import foo from "./lib.ts"`); namespace imports (`import * as ns from "./lib.ts"`) with `ns.name` → `lib_name` rewriting; named re-exports (`export { foo } from "./lib.ts"`); wildcard re-exports (`export * from "./lib.ts"`); `export default function`; `exportRenamesCache` to resolve re-export chains across already-visited files; `applyRenames` updated to escape regex metacharacters (enabling dotted-key `ns.foo` rewrites) |

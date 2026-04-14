@@ -213,6 +213,53 @@
     ;; Return total length (including leading '-' and trailing 'n')
     (i32.sub (local.get $end) (local.get $orig))
   )
+
+  ;; ── write i32[] to scratch ────────────────────────────────────────────────
+  ;; Appends "[ elem, elem, ... ]" into the gather buffer.
+  ;; arr_ptr layout: [length:i32, capacity:i32, elem0:i32, elem1:i32, ...]
+  (func $__write_i32arr_to_scratch (param $arr_ptr i32) (param $scratch_base i32) (param $cursor_addr i32)
+    (local $len i32)
+    (local $idx i32)
+    (local $cur i32)
+    (local $elem i32)
+    (local $slen i32)
+    (local.set $len (i32.load (local.get $arr_ptr)))
+    (local.set $cur (i32.load (local.get $cursor_addr)))
+    ;; Write "[ "
+    (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 91))
+    (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+    (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 32))
+    (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+    ;; Loop over elements
+    (local.set $idx (i32.const 0))
+    (block $done
+      (loop $loop
+        (br_if $done (i32.ge_u (local.get $idx) (local.get $len)))
+        ;; Write ", " separator between elements
+        (if (i32.gt_u (local.get $idx) (i32.const 0))
+          (then
+            (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 44))
+            (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+            (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 32))
+            (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+          )
+        )
+        ;; Load element at arr_ptr+8+idx*4 and convert to decimal string
+        (local.set $elem (i32.load (i32.add (i32.add (local.get $arr_ptr) (i32.const 8)) (i32.shl (local.get $idx) (i32.const 2)))))
+        (local.set $slen (call $__i32_to_str (local.get $elem) (i32.add (local.get $scratch_base) (local.get $cur))))
+        (local.set $cur (i32.add (local.get $cur) (local.get $slen)))
+        (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
+        (br $loop)
+      )
+    )
+    ;; Write " ]"
+    (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 32))
+    (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+    (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 93))
+    (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+    ;; Update cursor
+    (i32.store (local.get $cursor_addr) (local.get $cur))
+  )
   (func $getScores (export "getScores")  (result i32)
     (local $__arr_ret i32)
     (local.set $__arr_ret (call $__malloc (i32.const 40)))
@@ -238,8 +285,9 @@
           (i32.store8 (i32.const 140) (i32.const 115))
           (i32.store8 (i32.const 141) (i32.const 58))
           (i32.store8 (i32.const 142) (i32.const 32))
-          (i32.store (i32.const 4) (i32.add (i32.const 11) (call $__i32_to_str (call $getScores) (i32.const 143))))
-          (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
+          (i32.store (i32.const 4) (i32.const 11))
+          (call $__write_i32arr_to_scratch (call $getScores) (i32.const 132) (i32.const 4))
+          (i32.store8 (i32.add (i32.const 132) (i32.add (i32.load (i32.const 4)) (i32.const 0))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
             (i32.const 1)
