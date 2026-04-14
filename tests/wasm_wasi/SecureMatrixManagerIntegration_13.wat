@@ -2,7 +2,7 @@
   (import "wasi_snapshot_preview1" "proc_exit" (func $proc_exit (param i32)))
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
   (memory (export "memory") 2)
-  (global $__heap_ptr (mut i32) (i32.const 271))
+  (global $__heap_ptr (mut i32) (i32.const 290))
   (type $ftype_i32_i32_i32_r_void (func (param i32) (param i32) (param i32)))
   (type $ftype_i32_i32_r_i32 (func (param i32) (param i32) (result i32)))
   ;; Bump allocator — advances __heap_ptr and returns the old value
@@ -215,6 +215,51 @@
     ;; Return total length (including leading '-' and trailing 'n')
     (i32.sub (local.get $end) (local.get $orig))
   )
+  ;; Dynamic array grow_i32: malloc new block of newcap elements, copy data, return new ptr.
+  (func $__dynarr_grow_i32 (param $arr i32) (param $newcap i32) (result i32)
+    (local $newptr i32)
+    (local $len i32)
+    (local $i i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (local.set $newptr (call $__malloc (i32.add (i32.const 8) (i32.shl (local.get $newcap) (i32.const 2)))))
+    (i32.store (local.get $newptr) (local.get $len))
+    (i32.store offset=4 (local.get $newptr) (local.get $newcap))
+    (local.set $i (i32.const 0))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.ge_u (local.get $i) (local.get $len)))
+        (i32.store
+          (i32.add (i32.add (local.get $newptr) (i32.const 8)) (i32.shl (local.get $i) (i32.const 2)))
+          (i32.load
+            (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const 2)))
+          )
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)
+      )
+    )
+    (local.get $newptr)
+  )
+
+  ;; Dynamic array push_i32: grow if full, store val at end, increment length, return new arr ptr.
+  (func $__dynarr_push_i32 (param $arr i32) (param $val i32) (result i32)
+    (local $len i32)
+    (local $cap i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (local.set $cap (i32.load offset=4 (local.get $arr)))
+    (if (i32.ge_u (local.get $len) (local.get $cap))
+      (then
+        (local.set $arr (call $__dynarr_grow_i32 (local.get $arr) (i32.shl (local.get $cap) (i32.const 1))))
+      )
+    )
+    (i32.store
+      (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $len) (i32.const 2)))
+      (local.get $val)
+    )
+    (local.set $len (i32.add (local.get $len) (i32.const 1)))
+    (i32.store (local.get $arr) (local.get $len))
+    (local.get $arr)
+  )
   (func $createSecureMatrix (export "createSecureMatrix")  (result i32)
     (local $data i32)
     (local $__2d_tmp i32)
@@ -244,7 +289,7 @@
     (call_indirect (type $ftype_i32_i32_i32_r_void) (local.tee $__iface_tmp (i32.load (local.get $sm))) (i32.const 0) (i32.const 42) (i32.load (local.get $__iface_tmp)))
     (local.set $row0 (call_indirect (type $ftype_i32_i32_r_i32) (local.tee $__iface_tmp (i32.load (i32.add (local.get $sm) (i32.const 4)))) (i32.const 0) (i32.load (local.get $__iface_tmp))))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__f64_to_str (;? row0[0] ;) (f64.const 0) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__i32_to_str (i32.load (i32.add (i32.add (local.get $row0) (i32.const 8)) (i32.shl (i32.const 0) (i32.const 2)))) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -258,10 +303,14 @@
   (func $__anon_0 (param $row i32) (param $val i32) (param $data i32) 
     (if (i32.ge_s (local.get $row) (i32.load (local.get $data)))
       (then
-      (;; { throw new Error("Index out of bounds"); };)
+      (i32.store (i32.const 0) (i32.const 260))
+      (i32.store (i32.const 4) (i32.const 19))
+      (drop (call $fd_write (i32.const 2) (i32.const 0) (i32.const 1) (i32.const 8)))
+      (call $proc_exit (i32.const 0))
+      (unreachable)
       )
     )
-    (;; data[row].push(val);;)
+    (i32.store (i32.add (i32.add (local.get $data) (i32.const 8)) (i32.shl (local.get $row) (i32.const 2))) (call $__dynarr_push_i32 (i32.load (i32.add (i32.add (local.get $data) (i32.const 8)) (i32.shl (local.get $row) (i32.const 2)))) (local.get $val)))
   )
 
   (func $__anon_0__factory (param $data i32) (result i32)
@@ -281,7 +330,7 @@
   (func $__anon_1 (param $row i32) (param $data i32) (result i32)
     (if (i32.ge_s (local.get $row) (i32.load (local.get $data)))
       (then
-      (i32.store (i32.const 0) (i32.const 260))
+      (i32.store (i32.const 0) (i32.const 279))
       (i32.store (i32.const 4) (i32.const 11))
       (drop (call $fd_write (i32.const 2) (i32.const 0) (i32.const 1) (i32.const 8)))
       (call $proc_exit (i32.const 0))
@@ -306,5 +355,6 @@
   )
   (table 2 funcref)
   (elem (i32.const 0) $__anon_0__factory__trampoline $__anon_1__factory__trampoline)
-  (data (i32.const 260) "\49\6e\76\61\6c\69\64\20\52\6f\77")
+  (data (i32.const 260) "\49\6e\64\65\78\20\6f\75\74\20\6f\66\20\62\6f\75\6e\64\73")
+  (data (i32.const 279) "\49\6e\76\61\6c\69\64\20\52\6f\77")
 )

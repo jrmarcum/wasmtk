@@ -48,6 +48,7 @@
     (return (i32.eqz (call $__str_cmp (local.get $a_ptr) (local.get $a_len) (i32.const 0) (i32.const 0))))
   )
   (func $_start (export "_start")
+    (local $__iface_tmp i32)
         (i32.store (i32.const 0) (if (result i32) (call $isStringEmpty (i32.const 260) (i32.const 0)) (then (i32.const 260)) (else (i32.const 264))))
           (i32.store (i32.const 4) (if (result i32) (call $isStringEmpty (i32.const 260) (i32.const 0)) (then (i32.const 4)) (else (i32.const 5))))
           (i32.store (i32.const 8) (i32.const 269))

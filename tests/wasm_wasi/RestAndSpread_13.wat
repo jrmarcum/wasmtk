@@ -327,6 +327,7 @@
     (local $abc i32)
     (local $fsum f64)
     (local $__rest_ptr i32)
+    (local $__iface_tmp i32)
     (local.set $__rest_ptr (call $__malloc (i32.const 40)))
       (i32.store (local.get $__rest_ptr) (i32.const 3))
       (i32.store offset=4 (local.get $__rest_ptr) (i32.const 8))

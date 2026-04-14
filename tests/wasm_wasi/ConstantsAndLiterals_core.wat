@@ -48,6 +48,7 @@
     (return (i32.eq (local.get $a) (i32.const 42)))
   )
   (func $_start (export "_start")
+    (local $__iface_tmp i32)
         (i32.store (i32.const 0) (if (result i32) (call $isHello (i32.const 260) (i32.const 5)) (then (i32.const 265)) (else (i32.const 269))))
           (i32.store (i32.const 4) (if (result i32) (call $isHello (i32.const 260) (i32.const 5)) (then (i32.const 4)) (else (i32.const 5))))
           (i32.store (i32.const 8) (i32.const 274))

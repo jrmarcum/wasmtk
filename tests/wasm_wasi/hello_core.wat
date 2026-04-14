@@ -11,6 +11,7 @@
     (local.get $ptr)
   )
   (func $_start (export "_start")
+    (local $__iface_tmp i32)
         (i32.store (i32.const 0) (i32.const 260))
           (i32.store (i32.const 4) (i32.const 14))
           (drop (call $fd_write

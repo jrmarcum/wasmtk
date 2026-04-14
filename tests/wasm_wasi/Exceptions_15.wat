@@ -476,6 +476,7 @@
   (func $_start (export "_start")
     (local $r1 i32)
     (local $r2 i32)
+    (local $__iface_tmp i32)
     (local.set $r1 (call $safeDivide (i32.const 10) (i32.const 2)))
         (i32.store (i32.const 0) (i32.const 132))
           (i32.store (i32.const 4) (call $__i32_to_str (local.get $r1) (i32.const 132)))

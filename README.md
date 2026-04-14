@@ -70,6 +70,7 @@ wasmtk run myprogram.wasm
 | Nested closures | Multi-level capture: inner arrow captures from outer arrow's scope |
 | Heap-allocated closures | Factory functions `function f(x) { return (y) => x*y; }` — inner arrow lifted to `f__inner`; factory mallocs `{table_idx, captures}` struct; `$f__trampoline` dispatches via `call_indirect` |
 | Named function type aliases | `type Scaler = (val: i32) => i32` — inline capturing arrows heap-allocated as `__anon_N__factory`; closure pointers dispatchable via named-type trampolines |
+| Shared mutable captures | `function createCounter() { let count = 0; return { inc: () => { count++; return count; }, dec: () => ... } }` — captured variables shared across multiple closures AND mutated are heap-boxed: a 4-byte cell is allocated per shared variable; each closure receives the cell pointer; reads emit `i32.load`, mutations emit `i32.store` |
 | Variable declarations | `let`, `const`, `var` with optional type annotations |
 
 ##### Control Flow
@@ -283,7 +284,6 @@ export function _start() { ... }
 | Feature | Status |
 | --- | --- |
 | Class inheritance (`extends`) | Deferred — virtual dispatch via vtable requires heap |
-| Object literals with closure methods | Phase 5h — `{ inc: () => ..., dec: () => ... }` pattern with shared captured state not yet supported |
 | Multi-dimensional arrays beyond `i32[][]` | Phase 6d covers `i32[][]`; `f64[][]` and deeper nesting not yet implemented |
 
 > **Why the limitations?** `wasic` compiles directly to raw WAT with no runtime. Dynamic allocation, garbage collection, and prototype semantics cannot be expressed without an embedded runtime library. Use `wasmtk javyc` for programs that need them today.
@@ -457,6 +457,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | 5e | First-class functions | funcref table, `call_indirect`, named arrow variables, callbacks, closure capture, IIFE entry pattern, nested closures, void arrows, mixed-signature branches; bug fix: type annotation declarations (`let f: (a) => b`) correctly skipped by arrow-substitution pass |
 | 5f | Heap-allocated closures | Closure factories — functions that `return (params) => expr` produce a heap struct `{table_idx, captures...}`; `factoryFn(a)(b)` dispatches via a generated trampoline (`$fn__trampoline`); supported in `console.log` args and all expression/statement contexts |
 | 5g | Closures as first-class values | Named function-type aliases; inline capturing arrows heap-allocated as `__anon_N__factory`; closure pointer dispatch via `closureTypedVars` + trampoline; bug fix: outer-scope regex extended to match array types (`i32[][]`) so 2D-array captures are detected correctly |
+| 5h | Shared mutable captures (heap-boxing) | `return { inc: () => { count++; ... }, dec: () => { count--; ... } }` — variables captured by 2+ closures in a `return { ... }` object literal AND mutated by any of them are heap-boxed: factory allocates a 4-byte cell, stores the initial value, passes the pointer to every closure factory; reads emit `(i32.load (local.get $ptr))`; mutations (`count++`, `count--`, `count += x`, `count = x`) emit load-modify-store through the cell pointer |
 | 6a | Numeric arrays | `i32[]`, `f64[]` — static allocation, element read/write, `.length`, array params |
 | 6b | Structs / objects | `interface` and `type` as fixed-layout structs, field read/write, struct params |
 | 6c | Object destructuring | `const { x, y } = vec` → `i32.load` / `f64.load` at field offsets; renamed destructuring |
@@ -815,7 +816,7 @@ wasmtk wasic entry.ts   # jstyper sees mathlib.d.ts, skips inference, uses hand-
 | 35 (`typeof`/`keyof`) | Transparent — tsc resolves to concrete type in `.d.ts` output |
 | 36 (conditional types) | Not inferred from raw JS |
 | 37–38 (flat/math) | Transparent — body calls, not signature types |
-| 40 (wasm bundling into base 64 for javascipt build and javy compile)|
+| 40 (WASM base64 bundling for JS build and Javy compile) | WASM binary embedded as base64 in JS output; Javy compile integration |
 
 **Out-of-scope JS patterns (warning + skip):**
 

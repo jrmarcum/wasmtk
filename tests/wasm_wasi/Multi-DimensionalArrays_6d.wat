@@ -317,6 +317,7 @@
   (func $_start (export "_start")
     (local $matrix i32)
     (local $__2d_tmp i32)
+    (local $__iface_tmp i32)
     (local.set $matrix (call $__malloc (i32.const 40)))
       (i32.store (local.get $matrix) (i32.const 2))
       (i32.store offset=4 (local.get $matrix) (i32.const 8))

@@ -229,6 +229,7 @@
       (return (local.get $__obj_ret))
   )
   (func $_start (export "_start")
+    (local $__iface_tmp i32)
     (local $__struct_tmp i32)
         (local.set $__struct_tmp (call $tryDivide (i32.const 10) (i32.const 2)))
           (i32.store (i32.const 0) (i32.const 132))

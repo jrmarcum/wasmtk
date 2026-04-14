@@ -56,6 +56,7 @@
     (return (i32.ge_s (call $__str_cmp (local.get $a_ptr) (local.get $a_len) (local.get $b_ptr) (local.get $b_len)) (i32.const 0)))
   )
   (func $_start (export "_start")
+    (local $__iface_tmp i32)
         (i32.store (i32.const 0) (if (result i32) (call $testStringLt (i32.const 260) (i32.const 5) (i32.const 265) (i32.const 6)) (then (i32.const 271)) (else (i32.const 275))))
           (i32.store (i32.const 4) (if (result i32) (call $testStringLt (i32.const 260) (i32.const 5) (i32.const 265) (i32.const 6)) (then (i32.const 4)) (else (i32.const 5))))
           (i32.store (i32.const 8) (i32.const 280))

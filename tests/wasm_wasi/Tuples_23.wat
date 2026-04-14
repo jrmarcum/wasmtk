@@ -255,6 +255,7 @@
     (local $result2 i32)
     (local $addends i32)
     (local $qr i32)
+    (local $__iface_tmp i32)
     (local.set $origin (i32.const 260))
         (i32.store (i32.const 0) (i32.const 132))
           (i32.store (i32.const 4) (call $__i32_to_str (i32.load (i32.add (i32.const 260) (i32.const 0))) (i32.const 132)))

@@ -18,6 +18,7 @@
     (return (f64.lt (local.get $a) (local.get $b)))
   )
   (func $_start (export "_start")
+    (local $__iface_tmp i32)
         (i32.store (i32.const 0) (if (result i32) (call $testGtU32 (f64.const 5) (f64.const 3)) (then (i32.const 260)) (else (i32.const 264))))
           (i32.store (i32.const 4) (if (result i32) (call $testGtU32 (f64.const 5) (f64.const 3)) (then (i32.const 4)) (else (i32.const 5))))
           (i32.store (i32.const 8) (i32.const 269))

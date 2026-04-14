@@ -598,6 +598,7 @@
     (local $fvals i32)
     (local $fmapped i32)
     (local $fsum f64)
+    (local $__iface_tmp i32)
     (local.set $nums (call $__malloc (i32.const 48)))
       (i32.store (local.get $nums) (i32.const 5))
       (i32.store offset=4 (local.get $nums) (i32.const 10))

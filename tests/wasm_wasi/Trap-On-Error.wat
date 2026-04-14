@@ -226,6 +226,7 @@
     (return (i32.div_s (local.get $a) (local.get $b)))
   )
   (func $_start (export "_start")
+    (local $__iface_tmp i32)
         (i32.store (i32.const 0) (i32.const 132))
           (i32.store (i32.const 4) (call $__i32_to_str (call $safeDivide (i32.const 10) (i32.const 2)) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))

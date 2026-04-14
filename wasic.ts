@@ -284,6 +284,10 @@ interface FuncDef {
   returnedByFactory?: string;
   /** Phase 12: original TypeScript return type annotation (e.g. "MatrixManager") for interface dispatch. */
   resultTsName?: string;
+  /** Phase 5h: variables in a return-object that are shared across multiple closures AND mutated. */
+  sharedMutableCaptures?: Set<string>;
+  /** Phase 5h: captured params that are heap cell pointers (boxed) rather than plain values. */
+  boxedCaptures?: Set<string>;
 }
 
 /** Maps TypeScript type annotation strings to WAT types (or the "string"/"never" pseudo-types).
@@ -484,6 +488,10 @@ class WasicTranspiler {
   private currentFuncResultTsName: string | null = null;
   // Phase 12: interface-typed variables in the current function scope: varName → interfaceName.
   private interfaceVars: Map<string, string> = new Map();
+  // Phase 5h: boxed captures for the arrow function currently being emitted (pointers, not values).
+  private currentBoxedCaptures: Set<string> = new Set();
+  // Phase 5h: shared mutable captures for the enclosing factory function currently being emitted.
+  private currentSharedMutableCaptures: Set<string> = new Set();
 
   // Tracks which Math.* WAT helper functions are needed (emitted on demand)
   private mathHelpers: Set<string> = new Set();
@@ -768,6 +776,26 @@ class WasicTranspiler {
     if (bodyRaw.startsWith("{")) {
       const inner = bodyRaw.slice(1, bodyRaw.endsWith("}") ? -1 : undefined).trim();
       bodyLines = WasicTranspiler.splitStmts(inner);
+      // Infer result type from return statement if not annotated
+      if (anonResult === null) {
+        // Build scope including outer function params + locals for captured variable types
+        const inferLocals = new Map<string, WatType>();
+        if (enclosingFn) {
+          for (const p of enclosingFn.params) inferLocals.set(p.name, p.type);
+          for (const bl of enclosingFn.bodyLines) {
+            const vm = bl.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+))?\s*=/);
+            if (vm) inferLocals.set(vm[1], vm[2] ? mapType(vm[2]) as WatType : "i32");
+          }
+        }
+        for (const p of paramList) inferLocals.set(p.name, p.type);
+        for (const bl of bodyLines) {
+          const retM = bl.match(/^return\s+(.+?)\s*;?$/);
+          if (retM) {
+            const inferred = inferInitType(retM[1].trim(), inferLocals, this.enumValues, this.functions);
+            if (inferred) { anonResult = inferred; break; }
+          }
+        }
+      }
     } else {
       // Infer result type from body expression when no annotation was given
       if (anonResult === null) {
@@ -814,6 +842,11 @@ class WasicTranspiler {
         // Inject captures as extra params on the anon (inner) function
         anonDef.closureCaptures = captures;
         for (const cap of captures) anonDef.params.push({ name: cap, type: outerScope.get(cap)! });
+        // Phase 5h: if any capture is a shared mutable capture in the enclosing fn, mark it as boxed
+        if (enclosingFn?.sharedMutableCaptures) {
+          const boxed = new Set(captures.filter(c => enclosingFn.sharedMutableCaptures!.has(c)));
+          if (boxed.size > 0) anonDef.boxedCaptures = boxed;
+        }
 
         // Create a factory FuncDef that allocates the closure struct and returns a ptr
         const factoryName = `${anonName}__factory`;
@@ -1074,14 +1107,132 @@ class WasicTranspiler {
       const factoryParams = this.parseParams(rawParams);
       const returnedArrow = this.parseReturnArrow(name, bodyLines, factoryParams);
       if (returnedArrow) this.functions.push(returnedArrow);
-      const resultTsName = rawResult !== "void" && rawResult !== "" ? rawResult : undefined;
+      let resultTsName = rawResult !== "void" && rawResult !== "" ? rawResult : undefined;
+      let autoResultType: WatType | undefined;
+      // Phase 5h: auto-detect anonymous struct return — return { key: arrowFn, ... } with no explicit return type
+      if (!resultTsName && !returnedArrow) {
+        const returnObjLine = bodyLines.find(l => /^return\s*\{/.test(l));
+        if (returnObjLine) {
+          let depth = 0, objStart = -1, objEnd = -1;
+          for (let bi = 0; bi < returnObjLine.length; bi++) {
+            if (returnObjLine[bi] === "{") { if (depth++ === 0) objStart = bi; }
+            else if (returnObjLine[bi] === "}") { if (--depth === 0) { objEnd = bi; break; } }
+          }
+          if (objStart !== -1 && objEnd !== -1) {
+            const objContent = returnObjLine.slice(objStart + 1, objEnd).trim();
+            const arrowFieldRe = /(\w+)\s*:\s*\(([^)]*)\)(?:\s*:\s*([\w\[\]|]+))?\s*=>/g;
+            const autoFields: StructField[] = [];
+            let autoOffset = 0;
+            let afm: RegExpExecArray | null;
+            while ((afm = arrowFieldRe.exec(objContent)) !== null) {
+              const fieldName = afm[1];
+              const rawFParams = afm[2];
+              const rawFResult = afm[3]?.trim();
+              const mParams: WatType[] = rawFParams.trim()
+                ? rawFParams.split(",").map(p => {
+                    const ci = p.indexOf(":");
+                    return (ci !== -1 ? mapType(p.slice(ci + 1).trim()) : "i32") as WatType;
+                  })
+                : [];
+              let mResult: WatType | null = !rawFResult || rawFResult === "void"
+                ? null : mapType(rawFResult) as WatType;
+              // If no explicit result annotation, check body for non-empty return statement
+              if (mResult === null) {
+                const afterArrow = objContent.slice((afm.index ?? 0) + afm[0].length).trimStart();
+                if (afterArrow.startsWith("{")) {
+                  if (/return\s+\w/.test(afterArrow)) mResult = "i32" as WatType;
+                } else {
+                  // Expression body always returns a value
+                  mResult = "i32" as WatType;
+                }
+              }
+              autoFields.push({ name: fieldName, type: "i32", offset: autoOffset, size: 4,
+                funcType: { params: mParams, result: mResult } });
+              autoOffset += 4;
+            }
+            if (autoFields.length > 0) {
+              const autoStructName = `__AnonResult_${name}`;
+              this.structDefs.set(autoStructName, { name: autoStructName, fields: autoFields, totalSize: autoOffset });
+              resultTsName = autoStructName;
+              autoResultType = "i32";
+            }
+          }
+        }
+      }
+      // Phase 5h: detect shared mutable captures in return { ... } object literals.
+      // Variables referenced by 2+ arrows AND mutated in any arrow must be heap-boxed.
+      let sharedMutableCaptures: Set<string> | undefined;
+      if (!returnedArrow) {
+        const retObjLine = bodyLines.find(l => /^return\s*\{/.test(l));
+        if (retObjLine) {
+          // Build outer scope (params + top-level declarations before the return)
+          const outerVarNames = new Set<string>(factoryParams.map(p => p.name));
+          for (const bl of bodyLines) {
+            const vm = bl.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*\w+)?\s*=/);
+            if (vm) outerVarNames.add(vm[1]);
+          }
+          // Extract object literal content
+          let od = 0, oStart = -1, oEnd = -1;
+          for (let bi = 0; bi < retObjLine.length; bi++) {
+            if (retObjLine[bi] === "{") { if (od++ === 0) oStart = bi; }
+            else if (retObjLine[bi] === "}") { if (--od === 0) { oEnd = bi; break; } }
+          }
+          if (oStart !== -1 && oEnd !== -1) {
+            const objBody = retObjLine.slice(oStart + 1, oEnd);
+            // For each outer var: count how many distinct arrow bodies reference it
+            const refByArrow = new Map<string, Set<number>>();
+            const mutatedVars = new Set<string>();
+            // Find arrow boundary positions (split on top-level `=>` arrow markers)
+            const arrowBodyParts: string[] = [];
+            let abd = 0, abStart = 0, inArrow = false;
+            for (let bi = 0; bi < objBody.length; bi++) {
+              const ch = objBody[bi];
+              if (ch === "(" || ch === "{") abd++;
+              else if (ch === ")" || ch === "}") abd--;
+              // Detect '=>' at depth 0 to find arrow start
+              if (!inArrow && abd === 0 && objBody[bi] === "=" && objBody[bi + 1] === ">") {
+                inArrow = true;
+                abStart = bi + 2;
+              }
+              // End of an arrow body: comma or end of object at depth 0 after arrow started
+              if (inArrow && abd === 0 && (ch === "," || bi === objBody.length - 1)) {
+                arrowBodyParts.push(objBody.slice(abStart, bi + (bi === objBody.length - 1 ? 1 : 0)));
+                inArrow = false;
+              }
+            }
+            arrowBodyParts.forEach((bodyPart, arrowIdx) => {
+              for (const [, id] of bodyPart.matchAll(/\b([a-zA-Z_]\w*)\b/g)) {
+                if (outerVarNames.has(id)) {
+                  if (!refByArrow.has(id)) refByArrow.set(id, new Set());
+                  refByArrow.get(id)!.add(arrowIdx);
+                }
+              }
+              // Detect mutations: id++, ++id, id--, --id, id op= x, id = x (not ==)
+              for (const [, id] of bodyPart.matchAll(/\b(\w+)\s*(?:\+\+|--)|(?:\+\+|--)\s*(\w+)|\b(\w+)\s*(?:[+\-*\/%&|^]|<<|>>|>>>)?=(?!=)/g)) {
+                const mutId = id || "";
+                if (mutId && outerVarNames.has(mutId)) mutatedVars.add(mutId);
+              }
+              // Also catch augmented assignments like count += 1
+              for (const [, id] of bodyPart.matchAll(/\b(\w+)\s*(?:[+\-*\/%&|^]|<<|>>|>>>)?=(?!=)/g)) {
+                if (outerVarNames.has(id)) mutatedVars.add(id);
+              }
+            });
+            const shared = new Set<string>();
+            for (const [id, arrowSet] of refByArrow) {
+              if (arrowSet.size >= 2 && mutatedVars.has(id)) shared.add(id);
+            }
+            if (shared.size > 0) sharedMutableCaptures = shared;
+          }
+        }
+      }
       this.functions.push({
         name, params: factoryParams,
-        result: returnedArrow ? "i32" : result,
+        result: returnedArrow ? "i32" : (autoResultType ?? result),
         exported, bodyLines,
         isClosureFactory: !!returnedArrow,
         returnedArrow: returnedArrow ?? undefined,
         resultTsName,
+        sharedMutableCaptures,
       });
     }
   }
@@ -2237,13 +2388,15 @@ class WasicTranspiler {
     // n.toString() → malloc 32 bytes, call $__i32_to_str / $__f64_to_str
     const toStrMatch = initExpr.match(/^(\w+)\.toString\s*\(\s*\)$/);
     if (toStrMatch) {
-      const srcType = locals.get(toStrMatch[1]);
+      const srcName = toStrMatch[1];
+      const srcType = locals.get(srcName) ?? this.moduleGlobals.get(srcName)?.type;
       if (srcType === "i32" || srcType === "f64" || srcType === "i64") {
         this.needsNumericHelpers = true;
         const helperName = srcType === "f64" ? "$__f64_to_str" : "$__i32_to_str";
+        const getOp = this.moduleGlobals.has(srcName) ? `(global.get $${srcName})` : `(local.get $${srcName})`;
         return [
           `(local.set $${varName}_ptr (call $__malloc (i32.const 32)))`,
-          `${ind}(local.set $${varName}_len (call ${helperName} (local.get $${toStrMatch[1]}) (local.get $${varName}_ptr)))`,
+          `${ind}(local.set $${varName}_len (call ${helperName} ${getOp} (local.get $${varName}_ptr)))`,
         ].join("\n");
       }
     }
@@ -2829,7 +2982,11 @@ class WasicTranspiler {
         // In other numeric contexts: yield the ptr (i32) for use in expressions
         return `(local.get $${expr}_ptr)`;
       }
-      if (localType) return `(local.get $${expr})`;
+      if (localType) {
+        // Phase 5h: boxed capture — load through heap pointer
+        if (this.currentBoxedCaptures.has(expr)) return `(i32.load (local.get $${expr}))`;
+        return `(local.get $${expr})`;
+      }
       // Module global — emit global.get
       const globalInfo = this.moduleGlobals.get(expr);
       if (globalInfo) return `(global.get $${expr})`;
@@ -2962,6 +3119,42 @@ class WasicTranspiler {
               this.emitExpr(a, locals, innerCallParams[i]?.type ?? "i32")
             );
             return `(call $${chainHead}__trampoline (call $${chainHead} ${outerEmitted.join(" ")}) ${innerEmitted.join(" ")})`.trim();
+          }
+        }
+      }
+    }
+
+    // Phase 5h: chained method call on factory return — factory(args).method(args)
+    // e.g. createCounter().inc(), createSecureMatrix().getRow(0)
+    {
+      const chainHead5h = expr.match(/^(\w+)\s*\(/)?.[1];
+      if (chainHead5h) {
+        const factoryFn5h = this.functions.find(f => f.name === chainHead5h && f.resultTsName);
+        if (factoryFn5h?.resultTsName) {
+          const openParen5h = expr.indexOf("(");
+          const [rawFactoryArgs5h, afterFactory5h] = WasicTranspiler.extractParamBlock(expr, openParen5h);
+          const rest5h = expr.slice(afterFactory5h).trimStart();
+          const methodMatch5h = rest5h.match(/^\.(\w+)\s*\((.*?)?\)\s*$/);
+          if (methodMatch5h) {
+            const methodName5h = methodMatch5h[1];
+            const rawMethodArgs5h = methodMatch5h[2] ?? "";
+            const structDef5h = this.structDefs.get(factoryFn5h.resultTsName);
+            const field5h = structDef5h?.fields.find(f => f.name === methodName5h);
+            if (field5h?.funcType) {
+              const emittedFactoryArgs = rawFactoryArgs5h.trim()
+                ? this.splitArgs(rawFactoryArgs5h).map((a, i) => this.emitExpr(a, locals, factoryFn5h.params[i]?.type ?? "i32"))
+                : [];
+              const factoryCallWat = `(call $${chainHead5h} ${emittedFactoryArgs.join(" ")})`.trim();
+              const loadClosure = field5h.offset === 0
+                ? `(i32.load ${factoryCallWat})`
+                : `(i32.load (i32.add (local.tee $__iface_tmp ${factoryCallWat}) (i32.const ${field5h.offset})))`;
+              const trampolineParams5h: WatType[] = ["i32" as WatType, ...field5h.funcType.params];
+              const typeName5h = this.getOrCreateFuncType(trampolineParams5h, field5h.funcType.result);
+              const emittedMethodArgs = rawMethodArgs5h.trim()
+                ? this.splitArgs(rawMethodArgs5h).map((a, idx) => this.emitExpr(a, locals, field5h.funcType!.params[idx] ?? "i32" as WatType))
+                : [];
+              return `(call_indirect (type ${typeName5h}) (local.tee $__iface_tmp ${loadClosure}) ${emittedMethodArgs.join(" ")} (i32.load (local.get $__iface_tmp)))`.trim();
+            }
           }
         }
       }
@@ -3740,6 +3933,11 @@ class WasicTranspiler {
         return this.emitStringAssign(varName, initExpr, locals);
       }
       locals.set(varName, varType);
+      // Phase 5h: shared mutable capture — allocate heap cell, store initial value into it
+      if (this.currentSharedMutableCaptures.has(varName)) {
+        const initWat = this.emitExpr(initExpr, locals, "i32");
+        return `(local.set $${varName} (call $__malloc (i32.const 4)))\n      (i32.store (local.get $${varName}) ${initWat})`;
+      }
       return `(local.set $${varName} ${this.emitExpr(initExpr, locals, varType)})`;
     }
 
@@ -3771,6 +3969,10 @@ class WasicTranspiler {
       const suffix  = isFloat ? fOp : iOp;
       if (isGlobal) {
         return `(global.set $${varName} (${opType}.${suffix} (global.get $${varName}) ${this.emitExpr(rhs, locals, opType)}))`;
+      }
+      // Phase 5h: boxed capture — update through heap pointer
+      if (this.currentBoxedCaptures.has(varName)) {
+        return `(i32.store (local.get $${varName}) (${opType}.${suffix} (i32.load (local.get $${varName})) ${this.emitExpr(rhs, locals, opType)}))`;
       }
       return `(local.set $${varName} (${opType}.${suffix} (local.get $${varName}) ${this.emitExpr(rhs, locals, opType)}))`;
     }
@@ -3850,6 +4052,14 @@ class WasicTranspiler {
         // Load inner ptr, push (returns possibly-grown ptr), store back — address evaluated twice
         // but it's pure arithmetic so safe.
         return `(i32.store ${addrWat} (call $__dynarr_push_${outerInfo.elemType} (i32.load ${addrWat}) ${valWat}))`;
+      }
+      // Phase 5h: 2D array captured as i32 local (closure param) — treat as dynamic i32[][]
+      if (!outerInfo && locals.get(outerName) === "i32") {
+        const idxWat  = this.emitExpr(subscriptPushStmt[2], locals, "i32");
+        const valWat  = this.emitExpr(subscriptPushStmt[4], locals, "i32");
+        const addrWat = `(i32.add (i32.add (local.get $${outerName}) (i32.const 8)) (i32.shl ${idxWat} (i32.const 2)))`;
+        this.dynArrHelpers.add("push_i32");
+        return `(i32.store ${addrWat} (call $__dynarr_push_i32 (i32.load ${addrWat}) ${valWat}))`;
       }
     }
 
@@ -3954,6 +4164,10 @@ class WasicTranspiler {
         return this.emitStringAssign(varName, assignMatch[2].trim(), locals);
       }
       const varType = locals.get(varName)!;
+      // Phase 5h: boxed capture — store through heap pointer
+      if (this.currentBoxedCaptures.has(varName)) {
+        return `(i32.store (local.get $${varName}) ${this.emitExpr(assignMatch[2].trim(), locals, "i32")})`;
+      }
       return `(local.set $${varName} ${this.emitExpr(assignMatch[2].trim(), locals, varType)})`;
     }
     // Simple assignment to module global
@@ -3984,7 +4198,9 @@ class WasicTranspiler {
       }
       // Phase 13b: console.log(structReturningFn(...)) → print { field: val, ... }
       const logSingleArg = logMatch[1].trim();
-      const structFnCallMatch = logSingleArg.match(/^(\w+)\s*\((.*)\)$/);
+      // Guard: skip if this is a chained method call like funcCall().method() — those return
+      // a scalar, not a struct, and should fall through to the general emitExpr path.
+      const structFnCallMatch = !logSingleArg.includes(").") ? logSingleArg.match(/^(\w+)\s*\((.*)\)$/) : null;
       if (structFnCallMatch) {
         const callee = this.functions.find(f => f.name === structFnCallMatch[1]);
         if (callee?.resultTsName && this.structDefs.has(callee.resultTsName)) {
@@ -4005,6 +4221,21 @@ class WasicTranspiler {
           const { statements, needsStrGather } = emitConsoleLog(segments, (text) => this.allocString(text), "    ", 1, this.iovBase, this.scratchBase);
           if (needsStrGather) this.needsStrGatherHelper = true;
           return [ptrStmt, ...statements].join("\n      ");
+        }
+      }
+      // Phase 5h: chained call console.log(factoryFn().method()) — parseSingleArg cannot handle
+      // these (callMatch greedily mis-parses the args), so emit directly as i32.
+      if (logSingleArg.match(/^(\w+)\s*\(.*\)\.(\w+)\s*\(.*\)$/)) {
+        const chainedWat = this.emitExpr(logSingleArg, locals, "i32");
+        if (!chainedWat.startsWith("(;?") && chainedWat !== "(unreachable)") {
+          this.needsNumericHelpers = true;
+          const chainedSegs: LogSegment[] = [
+            { kind: "i32expr" as const, wat: chainedWat },
+            { kind: "literal" as const, text: "\n" },
+          ];
+          const { statements: cs, needsStrGather: csg } = emitConsoleLog(chainedSegs, (text) => this.allocString(text), "    ", 1, this.iovBase, this.scratchBase);
+          if (csg) this.needsStrGatherHelper = true;
+          return cs.join("\n      ");
         }
       }
       const allocator: DataAllocator = (text) => this.allocString(text);
@@ -4064,8 +4295,17 @@ class WasicTranspiler {
               return { type: retType as string, wat: this.emitExpr(token, locals, retType) };
             }
           }
+          // Phase 5h/12: interface method dispatch (counter1.inc() etc.)
+          const ifaceName2 = this.interfaceVars.get(receiver2);
+          if (ifaceName2) {
+            const field2 = this.structDefs.get(ifaceName2)?.fields.find(f => f.name === methodName2);
+            if (field2?.funcType) {
+              return { type: (field2.funcType.result ?? "i32") as string, wat: result };
+            }
+          }
         }
-        return undefined;
+        // Phase 5h: emitExpr succeeded (e.g. chained factoryFn().method()) — return as i32
+        return { type: "i32", wat: result };
       };
       const globalsMap = new Map([...this.moduleGlobals.entries()].map(([k, v]) => [k, watBaseType(v.type)]));
       const segments = parseConsoleLogArgs(logMatch[1], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFn, globalsMap);
@@ -4105,6 +4345,8 @@ class WasicTranspiler {
         return { type: f.type, watLoad: `(${loadOp} (i32.add ${baseWat} (i32.const ${f.offset})))` };
       };
       const dotCallLookupFnErr: DotCallLookup = (token) => {
+        const result = this.emitExpr(token, locals, "i32");
+        if (result === "(unreachable)" || result.startsWith("(;?")) return undefined;
         const m2 = token.match(/^(?:this|\w+)\.(\w+)\s*\(/);
         if (m2) {
           const receiver2 = token.match(/^(\w+)\./)?.[1] ?? "";
@@ -4128,8 +4370,16 @@ class WasicTranspiler {
               return { type: retType as string, wat: this.emitExpr(token, locals, retType) };
             }
           }
+          // Phase 5h/12: interface method dispatch
+          const ifaceName2 = this.interfaceVars.get(receiver2);
+          if (ifaceName2) {
+            const field2 = this.structDefs.get(ifaceName2)?.fields.find(f => f.name === methodName2);
+            if (field2?.funcType) {
+              return { type: (field2.funcType.result ?? "i32") as string, wat: result };
+            }
+          }
         }
-        return undefined;
+        return { type: "i32", wat: result };
       };
       const globalsMapErr = new Map([...this.moduleGlobals.entries()].map(([k, v]) => [k, watBaseType(v.type)]));
       const segments = parseConsoleLogArgs(errMatch[2], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFnErr, globalsMapErr);
@@ -4160,11 +4410,19 @@ class WasicTranspiler {
     // Post/pre increment/decrement as standalone statements: i++, i--, ++i, --i
     if (/^(\w+)\+\+;?$/.test(line) || /^\+\+(\w+);?$/.test(line)) {
       const v = line.replace(/[+;]/g, "").trim();
+      // Phase 5h: boxed capture — update through heap pointer
+      if (this.currentBoxedCaptures.has(v)) {
+        return `(i32.store (local.get $${v}) (i32.add (i32.load (local.get $${v})) (i32.const 1)))`;
+      }
       const vt = watBaseType(locals.get(v) ?? "i32");
       return `(local.set $${v} (${vt}.add (local.get $${v}) (${vt}.const 1)))`;
     }
     if (/^(\w+)--;?$/.test(line) || /^--(\w+);?$/.test(line)) {
       const v = line.replace(/[-;]/g, "").trim();
+      // Phase 5h: boxed capture — update through heap pointer
+      if (this.currentBoxedCaptures.has(v)) {
+        return `(i32.store (local.get $${v}) (i32.sub (i32.load (local.get $${v})) (i32.const 1)))`;
+      }
       const vt = watBaseType(locals.get(v) ?? "i32");
       return `(local.set $${v} (${vt}.sub (local.get $${v}) (${vt}.const 1)))`;
     }
@@ -4431,12 +4689,21 @@ class WasicTranspiler {
       const ifMatch = line.match(/^if\s*\((.+)\)\s*\{?$/) ?? line.match(/^if\s*\((.+)\)\s+(\S.*)$/);
       if (ifMatch) {
         const cond = ifMatch[1].trim();
-        const inlineBody = ifMatch[2] && ifMatch[2] !== "{" ? ifMatch[2].trim() : null;
+        const rawIfBody = ifMatch[2];
+        const inlineBody = rawIfBody && rawIfBody !== "{" && !rawIfBody.trimStart().startsWith("{")
+          ? rawIfBody.trim() : null;
+        const singleLineBlock = rawIfBody && rawIfBody.trimStart().startsWith("{") && rawIfBody.trim() !== "{"
+          ? rawIfBody : null;
         let ifBody: string[];
         let terminator = "";
         if (inlineBody) {
-          // Single-line if: body is the inline statement
+          // Single-line if: body is the inline statement (no braces)
           ifBody = [inlineBody];
+          i++;
+        } else if (singleLineBlock) {
+          // Single-line brace block: if (cond) { stmt1; stmt2; } — fully on one line
+          const inner = singleLineBlock.replace(/^\s*\{/, "").replace(/\}\s*$/, "").trim();
+          ifBody = inner ? WasicTranspiler.splitStmts(inner) : [];
           i++;
         } else {
           // Multi-line if: collect body lines until matching } or } else {
@@ -5880,7 +6147,8 @@ class WasicTranspiler {
       locals.set("__obj_ret", "i32");
     }
     // Phase 12: add $__iface_tmp for interface method dispatch (any dot-call in body)
-    if (fn.bodyLines.some(l => /\w+\.\w+\s*\(/.test(l)) && !locals.has("__iface_tmp")) {
+    // Phase 5h: also add for factory().method() chained calls
+    if (fn.bodyLines.some(l => /\w+\.\w+\s*\(/.test(l) || /\w+\s*\(.*\)\.\w+\s*\(/.test(l)) && !locals.has("__iface_tmp")) {
       declaredLocals.push(["__iface_tmp", "i32"]);
       locals.set("__iface_tmp", "i32");
     }
@@ -5912,7 +6180,12 @@ class WasicTranspiler {
     // For never-returning functions pass null so return statements emit (return) with no value.
     const blockResult = fn.result === "never" ? null : fn.result;
     this.currentFuncResultTsName = fn.resultTsName ?? null;
+    // Phase 5h: set boxed/shared capture context for this function
+    this.currentBoxedCaptures = fn.boxedCaptures ?? new Set();
+    this.currentSharedMutableCaptures = fn.sharedMutableCaptures ?? new Set();
     const body = this.emitBlock(fn.bodyLines, locals, blockResult);
+    this.currentBoxedCaptures = new Set();
+    this.currentSharedMutableCaptures = new Set();
     // Phase 21: append (unreachable) for never-typed functions — signals to the WASM validator
     // that control never reaches the end of this function.
     const neverSuffix = fn.result === "never" ? "\n    (unreachable)" : "";
@@ -6319,13 +6592,17 @@ class WasicTranspiler {
           const initExpr = (m[3] ?? "").trim();
           // Skip arrow function declarations — lifted to module level, not WAT locals
           if (/^\s*\([^)]*\)\s*(?::\s*\w+)?\s*=>/.test(initExpr)) continue;
-          // Phase 23: tuple-returning function call — register in structVars for t[N] access
+          // Phase 12/23/5h: struct/interface/tuple-returning function call
           const fcmS = initExpr.match(/^(\w+)\s*\(/);
           if (fcmS) {
             const calledFnS = this.functions.find(f => f.name === fcmS[1]);
-            if (calledFnS?.resultTsName?.startsWith("__Tuple_") && this.structDefs.has(calledFnS.resultTsName)) {
+            if (calledFnS?.resultTsName && this.structDefs.has(calledFnS.resultTsName)) {
               const retDefS = this.structDefs.get(calledFnS.resultTsName)!;
-              this.structVars.set(m[1], { def: retDefS, ptr: -1 });
+              if (calledFnS.resultTsName.startsWith("__Tuple_")) {
+                this.structVars.set(m[1], { def: retDefS, ptr: -1 });
+              } else {
+                this.interfaceVars.set(m[1], calledFnS.resultTsName);
+              }
               startLocals.set(m[1], "i32");
               startDeclaredLocals.push([m[1], "i32"]);
               continue;
@@ -6363,6 +6640,13 @@ class WasicTranspiler {
       if (this.hasRestLiteralCalls(this.startBodyLines) && !startLocals.has("__rest_ptr")) {
         startDeclaredLocals.push(["__rest_ptr", "i32"]);
         startLocals.set("__rest_ptr", "i32");
+      }
+      // Phase 12/5h: add $__iface_tmp for interface/factory method dispatch in start body
+      if (!startLocals.has("__iface_tmp") && this.startBodyLines.some(l =>
+        /\w+\.\w+\s*\(/.test(l) || /\w+\s*\(.*\)\.\w+\s*\(/.test(l)
+      )) {
+        startDeclaredLocals.push(["__iface_tmp", "i32"]);
+        startLocals.set("__iface_tmp", "i32");
       }
       // Add $__struct_tmp if any start body line has console.log(structReturningFn(...))
       if (!startLocals.has("__struct_tmp") && this.startBodyLines.some(l => {

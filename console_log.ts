@@ -366,6 +366,11 @@ function parseSingleArg(
       return [{ kind, wat }];
     }
   }
+  // Phase 12/5h: fallback — i32 local holding a dynamic i32[] array pointer (captured or method-returned)
+  if (bracketMatch && locals.get(bracketMatch[1]) === "i32") {
+    const idxWat = exprToWat(bracketMatch[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup);
+    return [{ kind: "i32expr" as const, wat: `(i32.load (i32.add (i32.add (local.get $${bracketMatch[1]}) (i32.const 8)) (i32.shl ${idxWat} (i32.const 2))))` }];
+  }
 
   // ── Array .length: dynamic → runtime i32 load from header; static → compile-time constant
   const dotLenMatch = token.match(/^(\w+)\.length$/);

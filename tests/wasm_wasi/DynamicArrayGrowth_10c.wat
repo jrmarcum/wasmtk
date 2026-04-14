@@ -352,6 +352,7 @@
     (local $nums i32)
     (local $last i32)
     (local $scores i32)
+    (local $__iface_tmp i32)
     (local.set $nums (call $__malloc (i32.const 40)))
       (i32.store (local.get $nums) (i32.const 3))
       (i32.store offset=4 (local.get $nums) (i32.const 8))
