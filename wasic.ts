@@ -3567,48 +3567,34 @@ class WasicTranspiler {
     }
 
     // throw new Error("msg") | throw "literal" | throw someVar;
-    // Strategy: write the error message to stderr (fd=2) via fd_write, then call proc_exit(0).
-    // This produces exit code 0 (matching Deno's TS behaviour for uncaught throws) and
-    // fulfils the "error reporting" requirement without relying on the EH throw proposal at
-    // runtime (WebAssembly.Exception leaks to the host and causes exit code 1).
+    // Strategy: emit (throw $__exn_tag ptr len) so the exception can be caught by any
+    // enclosing try/catch block.  Uncaught throws propagate to the host, which exits
+    // with a non-zero code.
     const throwMatch = line.match(/^throw\s+(.+?);?$/);
     if (throwMatch) {
-      this.hasConsoleLog = true;  // ensure fd_write is imported
+      this.needsExceptionTag = true;
       const throwExpr = throwMatch[1].trim();
-      const iov = this.iovBase;
-      const nwrit = iov + 8;  // scratch slot for nwritten (4 bytes, after the 8-byte iov)
 
-      // Helper to build the stderr-write + exit sequence for a static string
-      const stderrExit = (ptr: number, len: number): string => [
-        `(i32.store (i32.const ${iov}) (i32.const ${ptr}))`,
-        `(i32.store (i32.const ${iov + 4}) (i32.const ${len}))`,
-        `(drop (call $fd_write (i32.const 2) (i32.const ${iov}) (i32.const 1) (i32.const ${nwrit})))`,
-        `(call $proc_exit (i32.const 0))`,
-        `(unreachable)`,
-      ].join("\n      ");
+      // Helper to emit the WASM throw instruction for a static string in data memory
+      const throwExnTag = (ptr: number, len: number): string =>
+        `(throw $__exn_tag (i32.const ${ptr}) (i32.const ${len}))`;
 
       // throw new Error("msg") or throw new Error('msg')
       const newErrMatch = throwExpr.match(/^new\s+Error\s*\(\s*["']([^"']*)["']\s*\)$/);
       if (newErrMatch) {
         const [ptr, len] = this.allocStringNoLog(newErrMatch[1]);
-        return stderrExit(ptr, len);
+        return throwExnTag(ptr, len);
       }
       // throw "literal" or throw 'literal'
       const strLitMatch = throwExpr.match(/^["']([^"']*)["']$/);
       if (strLitMatch) {
         const [ptr, len] = this.allocStringNoLog(strLitMatch[1]);
-        return stderrExit(ptr, len);
+        return throwExnTag(ptr, len);
       }
       // throw someVar (string variable — ptr/len locals)
       if (/^\w+$/.test(throwExpr)) {
         if (locals.get(throwExpr) === "string") {
-          return [
-            `(i32.store (i32.const ${iov}) (local.get $${throwExpr}_ptr))`,
-            `(i32.store (i32.const ${iov + 4}) (local.get $${throwExpr}_len))`,
-            `(drop (call $fd_write (i32.const 2) (i32.const ${iov}) (i32.const 1) (i32.const ${nwrit})))`,
-            `(call $proc_exit (i32.const 0))`,
-            `(unreachable)`,
-          ].join("\n      ");
+          return `(throw $__exn_tag (local.get $${throwExpr}_ptr) (local.get $${throwExpr}_len))`;
         }
         // Numeric/opaque value — exit without a message
         return `(call $proc_exit (i32.const 0))\n      (unreachable)`;

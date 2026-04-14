@@ -1,14 +1,12 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@std/assert@*": "1.0.0",
-    "jsr:@std/assert@1.0.0": "1.0.0",
+    "jsr:@std/assert@*": "1.0.13",
     "jsr:@std/cli@1": "1.0.3",
-    "jsr:@std/encoding@^1.0.5": "1.0.10",
     "jsr:@std/fmt@*": "1.0.9",
     "jsr:@std/fs@*": "1.0.22",
-    "jsr:@std/internal@^1.0.1": "1.0.12",
     "jsr:@std/internal@^1.0.12": "1.0.12",
+    "jsr:@std/internal@^1.0.6": "1.0.12",
     "jsr:@std/path@*": "1.1.4",
     "jsr:@std/path@^1.1.2": "1.1.4",
     "jsr:@std/path@^1.1.4": "1.1.4",
@@ -18,10 +16,10 @@
     "npm:wasm2js@0.2": "0.2.0"
   },
   "jsr": {
-    "@std/assert@1.0.0": {
-      "integrity": "0e4f6d873f7f35e2a1e6194ceee39686c996b9e5d134948e644d35d4c4df2008",
+    "@std/assert@1.0.13": {
+      "integrity": "ae0d31e41919b12c656c742b22522c32fb26ed0cba32975cb0de2a273cb68b29",
       "dependencies": [
-        "jsr:@std/internal@^1.0.1"
+        "jsr:@std/internal@^1.0.6"
       ]
     },
     "@std/cli@1.0.3": {
@@ -29,9 +27,6 @@
     },
     "@std/cli@1.0.22": {
       "integrity": "50d1e4f87887cb8a8afa29b88505ab5081188f5cad3985460c3b471fa49ff21a"
-    },
-    "@std/encoding@1.0.10": {
-      "integrity": "8783c6384a2d13abd5e9e87a7ae0520a30e9f56aeeaa3bdf910a3eaaf5c811a1"
     },
     "@std/fmt@1.0.9": {
       "integrity": "2487343e8899fb2be5d0e3d35013e54477ada198854e52dd05ed0422eddcabe0"
@@ -100,9 +95,7 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@std/assert@1.0.0",
       "jsr:@std/cli@1",
-      "jsr:@std/encoding@^1.0.5",
       "jsr:@std/path@^1.1.2",
       "npm:assemblyscript@~0.27.30",
       "npm:binaryen@116",
