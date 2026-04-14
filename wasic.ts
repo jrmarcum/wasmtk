@@ -2524,9 +2524,16 @@ class WasicTranspiler {
       }
     }
 
-    // Parenthesised group
+    // Parenthesised group — only strip when the outer ( truly wraps the whole expression.
+    // e.g. "(a + b)" → yes; "(a + b) + (c + d)" → no (first ) closes before the end).
     if (expr.startsWith("(") && expr.endsWith(")")) {
-      return this.emitExpr(expr.slice(1, -1), locals, defaultType);
+      let pd = 0, isWrapped = true;
+      for (let pi = 0; pi < expr.length - 1; pi++) {
+        if (expr[pi] === "(" || expr[pi] === "[") pd++;
+        else if (expr[pi] === ")" || expr[pi] === "]") pd--;
+        if (pd === 0) { isWrapped = false; break; }
+      }
+      if (isWrapped) return this.emitExpr(expr.slice(1, -1), locals, defaultType);
     }
 
     // Bigint literal: 42n → (i64.const 42)
@@ -3408,11 +3415,13 @@ class WasicTranspiler {
    *  spaces) at paren depth 0. Used for `as` and `satisfies`. */
   private findDepth0Keyword(expr: string, needle: string): number {
     let depth = 0;
-    for (let i = expr.length - needle.length; i >= 0; i--) {
+    // Start from the very end so that closing ) chars in the tail are accounted for in
+    // the depth before we check any potential match position.
+    for (let i = expr.length - 1; i >= 0; i--) {
       const ch = expr[i];
       if (ch === ")" || ch === "]") depth++;
       else if (ch === "(" || ch === "[") depth--;
-      if (depth === 0 && expr.slice(i, i + needle.length) === needle) {
+      if (depth === 0 && i + needle.length <= expr.length && expr.slice(i, i + needle.length) === needle) {
         return i;
       }
     }

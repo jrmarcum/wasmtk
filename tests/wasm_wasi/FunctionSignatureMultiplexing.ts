@@ -14,9 +14,9 @@ function complex(a: i32, b: f64, c: i32): f64 {
 }
 
 export function _start(): void {
-  add(1, 2);
-  square(3.0);
-  complex(1, 2.0, 3);
+  console.log(add(1, 2));
+  console.log(square(3.0));
+  console.error(complex(1, 2.0, 3));
 }
 
-console.log(_start());
+_start();
