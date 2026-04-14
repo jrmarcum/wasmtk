@@ -143,6 +143,7 @@ const wasiImports: WasiImports = {
     fd_filestat_get: (): number => 0,
     poll_oneoff: (): number => 28,
     sched_yield: (): number => 0,
+    fd_fdstat_set_flags: (_fd: number | bigint, _flags: number | bigint): number => 0,
   }
 };
 
