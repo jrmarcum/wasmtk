@@ -286,7 +286,7 @@
             (i32.const 1)
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__i32_to_str (f64.sqrt (f64.const 9.0)) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (f64.sqrt (f64.const 9.0)) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -295,7 +295,7 @@
             (i32.const 1)
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__i32_to_str (f64.floor (f64.const 2.9)) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (f64.floor (f64.const 2.9)) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -304,7 +304,7 @@
             (i32.const 1)
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__i32_to_str (f64.ceil (f64.const 2.1)) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (f64.ceil (f64.const 2.1)) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -313,7 +313,7 @@
             (i32.const 1)
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__i32_to_str (f64.trunc (f64.const 3.7)) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (f64.trunc (f64.const 3.7)) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -322,7 +322,7 @@
             (i32.const 1)
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__i32_to_str (f64.nearest (f64.const 2.5)) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (f64.nearest (f64.const 2.5)) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -331,7 +331,7 @@
             (i32.const 1)
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__i32_to_str (call $__i32_abs (i32.const -4.5)) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (f64.abs (f64.const -4.5)) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -351,7 +351,7 @@
             (i32.const 1)
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__i32_to_str (call $__i32_min (i32.const 3.0) (i32.const 5.0)) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (f64.min (f64.const 3.0) (f64.const 5.0)) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -360,7 +360,7 @@
             (i32.const 1)
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__i32_to_str (call $__i32_max (i32.const 3.0) (i32.const 5.0)) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (f64.max (f64.const 3.0) (f64.const 5.0)) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -391,7 +391,7 @@
             (i32.const 1)
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__i32_to_str (call $__math_pow (f64.const 2.0) (f64.const 10.0)) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (call $__math_pow (f64.const 2.0) (f64.const 10.0)) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -400,7 +400,7 @@
             (i32.const 1)
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__i32_to_str (if (result f64) (f64.eq (f64.const -3.0) (f64.const 0)) (then (f64.const 0)) (else (f64.copysign (f64.const 1) (f64.const -3.0)))) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (if (result f64) (f64.eq (f64.const -3.0) (f64.const 0)) (then (f64.const 0)) (else (f64.copysign (f64.const 1) (f64.const -3.0)))) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -409,7 +409,7 @@
             (i32.const 1)
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__i32_to_str (if (result f64) (f64.eq (f64.const 0.0) (f64.const 0)) (then (f64.const 0)) (else (f64.copysign (f64.const 1) (f64.const 0.0)))) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (if (result f64) (f64.eq (f64.const 0.0) (f64.const 0)) (then (f64.const 0)) (else (f64.copysign (f64.const 1) (f64.const 0.0)))) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -418,7 +418,7 @@
             (i32.const 1)
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__i32_to_str (if (result f64) (f64.eq (f64.const 5.0) (f64.const 0)) (then (f64.const 0)) (else (f64.copysign (f64.const 1) (f64.const 5.0)))) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (if (result f64) (f64.eq (f64.const 5.0) (f64.const 0)) (then (f64.const 0)) (else (f64.copysign (f64.const 1) (f64.const 5.0)))) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -427,7 +427,7 @@
             (i32.const 1)
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__i32_to_str (f64.sqrt (f64.add (f64.mul (f64.const 3.0) (f64.const 3.0)) (f64.mul (f64.const 4.0) (f64.const 4.0)))) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (f64.sqrt (f64.add (f64.mul (f64.const 3.0) (f64.const 3.0)) (f64.mul (f64.const 4.0) (f64.const 4.0)))) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write

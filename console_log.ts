@@ -267,7 +267,8 @@ function parseSingleArg(
   }
 
   // ── Dot-call expression: receiver.method(args) or this.method(args) — class/static calls
-  if (dotCallLookup && /^(?:this|\w+)\.(\w+)\s*\(/.test(token)) {
+  // Skip Math.* tokens — they have their own dedicated handler below.
+  if (dotCallLookup && !token.startsWith("Math.") && /^(?:this|\w+)\.(\w+)\s*\(/.test(token)) {
     const result = dotCallLookup(token);
     if (result) {
       const kind = result.type === "f64" || result.type === "f32" ? "f64expr" as const
