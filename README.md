@@ -210,11 +210,16 @@ wasmtk run myprogram.wasm
 
 | Function | Notes |
 | --- | --- |
-| `Math.sqrt`, `Math.abs` | Native WASM `f64.sqrt`, `f64.abs` |
+| `Math.sqrt` | Native WASM `f64.sqrt` |
+| `Math.abs` | `f64.abs` in f64 context; `$__i32_abs` WAT helper when argument is an i32 variable |
 | `Math.floor`, `Math.ceil`, `Math.round`, `Math.trunc` | Native WASM float ops |
-| `Math.min`, `Math.max` | Native WASM min/max |
-| `Math.pow` | Native WASM `f64.pow` (via Binaryen) |
-| `Math.sign` | Implemented as WAT comparison sequence |
+| `Math.min`, `Math.max` | `f64.min` / `f64.max` in f64 context; `$__i32_min` / `$__i32_max` WAT helpers when both arguments are i32 |
+| `Math.pow` | WAT `$__math_pow` helper (Binaryen converts to native `f64.pow`) |
+| `Math.sign` | Implemented as WAT comparison + `f64.copysign` sequence |
+| `Math.hypot(a, b)` | `f64.sqrt(a² + b²)` — two-argument form |
+| `Math.clz32(n)` | Native WASM `i32.clz` — counts leading zeros of a 32-bit integer |
+| `Math.imul(a, b)` | Native WASM `i32.mul` — C-style 32-bit integer multiplication |
+| `Math.PI`, `Math.E`, `Math.SQRT2`, `Math.LN2`, `Math.LN10`, `Math.LOG2E`, `Math.LOG10E`, `Math.SQRT1_2` | `f64.const` — compile-time constants |
 
 ##### Multi-file Programs
 
@@ -486,6 +491,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | 21 | `never` type, `void` (complete), `readonly` | `"never"` added to `WatType`; `mapType("never")` returns `"never"`; `never`-return functions emit no WAT `(result ...)` and get `(unreachable)` appended to the body; all call-statement `drop` sites guarded against never/string results; `StructField.readonly?` flag; interface and class field parsing captures `readonly` modifier; `this.field = val` writes blocked outside the constructor; `obj.field = val` writes blocked for readonly struct/class fields; `currentMethodName` instance variable added |
 | 22 | Compile-time convenience additions | `const enum` — identical to numeric enum (already parsed); Math constants (`Math.PI`, `Math.E`, `Math.LN2`, `Math.LOG2E`, `Math.LOG10E`, `Math.SQRT2`, `Math.SQRT1_2`, `Math.LN10`) → `f64.const` (already done); `**` exponentiation operator → `Math.pow` via right-associative LTR scan + `*` guard in `findBinaryOp`; `as` type assertion → `emitTypeCast` (trunc/convert/promote/demote/wrap/extend); postfix `!` non-null assertion stripped; `satisfies` operator stripped; `findDepth0LTR` + `findDepth0Keyword` + `emitTypeCast` helpers added; **bug fix**: `findDepth0Keyword` now scans from `expr.length - 1` so trailing `)` chars are correctly counted in depth before any ` as ` match is attempted; paren-group check now verifies the outer `(` is balanced with the final `)` before stripping — `as` now compiles correctly inside mixed-type compound expressions such as `(b * b) + (a as f64) + (c as f64)` |
 | 23 | Tuple types `[A, B, C]` | Anonymous fixed-layout struct in linear memory; positional fields `_0`, `_1`, …; `type Pair = [i32, i32]` alias parsed in `parseStructs()`; inline `[T1, T2]` annotations; `getOrCreateTupleDef()` / `makeTupleStructDef()` create synthetic `__Tuple_T1_T2` StructDef; `mapType` extended for `[` prefix and `__Tuple_` prefix → i32; tuple params register in structVars via `structType`; `emitStatement` handles tuple literal init, named alias init, destructuring, element write, `return [e0, e1]`; strict `tupleFieldMatch` regex in `emitExpr` avoids greedy-match confusion with arithmetic; dynamic-array fallback guarded by `!structVars.has(var)`; `console_log.ts` handles `t[N]` via `structLookup` for correct type inference |
+| bug fix | `Math.*` inside `console.log` with float-literal args | `console.log(Math.abs(-4.5))`, `Math.min(3.0, 5.0)`, `Math.max(3.0, 5.0)` produced invalid WAT (`i32.const -4.5`, `i32.const 3.0`, etc.) — root cause: `parseSingleArg` in `console_log.ts` routed these tokens through `dotCallLookup` (which called `emitExpr(..., "i32")`) before the dedicated `Math.*` handler ran; fix: added `!token.startsWith("Math.")` guard on the `dotCallLookup` check; all `Math.*` tokens now reach the correct handler which emits `f64.abs`, `f64.min`, `f64.max`; `MathIntrinsics_7a.ts` compiles and passes — 84/84 suite |
 
 ---
 
