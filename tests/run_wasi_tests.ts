@@ -45,14 +45,17 @@ interface StepResult {
  *
  * Prints:
  *   [label]  cmd args...
- *   ✓ label succeeded          ← on success (mirrors quick-run.ts "✓ Success")
- *   ✗ label failed (exit code X) ← on failure (mirrors quick-run.ts "✗ Failed (code X)")
- *   ✗ label error: message      ← if the process couldn't be spawned
+ *   ✓ label succeeded                    ← success (not expected to fail)
+ *   ✓ label failed as expected           ← failure when expectedFail=true
+ *   ✗ label succeeded (expected failure) ← success when expectedFail=true
+ *   ✗ label failed (exit code X)         ← unexpected failure
+ *   ✗ label error: message               ← process couldn't be spawned
  */
 async function runStep(
   label: string,
   cmd: string,
   args: string[],
+  expectedFail = false,
 ): Promise<StepResult> {
   console.log(blue(`  [${label}]`), dim(`${cmd} ${args.join(" ")}`));
 
@@ -64,9 +67,17 @@ async function runStep(
     }).output();
 
     if (success) {
-      console.log(green(`  ✓ ${label} succeeded`));
+      if (expectedFail) {
+        console.log(yellow(`  ✗ ${label} succeeded (expected failure)`));
+      } else {
+        console.log(green(`  ✓ ${label} succeeded`));
+      }
     } else {
-      console.log(red(`  ✗ ${label} failed (exit code ${code})`));
+      if (expectedFail) {
+        console.log(green(`  ✓ ${label} failed as expected (exit code ${code})`));
+      } else {
+        console.log(red(`  ✗ ${label} failed (exit code ${code})`));
+      }
     }
     return { success, code };
   } catch (err: unknown) {
@@ -74,6 +85,25 @@ async function runStep(
     console.error(red(`  ✗ ${label} error: ${msg}`));
     return { success: false, code: -1 };
   }
+}
+
+/**
+ * Reads the first 10 lines of a .ts file and returns any steps listed in a
+ * "// @expect-fail: compile, run-ts, run-wasm" comment as a Set.
+ */
+async function readExpectedFailures(tsPath: string): Promise<Set<string>> {
+  const expected = new Set<string>();
+  try {
+    const text = await Deno.readTextFile(tsPath);
+    for (const line of text.split("\n").slice(0, 10)) {
+      const m = line.match(/\/\/\s*@expect-fail\s*:\s*(.+)/);
+      if (m) {
+        for (const step of m[1].split(",")) expected.add(step.trim());
+        break;
+      }
+    }
+  } catch { /* ignore unreadable files */ }
+  return expected;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -128,39 +158,49 @@ async function startTestSuite() {
     console.log(yellow(bold(`── ${file}`)));
     processed++;
 
+    const expectFail = await readExpectedFailures(tsPath);
+    // A step "passes" if it succeeded when not expected to fail, or failed when expected to fail.
+    const stepOk = (r: StepResult, step: string) =>
+      expectFail.has(step) ? !r.success : r.success;
+
     // ── Step 1: Compile TS → WASM ─────────────────────────────────
-    const compile = await runStep("compile", WASMTK_BIN, ["wasic", tsPath]);
+    const compile = await runStep("compile", WASMTK_BIN, ["wasic", tsPath], expectFail.has("compile"));
 
     // ── Step 2: Run TS source directly (reference baseline) ────────
-    const runTs = await runStep("run-ts", WASMTK_BIN, ["run", tsPath]);
+    const runTs = await runStep("run-ts", WASMTK_BIN, ["run", tsPath], expectFail.has("run-ts"));
 
     // ── Step 3: Run compiled WASM ─────────────────────────────────
     let runWasm: StepResult;
+    const compileExpectedFail = expectFail.has("compile") && !compile.success;
     if (!compile.success) {
-      console.log(dim("  (skipping run-wasm — compile failed)"));
-      runWasm = { success: false, code: -1 };
+      if (!compileExpectedFail) {
+        console.log(dim("  (skipping run-wasm — compile failed)"));
+      }
+      // If compile failed as expected, treat run-wasm as N/A (not a failure).
+      runWasm = { success: !compileExpectedFail ? false : true, code: -1 };
     } else if (!(await exists(wasmPath))) {
       console.log(red("  ✗ run-wasm: .wasm file not found after compile"));
       runWasm = { success: false, code: -1 };
     } else {
-      runWasm = await runStep("run-wasm", WASMTK_BIN, ["run", wasmPath]);
+      runWasm = await runStep("run-wasm", WASMTK_BIN, ["run", wasmPath], expectFail.has("run-wasm"));
     }
 
     // ── File verdict ──────────────────────────────────────────────
-    const allPassed = compile.success && runTs.success && runWasm.success;
+    const allPassed = stepOk(compile, "compile") && stepOk(runTs, "run-ts") && stepOk(runWasm, "run-wasm");
     if (allPassed) {
-      console.log(green(`✅ ${file} PASSED\n`));
+      const note = expectFail.size > 0 ? dim(` (expected failures: ${[...expectFail].join(", ")})`) : "";
+      console.log(green(`✅ ${file} PASSED`) + note + "\n");
       passedCount++;
     } else {
-      // List which steps failed so the reader knows exactly where to look
-      const failedSteps = (
+      // List steps whose outcome didn't match expectations.
+      const badSteps = (
         [
-          !compile.success && "compile",
-          !runTs.success   && "run-ts",
-          !runWasm.success && "run-wasm",
+          !stepOk(compile, "compile") && "compile",
+          !stepOk(runTs,   "run-ts")  && "run-ts",
+          !stepOk(runWasm, "run-wasm") && "run-wasm",
         ] as (string | false)[]
       ).filter((s): s is string => s !== false).join(", ");
-      console.log(red(`❌ ${file} FAILED  [${failedSteps}]\n`));
+      console.log(red(`❌ ${file} FAILED  [${badSteps}]\n`));
       failedCount++;
     }
   }

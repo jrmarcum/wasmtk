@@ -1,4 +1,5 @@
 // External source defines an interface 'logger' with a 'log' function
+// @expect-fail: compile
 //@ts-ignore: valid
 // deno-lint-ignore-file
 import { assert } from "jsr:@std/assert";

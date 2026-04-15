@@ -4542,6 +4542,18 @@ class WasicTranspiler {
           return hasResultS ? `(drop ${callWatS})` : callWatS;
         }
       }
+
+      // Receiver is not `this`, not a class instance, not a class, and not an interface variable:
+      // it is an undeclared/unimported identifier. Fail compilation with a descriptive note.
+      if (receiver !== "this") {
+        const isKnown = this.classVars.has(receiver) || this.classDefs.has(receiver) || this.interfaceVars.has(receiver);
+        if (!isKnown) {
+          console.error(`❌ wasic: '${receiver}' is not defined — '${receiver}.${methodName}(...)' cannot be compiled`);
+          console.error(`   Note: '${receiver}' was not imported or declared in this module.`);
+          console.error(`   If '${receiver}' is an external module, import the required function(s) directly (e.g. import { ${methodName} } from "...").`);
+          Deno.exit(1);
+        }
+      }
     }
 
     // Phase 5f: standalone chained call — factoryFn(outerArgs)(innerArgs);
