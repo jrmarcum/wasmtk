@@ -463,6 +463,11 @@ class WasicTranspiler {
   // Key format: "push_i32", "pop_f64", "shift_i32", "unshift_f64", etc.
   private dynArrHelpers: Set<string> = new Set();
 
+  // Tracks variables assigned from arr.find() calls so console.log can print "undefined"
+  // (matching TypeScript semantics) when the not-found sentinel is returned.
+  // Reset at the start of each emitFunction call.
+  private findResultVars: Set<string> = new Set();
+
   // Set to true when any throw/try/catch is emitted; causes (tag $__exn_tag) to be emitted.
   private needsExceptionTag = false;
 
@@ -3930,6 +3935,10 @@ class WasicTranspiler {
         return this.emitStringAssign(varName, initExpr, locals);
       }
       locals.set(varName, varType);
+      // Track find() result variables so console.log can print "undefined" for not-found sentinel
+      if (/^\w+\.find\s*\(/.test(initExpr) && (varType === "i32" || varType === "f64")) {
+        this.findResultVars.add(varName);
+      }
       // Phase 5h: shared mutable capture — allocate heap cell, store initial value into it
       if (this.currentSharedMutableCaptures.has(varName)) {
         const initWat = this.emitExpr(initExpr, locals, "i32");
@@ -4220,6 +4229,36 @@ class WasicTranspiler {
           if (needsArrPrintHelper) this.needsArrPrintHelper = true;
           return [ptrStmt, ...statements].join("\n      ");
         }
+      }
+      // find() result variable: print "undefined" when sentinel (-1 for i32, NaN for f64),
+      // matching TypeScript's Array.find() semantics for the not-found case.
+      if (this.findResultVars.has(logSingleArg)) {
+        const varType = locals.get(logSingleArg);
+        this.needsNumericHelpers = true;
+        const [undefOffset, undefLen] = this.allocString("undefined\n");
+        const isFindF64 = varType === "f64";
+        const cond = isFindF64
+          ? `(f64.ne (local.get $${logSingleArg}) (local.get $${logSingleArg}))` // NaN != NaN
+          : `(i32.eq (local.get $${logSingleArg}) (i32.const -1))`;
+        const normalSegs: LogSegment[] = isFindF64
+          ? [{ kind: "f64var" as const, name: logSingleArg }, { kind: "literal" as const, text: "\n" }]
+          : [{ kind: "i32var" as const, name: logSingleArg }, { kind: "literal" as const, text: "\n" }];
+        const { statements: normalStmts, needsStrGather: nsg, needsArrPrintHelper: naph } =
+          emitConsoleLog(normalSegs, (text) => this.allocString(text), "      ", 1, this.iovBase, this.scratchBase);
+        if (nsg) this.needsStrGatherHelper = true;
+        if (naph) this.needsArrPrintHelper = true;
+        return [
+          `    (if ${cond}`,
+          `      (then`,
+          `        (i32.store (i32.const ${this.iovBase}) (i32.const ${undefOffset}))`,
+          `        (i32.store (i32.const ${this.iovBase + 4}) (i32.const ${undefLen}))`,
+          `        (drop (call $fd_write (i32.const 1) (i32.const ${this.iovBase}) (i32.const 1) (i32.const ${this.iovBase + 128})))`,
+          `      )`,
+          `      (else`,
+          ...normalStmts.map(s => `  ${s}`),
+          `      )`,
+          `    )`,
+        ].join("\n");
       }
       // Phase 5h: chained call console.log(factoryFn().method()) — parseSingleArg cannot handle
       // these (callMatch greedily mis-parses the args), so emit directly as i32.
@@ -5774,11 +5813,12 @@ class WasicTranspiler {
     // Phase 5f: closure factory — emit heap-alloc body + trampoline, skip normal body emit
     if (fn.isClosureFactory && fn.returnedArrow) return this.emitClosureFactory(fn);
 
-    // Reset per-function array and struct tracking
-    this.arrayVars  = new Map();
-    this.structVars = new Map();
-    this.classVars  = new Map();
-    this.interfaceVars = new Map();
+    // Reset per-function array, struct, and find-result tracking
+    this.arrayVars      = new Map();
+    this.structVars     = new Map();
+    this.classVars      = new Map();
+    this.interfaceVars  = new Map();
+    this.findResultVars = new Set();
     this.currentFuncResultTsName = null;
     this.currentMethodClass = fn.className ?? null;
     this.currentMethodName  = fn.name;
