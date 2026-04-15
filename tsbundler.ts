@@ -145,7 +145,9 @@ function applyRenames(src: string, renames: Map<string, string>): string {
   for (const [from, to] of entries) {
     // Escape all regex metacharacters (including `.` in namespace keys)
     const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    src = src.replace(new RegExp(`(?<!\\w)${escaped}(?!\\w)`, "g"), to);
+    // Use (?<![\w.]) so a plain identifier rename (e.g. "log" → "LoggerProvider_log")
+    // does not match the same identifier used as a method name (e.g. console.log).
+    src = src.replace(new RegExp(`(?<![\\w.])${escaped}(?!\\w)`, "g"), to);
   }
   return src;
 }
