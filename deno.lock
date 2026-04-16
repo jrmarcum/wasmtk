@@ -10,7 +10,6 @@
     "jsr:@std/path@*": "1.1.4",
     "jsr:@std/path@^1.1.2": "1.1.4",
     "jsr:@std/path@^1.1.4": "1.1.4",
-    "npm:assemblyscript@~0.27.30": "0.27.37",
     "npm:binaryen@116": "116.0.0",
     "npm:wabt@^1.0.36": "1.0.39",
     "npm:wasm2js@0.2": "0.2.0"
@@ -49,24 +48,9 @@
     }
   },
   "npm": {
-    "assemblyscript@0.27.37": {
-      "integrity": "sha512-YtY5k3PiV3SyUQ6gRlR2OCn8dcVRwkpiG/k2T5buoL2ymH/Z/YbaYWbk/f9mO2HTgEtGWjPiAQrIuvA7G/63Gg==",
-      "dependencies": [
-        "binaryen@116.0.0-nightly.20240114",
-        "long"
-      ],
-      "bin": true
-    },
     "binaryen@116.0.0": {
       "integrity": "sha512-Hp0dXC6Cb/rTwWEoUS2BRghObE7g/S9umKtxuTDt3f61G6fNTE/YVew/ezyy3IdHcLx3f17qfh6LwETgCfvWkQ==",
       "bin": true
-    },
-    "binaryen@116.0.0-nightly.20240114": {
-      "integrity": "sha512-0GZrojJnuhoe+hiwji7QFaL3tBlJoA+KFUN7ouYSDGZLSo9CKM8swQX8n/UcbR0d1VuZKU+nhogNzv423JEu5A==",
-      "bin": true
-    },
-    "long@5.3.2": {
-      "integrity": "sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA=="
     },
     "minimist@1.2.8": {
       "integrity": "sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA=="
@@ -97,7 +81,6 @@
     "dependencies": [
       "jsr:@std/cli@1",
       "jsr:@std/path@^1.1.2",
-      "npm:assemblyscript@~0.27.30",
       "npm:binaryen@116",
       "npm:wabt@^1.0.36",
       "npm:wasm2js@0.2"

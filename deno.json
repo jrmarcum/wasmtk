@@ -8,7 +8,6 @@
     "./utils": "./utils.ts",
     "./runner": "./runner.ts",
     "./args": "./args.ts",
-    "./compiler": "./compiler.ts",
     "./javyc": "./javyc.ts",
     "./wasic": "./wasic.ts",
     "./modc": "./modc.ts",
@@ -31,7 +30,6 @@
     "@std/cli/parse-args": "jsr:@std/cli@^1.0.0/parse-args",
     "@std/path": "jsr:@std/path@^1.1.2",
     "binaryen": "npm:binaryen@^116.0.0",
-    "asc": "npm:assemblyscript@^0.27.30/asc",
     "wasm2js": "npm:wasm2js@^0.2.0",
     "wabt": "npm:wabt@^1.0.36"
   },
