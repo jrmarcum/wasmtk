@@ -23,7 +23,7 @@ import {
   compileWasi,
   convertFile,
   bundleTs
-} from "./utils.ts";
+} from "./src/utils.ts";
 
 /**
  * Main entry point for the wasmtk CLI application.
@@ -128,7 +128,7 @@ Options:
       await bundleTs(target, outPath ?? target.replace(/\.ts$/, ".js"));
       break;
     case "wasmbundle": {
-      const { runWasmBundle } = await import("./wasmbundle.ts");
+      const { runWasmBundle } = await import("./src/wasmbundle.ts");
       const inputFiles = args._.slice(1).map(String);
       const bundleOut = outPath ?? "combined.wasm";
       const conflictFlag = args["on-conflict"] as string | undefined;

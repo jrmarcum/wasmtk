@@ -5,16 +5,16 @@
   "license": "MIT",
   "exports": {
     ".": "./main.ts",
-    "./utils": "./utils.ts",
-    "./runner": "./runner.ts",
-    "./args": "./args.ts",
-    "./javyc": "./javyc.ts",
-    "./wasic": "./wasic.ts",
-    "./modc": "./modc.ts",
-    "./tsbundler": "./tsbundler.ts",
-    "./console_log": "./console_log.ts",
-    "./wasmbundle": "./wasmbundle.ts",
-    "./wasmmerge": "./wasmmerge.ts"
+    "./utils": "./src/utils.ts",
+    "./runner": "./src/runner.ts",
+    "./args": "./src/args.ts",
+    "./javyc": "./src/javyc.ts",
+    "./wasic": "./src/wasic.ts",
+    "./modc": "./src/modc.ts",
+    "./tsbundler": "./src/tsbundler.ts",
+    "./console_log": "./src/console_log.ts",
+    "./wasmbundle": "./src/wasmbundle.ts",
+    "./wasmmerge": "./src/wasmmerge.ts"
   },
   "publish": {
     "include": [
@@ -22,7 +22,8 @@
       "LICENSE-APACHE",
       "LICENSE-MIT",
       "README.md",
-      "*.ts",
+      "main.ts",
+      "src/*.ts",
       "deno.json"
     ]
   },
