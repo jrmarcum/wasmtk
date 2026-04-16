@@ -25,6 +25,39 @@ deno add jsr:@jrmarcum/wasmtk
 
 ---
 
+## 📁 Project Structure
+
+```text
+wasmtk/
+├── main.ts              # CLI entry point
+├── deno.json            # Deno configuration, tasks, and JSR exports
+├── src/                 # Source modules
+│   ├── wasic.ts         # TypeScript-to-WAT transpiler (WasicTranspiler)
+│   ├── console_log.ts   # console.log/error/warn WAT emission + number-to-string helpers
+│   ├── tsbundler.ts     # Multi-file import bundler (.ts and .wasm imports)
+│   ├── wasmmerge.ts     # WAT-level merge of pre-compiled .wasm modules
+│   ├── wasmbundle.ts    # CLI bundler for combining multiple .wasm files
+│   ├── modc.ts          # Library-mode compilation (no _start, no WASI)
+│   ├── javyc.ts         # TypeScript via Javy/QuickJS embedded runtime
+│   ├── utils.ts         # WASM runner, WASI shims, and CLI command handlers
+│   ├── runner.ts        # Standalone WASM/WAT runner utilities
+│   ├── args.ts          # CLI argument parsing helpers
+│   └── wasm/            # Pre-compiled WASM library assets (Phase 38+)
+├── tests/               # Test suite
+│   ├── run_wasi_tests.ts
+│   ├── run_bundle_tests.ts
+│   ├── run_mod_tests.ts
+│   ├── run_wasi_javy_tests.ts
+│   ├── wasm_wasi/       # wasic test programs (one per feature/phase)
+│   ├── wasm_wasi_bundle/
+│   ├── wasm_wasi_javy/
+│   └── wasm_mod/
+└── README.md
+
+```
+
+---
+
 ## 🔨 Compiler Options
 
 wasmtk provides three distinct compilation paths. Choosing the right one depends on what your program needs at runtime.
@@ -729,7 +762,7 @@ Phases 24–39 extend `wasic` incrementally. Early phases add compile-time conve
 | 35 | `typeof` (type position) / `keyof T` | `typeof x` resolved to known `WatType` at compile time; `keyof T` yields string-literal union of struct field names (usable with Phase 32 string literal unions) |
 | 36 | Simple conditional types | `T extends U ? X : Y` evaluated during `expandGenerics` monomorphization; complex recursive forms excluded |
 | 37 | `flat()` / `flatMap(fn)` | Flatten nested arrays; requires Phase 30 struct arrays and Phase 31 TypedArray infrastructure |
-| 38 | Extended math via external library | `Math.sin/cos/tan/asin/acos/atan/atan2`, `Math.log/log2/log10/exp/expm1/log1p`, `Math.hypot/cbrt/sinh/cosh/tanh`, `Math.random()` (WASI `random_get`) — imported as a pre-compiled `mathlib.wasm` via the Phase 18 bundler |
+| 38 | Extended math via external library | `Math.sin/cos/tan/asin/acos/atan/atan2`, `Math.log/log2/log10/exp/expm1/log1p`, `Math.hypot/cbrt/sinh/cosh/tanh`, `Math.random()` (WASI `random_get`) — imported as a pre-compiled `src/wasm/mathlib.wasm` via the Phase 18 bundler |
 | 39 | `jstyper` — JavaScript import pre-processor | Generates `.d.ts` from `.js` via `npm:typescript`; merges typed signatures with JS bodies to produce `.ts` for wasic; `.js` never modified; existing `.d.ts` / `@types/` used directly; sequenced last so all supported types are available as annotations |
 | 40 | External interface mapping (WIT / custom section) | `modc` / `wasic` accept a `.wit` file or WASM custom section declaring an external interface (e.g. `interface Logger { log(msgPtr: i32): void; }`); compiler verifies call sites match the declared signature; host provides the concrete implementation at link time — upgrades the current compile-time rejection (`❌ wasic: 'logger' is not defined`) to a full signature-verified binding; see `tests/wasm_wasi/ExternalMapping_11b.ts` |
 
