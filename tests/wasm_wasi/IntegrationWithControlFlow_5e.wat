@@ -74,16 +74,18 @@
 
   ;; ── f64 → decimal string ──────────────────────────────────────────────────
   ;; Writes the decimal representation of $val at $buf, returns byte count.
-  ;; Outputs the integer part plus up to 6 significant decimal digits.
+  ;; Outputs the integer part plus up to 15 significant decimal digits.
+  ;; Uses ×1e15 i64 arithmetic: 1e15 < 2^53 so the scaled fractional value
+  ;; fits exactly in the representable integer range of f64, and the full
+  ;; 15-digit result fits in i64. Trailing zeros are stripped from the output.
   ;; Values outside [-2147483648, 2147483647] for the integer part are clamped.
   (func $__f64_to_str (param $val f64) (param $buf i32) (result i32)
     (local $len i32)
     (local $ipart i32)
     (local $fpart i64)
     (local $flen i32)
-    (local $fdigits i32)
+    (local $fdigits i64)
     (local $ptr i32)
-    (local $zeros i32)
     (local.set $ptr (local.get $buf))
     ;; Handle negative
     (if (f64.lt (local.get $val) (f64.const 0))
@@ -97,12 +99,16 @@
     (local.set $ipart (i32.trunc_f64_s (local.get $val)))
     (local.set $len (call $__i32_to_str (local.get $ipart) (local.get $ptr)))
     (local.set $ptr (i32.add (local.get $ptr) (local.get $len)))
-    ;; Fractional part: multiply remainder by 1 000 000, take integer
+    ;; Fractional part: multiply remainder by 1e15, round to nearest integer.
+    ;; f64.nearest corrects truncation error from f64 values slightly below
+    ;; their true decimal (e.g. 3.14159 stored as 3.14158999…).
     (local.set $fpart
       (i64.trunc_f64_s
-        (f64.mul
-          (f64.sub (local.get $val) (f64.convert_i32_s (local.get $ipart)))
-          (f64.const 1000000)
+        (f64.nearest
+          (f64.mul
+            (f64.sub (local.get $val) (f64.convert_i32_s (local.get $ipart)))
+            (f64.const 1000000000000000)
+          )
         )
       )
     )
@@ -111,24 +117,23 @@
         ;; Decimal point
         (i32.store8 (local.get $ptr) (i32.const 46))
         (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
-        ;; Write 6-digit fractional string then strip trailing zeros
-        (local.set $fdigits (i32.wrap_i64 (local.get $fpart)))
-        ;; Write fractional digits in reverse into a 6-byte window
-        (local.set $flen (i32.const 6))
+        ;; Write 15-digit fractional string then strip trailing zeros
+        (local.set $fdigits (local.get $fpart))
+        (local.set $flen (i32.const 15))
         (block $fdone
           (loop $floop
             (br_if $fdone (i32.eqz (local.get $flen)))
             (i32.store8
               (i32.add (local.get $ptr) (i32.sub (local.get $flen) (i32.const 1)))
-              (i32.add (i32.const 48) (i32.rem_u (local.get $fdigits) (i32.const 10)))
+              (i32.add (i32.const 48) (i32.wrap_i64 (i64.rem_u (local.get $fdigits) (i64.const 10))))
             )
-            (local.set $fdigits (i32.div_u (local.get $fdigits) (i32.const 10)))
+            (local.set $fdigits (i64.div_u (local.get $fdigits) (i64.const 10)))
             (local.set $flen (i32.sub (local.get $flen) (i32.const 1)))
             (br $floop)
           )
         )
-        ;; Count non-zero trailing digits to strip
-        (local.set $flen (i32.const 6))
+        ;; Strip trailing zeros
+        (local.set $flen (i32.const 15))
         (block $strip
           (loop $striploop
             (br_if $strip (i32.eqz (local.get $flen)))

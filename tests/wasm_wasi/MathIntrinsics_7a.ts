@@ -1,5 +1,4 @@
 type i32 = number;
-type f64 = number;
 
 export function _start(): void {
   // Constants
@@ -12,7 +11,7 @@ export function _start(): void {
   console.log(Math.floor(2.9));  // 2
   console.log(Math.ceil(2.1));   // 3
   console.log(Math.trunc(3.7));  // 3
-  console.log(Math.round(2.5));  // 2  (round-to-nearest-even)
+  console.log(Math.round(2.5));  // 3  (round-half-away-from-zero, matches JS)
 
   // abs — f64 context
   console.log(Math.abs(-4.5));   // 4.5

@@ -2920,13 +2920,21 @@ class WasicTranspiler {
           return `(f64.max ${this.emitExpr(args[0] ?? "0", locals, "f64")} ${this.emitExpr(args[1] ?? "0", locals, "f64")})`;
         }
 
+        // Math.round — JavaScript semantics: round half away from zero.
+        // f64.nearest uses IEEE 754 ties-to-even (banker's rounding), which
+        // gives Math.round(2.5)=2 instead of the JS-correct 3.
+        // floor(x + 0.5) matches JS for all normal values.
+        if (mathFn === "round") {
+          const xWat = this.emitExpr(args[0] ?? "0", locals, "f64");
+          return `(f64.floor (f64.add ${xWat} (f64.const 0.5)))`;
+        }
+
         // Native f64 single-arg instructions
         const F64_UNARY: Record<string, string> = {
           sqrt:  "f64.sqrt",
           floor: "f64.floor",
           ceil:  "f64.ceil",
           trunc: "f64.trunc",
-          round: "f64.nearest",
         };
         if (F64_UNARY[mathFn]) {
           return `(${F64_UNARY[mathFn]} ${this.emitExpr(args[0] ?? "0", locals, "f64")})`;
