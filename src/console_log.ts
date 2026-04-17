@@ -191,6 +191,10 @@ function parseSingleArg(
     return [{ kind: "literal", text: token }];
   }
 
+  // ── Phase 24: null / undefined literals
+  if (token === "null")      return [{ kind: "literal", text: "null" }];
+  if (token === "undefined") return [{ kind: "literal", text: "undefined" }];
+
   // ── String concatenation: only split on + when at least one side is a string literal
   // or a string-typed local. If both sides are non-strings the + is arithmetic —
   // fall through to the expr handler.

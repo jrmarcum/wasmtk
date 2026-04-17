@@ -127,6 +127,8 @@ wasmtk run myprogram.wasm
 | Logical | `&& \|\| !` |
 | Bitwise | `& \| ^ ~ << >> >>>` |
 | Compound assignment | `+= -= *= /= %= &= \|= ^= <<= >>= >>>=` |
+| Logical assignment | `??= \|\|= &&=` — assign only when null/falsy/truthy (Phase 25) |
+| Nullish coalescing | `??` — returns rhs when lhs is `null`/`undefined`, else lhs (Phase 25) |
 
 ##### Numeric Types
 
@@ -143,6 +145,10 @@ wasmtk run myprogram.wasm
 | `as` type assertion | Numeric type cast → WASM conversion instruction (trunc, convert, promote, demote, wrap, extend) |
 | Postfix `!` | Non-null assertion stripped at compile time (no WAT equivalent needed) |
 | `satisfies` | Compile-time type hint stripped at compile time (no WAT equivalent needed) |
+| `T \| null` / `T \| undefined` | Nullable value types — two WAT locals per variable (`$x` value + `$x__null` i32 flag); nullable function returns use a module-level `$__nullable_ret_flag` side-channel global; `console.log(x)` prints `"null"` when flag is set |
+| `x === null` / `x !== null` | Null checks compile to `(local.get $x__null)` / `(i32.eqz (local.get $x__null))` — zero overhead |
+| `x ?? fallback` | Nullish coalescing — WAT `(if (result T) nullFlag (then fallback) (else x))` |
+| `??=` `\|\|=` `&&=` | Logical assignment — conditional store; supported for both locals and module globals |
 
 ##### Strings
 
@@ -531,9 +537,12 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | enhancement | Test runner `// @expect-fail` marker for negative tests | `run_wasi_tests.ts` reads `// @expect-fail: compile, run-ts, run-wasm` from the first 10 lines of any test file. `runStep` accepts an `expectedFail` flag and prints `✓ compile failed as expected` for expected failures. A step that fails-as-expected counts as OK in the verdict; run-wasm is treated as N/A when compile fails as expected. Overall result prints `✅ PASSED (expected failures: compile)`. `ExternalMapping_11b.ts` uses `// @expect-fail: compile` — 86/86 suite |
 | bug fix | `tsbundler` `applyRenames` mangled `console.log` in imported modules | When a non-entry module exported a function whose name matched a built-in method (e.g. `export function log(...)`), `applyRenames` renamed every occurrence including `console.log(...)` — turning the function body into an empty stub (no WASI output). Root cause: lookbehind `(?<!\w)` allows a match after `.` because `.` is not a word character. Fix: changed to `(?<![\w.])` so a dot before the identifier prevents the match; `console.log` and all other method-call forms are left untouched while standalone call sites are correctly renamed. `ExternalMapping_11c.ts` — 85/85 suite |
 | bug fix | `arr.find()` printed raw sentinel instead of `undefined` | `console.log(notFound)` where `notFound = arr.find(isNeg)` and no element matched printed `-1` (i32 sentinel) or `NaN` (f64 sentinel) instead of `undefined`, diverging from TypeScript semantics. Fix: `emitStatement` now tracks variables declared from `.find()` calls in `findResultVars`; when a `findResultVar` is the sole argument to `console.log`, the emitter wraps the print in a sentinel check — `(if (i32.eq val (i32.const -1)) (then print "undefined\n") (else print val))` — so not-found results display `undefined` exactly as TypeScript does. `ArrayMethods_12.ts` — 85/85 suite |
+| perf fix (2026-04-17) | `runWasi` library-detection no longer double-compiles | `checkIsLibrary(path)` called a redundant `WebAssembly.compile()` after `WebAssembly.instantiate()` had already succeeded. Fix: inline check `!wasiInstance.exports._start` on the live instance — eliminates one disk read and one compile round-trip for library-call paths |
 | cleanup (2026-04-15) | Removed `asc` (AssemblyScript) dependency | `compiler.ts` deleted — `runAssemblyScriptCompiler` and `runJavyCompiler` were exported but never imported by any other module in the project; `asc` (`npm:assemblyscript`) removed from `deno.json` imports; `./compiler` removed from `deno.json` exports; `modc` exclusively uses `compileLibTs` from `wasic.ts` — no AssemblyScript toolchain required at any point in the compilation pipeline |
 | bug fix (2026-04-15) | `Math.round` semantics corrected to round half away from zero | `Math.round` was compiled to `f64.nearest` (IEEE 754 round-to-nearest-even / banker's rounding), causing `Math.round(2.5)` → `2` instead of the JavaScript-correct `3`. Fix: both `wasic.ts` (F64_UNARY table) and `console_log.ts` (exprToWat Math handler) now emit `(f64.floor (f64.add x (f64.const 0.5)))`, which matches JavaScript's "round half away from zero" rule for all normal values |
 | bug fix (2026-04-15) | `$__f64_to_str` upgraded to ×1e15 / i64 — 15-digit precision | `$__f64_to_str` in `console_log.ts` upgraded from ×1e6 (6 decimal digits, i32 arithmetic) to ×1e15 (15 decimal digits, i64 arithmetic): `$fdigits` promoted from `i32` to `i64`; divisor and modulus changed to `i64.const 10`; digit extracted via `i32.wrap_i64`; loop count raised from 6 to 15; `f64.nearest` wrapping added before `i64.trunc_f64_s` to correct truncation error from f64 values that sit slightly below their true decimal (e.g. `3.14159` stored as `3.14158999…` → frac×1e6 was `141589.999…` → truncated to `141589` → printed `3.141589`; now rounds to `141590` → prints `3.14159`). Output now matches JavaScript for all but a small number of values requiring 17 significant digits (e.g. `Math.SQRT2` → JS `1.4142135623730951`, WASM `1.414213562373095`), a known JavaScript quirk where the f64 bit pattern requires 17 digits to guarantee round-trip uniqueness |
+| 24 (2026-04-17) | `null` / `undefined` as values; `T \| null` returns | Nullable variable declarations (`const x: i32 \| null`) emit two WAT locals — `$x` (value) and `$x__null` (i32 flag, 1=null); nullable function returns (`function f(): i32 \| null`) use a module-level `$__nullable_ret_flag` global as a side-channel (callee sets to 1=has-value or 0=null, caller reads immediately after call); `parseNullableAnnotation()` helper strips `\| null \| undefined` and returns the inner `WatType`; null comparisons (`x === null`, `x !== null`) compile to `(local.get $x__null)` / `(i32.eqz (...))`; `console.log(x)` of a nullable var prints `"null"` when flag is set and the normal value otherwise; `null` / `undefined` literals added to `console_log.ts` `parseSingleArg`; pre-scans in both `emitFunction` and `startBodyLines` detect `T \| null` type annotations and register both locals; `nullableVarInnerType` map reset at start of each `emitFunction` call; `needsNullableResultFlag` flag gates `$__nullable_ret_flag` global emission — 87/87 suite |
+| 25 (2026-04-17) | Nullish coalescing `??`, logical assignment `??=` `\|\|=` `&&=` | `??` handled before binary ops table in `emitExpr` — emits WAT `(if (result T) nullFlag (then rhs) (else lhs))` for nullable locals; pointer/string fallback uses `(i32.eqz ptr)`; `findBinaryOp` guards prevent `??` / `\|\|` / `&&` from matching `??=` / `\|\|=` / `&&=` (`after === "="` early-continue); `logicalAssignMatch` regex handles all three operators in `emitStatement` supporting both WAT locals (`local.get`/`local.set`) and module globals (`global.get`/`global.set`); `??=` for nullable locals clears the `__null` flag on assignment — 87/87 suite |
 
 ---
 
@@ -744,12 +753,10 @@ The TypeScript-to-JS bundler command is renamed from `bundle` to `tsbundle` to c
 
 ### Planned Phases
 
-Phases 24–39 extend `wasic` incrementally. Early phases add compile-time conveniences and core language features; middle phases build out the runtime data model; later phases complete the type system. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
+Phases 26–39 extend `wasic` incrementally. Early phases add compile-time conveniences and core language features; middle phases build out the runtime data model; later phases complete the type system. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
 
 | Phase | Feature | Strategy |
 | --- | --- | --- |
-| 24 | `null` / `undefined` as values; nullable `T \| null` | Sentinel `i32 = 0` for pointer types; null-check → `(i32.eqz)`; functions returning `T \| null` emit a pointer that may be 0 |
-| 25 | Optional chaining, nullish coalescing, logical assignment | `obj?.prop` → null-guard + load; `x ?? y` → `(if (i32.eqz x) y else x)`; `??=` `\|\|=` `&&=` expanded to conditional assignment — all depend on Phase 24 |
 | 26 | `for...of`, array destructuring, default / nested destructuring | `for...of` over arrays desugars to indexed `for`; `const [a, b] = arr` → indexed loads; `const { x = 0 } = obj` → null/zero check + conditional load; nested `{ a: { b } }` → chained field offsets |
 | 27 | Extended string methods | `charCodeAt`, `charAt`, `String.fromCharCode`, `startsWith`, `endsWith`, `substring`, `lastIndexOf`, `trim`/`trimStart`/`trimEnd`, `toUpperCase`/`toLowerCase` (ASCII), `padStart`/`padEnd`, `repeat`, `replace`/`replaceAll`, `split` → dynamic `string[]` |
 | 28 | Extended array methods | `every(fn)`, `some(fn)`, `findIndex(fn)`, `lastIndexOf(val)`, `at(i)`, `reverse()`, `fill(val)`, `join(sep)`, `sort(compareFn?)` — all extend the Phase 12 `call_indirect` callback infrastructure |
@@ -855,8 +862,8 @@ wasmtk wasic entry.ts   # jstyper sees mathlib.d.ts, skips inference, uses hand-
 | ✅ 21 (`void`, `never`, `readonly`) | `: void` on zero-return functions correct; `readonly` stripped |
 | ✅ 22 (compile-time ops) | `const enum` members usable as annotation values; `as` assertions passthrough |
 | ✅ 23 (tuples) | tsc rarely infers true tuples from raw JS; hand-edited `.d.ts` can declare `type T = [A, B]` → full tuple support |
-| 24 (`null`/`undefined`) | High — `T \| null` already survives the merge; Phase 24 makes runtime behaviour correct |
-| 25 (optional chaining / nullish) | Transparent — appears in function bodies, not signatures |
+| ✅ 24 (`null`/`undefined`) | `T \| null` in `.d.ts` survives merge; nullable locals, null checks, `??`, `??=` fully supported |
+| ✅ 25 (optional chaining / nullish) | `??` / `??=` / `\|\|=` / `&&=` fully compiled; transparent in function bodies |
 | 26 (for...of / destructuring) | Transparent — body patterns, not type annotations |
 | 27–28 (string/array methods) | Transparent — method calls in bodies, not signatures |
 | 29 (class enhancements) | String enum member types usable in `.d.ts` annotations |

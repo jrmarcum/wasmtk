@@ -317,6 +317,17 @@ function mapType(ts: string): WatType {
   return "f64"; // number, f64, or unknown → f64
 }
 
+/** Phase 24: Detects T|null or T|undefined union annotation; returns the inner WAT type or null.
+ *  Returns null if the annotation is not a nullable union, or if the union has more than one
+ *  non-null/non-undefined member (complex unions are not supported). */
+function parseNullableAnnotation(ts: string): WatType | null {
+  const parts = ts.split("|").map(p => p.trim());
+  if (parts.length < 2) return null;
+  const nonNull = parts.filter(p => p !== "null" && p !== "undefined");
+  if (nonNull.length === parts.length || nonNull.length !== 1) return null;
+  return mapType(nonNull[0]);
+}
+
 /** Encodes a 32-bit integer as 4 little-endian WAT escape bytes. */
 function encodeI32LE(val: number): string {
   const v = (val | 0) >>> 0;
@@ -535,6 +546,20 @@ class WasicTranspiler {
 
   // Top-level statements that become the _start body (patterns 2–4)
   private startBodyLines: string[] = [];
+
+  // Phase 24: variables declared as T|null/T|undefined — varName → inner WAT type.
+  // Only value types (i32/f64/bool/i64) are tracked here; they get a companion
+  // $varName__null local (i32, 1=is-null, 0=has-value).
+  // Reference types (string, struct, array) use 0-pointer as the null sentinel.
+  // Reset at the start of each emitFunction call and before the _start body pre-scan.
+  private nullableVarInnerType: Map<string, WatType> = new Map();
+  // Phase 24: functions returning T|null — funcName → inner WAT type.
+  private nullableFuncReturnType: Map<string, WatType> = new Map();
+  // Phase 24: set to true when the function currently being emitted returns T|null.
+  private currentFuncIsNullableReturn = false;
+  // Phase 24: set to true when any nullable-return function is compiled — triggers
+  // emission of the $__nullable_ret_flag global in the WAT module.
+  private needsNullableResultFlag = false;
 
   // Module-level scalar globals (const/let/var at top level): varName → { type, mutable, initExpr }
   private moduleGlobals = new Map<string, { type: WatType; mutable: boolean; initExpr: string }>();
@@ -1061,11 +1086,18 @@ class WasicTranspiler {
       const [rawParams, afterClose] = WasicTranspiler.extractParamBlock(src, openParen);
 
       // After `)` expect optional `: returnType` then `{`
-      // Return type may include array suffix: i32[], i32[][], ClassName, tuple [T1,T2], etc.
-      const restMatch = src.slice(afterClose).match(/^\s*(?::\s*([\w]+(?:\[\])*|\[[^\]]*\]))?\s*\{/);
+      // Return type may include array suffix: i32[], i32[][], ClassName, tuple [T1,T2], T|null, etc.
+      const restMatch = src.slice(afterClose).match(/^\s*(?::\s*([\w]+(?:\[\])*(?:\s*\|\s*(?:null|undefined))*|\[[^\]]*\]))?\s*\{/);
       if (!restMatch) continue; // malformed header — skip
 
       let rawResult = (restMatch[1] ?? "void").trim();
+      // Phase 24: detect T|null or T|undefined return type — register in nullableFuncReturnType
+      // and strip the union annotation so the WAT result type is just the base type.
+      const nullableRetInner = parseNullableAnnotation(rawResult);
+      if (nullableRetInner !== null) {
+        this.nullableFuncReturnType.set(name, nullableRetInner);
+        rawResult = rawResult.split("|")[0].trim(); // e.g. "i32 | null" → "i32"
+      }
       // Phase 23: if return type is a tuple "[T1, T2, ...]", create/register the synthetic StructDef
       if (rawResult.startsWith("[") && rawResult.endsWith("]")) {
         const def = this.getOrCreateTupleDef(rawResult);
@@ -2361,6 +2393,14 @@ class WasicTranspiler {
     this.stringVars.add(varName);
     const ind = "      ";
 
+    // Phase 24: null/undefined → set ptr=0, len=0 (null string pointer convention)
+    if (initExpr === "null" || initExpr === "undefined") {
+      return [
+        `(local.set $${varName}_ptr (i32.const 0))`,
+        `${ind}(local.set $${varName}_len (i32.const 0))`,
+      ].join("\n");
+    }
+
     // String literal
     const litMatch = initExpr.match(/^"([^"]*)"$/) ?? initExpr.match(/^'([^']*)'$/);
     if (litMatch) {
@@ -3297,6 +3337,31 @@ class WasicTranspiler {
       }
     }
 
+    // Phase 25: Nullish coalescing ?? — only short-circuits on null/undefined.
+    // Handled before the binaryOps table because its WAT shape differs (if/result).
+    {
+      const qqIdx = this.findBinaryOp(expr, "??");
+      if (qqIdx !== -1) {
+        const lhsQQ = expr.slice(0, qqIdx).trim();
+        const rhsQQ = expr.slice(qqIdx + 2).trim();
+        const qqInner = this.nullableVarInnerType.get(lhsQQ);
+        if (qqInner && watBaseType(qqInner) !== undefined) {
+          const bt = watBaseType(qqInner);
+          const rhsWat = this.emitExpr(rhsQQ, locals, qqInner);
+          const lhsWat = this.emitExpr(lhsQQ, locals, qqInner);
+          // $lhsQQ__null is 1 when lhs is null → (then rhs) fires when null
+          return `(if (result ${bt}) (local.get $${lhsQQ}__null) (then ${rhsWat}) (else ${lhsWat}))`;
+        }
+        // Pointer/string type: check for null pointer (0)
+        const ctxBt = watBaseType(defaultType === "never" ? "i32" : defaultType as WatType);
+        const rhsWatP = this.emitExpr(rhsQQ, locals, defaultType);
+        const lhsWatP = this.emitExpr(lhsQQ, locals, defaultType);
+        const ptrLocal = locals.get(lhsQQ) === "string" ? `${lhsQQ}_ptr` : lhsQQ;
+        const nullCkP  = `(i32.eqz (local.get $${ptrLocal}))`;
+        return `(if (result ${ctxBt}) ${nullCkP} (then ${rhsWatP}) (else ${lhsWatP}))`;
+      }
+    }
+
     // Binary operators — scanned in ascending-precedence order so the lowest-precedence
     // operator is matched first, producing correctly-grouped s-expressions.
     // [op, i32-suffix, f64-suffix, alwaysI32]
@@ -3330,6 +3395,26 @@ class WasicTranspiler {
       if (idx !== -1) {
         const lhs     = expr.slice(0, idx).trim();
         const rhs     = expr.slice(idx + op.length).trim();
+
+        // Phase 24: null/undefined comparison — intercept before the regular type dispatch.
+        if ((op === "===" || op === "!==" || op === "==" || op === "!=") &&
+            (rhs === "null" || rhs === "undefined" || lhs === "null" || lhs === "undefined")) {
+          const varName = (rhs === "null" || rhs === "undefined") ? lhs : rhs;
+          const nlInner = this.nullableVarInnerType.get(varName);
+          if (nlInner) {
+            // Value type with __null flag: 1=is-null
+            const nullFlag = `(local.get $${varName}__null)`;
+            return (op === "===" || op === "==") ? nullFlag : `(i32.eqz ${nullFlag})`;
+          }
+          // String type: check ptr == 0
+          if (locals.get(varName) === "string") {
+            const ptrCk = `(i32.eqz (local.get $${varName}_ptr))`;
+            return (op === "===" || op === "==") ? ptrCk
+              : `(i32.ne (local.get $${varName}_ptr) (i32.const 0))`;
+          }
+          // Pointer types (i32): fall through to normal i32.eq/ne which compares with 0
+        }
+
         // For logical/bitwise ops always use i32; for others infer from the LHS local type.
         const lhsType: WatType = alwaysI32
           ? "i32"
@@ -3405,6 +3490,9 @@ class WasicTranspiler {
         if (op === "*"  && (after === "*" || before === "*"))             continue; // skip **
         if (op === ">>" && (after === ">" || before === ">"))             continue;
         if (op === "?"  && after === ".")                                  continue; // optional chaining ?.
+        if (op === "??" && after === "=")                                  continue; // don't match ??=
+        if (op === "||" && after === "=")                                  continue; // don't match ||=
+        if (op === "&&" && after === "=")                                  continue; // don't match &&=
         return i;
       }
     }
@@ -3507,6 +3595,15 @@ class WasicTranspiler {
     if (line.startsWith("return")) {
       const expr = line.replace(/^return\s*/, "").replace(/;$/, "").trim();
       if (!expr || funcResult === null) return "(return)";
+      // Phase 24: nullable-return function — set $__nullable_ret_flag before returning.
+      // flag=1 → has value; flag=0 → is null.
+      if (this.currentFuncIsNullableReturn) {
+        if (expr === "null" || expr === "undefined") {
+          return `(global.set $__nullable_ret_flag (i32.const 0))\n      (return (${watBaseType(funcResult)}.const 0))`;
+        }
+        const retWat = this.emitExpr(expr, locals, funcResult);
+        return `(global.set $__nullable_ret_flag (i32.const 1))\n      (return ${retWat})`;
+      }
       // return { key: val, ... } — interface/struct object literal: malloc struct and store fields
       if (expr.startsWith("{") && this.currentFuncResultTsName) {
         const structDef = this.structDefs.get(this.currentFuncResultTsName);
@@ -3917,6 +4014,40 @@ class WasicTranspiler {
       }
     }
 
+    // Phase 24: nullable variable declaration: let x: T | null = expr
+    // Must come before letMatch because letMatch only captures single-word type annotations.
+    const nullableLetMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([\w\[\]]+(?:\s*\|\s*(?:null|undefined))+)\s*=\s*(.+?);?$/);
+    if (nullableLetMatch) {
+      const nlVarName  = nullableLetMatch[1];
+      const nlTypeStr  = nullableLetMatch[2];
+      const nlInitExpr = nullableLetMatch[3].trim();
+      const nlInner    = parseNullableAnnotation(nlTypeStr);
+      if (nlInner && this.nullableVarInnerType.has(nlVarName)) {
+        if (nlInitExpr === "null" || nlInitExpr === "undefined") {
+          if (nlInner === "string") {
+            locals.set(nlVarName, "string");
+            return this.emitStringAssign(nlVarName, nlInitExpr, locals);
+          }
+          // Value type: clear value, set null flag
+          return `(local.set $${nlVarName}__null (i32.const 1))`;
+        }
+        if (nlInner === "string") {
+          locals.set(nlVarName, "string");
+          return this.emitStringAssign(nlVarName, nlInitExpr, locals);
+        }
+        // Detect call to a nullable-returning function to propagate the flag
+        const nlFnCallM = nlInitExpr.match(/^(\w+)\s*\(/);
+        const nlCalledFn = nlFnCallM ? this.functions.find(f => f.name === nlFnCallM[1]) : null;
+        const bt = watBaseType(nlInner);
+        const valWat = this.emitExpr(nlInitExpr, locals, nlInner);
+        if (nlCalledFn && this.nullableFuncReturnType.has(nlCalledFn.name)) {
+          // Read the side-channel flag written by the callee
+          return `(local.set $${nlVarName} ${valWat})\n      (local.set $${nlVarName}__null (i32.eqz (global.get $__nullable_ret_flag)))`;
+        }
+        return `(local.set $${nlVarName} ${valWat})\n      (local.set $${nlVarName}__null (i32.const 0))`;
+      }
+    }
+
     // var / let / const declaration
     const letMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+))?\s*=\s*(.+?);?$/);
     if (letMatch) {
@@ -3956,6 +4087,40 @@ class WasicTranspiler {
     }
 
     // Compound assignment: +=  -=  *=  /=  %=  &=  |=  ^=  <<=  >>=  >>>=
+    // Phase 25: logical assignment ??= ||= &&=
+    const logicalAssignMatch = line.match(/^(\w+)\s*(\?\?=|\|\|=|&&=)\s*(.+?);?$/);
+    if (logicalAssignMatch && (locals.has(logicalAssignMatch[1]) || this.moduleGlobals.has(logicalAssignMatch[1]))) {
+      const laVar    = logicalAssignMatch[1];
+      const laOp     = logicalAssignMatch[2];
+      const laRhs    = logicalAssignMatch[3].trim();
+      const isGlobal = !locals.has(laVar) && this.moduleGlobals.has(laVar);
+      const nlInner  = this.nullableVarInnerType.get(laVar);
+      const laType   = nlInner ?? (isGlobal ? this.moduleGlobals.get(laVar)!.type : (locals.get(laVar) as WatType)) ?? "i32";
+      const getWat   = isGlobal ? `(global.get $${laVar})` : `(local.get $${laVar})`;
+      const rhsWat   = this.emitExpr(laRhs, locals, laType);
+      const setVal   = isGlobal
+        ? `(global.set $${laVar} ${rhsWat})`
+        : `(local.set $${laVar} ${rhsWat})`;
+      if (laOp === "??=") {
+        if (nlInner) {
+          const setNull = isGlobal
+            ? `(global.set $${laVar}__null (i32.const 0))`
+            : `(local.set $${laVar}__null (i32.const 0))`;
+          const nullGet = isGlobal ? `(global.get $${laVar}__null)` : `(local.get $${laVar}__null)`;
+          return `(if ${nullGet} (then ${setVal} ${setNull}))`;
+        }
+        const ptrGet = (locals.get(laVar) === "string")
+          ? `(local.get $${laVar}_ptr)` : getWat;
+        return `(if (i32.eqz ${ptrGet}) (then ${setVal}))`;
+      }
+      if (laOp === "||=") {
+        return `(if (i32.eqz ${getWat}) (then ${setVal}))`;
+      }
+      if (laOp === "&&=") {
+        return `(if ${getWat} (then ${setVal}))`;
+      }
+    }
+
     const compoundMatch = line.match(/^(\w+)\s*(>>>=|>>=|<<=|\+=|-=|\*=|\/=|%=|&=|\|=|\^=)\s*(.+?);?$/);
     if (compoundMatch && (locals.has(compoundMatch[1]) || this.moduleGlobals.has(compoundMatch[1]))) {
       const varName = compoundMatch[1];
@@ -4177,6 +4342,21 @@ class WasicTranspiler {
       if (locals.get(varName) === "string") {
         return this.emitStringAssign(varName, assignMatch[2].trim(), locals);
       }
+      // Phase 24: nullable reassignment — x = null or x = value
+      const nlReassignInner = this.nullableVarInnerType.get(varName);
+      if (nlReassignInner) {
+        const rhs = assignMatch[2].trim();
+        if (rhs === "null" || rhs === "undefined") {
+          return `(local.set $${varName}__null (i32.const 1))`;
+        }
+        const nlFnCallM = rhs.match(/^(\w+)\s*\(/);
+        const nlCalledFn = nlFnCallM ? this.functions.find(f => f.name === nlFnCallM[1]) : null;
+        const valWat = this.emitExpr(rhs, locals, nlReassignInner);
+        if (nlCalledFn && this.nullableFuncReturnType.has(nlCalledFn.name)) {
+          return `(local.set $${varName} ${valWat})\n      (local.set $${varName}__null (i32.eqz (global.get $__nullable_ret_flag)))`;
+        }
+        return `(local.set $${varName} ${valWat})\n      (local.set $${varName}__null (i32.const 0))`;
+      }
       const varType = locals.get(varName)!;
       // Phase 5h: boxed capture — store through heap pointer
       if (this.currentBoxedCaptures.has(varName)) {
@@ -4260,6 +4440,32 @@ class WasicTranspiler {
           `      (then`,
           `        (i32.store (i32.const ${this.iovBase}) (i32.const ${undefOffset}))`,
           `        (i32.store (i32.const ${this.iovBase + 4}) (i32.const ${undefLen}))`,
+          `        (drop (call $fd_write (i32.const 1) (i32.const ${this.iovBase}) (i32.const 1) (i32.const ${this.iovBase + 128})))`,
+          `      )`,
+          `      (else`,
+          ...normalStmts.map(s => `  ${s}`),
+          `      )`,
+          `    )`,
+        ].join("\n");
+      }
+      // Phase 24: nullable variable — print "null" when flag is set, else print value
+      if (this.nullableVarInnerType.has(logSingleArg)) {
+        const nlInner = this.nullableVarInnerType.get(logSingleArg)!;
+        this.needsNumericHelpers = true;
+        const [nullOffset, nullLen] = this.allocString("null\n");
+        const isF64 = nlInner === "f64";
+        const normalSegs: LogSegment[] = isF64
+          ? [{ kind: "f64var" as const, name: logSingleArg }, { kind: "literal" as const, text: "\n" }]
+          : [{ kind: "i32var" as const, name: logSingleArg }, { kind: "literal" as const, text: "\n" }];
+        const { statements: normalStmts, needsStrGather: nsg2, needsArrPrintHelper: naph2 } =
+          emitConsoleLog(normalSegs, (text) => this.allocString(text), "      ", 1, this.iovBase, this.scratchBase);
+        if (nsg2) this.needsStrGatherHelper = true;
+        if (naph2) this.needsArrPrintHelper = true;
+        return [
+          `    (if (local.get $${logSingleArg}__null)`,
+          `      (then`,
+          `        (i32.store (i32.const ${this.iovBase}) (i32.const ${nullOffset}))`,
+          `        (i32.store (i32.const ${this.iovBase + 4}) (i32.const ${nullLen}))`,
           `        (drop (call $fd_write (i32.const 1) (i32.const ${this.iovBase}) (i32.const 1) (i32.const ${this.iovBase + 128})))`,
           `      )`,
           `      (else`,
@@ -5834,12 +6040,14 @@ class WasicTranspiler {
     if (fn.isClosureFactory && fn.returnedArrow) return this.emitClosureFactory(fn);
 
     // Reset per-function array, struct, and find-result tracking
-    this.arrayVars      = new Map();
-    this.structVars     = new Map();
-    this.classVars      = new Map();
-    this.interfaceVars  = new Map();
-    this.findResultVars = new Set();
-    this.currentFuncResultTsName = null;
+    this.arrayVars              = new Map();
+    this.structVars             = new Map();
+    this.classVars              = new Map();
+    this.interfaceVars          = new Map();
+    this.findResultVars         = new Set();
+    this.nullableVarInnerType   = new Map();
+    this.currentFuncResultTsName    = null;
+    this.currentFuncIsNullableReturn = this.nullableFuncReturnType.has(fn.name);
     this.currentMethodClass = fn.className ?? null;
     this.currentMethodName  = fn.name;
 
@@ -6108,6 +6316,20 @@ class WasicTranspiler {
           }
         }
         continue;
+      }
+      // Phase 24: nullable variable declaration: const x: i32 | null = ...
+      const nlPre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([\w\[\]]+(?:\s*\|\s*(?:null|undefined))+)\s*=/);
+      if (nlPre) {
+        const nlVarName = nlPre[1];
+        const nlInner = parseNullableAnnotation(nlPre[2]);
+        if (nlInner && !locals.has(nlVarName)) {
+          this.nullableVarInnerType.set(nlVarName, nlInner);
+          declaredLocals.push([nlVarName, nlInner], [`${nlVarName}__null`, "i32"]);
+          locals.set(nlVarName, nlInner);
+          locals.set(`${nlVarName}__null`, "i32");
+          this.needsNullableResultFlag = true;
+          continue;
+        }
       }
       const m = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+))?\s*(?:=\s*(.+?))?;?$/);
       if (m) {
@@ -6501,9 +6723,11 @@ class WasicTranspiler {
       // Pre-scan for var/let/const so WAT locals are declared at the top of _start.
       // String variables expand to two i32 locals ($name_ptr, $name_len).
       // Reset per-function state so dynamic array helpers work for top-level code.
-      this.arrayVars  = new Map();
-      this.structVars = new Map();
-      this.classVars  = new Map();
+      this.arrayVars                   = new Map();
+      this.structVars                  = new Map();
+      this.classVars                   = new Map();
+      this.nullableVarInnerType        = new Map();
+      this.currentFuncIsNullableReturn = false;
       const startDynArrayNames = this.findDynamicArrays(this.startBodyLines);
       const startLocals = new Map<string, WatType>();
       const startDeclaredLocals: [string, WatType][] = [];
@@ -6648,6 +6872,20 @@ class WasicTranspiler {
           startDeclaredLocals.push([varName2c, "i32"]);
           continue;
         }
+        // Phase 24: nullable variable: const x: i32 | null = ...
+        const nlPreS = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([\w\[\]]+(?:\s*\|\s*(?:null|undefined))+)\s*=/);
+        if (nlPreS) {
+          const nlVarNameS = nlPreS[1];
+          const nlInnerS = parseNullableAnnotation(nlPreS[2]);
+          if (nlInnerS && !startLocals.has(nlVarNameS)) {
+            this.nullableVarInnerType.set(nlVarNameS, nlInnerS);
+            startDeclaredLocals.push([nlVarNameS, nlInnerS], [`${nlVarNameS}__null`, "i32"]);
+            startLocals.set(nlVarNameS, nlInnerS);
+            startLocals.set(`${nlVarNameS}__null`, "i32");
+            this.needsNullableResultFlag = true;
+            continue;
+          }
+        }
         const m = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+))?\s*(?:=\s*(.+?))?;?$/);
         if (m) {
           const typeStr = m[2] ?? "";
@@ -6763,6 +7001,7 @@ class WasicTranspiler {
       imports,
       `  (memory (export "memory") ${memoryPages})`,
       `  (global $__heap_ptr (mut i32) (i32.const ${heapStart}))`,
+      this.needsNullableResultFlag ? `  (global $__nullable_ret_flag (mut i32) (i32.const 0))` : "",
       ...moduleGlobalDecls,
       this.needsExceptionTag ? `  (tag $__exn_tag (export "__exn_tag") (param i32 i32))` : "",
       funcTypesWat,

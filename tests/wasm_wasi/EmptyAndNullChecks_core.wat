@@ -45,7 +45,7 @@
   )
 
   (func $isStringNull (export "isStringNull") (param $a_ptr i32) (param $a_len i32) (result i32)
-    (return (i32.eqz (call $__str_cmp (local.get $a_ptr) (local.get $a_len) (i32.const 0) (i32.const 0))))
+    (return (i32.eqz (local.get $a_ptr)))
   )
   (func $_start (export "_start")
     (local $__iface_tmp i32)

@@ -28,7 +28,7 @@ interface WabtModule {
 }
 
 /** The current version of the wasmtk toolkit. */
-export const VERSION = "1.2.4";
+export const VERSION = "1.2.5";
 
 let wasiInstance: WebAssembly.Instance | undefined;
 
@@ -212,7 +212,7 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
     const result = await WebAssembly.instantiate(wasmBytes as BufferSource, extendedImports as unknown as WebAssembly.Imports);
     wasiInstance = result.instance;
     
-    if (args.length > 0 && await checkIsLibrary(path)) {
+    if (args.length > 0 && !wasiInstance.exports._start) {
       const [name, ...params] = args;
       const fn = wasiInstance.exports[name];
       if (typeof fn === "function") {
