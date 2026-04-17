@@ -114,6 +114,7 @@ wasmtk run myprogram.wasm
 | While loop | `while (cond) { }` |
 | Do-while loop | `do { } while (cond)` |
 | For loop | `for (let i = 0; i < n; i++)` |
+| For-of loop | `for (const x of arr)` — iterates `i32[]` / `f64[]` static and dynamic arrays; supports `break` / `continue` |
 | Switch | `switch (x) { case 1: ... break; default: ... }` |
 | Labeled break/continue | `outer: for(...) { inner: for(...) { break outer; } }` |
 | Ternary | `cond ? a : b` |
@@ -193,6 +194,7 @@ wasmtk run myprogram.wasm
 | Spread array literal | `const merged = [...a, ...b]` — heap-allocates a new array via `$__dynarr_concat_T`; source arrays are automatically promoted to dynamic layout |
 | Multi-dimensional arrays | `i32[][]` — nested dynamic array; `const m: i32[][] = [[1,2],[3,4]]` allocates outer + row arrays; `m[i].push(val)` updates the outer slot after possible row growth; `console.log(m)` prints `[ [ 1, 2 ], ... ]` (Deno format) |
 | `console.log` of array-returning calls | `console.log("scores:", getScores())` where `getScores(): i32[]` prints `scores: [ 95, 88, 72 ]` — the `arrptr` LogSegment dispatches to a `$__write_i32arr_to_scratch` WAT helper that walks the dynamic-array header and formats elements in `[ a, b, c ]` style |
+| Array destructuring with defaults | `const [a = 10, b = 20] = arr` — each binding gets the array element if in-bounds, or the default value; runtime length check for dynamic arrays; static arrays resolved at compile time |
 
 ##### Structs & Objects
 
@@ -543,6 +545,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | bug fix (2026-04-15) | `$__f64_to_str` upgraded to ×1e15 / i64 — 15-digit precision | `$__f64_to_str` in `console_log.ts` upgraded from ×1e6 (6 decimal digits, i32 arithmetic) to ×1e15 (15 decimal digits, i64 arithmetic): `$fdigits` promoted from `i32` to `i64`; divisor and modulus changed to `i64.const 10`; digit extracted via `i32.wrap_i64`; loop count raised from 6 to 15; `f64.nearest` wrapping added before `i64.trunc_f64_s` to correct truncation error from f64 values that sit slightly below their true decimal (e.g. `3.14159` stored as `3.14158999…` → frac×1e6 was `141589.999…` → truncated to `141589` → printed `3.141589`; now rounds to `141590` → prints `3.14159`). Output now matches JavaScript for all but a small number of values requiring 17 significant digits (e.g. `Math.SQRT2` → JS `1.4142135623730951`, WASM `1.414213562373095`), a known JavaScript quirk where the f64 bit pattern requires 17 digits to guarantee round-trip uniqueness |
 | 24 (2026-04-17) | `null` / `undefined` as values; `T \| null` returns | Nullable variable declarations (`const x: i32 \| null`) emit two WAT locals — `$x` (value) and `$x__null` (i32 flag, 1=null); nullable function returns (`function f(): i32 \| null`) use a module-level `$__nullable_ret_flag` global as a side-channel (callee sets to 1=has-value or 0=null, caller reads immediately after call); `parseNullableAnnotation()` helper strips `\| null \| undefined` and returns the inner `WatType`; null comparisons (`x === null`, `x !== null`) compile to `(local.get $x__null)` / `(i32.eqz (...))`; `console.log(x)` of a nullable var prints `"null"` when flag is set and the normal value otherwise; `null` / `undefined` literals added to `console_log.ts` `parseSingleArg`; pre-scans in both `emitFunction` and `startBodyLines` detect `T \| null` type annotations and register both locals; `nullableVarInnerType` map reset at start of each `emitFunction` call; `needsNullableResultFlag` flag gates `$__nullable_ret_flag` global emission — 87/87 suite |
 | 25 (2026-04-17) | Nullish coalescing `??`, logical assignment `??=` `\|\|=` `&&=` | `??` handled before binary ops table in `emitExpr` — emits WAT `(if (result T) nullFlag (then rhs) (else lhs))` for nullable locals; pointer/string fallback uses `(i32.eqz ptr)`; `findBinaryOp` guards prevent `??` / `\|\|` / `&&` from matching `??=` / `\|\|=` / `&&=` (`after === "="` early-continue); `logicalAssignMatch` regex handles all three operators in `emitStatement` supporting both WAT locals (`local.get`/`local.set`) and module globals (`global.get`/`global.set`); `??=` for nullable locals clears the `__null` flag on assignment — 87/87 suite |
+| 26 (2026-04-17) | `for...of` loops; array destructuring with default values | `for...of` over static `i32[]`, dynamic `i32[]`, `f64[]` arrays; `break` / `continue` inside loops; `for...of` over function-local dynamic arrays; array destructuring with defaults `const [a = 10, b = 20] = arr` — runtime length check on dynamic arrays; `$__forof_idx` (i32) shared local registered by pre-scans in both `emitFunction` and `startBodyLines`; **`parseTopLevel` `collectBlock` fix** — without this, module-level loop bodies were silently stripped because brace depth was never updated for top-level pattern-4 lines; static/dynamic/param access patterns differ (`i32.const` base / `i32.load` header / `local.get` base); pre-scan extracts binding name by splitting on `=` to avoid registering `"a = 10"` as a WAT local name — 88/88 suite |
 
 ---
 
@@ -753,11 +756,10 @@ The TypeScript-to-JS bundler command is renamed from `bundle` to `tsbundle` to c
 
 ### Planned Phases
 
-Phases 26–39 extend `wasic` incrementally. Early phases add compile-time conveniences and core language features; middle phases build out the runtime data model; later phases complete the type system. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
+Phases 27–39 extend `wasic` incrementally. Early phases add compile-time conveniences and core language features; middle phases build out the runtime data model; later phases complete the type system. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
 
 | Phase | Feature | Strategy |
 | --- | --- | --- |
-| 26 | `for...of`, array destructuring, default / nested destructuring | `for...of` over arrays desugars to indexed `for`; `const [a, b] = arr` → indexed loads; `const { x = 0 } = obj` → null/zero check + conditional load; nested `{ a: { b } }` → chained field offsets |
 | 27 | Extended string methods | `charCodeAt`, `charAt`, `String.fromCharCode`, `startsWith`, `endsWith`, `substring`, `lastIndexOf`, `trim`/`trimStart`/`trimEnd`, `toUpperCase`/`toLowerCase` (ASCII), `padStart`/`padEnd`, `repeat`, `replace`/`replaceAll`, `split` → dynamic `string[]` |
 | 28 | Extended array methods | `every(fn)`, `some(fn)`, `findIndex(fn)`, `lastIndexOf(val)`, `at(i)`, `reverse()`, `fill(val)`, `join(sep)`, `sort(compareFn?)` — all extend the Phase 12 `call_indirect` callback infrastructure |
 | 29 | Class enhancements | Static class fields → named WASM globals; `get`/`set` accessors → desugared to `ClassName_get_x` / `ClassName_set_x` functions; `private`/`protected`/`public` enforced at compile time; string enums → i32 constants with string lookup table |
@@ -864,7 +866,7 @@ wasmtk wasic entry.ts   # jstyper sees mathlib.d.ts, skips inference, uses hand-
 | ✅ 23 (tuples) | tsc rarely infers true tuples from raw JS; hand-edited `.d.ts` can declare `type T = [A, B]` → full tuple support |
 | ✅ 24 (`null`/`undefined`) | `T \| null` in `.d.ts` survives merge; nullable locals, null checks, `??`, `??=` fully supported |
 | ✅ 25 (optional chaining / nullish) | `??` / `??=` / `\|\|=` / `&&=` fully compiled; transparent in function bodies |
-| 26 (for...of / destructuring) | Transparent — body patterns, not type annotations |
+| ✅ 26 (for...of / destructuring) | Transparent — body patterns, not type annotations |
 | 27–28 (string/array methods) | Transparent — method calls in bodies, not signatures |
 | 29 (class enhancements) | String enum member types usable in `.d.ts` annotations |
 | 30 (struct arrays) | `Vec2[]` and `string[]` become valid annotation types in `.d.ts` |

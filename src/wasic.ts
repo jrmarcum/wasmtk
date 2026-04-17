@@ -1465,6 +1465,7 @@ class WasicTranspiler {
     const lines = this.src.split("\n").map(l => l.trim()).filter(l => l.length > 0);
     let depth = 0;
     let collectInner = false; // true while inside an import.meta.main block
+    let collectBlock = false; // true while collecting body of a top-level for/while/if block
 
     for (const line of lines) {
       const opens  = (line.match(/\{/g) ?? []).length;
@@ -1527,12 +1528,29 @@ class WasicTranspiler {
 
         // Pattern 4: bare top-level statement → goes into _start
         this.startBodyLines.push(line);
+        // Phase 26: if this statement opens a block (for/while/if/etc.), track depth
+        // so that inner body lines and closing braces are included in startBodyLines.
+        const netOpen = opens - closes;
+        if (netOpen > 0) {
+          depth = netOpen;
+          collectBlock = true;
+        }
 
       } else {
         // Inside a function/block body
         const newDepth = depth + opens - closes;
 
-        if (collectInner) {
+        if (collectBlock) {
+          // Collect body lines of a top-level block statement (for/while/if/etc.).
+          // Include the closing } so emitBlock/extractBlock can find the block end.
+          this.startBodyLines.push(line);
+          if (newDepth <= 0) {
+            collectBlock = false;
+            depth = 0;
+          } else {
+            depth = newDepth;
+          }
+        } else if (collectInner) {
           // Collect lines belonging to if (import.meta.main) block.
           // When newDepth would reach 0 this is the closing } — don't collect it.
           if (newDepth >= 1) {
@@ -1540,10 +1558,12 @@ class WasicTranspiler {
           } else {
             collectInner = false;
           }
+          depth = Math.max(0, newDepth);
+          if (depth === 0) collectInner = false;
+        } else {
+          depth = Math.max(0, newDepth);
+          if (depth === 0) collectInner = false;
         }
-
-        depth = Math.max(0, newDepth);
-        if (depth === 0) collectInner = false;
       }
     }
   }
@@ -3745,7 +3765,7 @@ class WasicTranspiler {
       }
     }
 
-    // Array destructuring with rest: const [a, b, ...rest] = srcArr
+    // Array destructuring with rest/defaults: const [a, b = 20, ...rest] = srcArr
     const arrDestructMatch = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\s*;?$/);
     if (arrDestructMatch) {
       const bindingsList = arrDestructMatch[1].split(",").map(b => b.trim()).filter(Boolean);
@@ -3757,6 +3777,7 @@ class WasicTranspiler {
         const storeOp  = elemType === "f64" ? "f64.store" : elemType === "i64" ? "i64.store" : "i32.store";
         const shift    = (elemType === "f64" || elemType === "i64") ? 3 : 2;
         const elemSize = (elemType === "f64" || elemType === "i64") ? 8 : 4;
+        const watType  = elemType === "f64" ? "f64" : elemType === "i64" ? "i64" : "i32";
         const stmts: string[] = [];
         let simpleCount = 0;
         let restName: string | null = null;
@@ -3765,14 +3786,29 @@ class WasicTranspiler {
           if (b.startsWith("...")) restName = b.slice(3).trim();
           else simpleCount++;
         }
-        // Emit load for each simple binding
+        // Emit load for each simple binding, supporting optional default values
         let idx = 0;
         for (const b of bindingsList) {
           if (b.startsWith("...")) break;
-          const loadWat = srcInfo.dynamic
+          // Parse "name" or "name = default"
+          const eqPos     = b.indexOf("=");
+          const bindName  = eqPos !== -1 ? b.slice(0, eqPos).trim() : b;
+          const defVal    = eqPos !== -1 ? b.slice(eqPos + 1).trim() : null;
+          const loadWat   = srcInfo.dynamic
             ? `(${loadOp} (i32.add (i32.add (local.get $${srcName}) (i32.const 8)) (i32.shl (i32.const ${idx}) (i32.const ${shift}))))`
             : `(${loadOp} (i32.const ${srcInfo.ptr + idx * elemSize}))`;
-          stmts.push(`(local.set $${b} ${loadWat})`);
+          if (defVal !== null) {
+            // Emit default: if idx < length load element, else use default
+            const defWat = `(${watType}.const ${defVal})`;
+            if (srcInfo.dynamic) {
+              stmts.push(`(local.set $${bindName} (if (result ${watType}) (i32.gt_u (i32.load (local.get $${srcName})) (i32.const ${idx})) (then ${loadWat}) (else ${defWat})))`);
+            } else {
+              // Static: length known at compile time
+              stmts.push(idx < srcInfo.length ? `(local.set $${bindName} ${loadWat})` : `(local.set $${bindName} ${defWat})`);
+            }
+          } else {
+            stmts.push(`(local.set $${bindName} ${loadWat})`);
+          }
           idx++;
         }
         // Emit rest binding
@@ -4038,7 +4074,6 @@ class WasicTranspiler {
         // Detect call to a nullable-returning function to propagate the flag
         const nlFnCallM = nlInitExpr.match(/^(\w+)\s*\(/);
         const nlCalledFn = nlFnCallM ? this.functions.find(f => f.name === nlFnCallM[1]) : null;
-        const bt = watBaseType(nlInner);
         const valWat = this.emitExpr(nlInitExpr, locals, nlInner);
         if (nlCalledFn && this.nullableFuncReturnType.has(nlCalledFn.name)) {
           // Read the side-channel flag written by the callee
@@ -5033,6 +5068,85 @@ class WasicTranspiler {
         out.push(`${indent}  )`);
         out.push(`${indent})`);
         continue;
+      }
+
+      // Phase 26: for...of loop — for (const/let item of arr) { ... }
+      // Must come before the inlined-for and regular-for handlers so "of" isn't split as init;cond;update.
+      if (/^for\s*\(\s*(?:const|let)\s+\w+\s+of\s+\w+\s*\)/.test(line)) {
+        const forOfM = line.match(/^for\s*\(\s*(?:const|let)\s+(\w+)\s+of\s+(\w+)\s*\)\s*(\{.*)?$/);
+        if (forOfM) {
+          const itemName   = forOfM[1];
+          const arrName    = forOfM[2];
+          const inlinePart = (forOfM[3] ?? "").trim();
+
+          let forOfBody: string[];
+          if (inlinePart.startsWith("{") && inlinePart.endsWith("}") && inlinePart.length > 2) {
+            // Fully inline: for (...) { body }
+            const bodyContent = inlinePart.slice(1, -1).trim();
+            forOfBody = bodyContent ? WasicTranspiler.splitStmts(bodyContent) : [];
+            i++;
+          } else if (inlinePart === "{" || inlinePart === "") {
+            // Multi-line block follows
+            const [body, consumed] = this.extractBlock(lines, i + 1);
+            forOfBody = body;
+            i += consumed + 1;
+          } else {
+            i++;
+            continue;
+          }
+
+          const arrInfo  = this.arrayVars.get(arrName);
+          const elemType: WatType = arrInfo?.elemType ?? "i32";
+          const loadOp   = elemType === "f64" ? "f64.load" : elemType === "i64" ? "i64.load" : "i32.load";
+          const shift    = (elemType === "f64" || elemType === "i64") ? 3 : 2;
+
+          const lbl  = this.pendingLabel ?? String(this.loopCounter++); this.pendingLabel = null;
+          const brk  = `$break_${lbl}`;
+          const loop = `$loop_${lbl}`;
+          const cont = `$cont_${lbl}`;
+          const idxVar = "$__forof_idx";
+
+          // Element load and length WAT — mirrors the array indexing logic at emitExpr line ~2749.
+          // ptr=-1: runtime param pointer (no header). ptr=-2/dynamic: heap array (8-byte header). ptr>=0: static.
+          let elemLoadWat: string;
+          let lenWat: string;
+          if (!arrInfo) {
+            // Unknown array (captured var or not in scope) — assume dynamic heap layout
+            elemLoadWat = `(${loadOp} (i32.add (i32.add (local.get $${arrName}) (i32.const 8)) (i32.shl (local.get ${idxVar}) (i32.const ${shift}))))`;
+            lenWat      = `(i32.load (local.get $${arrName}))`;
+          } else if (arrInfo.dynamic) {
+            // Dynamic heap array: [length, capacity, elem0, ...] at base ptr
+            elemLoadWat = `(${loadOp} (i32.add (i32.add (local.get $${arrName}) (i32.const 8)) (i32.shl (local.get ${idxVar}) (i32.const ${shift}))))`;
+            lenWat      = `(i32.load (local.get $${arrName}))`;
+          } else if (arrInfo.ptr === -1) {
+            // Array parameter (runtime pointer, no header): elements start directly at ptr
+            // Length is not stored — length must be passed separately; default to 0 if unknown
+            elemLoadWat = `(${loadOp} (i32.add (local.get $${arrName}) (i32.shl (local.get ${idxVar}) (i32.const ${shift}))))`;
+            lenWat      = arrInfo.length > 0 ? `(i32.const ${arrInfo.length})` : `(i32.load (local.get $${arrName}))`;
+          } else {
+            // Static array: compile-time address, known length
+            elemLoadWat = `(${loadOp} (i32.add (i32.const ${arrInfo.ptr}) (i32.shl (local.get ${idxVar}) (i32.const ${shift}))))`;
+            lenWat      = `(i32.const ${arrInfo.length})`;
+          }
+
+          this.controlStack.push({ breakLabel: brk, continueLabel: cont });
+          const bodyWat = this.emitBlock(forOfBody, locals, funcResult, indent + "      ");
+          this.controlStack.pop();
+
+          out.push(`${indent}(local.set ${idxVar} (i32.const 0))`);
+          out.push(`${indent}(block ${brk}`);
+          out.push(`${indent}  (loop ${loop}`);
+          out.push(`${indent}    (br_if ${brk} (i32.ge_u (local.get ${idxVar}) ${lenWat}))`);
+          out.push(`${indent}    (local.set $${itemName} ${elemLoadWat})`);
+          out.push(`${indent}    (block ${cont}`);
+          out.push(bodyWat);
+          out.push(`${indent}    )`);
+          out.push(`${indent}    (local.set ${idxVar} (i32.add (local.get ${idxVar}) (i32.const 1)))`);
+          out.push(`${indent}    (br ${loop})`);
+          out.push(`${indent}  )`);
+          out.push(`${indent})`);
+          continue;
+        }
       }
 
       // Phase 12: inlined for loop — for (...) { body } all on one line (from splitStmts in arrow bodies).
@@ -6229,7 +6343,7 @@ class WasicTranspiler {
         }
         continue;
       }
-      // Array destructuring with rest: const [a, b, ...rest] = srcArr
+      // Array destructuring with rest/defaults: const [a, b = 20, ...rest] = srcArr
       const arrDestructPre = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\s*;?$/);
       if (arrDestructPre) {
         const bindingsListPre = arrDestructPre[1].split(",").map(b => b.trim()).filter(Boolean);
@@ -6243,8 +6357,12 @@ class WasicTranspiler {
             declaredLocals.push([restNamePre, "i32"]);
             locals.set(restNamePre, "i32");
           } else {
-            declaredLocals.push([b, elemTypePre]);
-            locals.set(b, elemTypePre);
+            // Phase 26: strip "= default" to get the binding name
+            const bName = b.includes("=") ? b.slice(0, b.indexOf("=")).trim() : b;
+            if (!locals.has(bName)) {
+              declaredLocals.push([bName, elemTypePre]);
+              locals.set(bName, elemTypePre);
+            }
           }
         }
         continue;
@@ -6407,6 +6525,22 @@ class WasicTranspiler {
         const t2 = typeStr2 ? mapType(typeStr2) : inferInitType(initExpr2, locals, this.enumValues, this.functions);
         declaredLocals.push([forM[1], t2]);
         locals.set(forM[1], t2);
+      }
+      // Phase 26: for...of item variable: for (const item of arrName) { ... }
+      const forOfPre = line.match(/^for\s*\(\s*(?:const|let)\s+(\w+)\s+of\s+(\w+)\s*\)/);
+      if (forOfPre) {
+        const foItemName = forOfPre[1];
+        const foArrName  = forOfPre[2];
+        const foArrInfo  = this.arrayVars.get(foArrName);
+        const foElemType: WatType = foArrInfo?.elemType ?? "i32";
+        if (!locals.has(foItemName)) {
+          declaredLocals.push([foItemName, foElemType]);
+          locals.set(foItemName, foElemType);
+        }
+        if (!locals.has("__forof_idx")) {
+          declaredLocals.push(["__forof_idx", "i32"]);
+          locals.set("__forof_idx", "i32");
+        }
       }
       // catch variable: } catch (e) { — registers e as a (ptr, len) string pair
       const catchVarPre = line.match(/^}\s*catch\s*\(\s*(\w+)(?:\s*:\s*\w+)?\s*\)\s*\{?$/);
@@ -6811,7 +6945,7 @@ class WasicTranspiler {
           }
           continue;
         }
-        // Array destructuring with rest — mirrors emitFunction pre-scan
+        // Array destructuring with rest/defaults — mirrors emitFunction pre-scan
         const arrDestructPre2 = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\s*;?$/);
         if (arrDestructPre2) {
           const bindingsListPre2 = arrDestructPre2[1].split(",").map(b => b.trim()).filter(Boolean);
@@ -6825,8 +6959,12 @@ class WasicTranspiler {
               startLocals.set(restNamePre2, "i32");
               startDeclaredLocals.push([restNamePre2, "i32"]);
             } else {
-              startLocals.set(b, elemTypePre2);
-              startDeclaredLocals.push([b, elemTypePre2]);
+              // Phase 26: strip "= default" to get the binding name
+              const bName2 = b.includes("=") ? b.slice(0, b.indexOf("=")).trim() : b;
+              if (!startLocals.has(bName2)) {
+                startLocals.set(bName2, elemTypePre2);
+                startDeclaredLocals.push([bName2, elemTypePre2]);
+              }
             }
           }
           continue;
@@ -6926,6 +7064,22 @@ class WasicTranspiler {
           const t2 = typeStr2 ? mapType(typeStr2) : inferInitType(initExpr2, startLocals, this.enumValues, this.functions);
           startDeclaredLocals.push([forM[1], t2]);
           startLocals.set(forM[1], t2);
+        }
+        // Phase 26: for...of item variable — mirrors emitFunction pre-scan
+        const forOfPre2 = line.match(/^for\s*\(\s*(?:const|let)\s+(\w+)\s+of\s+(\w+)\s*\)/);
+        if (forOfPre2) {
+          const foItemName2 = forOfPre2[1];
+          const foArrName2  = forOfPre2[2];
+          const foArrInfo2  = this.arrayVars.get(foArrName2);
+          const foElemType2: WatType = foArrInfo2?.elemType ?? "i32";
+          if (!startLocals.has(foItemName2)) {
+            startDeclaredLocals.push([foItemName2, foElemType2]);
+            startLocals.set(foItemName2, foElemType2);
+          }
+          if (!startLocals.has("__forof_idx")) {
+            startDeclaredLocals.push(["__forof_idx", "i32"]);
+            startLocals.set("__forof_idx", "i32");
+          }
         }
         // catch variable: } catch (e) { — registers e as a (ptr, len) string pair
         const catchVarPre2 = line.match(/^}\s*catch\s*\(\s*(\w+)(?:\s*:\s*\w+)?\s*\)\s*\{?$/);
