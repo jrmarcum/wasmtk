@@ -5455,7 +5455,17 @@ class WasicTranspiler {
         // After dispatch block closes, code falls sequentially through remaining case bodies.
         // A case with break emits (br $exit); without break it falls through to the next case body.
         this.controlStack.push({ breakLabel: exitLabel });
-        const switchValWat = this.emitExpr(switchExpr, locals, "i32");
+        // Determine whether the switch expression is f64 (e.g. `number` typed var)
+        let switchType: "i32" | "f64" = "i32";
+        if (/^\w+$/.test(switchExpr)) {
+          const lt = locals.get(switchExpr);
+          if (lt === "f64" || lt === "f32") switchType = "f64";
+          else {
+            const gt = this.moduleGlobals.get(switchExpr)?.type;
+            if (gt === "f64" || gt === "f32") switchType = "f64";
+          }
+        }
+        const switchValWat = this.emitExpr(switchExpr, locals, switchType);
         const nonDefault = cases.filter(c => !c.isDefault);
         const defaultCase = cases.find(c => c.isDefault);
         // Ordered: non-default cases first, default last
@@ -5479,9 +5489,12 @@ class WasicTranspiler {
         const innerPad = "  ".repeat(N + 1);
         for (let k = 0; k < nonDefault.length; k++) {
           const c = nonDefault[k];
-          const condWat = c.values.map(v =>
-            `(i32.eq ${switchValWat} ${this.emitExpr(v, locals, "i32")})`
-          ).join(" ");
+          const condWat = c.values.map(v => {
+            if (switchType === "f64") {
+              return `(f64.eq ${switchValWat} ${this.emitExpr(v, locals, "f64")})`;
+            }
+            return `(i32.eq ${switchValWat} ${this.emitExpr(v, locals, "i32")})`;
+          }).join(" ");
           const condExpr = c.values.length === 1 ? condWat : `(i32.or ${condWat})`;
           switchLines.push(`${indent}${innerPad}(br_if ${caseLabels[k]} ${condExpr})`);
         }

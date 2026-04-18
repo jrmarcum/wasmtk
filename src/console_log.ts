@@ -312,6 +312,20 @@ function parseSingleArg(
     }
   }
 
+  // ── String(varName) where varName is a string local → pass through as strvar
+  const stringCastMatch = token.match(/^String\s*\(\s*(\w+)\s*\)$/);
+  if (stringCastMatch && locals.get(stringCastMatch[1]) === "string") {
+    const v = stringCastMatch[1];
+    return [{ kind: "strvar", ptrLocal: `${v}_ptr`, lenLocal: `${v}_len` }];
+  }
+
+  // ── VAR instanceof Error ? VAR.message : String(VAR) — caught exception is always a string
+  const instanceofTernaryMatch = token.match(/^(\w+)\s+instanceof\s+Error\s*\?\s*\1\.message\s*:\s*String\s*\(\s*\1\s*\)$/);
+  if (instanceofTernaryMatch && locals.get(instanceofTernaryMatch[1]) === "string") {
+    const v = instanceofTernaryMatch[1];
+    return [{ kind: "strvar", ptrLocal: `${v}_ptr`, lenLocal: `${v}_len` }];
+  }
+
   // ── Function call: name(arg, arg, ...)
   // Look up the callee's parameter types so each argument gets the correct const kind.
   const callMatch = token.match(/^(\w+)\s*\((.*)?\)$/);

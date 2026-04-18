@@ -295,8 +295,8 @@
       (block $case_default_3
         (block $case_3_1
           (block $case_3_0
-            (br_if $case_3_0 (i32.eq (local.get $val) (i32.const 1)))
-            (br_if $case_3_1 (i32.eq (local.get $val) (i32.const 2)))
+            (br_if $case_3_0 (f64.eq (local.get $val) (f64.const 1)))
+            (br_if $case_3_1 (f64.eq (local.get $val) (f64.const 2)))
             (br $case_default_3)
           )
                 (i32.store (i32.const 0) (i32.const 260))
