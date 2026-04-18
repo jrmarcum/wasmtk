@@ -45,6 +45,7 @@
     "compile": "deno compile -A --output wasmtk main.ts",
     "publish": "deno publish"
   },
+  "nodeModulesDir": "none",
   "fmt": {
     "useTabs": false,
     "lineWidth": 100,
