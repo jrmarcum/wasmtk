@@ -16,6 +16,9 @@
     "./wasmbundle": "./src/wasmbundle.ts",
     "./wasmmerge": "./src/wasmmerge.ts"
   },
+  "bin": {
+    "wasmtk": "./main.ts"
+  },
   "publish": {
     "include": [
       "LICENSE",
@@ -26,11 +29,6 @@
       "src/*.ts",
       "deno.json"
     ]
-  },
-  "publishConfig": {
-    "bin": {
-      "wasmtk": "./mod.ts"
-    }
   },
   "imports": {
     "@std/cli/parse-args": "jsr:@std/cli@^1.0.0/parse-args",
