@@ -39,16 +39,16 @@ function testCharAt(): void {
 
 function testStartsEndsWith(): void {
   const s: string = "hello world";
-  const sw1: i32 = s.startsWith("hello");
+  const sw1: boolean = s.startsWith("hello");
   console.log(sw1);
 
-  const sw2: i32 = s.startsWith("world");
+  const sw2: boolean = s.startsWith("world");
   console.log(sw2);
 
-  const ew1: i32 = s.endsWith("world");
+  const ew1: boolean = s.endsWith("world");
   console.log(ew1);
 
-  const ew2: i32 = s.endsWith("hello");
+  const ew2: boolean = s.endsWith("hello");
   console.log(ew2);
 }
 
