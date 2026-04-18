@@ -111,6 +111,7 @@ bunx @jrmarcum/wasmtk
 wasmtk/
 ├── main.ts              # CLI entry point
 ├── deno.json            # Deno configuration, tasks, and JSR exports
+├── package.json         # Minimal npm shim — bin field for Bun global install
 ├── src/                 # Source modules
 │   ├── wasic.ts         # TypeScript-to-WAT transpiler (WasicTranspiler)
 │   ├── console_log.ts   # console.log/error/warn WAT emission + number-to-string helpers
@@ -123,6 +124,8 @@ wasmtk/
 │   ├── runner.ts        # Standalone WASM/WAT runner utilities
 │   ├── args.ts          # CLI argument parsing helpers
 │   └── wasm/            # Pre-compiled WASM library assets (Phase 38+)
+├── scripts/
+│   └── sync-version.ts  # Version sync — propagates deno.json version → package.json + src/utils.ts
 ├── tests/               # Test suite
 │   ├── run_wasi_tests.ts
 │   ├── run_bundle_tests.ts
@@ -135,6 +138,15 @@ wasmtk/
 └── README.md
 
 ```
+
+### Development tasks
+
+| Task | Command | Notes |
+| --- | --- | --- |
+| Local install | `deno task install` | Syncs version, caches deps, installs global `wasmtk` binary |
+| Publish to JSR | `deno task publish` | Syncs version, then runs `deno publish` |
+| Bump version | Edit `version` in `deno.json`, then `deno task update-version` | Propagates to `package.json` and `src/utils.ts` automatically; `install` and `publish` call this automatically |
+| Dev watch | `deno task dev` | Runs `main.ts` with `--watch` |
 
 ---
 
