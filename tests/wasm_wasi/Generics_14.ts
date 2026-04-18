@@ -1,6 +1,10 @@
 // Phase 14 — Generics (Monomorphization)
 // Tests: explicit type args, literal inference, generic structs, generic func with struct param
 
+type i32 = number;
+type f64 = number;
+type bool = boolean;
+
 // ── Generic identity ──────────────────────────────────────────────────────────
 
 function identity<T>(x: T): T {

@@ -22,12 +22,13 @@
  * If no .test.json file is present, the module is still loaded and its
  * exports are listed — the run counts as a discovery pass.
  */
+// deno-lint-ignore-file no-import-prefix
 
-import { join, parse } from "jsr:@std/path";
-import { exists } from "jsr:@std/fs";
+import { join, parse } from "jsr:@std/path@1.0.2";
+import { exists } from "jsr:@std/fs@1.0.1";
 import {
   blue, bold, cyan, dim, green, magenta, red, yellow,
-} from "jsr:@std/fmt/colors";
+} from "jsr:@std/fmt/colors@1.0.1";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types

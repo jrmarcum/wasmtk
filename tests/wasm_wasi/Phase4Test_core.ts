@@ -24,7 +24,7 @@ export function _start(): void {
   console.log(n); // 4
 
   // switch/case
-  const val = 2;
+  const val: number = 2;
   switch (val) {
     case 1:
       console.log(11);

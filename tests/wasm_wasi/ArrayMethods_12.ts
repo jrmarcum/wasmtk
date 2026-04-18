@@ -1,5 +1,8 @@
 // Phase 12 — Array Methods
 // Tests: indexOf, includes, slice, forEach, map, filter, find, reduce
+type i32 = number;
+type f64 = number;
+type bool = boolean;
 
 // ── Setup ────────────────────────────────────────────────────────────────────
 const nums: i32[] = [10, 20, 30, 40, 50];
@@ -47,7 +50,7 @@ console.log(doubled[0]);       // 20
 console.log(doubled[4]);       // 100
 
 // ── filter ────────────────────────────────────────────────────────────────────
-function isOver25(v: i32): i32 {
+function isOver25(v: i32): bool {
   return v > 25;
 }
 
@@ -57,19 +60,19 @@ console.log(big[0]);       // 30
 console.log(big[2]);       // 50
 
 // ── find ──────────────────────────────────────────────────────────────────────
-function isOver15(v: i32): i32 {
+function isOver15(v: i32): bool {
   return v > 15;
 }
 
-const found: i32 = nums.find(isOver15);
+const found: i32 | undefined = nums.find(isOver15);
 console.log(found);        // 20 (first element > 15)
 
-function isNeg(v: i32): i32 {
+function isNeg(v: i32): bool {
   return v < 0;
 }
 
-const notFound: i32 = nums.find(isNeg);
-console.log(notFound);     // -1
+const notFound: i32 | undefined = nums.find(isNeg);
+console.log(notFound);     // undefined
 
 // ── reduce ────────────────────────────────────────────────────────────────────
 function addUp(acc: i32, v: i32): i32 {

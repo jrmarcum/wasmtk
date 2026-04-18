@@ -1,5 +1,8 @@
 // Phase 11 — String Operations
 // Tests: indexOf, includes, slice, concat (+), String(n), n.toString()
+type i32 = number;
+type f64 = number;
+type bool = boolean;
 
 const greeting: string = "Hello, World!";
 

@@ -1,6 +1,8 @@
 // Phase 10c — Dynamic Array Growth (realloc via bump allocator)
 // Initial capacity = max(initLen*2, 8) = 8 for a 3-element array.
 // Push 6 more elements (total 9) to force a grow from cap=8 to cap=16.
+type i32 = number;
+type f64 = number;
 
 const nums: i32[] = [1, 2, 3];
 nums.push(4);
@@ -30,7 +32,7 @@ console.log(nums[1]);        // 1
 console.log(nums.length);    // 17
 
 // pop still works on grown array
-const last: i32 = nums.pop();
+const last: i32 = nums.pop()!;
 console.log(last);           // 16
 console.log(nums.length);    // 16
 

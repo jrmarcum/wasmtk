@@ -6,7 +6,7 @@
 type i32 = number;
 export function testShadowing(x: i32): i32 {
   const getX = (): i32 => x;
-  const inner: i32 = 100; // different name — does not shadow x
+  const _inner: i32 = 100; // different name — does not shadow x
   return getX(); // should return x, not inner
 }
 

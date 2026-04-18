@@ -9,7 +9,7 @@
 //   negative
 //   finally
 //   custom error
-
+type i32 = number;
 function divide(a: i32, b: i32): i32 {
   if (b === 0) {
     throw new Error("Division by zero");
@@ -23,7 +23,7 @@ function safeDivide(a: i32, b: i32): i32 {
   try {
     result = divide(a, b);
   } catch (e) {
-    console.log(e);
+    console.log(e instanceof Error ? e.message : String(e));
   }
   return result;
 }
@@ -33,22 +33,27 @@ function withFinally(x: i32): void {
   try {
     if (x < 0) {
       throw new Error("negative");
+    } else {
+      console.log("success");
     }
-    console.log("success");
   } catch (e) {
-    console.log(e.message);
+    console.log(e instanceof Error ? e.message : String(e));
   } finally {
     console.log("finally");
   }
 }
 
 // throw a string variable (not new Error).
+function throwString(msg: string): never {
+  throw msg;
+}
+
 function testThrowString(): void {
   const msg: string = "custom error";
   try {
-    throw msg;
+    throwString(msg);
   } catch (e) {
-    console.log(e);
+    console.log(String(e));
   }
 }
 

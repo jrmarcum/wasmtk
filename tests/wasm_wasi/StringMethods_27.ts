@@ -1,6 +1,7 @@
 // Phase 27: Extended string methods
 // Tests: trim, trimStart, trimEnd, charCodeAt, charAt, startsWith, endsWith,
 //        toUpperCase, toLowerCase, replace, replaceAll, padStart, padEnd, repeat, split
+type i32 = number;
 
 function testTrim(): void {
   const s: string = "  hello world  ";

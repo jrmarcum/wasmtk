@@ -16,6 +16,7 @@ export function testStateMachine(input: i32): i32 {
       case 2:
         // No break! Testing fall-through to default
         state = 0;
+        /* falls through */
       default:
         counter += 100;
         break;

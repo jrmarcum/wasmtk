@@ -2,6 +2,8 @@
 // Tests: rest params, spread array literal, spread call
 
 // ── Rest parameters ───────────────────────────────────────────────────────────
+type i32 = number;
+type f64 = number;
 
 function sumAll(...nums: i32[]): i32 {
   let total: i32 = 0;

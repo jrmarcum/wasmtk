@@ -7937,7 +7937,7 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
     try {
       const bytes = await rt.readFile(entry.filePath);
       wasmBytesMap.set(entry.filePath, bytes);
-      const mod = wabtMod.readWasm(bytes.buffer, { readDebugNames: true });
+      const mod = wabtMod.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: true });
       const importedWat = mod.toText({ foldExprs: false });
       mod.destroy();
       const preResult = mergeWasmWat(importedWat, entry.prefix, 0);
@@ -8040,7 +8040,7 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
     try {
       const bytes = await rt.readFile(entry.filePath);
       wasmBytesMap2.set(entry.filePath, bytes);
-      const mod = wabtMod2.readWasm(bytes.buffer, { readDebugNames: true });
+      const mod = wabtMod2.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: true });
       const importedWat = mod.toText({ foldExprs: false });
       mod.destroy();
       const preResult2 = mergeWasmWat(importedWat, entry.prefix, 0);

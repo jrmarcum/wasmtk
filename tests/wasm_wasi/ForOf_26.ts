@@ -91,7 +91,7 @@ console.log(sumDynamic()); // 100
 
 // ── Array destructuring with default values ───────────────────────────────────
 
-let dynShort: i32[] = [7];
+const dynShort: i32[] = [7];
 dynShort.push(0);
 dynShort.pop();
 const [da = 10, db = 20] = dynShort;
@@ -100,7 +100,7 @@ console.log(db); // 20
 
 // ── Array destructuring defaults with full array ──────────────────────────────
 
-let dynFull: i32[] = [11, 22, 33];
+const dynFull: i32[] = [11, 22, 33];
 dynFull.push(0);
 dynFull.pop();
 const [fa = 99, fb = 99, fc = 99] = dynFull;

@@ -2,6 +2,8 @@
 // Tests heap-allocated arrays with a [length, capacity] header.
 
 // --- push ---
+type i32 = number;
+type f64 = number;
 const nums: i32[] = [10, 20, 30];
 nums.push(40);
 nums.push(50);
@@ -11,12 +13,12 @@ console.log(nums[4]);         // 50
 console.log(nums.length);     // 5
 
 // --- pop ---
-const val1: i32 = nums.pop();
+const val1: i32 = nums.pop()!;
 console.log(val1);            // 50
 console.log(nums.length);     // 4
 
 // --- shift ---
-const val2: i32 = nums.shift();
+const val2: i32 = nums.shift()!;
 console.log(val2);            // 10
 console.log(nums[0]);         // 20  (shifted left)
 console.log(nums.length);     // 3
@@ -36,6 +38,6 @@ const scores: f64[] = [1.5, 2.5];
 scores.push(3.5);
 console.log(scores[2]);       // 3.5
 console.log(scores.length);   // 3
-const last: f64 = scores.pop();
+const last: f64 = scores.pop()!;
 console.log(last);            // 3.5
 console.log(scores.length);   // 2

@@ -17,11 +17,16 @@
  * Defaults to tests/wasm_wasi_bundle/ relative to this script's location.
  */
 
-import { join, parse } from "jsr:@std/path";
-import { exists } from "jsr:@std/fs";
+// deno-lint-ignore no-import-prefix
+import { join } from "jsr:@std/path@1.1.4";
+
+// deno-lint-ignore no-import-prefix
+import { exists } from "jsr:@std/fs@1.0.23";
 import {
   blue, bold, cyan, dim, green, magenta, red, yellow,
-} from "jsr:@std/fmt/colors";
+
+// deno-lint-ignore no-import-prefix
+} from "jsr:@std/fmt/colors@1.0.25";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuration
