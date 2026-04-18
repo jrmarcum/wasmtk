@@ -48,7 +48,7 @@ deno task install
 Bun:
 
 ```bash
-bun add -g @jrmarcum/wasmtk
+bun install -g @jsr/jrmarcum__wasmtk
 ```
 
 Bun installs global binaries to `~/.bun/bin`. Ensure this directory is on your `PATH` so the `wasmtk` command is available system-wide:

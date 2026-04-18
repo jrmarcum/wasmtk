@@ -1,0 +1,2 @@
+[install.scopes]
+"@jsr" = { registry = "https://npm.jsr.io/" }

@@ -1,0 +1,14 @@
+{
+  "name": "@jrmarcum/wasmtk",
+  "version": "1.2.8",
+  "bin": {
+    "wasmtk": "./main.ts"
+  },
+  "dependencies": {
+    "@jsr/std__cli": "^1.0.0",
+    "@jsr/std__path": "^1.1.2",
+    "binaryen": "^116.0.0",
+    "wabt": "^1.0.36",
+    "wasm2js": "^0.2.0"
+  }
+}
