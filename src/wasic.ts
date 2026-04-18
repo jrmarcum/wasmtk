@@ -119,6 +119,7 @@
 import wabt from "wabt";
 import binaryen from "binaryen";
 import { basename, dirname } from "@std/path";
+import { rt } from "./rt.ts";
 import { bundleImportsEx } from "./tsbundler.ts";
 import { mergeWasmWat, type ExternalFuncDef } from "./wasmmerge.ts";
 import {
@@ -194,7 +195,7 @@ async function watToOptimisedWasm(
     const optimised = binMod.emitBinary();
     binMod.dispose();
 
-    await Deno.writeFile(outPath, optimised);
+    await rt.writeFile(outPath, optimised);
     return { success: true, outputPath: outPath, sizeBytes: optimised.length };
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };
@@ -209,7 +210,7 @@ async function watToOptimisedWasm(
  */
 export async function compileWat(watPath: string, outPath?: string): Promise<WasicResult> {
   const out = outPath ?? watPath.replace(/\.wat$/, ".wasm");
-  const source = await Deno.readTextFile(watPath);
+  const source = await rt.readTextFile(watPath);
   const result = await watToOptimisedWasm(source, watPath, out);
   if (result.success) {
     console.log(`✅ WASI: ${out} (${result.sizeBytes} bytes)`);
@@ -454,6 +455,7 @@ class WasicTranspiler {
   private needsNumericHelpers = false;
   private needsStringHelpers = false;
   private needsStringOpHelpers = false;
+  private needsStringExtHelpers = false;  // Phase 27: trim/charCodeAt/case/replace/pad/repeat/split
   private needsStrGatherHelper = false;
   private needsArrPrintHelper = false;
   private needsMatrix2DPrintHelper = false;   // Phase 6d
@@ -468,6 +470,7 @@ class WasicTranspiler {
     elemType: WatType; ptr: number; length: number;
     dynamic?: boolean; capacity?: number; initElements?: string[];
     is2D?: boolean; rows?: string[][];   // Phase 6d: i32[][] multi-dimensional array
+    isStringArr?: boolean;               // Phase 27: string[] from split() — 8-byte (ptr,len) elements
   }> = new Map();
 
   // Tracks which dynamic-array WAT helper functions are needed for this module.
@@ -2452,6 +2455,92 @@ class WasicTranspiler {
       ].join("\n");
     }
 
+    // Phase 27: str.trim() / str.trimStart() / str.trimEnd()
+    const trimMatch = initExpr.match(/^(\w+)\.(trim(?:Start|End|Left|Right)?)\s*\(\s*\)$/);
+    if (trimMatch && locals.get(trimMatch[1]) === "string") {
+      this.needsStringExtHelpers = true;
+      this.needsStringOpHelpers = true;
+      const helperName = trimMatch[2] === "trim" ? "$__str_trim"
+        : (trimMatch[2] === "trimStart" || trimMatch[2] === "trimLeft") ? "$__str_trim_start"
+        : "$__str_trim_end";
+      return [
+        `(call ${helperName} (local.get $${trimMatch[1]}_ptr) (local.get $${trimMatch[1]}_len))`,
+        `${ind}(local.set $${varName}_len)`,
+        `${ind}(local.set $${varName}_ptr)`,
+      ].join("\n");
+    }
+
+    // Phase 27: str.charAt(i) → (ptr+i, 1) string
+    const charAtMatch = initExpr.match(/^(\w+)\.charAt\s*\((.+)\)$/);
+    if (charAtMatch && locals.get(charAtMatch[1]) === "string") {
+      this.needsStringExtHelpers = true;
+      const idxWat = this.emitExpr(charAtMatch[2].trim(), locals, "i32");
+      return [
+        `(call $__str_char_at (local.get $${charAtMatch[1]}_ptr) (local.get $${charAtMatch[1]}_len) ${idxWat})`,
+        `${ind}(local.set $${varName}_len)`,
+        `${ind}(local.set $${varName}_ptr)`,
+      ].join("\n");
+    }
+
+    // Phase 27: str.toUpperCase() / str.toLowerCase()
+    const caseMatch = initExpr.match(/^(\w+)\.(toUpperCase|toLowerCase)\s*\(\s*\)$/);
+    if (caseMatch && locals.get(caseMatch[1]) === "string") {
+      this.needsStringExtHelpers = true;
+      const helperName = caseMatch[2] === "toUpperCase" ? "$__str_to_upper" : "$__str_to_lower";
+      return [
+        `(call ${helperName} (local.get $${caseMatch[1]}_ptr) (local.get $${caseMatch[1]}_len))`,
+        `${ind}(local.set $${varName}_len)`,
+        `${ind}(local.set $${varName}_ptr)`,
+      ].join("\n");
+    }
+
+    // Phase 27: str.replace(old, new) / str.replaceAll(old, new)
+    const replaceAllMatch = initExpr.match(/^(\w+)\.(replaceAll|replace)\s*\((.+)\)$/);
+    if (replaceAllMatch && locals.get(replaceAllMatch[1]) === "string") {
+      const allArgs = this.splitArgs(replaceAllMatch[3]);
+      if (allArgs.length === 2) {
+        this.needsStringExtHelpers = true;
+        this.needsStringOpHelpers = true;
+        const helperName = replaceAllMatch[2] === "replaceAll" ? "$__str_replace_all" : "$__str_replace";
+        const oldPtrLen = this.emitStringPtrLen(allArgs[0].trim(), locals);
+        const newPtrLen = this.emitStringPtrLen(allArgs[1].trim(), locals);
+        return [
+          `(call ${helperName} (local.get $${replaceAllMatch[1]}_ptr) (local.get $${replaceAllMatch[1]}_len) ${oldPtrLen} ${newPtrLen})`,
+          `${ind}(local.set $${varName}_len)`,
+          `${ind}(local.set $${varName}_ptr)`,
+        ].join("\n");
+      }
+    }
+
+    // Phase 27: str.padStart(targetLen, pad) / str.padEnd(targetLen, pad)
+    const padMatch = initExpr.match(/^(\w+)\.(padStart|padEnd)\s*\((.+)\)$/);
+    if (padMatch && locals.get(padMatch[1]) === "string") {
+      const allArgs = this.splitArgs(padMatch[3]);
+      if (allArgs.length === 2) {
+        this.needsStringExtHelpers = true;
+        const helperName = padMatch[2] === "padStart" ? "$__str_pad_start" : "$__str_pad_end";
+        const targetWat = this.emitExpr(allArgs[0].trim(), locals, "i32");
+        const padPtrLen = this.emitStringPtrLen(allArgs[1].trim(), locals);
+        return [
+          `(call ${helperName} (local.get $${padMatch[1]}_ptr) (local.get $${padMatch[1]}_len) ${targetWat} ${padPtrLen})`,
+          `${ind}(local.set $${varName}_len)`,
+          `${ind}(local.set $${varName}_ptr)`,
+        ].join("\n");
+      }
+    }
+
+    // Phase 27: str.repeat(n)
+    const repeatMatch = initExpr.match(/^(\w+)\.repeat\s*\((.+)\)$/);
+    if (repeatMatch && locals.get(repeatMatch[1]) === "string") {
+      this.needsStringExtHelpers = true;
+      const nWat = this.emitExpr(repeatMatch[2].trim(), locals, "i32");
+      return [
+        `(call $__str_repeat (local.get $${repeatMatch[1]}_ptr) (local.get $${repeatMatch[1]}_len) ${nWat})`,
+        `${ind}(local.set $${varName}_len)`,
+        `${ind}(local.set $${varName}_ptr)`,
+      ].join("\n");
+    }
+
     // n.toString() → malloc 32 bytes, call $__i32_to_str / $__f64_to_str
     const toStrMatch = initExpr.match(/^(\w+)\.toString\s*\(\s*\)$/);
     if (toStrMatch) {
@@ -2658,6 +2747,39 @@ class WasicTranspiler {
       this.needsStringOpHelpers = true;
       const subPtrLen = this.emitStringPtrLen(strIncludesMatch[2].trim(), locals);
       return `(i32.ne (call $__str_indexof (local.get $${strIncludesMatch[1]}_ptr) (local.get $${strIncludesMatch[1]}_len) ${subPtrLen}) (i32.const -1))`;
+    }
+
+    // Phase 27: str.charCodeAt(i) → i32 char code
+    const charCodeAtMatch = expr.match(/^(\w+)\.charCodeAt\s*\((.+)\)$/);
+    if (charCodeAtMatch && locals.get(charCodeAtMatch[1]) === "string") {
+      this.needsStringExtHelpers = true;
+      const idxWat = this.emitExpr(charCodeAtMatch[2].trim(), locals, "i32");
+      return `(call $__str_char_code_at (local.get $${charCodeAtMatch[1]}_ptr) (local.get $${charCodeAtMatch[1]}_len) ${idxWat})`;
+    }
+
+    // Phase 27: str.startsWith(sub) → i32 bool
+    const startsWithMatch = expr.match(/^(\w+)\.startsWith\s*\((.+)\)$/);
+    if (startsWithMatch && locals.get(startsWithMatch[1]) === "string") {
+      this.needsStringExtHelpers = true;
+      const subPtrLen = this.emitStringPtrLen(startsWithMatch[2].trim(), locals);
+      return `(call $__str_starts_with (local.get $${startsWithMatch[1]}_ptr) (local.get $${startsWithMatch[1]}_len) ${subPtrLen})`;
+    }
+
+    // Phase 27: str.endsWith(sub) → i32 bool
+    const endsWithMatch = expr.match(/^(\w+)\.endsWith\s*\((.+)\)$/);
+    if (endsWithMatch && locals.get(endsWithMatch[1]) === "string") {
+      this.needsStringExtHelpers = true;
+      const subPtrLen = this.emitStringPtrLen(endsWithMatch[2].trim(), locals);
+      return `(call $__str_ends_with (local.get $${endsWithMatch[1]}_ptr) (local.get $${endsWithMatch[1]}_len) ${subPtrLen})`;
+    }
+
+    // Phase 27: str.split(delim) → i32 pointer to string array (8-byte elements)
+    const splitMatch = expr.match(/^(\w+)\.split\s*\((.+)\)$/);
+    if (splitMatch && locals.get(splitMatch[1]) === "string") {
+      this.needsStringExtHelpers = true;
+      this.needsStringOpHelpers = true;
+      const delimPtrLen = this.emitStringPtrLen(splitMatch[2].trim(), locals);
+      return `(call $__str_split (local.get $${splitMatch[1]}_ptr) (local.get $${splitMatch[1]}_len) ${delimPtrLen})`;
     }
 
     // Phase 6d: 2D array element read: arr[rowIdx][colIdx]
@@ -4800,7 +4922,7 @@ class WasicTranspiler {
           console.error(`❌ wasic: '${receiver}' is not defined — '${receiver}.${methodName}(...)' cannot be compiled`);
           console.error(`   Note: '${receiver}' was not imported or declared in this module.`);
           console.error(`   If '${receiver}' is an external module, import the required function(s) directly (e.g. import { ${methodName} } from "...").`);
-          Deno.exit(1);
+          rt.exit(1);
         }
       }
     }
@@ -5097,6 +5219,38 @@ class WasicTranspiler {
 
           const arrInfo  = this.arrayVars.get(arrName);
           const elemType: WatType = arrInfo?.elemType ?? "i32";
+
+          // Phase 27: string[] (from split) — 8-byte elements, emit ptr+len local sets
+          if (arrInfo?.isStringArr) {
+            const lbl2 = this.pendingLabel ?? String(this.loopCounter++); this.pendingLabel = null;
+            const brk2  = `$break_${lbl2}`;
+            const loop2 = `$loop_${lbl2}`;
+            const cont2 = `$cont_${lbl2}`;
+            const idxVar2 = "$__forof_idx";
+            const lenWat2 = `(i32.load (local.get $${arrName}))`;
+            // base address of element i: arr + 8 + i*8
+            const elemBaseWat = `(i32.add (i32.add (local.get $${arrName}) (i32.const 8)) (i32.shl (local.get ${idxVar2}) (i32.const 3)))`;
+            const setPtrWat = `(local.set $${itemName}_ptr (i32.load ${elemBaseWat}))`;
+            const setLenWat = `(local.set $${itemName}_len (i32.load offset=4 ${elemBaseWat}))`;
+            this.controlStack.push({ breakLabel: brk2, continueLabel: cont2 });
+            const bodyWat2 = this.emitBlock(forOfBody, locals, funcResult, indent + "      ");
+            this.controlStack.pop();
+            out.push(`${indent}(local.set ${idxVar2} (i32.const 0))`);
+            out.push(`${indent}(block ${brk2}`);
+            out.push(`${indent}  (loop ${loop2}`);
+            out.push(`${indent}    (br_if ${brk2} (i32.ge_u (local.get ${idxVar2}) ${lenWat2}))`);
+            out.push(`${indent}    ${setPtrWat}`);
+            out.push(`${indent}    ${setLenWat}`);
+            out.push(`${indent}    (block ${cont2}`);
+            out.push(bodyWat2);
+            out.push(`${indent}    )`);
+            out.push(`${indent}    (local.set ${idxVar2} (i32.add (local.get ${idxVar2}) (i32.const 1)))`);
+            out.push(`${indent}    (br ${loop2})`);
+            out.push(`${indent}  )`);
+            out.push(`${indent})`);
+            continue;
+          }
+
           const loadOp   = elemType === "f64" ? "f64.load" : elemType === "i64" ? "i64.load" : "i32.load";
           const shift    = (elemType === "f64" || elemType === "i64") ? 3 : 2;
 
@@ -5505,6 +5659,7 @@ class WasicTranspiler {
   )`);
     if (this.needsStringHelpers)   parts.push(this.getStringHelperWat());
     if (this.needsStringOpHelpers || this.needsStrGatherHelper) parts.push(this.getStringOpHelperWat());
+    if (this.needsStringExtHelpers) parts.push(this.getStringExtHelperWat());
     if (this.needsNumericHelpers)  parts.push(getHelperWat());
     if (this.needsArrPrintHelper)  parts.push(getArrPrintHelperWat());
     if (this.mathHelpers.size > 0) parts.push(this.emitMathHelpers());
@@ -6135,6 +6290,504 @@ class WasicTranspiler {
   )`.trimEnd();
   }
 
+  // Phase 27: Extended string helpers — trim, charCodeAt, charAt, case conversion,
+  // replace, replaceAll, padStart, padEnd, repeat, split.
+  private getStringExtHelperWat(): string {
+    return `
+  ;; ── str_trim: remove leading and trailing ASCII whitespace ─────────────────
+  ;; Whitespace = 0x09 (tab), 0x0a (LF), 0x0d (CR), 0x20 (space).
+  ;; Returns (new_ptr, new_len) which is a sub-range of the original buffer.
+  (func $__str_trim
+    (param $ptr i32) (param $len i32)
+    (result i32 i32)
+    (local $s i32) (local $e i32) (local $b i32)
+    (local.set $s (i32.const 0))
+    (local.set $e (local.get $len))
+    ;; advance $s past leading whitespace
+    (block $done_s
+      (loop $loop_s
+        (br_if $done_s (i32.ge_u (local.get $s) (local.get $e)))
+        (local.set $b (i32.load8_u (i32.add (local.get $ptr) (local.get $s))))
+        (br_if $done_s (i32.and
+          (i32.and (i32.ne (local.get $b) (i32.const 0x20)) (i32.ne (local.get $b) (i32.const 0x09)))
+          (i32.and (i32.ne (local.get $b) (i32.const 0x0a)) (i32.ne (local.get $b) (i32.const 0x0d)))
+        ))
+        (local.set $s (i32.add (local.get $s) (i32.const 1)))
+        (br $loop_s)
+      )
+    )
+    ;; retreat $e past trailing whitespace
+    (block $done_e
+      (loop $loop_e
+        (br_if $done_e (i32.le_u (local.get $e) (local.get $s)))
+        (local.set $b (i32.load8_u (i32.add (local.get $ptr) (i32.sub (local.get $e) (i32.const 1)))))
+        (br_if $done_e (i32.and
+          (i32.and (i32.ne (local.get $b) (i32.const 0x20)) (i32.ne (local.get $b) (i32.const 0x09)))
+          (i32.and (i32.ne (local.get $b) (i32.const 0x0a)) (i32.ne (local.get $b) (i32.const 0x0d)))
+        ))
+        (local.set $e (i32.sub (local.get $e) (i32.const 1)))
+        (br $loop_e)
+      )
+    )
+    (i32.add (local.get $ptr) (local.get $s))
+    (i32.sub (local.get $e) (local.get $s))
+  )
+
+  ;; ── str_trim_start: remove leading ASCII whitespace ──────────────────────────
+  (func $__str_trim_start
+    (param $ptr i32) (param $len i32)
+    (result i32 i32)
+    (local $s i32) (local $b i32)
+    (block $done
+      (loop $loop
+        (br_if $done (i32.ge_u (local.get $s) (local.get $len)))
+        (local.set $b (i32.load8_u (i32.add (local.get $ptr) (local.get $s))))
+        (br_if $done (i32.and
+          (i32.and (i32.ne (local.get $b) (i32.const 0x20)) (i32.ne (local.get $b) (i32.const 0x09)))
+          (i32.and (i32.ne (local.get $b) (i32.const 0x0a)) (i32.ne (local.get $b) (i32.const 0x0d)))
+        ))
+        (local.set $s (i32.add (local.get $s) (i32.const 1)))
+        (br $loop)
+      )
+    )
+    (i32.add (local.get $ptr) (local.get $s))
+    (i32.sub (local.get $len) (local.get $s))
+  )
+
+  ;; ── str_trim_end: remove trailing ASCII whitespace ───────────────────────────
+  (func $__str_trim_end
+    (param $ptr i32) (param $len i32)
+    (result i32 i32)
+    (local $e i32) (local $b i32)
+    (local.set $e (local.get $len))
+    (block $done
+      (loop $loop
+        (br_if $done (i32.eqz (local.get $e)))
+        (local.set $b (i32.load8_u (i32.add (local.get $ptr) (i32.sub (local.get $e) (i32.const 1)))))
+        (br_if $done (i32.and
+          (i32.and (i32.ne (local.get $b) (i32.const 0x20)) (i32.ne (local.get $b) (i32.const 0x09)))
+          (i32.and (i32.ne (local.get $b) (i32.const 0x0a)) (i32.ne (local.get $b) (i32.const 0x0d)))
+        ))
+        (local.set $e (i32.sub (local.get $e) (i32.const 1)))
+        (br $loop)
+      )
+    )
+    (local.get $ptr)
+    (local.get $e)
+  )
+
+  ;; ── str_char_code_at: char code at index i, or -1 if out of bounds ───────────
+  (func $__str_char_code_at
+    (param $ptr i32) (param $len i32) (param $i i32)
+    (result i32)
+    (if (i32.lt_s (local.get $i) (i32.const 0)) (then (return (i32.const -1))))
+    (if (i32.ge_u (local.get $i) (local.get $len)) (then (return (i32.const -1))))
+    (i32.load8_u (i32.add (local.get $ptr) (local.get $i)))
+  )
+
+  ;; ── str_char_at: single-char sub-string at index i ───────────────────────────
+  ;; Returns (ptr+i, 1) if in bounds, (ptr, 0) if out of bounds.
+  (func $__str_char_at
+    (param $ptr i32) (param $len i32) (param $i i32)
+    (result i32 i32)
+    (if (i32.lt_s (local.get $i) (i32.const 0))
+      (then (return (local.get $ptr) (i32.const 0)))
+    )
+    (if (i32.ge_u (local.get $i) (local.get $len))
+      (then (return (local.get $ptr) (i32.const 0)))
+    )
+    (i32.add (local.get $ptr) (local.get $i))
+    (i32.const 1)
+  )
+
+  ;; ── str_starts_with: true if str begins with sub ─────────────────────────────
+  (func $__str_starts_with
+    (param $ptr i32) (param $len i32) (param $subptr i32) (param $sublen i32)
+    (result i32)
+    (local $j i32)
+    (if (i32.gt_u (local.get $sublen) (local.get $len)) (then (return (i32.const 0))))
+    (block $done
+      (loop $loop
+        (br_if $done (i32.ge_u (local.get $j) (local.get $sublen)))
+        (if (i32.ne
+          (i32.load8_u (i32.add (local.get $ptr) (local.get $j)))
+          (i32.load8_u (i32.add (local.get $subptr) (local.get $j)))
+        ) (then (return (i32.const 0))))
+        (local.set $j (i32.add (local.get $j) (i32.const 1)))
+        (br $loop)
+      )
+    )
+    (i32.const 1)
+  )
+
+  ;; ── str_ends_with: true if str ends with sub ─────────────────────────────────
+  (func $__str_ends_with
+    (param $ptr i32) (param $len i32) (param $subptr i32) (param $sublen i32)
+    (result i32)
+    (local $j i32) (local $off i32)
+    (if (i32.gt_u (local.get $sublen) (local.get $len)) (then (return (i32.const 0))))
+    (local.set $off (i32.sub (local.get $len) (local.get $sublen)))
+    (block $done
+      (loop $loop
+        (br_if $done (i32.ge_u (local.get $j) (local.get $sublen)))
+        (if (i32.ne
+          (i32.load8_u (i32.add (local.get $ptr) (i32.add (local.get $off) (local.get $j))))
+          (i32.load8_u (i32.add (local.get $subptr) (local.get $j)))
+        ) (then (return (i32.const 0))))
+        (local.set $j (i32.add (local.get $j) (i32.const 1)))
+        (br $loop)
+      )
+    )
+    (i32.const 1)
+  )
+
+  ;; ── str_to_upper: ASCII uppercase into a new heap buffer ────────────────────
+  (func $__str_to_upper
+    (param $ptr i32) (param $len i32)
+    (result i32 i32)
+    (local $newptr i32) (local $i i32) (local $b i32)
+    (local.set $newptr (call $__malloc (local.get $len)))
+    (block $done
+      (loop $loop
+        (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+        (local.set $b (i32.load8_u (i32.add (local.get $ptr) (local.get $i))))
+        (if (i32.and (i32.ge_u (local.get $b) (i32.const 97)) (i32.le_u (local.get $b) (i32.const 122)))
+          (then (local.set $b (i32.sub (local.get $b) (i32.const 32))))
+        )
+        (i32.store8 (i32.add (local.get $newptr) (local.get $i)) (local.get $b))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop)
+      )
+    )
+    (local.get $newptr)
+    (local.get $len)
+  )
+
+  ;; ── str_to_lower: ASCII lowercase into a new heap buffer ────────────────────
+  (func $__str_to_lower
+    (param $ptr i32) (param $len i32)
+    (result i32 i32)
+    (local $newptr i32) (local $i i32) (local $b i32)
+    (local.set $newptr (call $__malloc (local.get $len)))
+    (block $done
+      (loop $loop
+        (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+        (local.set $b (i32.load8_u (i32.add (local.get $ptr) (local.get $i))))
+        (if (i32.and (i32.ge_u (local.get $b) (i32.const 65)) (i32.le_u (local.get $b) (i32.const 90)))
+          (then (local.set $b (i32.add (local.get $b) (i32.const 32))))
+        )
+        (i32.store8 (i32.add (local.get $newptr) (local.get $i)) (local.get $b))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop)
+      )
+    )
+    (local.get $newptr)
+    (local.get $len)
+  )
+
+  ;; ── str_replace: replace first occurrence of old with new ───────────────────
+  ;; Returns new heap string (or original ptr/len if old not found).
+  (func $__str_replace
+    (param $ptr i32) (param $len i32)
+    (param $oldptr i32) (param $oldlen i32)
+    (param $newptr i32) (param $newlen i32)
+    (result i32 i32)
+    (local $pos i32) (local $outlen i32) (local $out i32) (local $wi i32)
+    (local.set $pos (call $__str_indexof (local.get $ptr) (local.get $len) (local.get $oldptr) (local.get $oldlen)))
+    (if (i32.eq (local.get $pos) (i32.const -1))
+      (then (return (local.get $ptr) (local.get $len)))
+    )
+    (local.set $outlen (i32.add (i32.sub (local.get $len) (local.get $oldlen)) (local.get $newlen)))
+    (local.set $out (call $__malloc (local.get $outlen)))
+    ;; copy prefix [0, pos)
+    (local.set $wi (i32.const 0))
+    (block $d0 (loop $l0
+      (br_if $d0 (i32.ge_u (local.get $wi) (local.get $pos)))
+      (i32.store8 (i32.add (local.get $out) (local.get $wi))
+        (i32.load8_u (i32.add (local.get $ptr) (local.get $wi))))
+      (local.set $wi (i32.add (local.get $wi) (i32.const 1)))
+      (br $l0)
+    ))
+    ;; copy new string
+    (block $d1 (loop $l1
+      (br_if $d1 (i32.ge_u (local.get $wi) (i32.add (local.get $pos) (local.get $newlen))))
+      (i32.store8 (i32.add (local.get $out) (local.get $wi))
+        (i32.load8_u (i32.add (local.get $newptr) (i32.sub (local.get $wi) (local.get $pos)))))
+      (local.set $wi (i32.add (local.get $wi) (i32.const 1)))
+      (br $l1)
+    ))
+    ;; copy suffix [pos+oldlen, len)
+    (block $d2 (loop $l2
+      (br_if $d2 (i32.ge_u (local.get $wi) (local.get $outlen)))
+      (i32.store8 (i32.add (local.get $out) (local.get $wi))
+        (i32.load8_u (i32.add (local.get $ptr) (i32.sub (i32.add (local.get $wi) (local.get $oldlen)) (local.get $newlen)))))
+      (local.set $wi (i32.add (local.get $wi) (i32.const 1)))
+      (br $l2)
+    ))
+    (local.get $out)
+    (local.get $outlen)
+  )
+
+  ;; ── str_replace_all: replace all occurrences of old with new ────────────────
+  (func $__str_replace_all
+    (param $ptr i32) (param $len i32)
+    (param $oldptr i32) (param $oldlen i32)
+    (param $newptr i32) (param $newlen i32)
+    (result i32 i32)
+    (local $cur i32) (local $pos i32) (local $buf i32) (local $blen i32)
+    (local $wi i32) (local $ri i32) (local $seglen i32)
+    ;; worst-case capacity: outlen <= len * (newlen/oldlen + 1) — allocate generously
+    ;; simple heuristic: (len + 1) * (newlen + 1)
+    (local.set $blen (i32.mul (i32.add (local.get $len) (i32.const 1)) (i32.add (local.get $newlen) (i32.const 1))))
+    (local.set $buf (call $__malloc (local.get $blen)))
+    (local.set $cur (i32.const 0))
+    (local.set $wi (i32.const 0))
+    (block $done
+      (loop $loop
+        ;; find next occurrence from $cur
+        (local.set $pos (call $__str_indexof
+          (i32.add (local.get $ptr) (local.get $cur))
+          (i32.sub (local.get $len) (local.get $cur))
+          (local.get $oldptr) (local.get $oldlen)
+        ))
+        (if (i32.eq (local.get $pos) (i32.const -1)) (then (br $done)))
+        (local.set $pos (i32.add (local.get $pos) (local.get $cur)))
+        ;; copy segment before match
+        (local.set $seglen (i32.sub (local.get $pos) (local.get $cur)))
+        (local.set $ri (i32.const 0))
+        (block $ds (loop $ls
+          (br_if $ds (i32.ge_u (local.get $ri) (local.get $seglen)))
+          (i32.store8 (i32.add (local.get $buf) (local.get $wi))
+            (i32.load8_u (i32.add (local.get $ptr) (i32.add (local.get $cur) (local.get $ri)))))
+          (local.set $wi (i32.add (local.get $wi) (i32.const 1)))
+          (local.set $ri (i32.add (local.get $ri) (i32.const 1)))
+          (br $ls)
+        ))
+        ;; copy new string
+        (local.set $ri (i32.const 0))
+        (block $dn (loop $ln
+          (br_if $dn (i32.ge_u (local.get $ri) (local.get $newlen)))
+          (i32.store8 (i32.add (local.get $buf) (local.get $wi))
+            (i32.load8_u (i32.add (local.get $newptr) (local.get $ri))))
+          (local.set $wi (i32.add (local.get $wi) (i32.const 1)))
+          (local.set $ri (i32.add (local.get $ri) (i32.const 1)))
+          (br $ln)
+        ))
+        (local.set $cur (i32.add (local.get $pos) (i32.add (local.get $oldlen) (i32.const 0))))
+        ;; guard against zero-length old (avoid infinite loop)
+        (if (i32.eqz (local.get $oldlen))
+          (then
+            (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+            (if (i32.gt_u (local.get $cur) (local.get $len)) (then (br $done)))
+          )
+        )
+        (br $loop)
+      )
+    )
+    ;; copy remaining tail
+    (local.set $ri (local.get $cur))
+    (block $dt (loop $lt
+      (br_if $dt (i32.ge_u (local.get $ri) (local.get $len)))
+      (i32.store8 (i32.add (local.get $buf) (local.get $wi))
+        (i32.load8_u (i32.add (local.get $ptr) (local.get $ri))))
+      (local.set $wi (i32.add (local.get $wi) (i32.const 1)))
+      (local.set $ri (i32.add (local.get $ri) (i32.const 1)))
+      (br $lt)
+    ))
+    (local.get $buf)
+    (local.get $wi)
+  )
+
+  ;; ── str_pad_start: pad string to targetLen with pad chars on the left ────────
+  (func $__str_pad_start
+    (param $ptr i32) (param $len i32) (param $target i32) (param $padptr i32) (param $padlen i32)
+    (result i32 i32)
+    (local $out i32) (local $need i32) (local $wi i32) (local $pi i32)
+    (if (i32.le_s (local.get $target) (local.get $len))
+      (then (return (local.get $ptr) (local.get $len)))
+    )
+    (local.set $need (i32.sub (local.get $target) (local.get $len)))
+    (local.set $out (call $__malloc (local.get $target)))
+    ;; fill pad chars cycling through padstr
+    (if (i32.eqz (local.get $padlen)) (then (local.set $padlen (i32.const 1))))
+    (block $dp (loop $lp
+      (br_if $dp (i32.ge_u (local.get $wi) (local.get $need)))
+      (local.set $pi (i32.rem_u (local.get $wi) (local.get $padlen)))
+      (i32.store8 (i32.add (local.get $out) (local.get $wi))
+        (i32.load8_u (i32.add (local.get $padptr) (local.get $pi))))
+      (local.set $wi (i32.add (local.get $wi) (i32.const 1)))
+      (br $lp)
+    ))
+    ;; copy original string
+    (local.set $pi (i32.const 0))
+    (block $ds (loop $ls
+      (br_if $ds (i32.ge_u (local.get $pi) (local.get $len)))
+      (i32.store8 (i32.add (local.get $out) (i32.add (local.get $need) (local.get $pi)))
+        (i32.load8_u (i32.add (local.get $ptr) (local.get $pi))))
+      (local.set $pi (i32.add (local.get $pi) (i32.const 1)))
+      (br $ls)
+    ))
+    (local.get $out)
+    (local.get $target)
+  )
+
+  ;; ── str_pad_end: pad string to targetLen with pad chars on the right ─────────
+  (func $__str_pad_end
+    (param $ptr i32) (param $len i32) (param $target i32) (param $padptr i32) (param $padlen i32)
+    (result i32 i32)
+    (local $out i32) (local $need i32) (local $wi i32) (local $pi i32)
+    (if (i32.le_s (local.get $target) (local.get $len))
+      (then (return (local.get $ptr) (local.get $len)))
+    )
+    (local.set $need (i32.sub (local.get $target) (local.get $len)))
+    (local.set $out (call $__malloc (local.get $target)))
+    ;; copy original string first
+    (block $ds (loop $ls
+      (br_if $ds (i32.ge_u (local.get $wi) (local.get $len)))
+      (i32.store8 (i32.add (local.get $out) (local.get $wi))
+        (i32.load8_u (i32.add (local.get $ptr) (local.get $wi))))
+      (local.set $wi (i32.add (local.get $wi) (i32.const 1)))
+      (br $ls)
+    ))
+    ;; fill pad chars
+    (if (i32.eqz (local.get $padlen)) (then (local.set $padlen (i32.const 1))))
+    (block $dp (loop $lp
+      (br_if $dp (i32.ge_u (local.get $wi) (local.get $target)))
+      (local.set $pi (i32.rem_u (i32.sub (local.get $wi) (local.get $len)) (local.get $padlen)))
+      (i32.store8 (i32.add (local.get $out) (local.get $wi))
+        (i32.load8_u (i32.add (local.get $padptr) (local.get $pi))))
+      (local.set $wi (i32.add (local.get $wi) (i32.const 1)))
+      (br $lp)
+    ))
+    (local.get $out)
+    (local.get $target)
+  )
+
+  ;; ── str_repeat: concatenate the string n times ───────────────────────────────
+  (func $__str_repeat
+    (param $ptr i32) (param $len i32) (param $n i32)
+    (result i32 i32)
+    (local $out i32) (local $outlen i32) (local $i i32) (local $j i32)
+    (if (i32.le_s (local.get $n) (i32.const 0))
+      (then (return (local.get $ptr) (i32.const 0)))
+    )
+    (local.set $outlen (i32.mul (local.get $len) (local.get $n)))
+    (local.set $out (call $__malloc (local.get $outlen)))
+    (block $done
+      (loop $outer
+        (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+        (local.set $j (i32.const 0))
+        (block $di (loop $li
+          (br_if $di (i32.ge_u (local.get $j) (local.get $len)))
+          (i32.store8
+            (i32.add (local.get $out) (i32.add (i32.mul (local.get $i) (local.get $len)) (local.get $j)))
+            (i32.load8_u (i32.add (local.get $ptr) (local.get $j)))
+          )
+          (local.set $j (i32.add (local.get $j) (i32.const 1)))
+          (br $li)
+        ))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $outer)
+      )
+    )
+    (local.get $out)
+    (local.get $outlen)
+  )
+
+  ;; ── str_split: split string by delimiter, return string-array ptr ────────────
+  ;; String array layout: [count i32][capacity i32][{ptr i32, len i32} × count]
+  ;; Each element is 8 bytes. The returned i32 is a pointer to this array.
+  (func $__str_split
+    (param $ptr i32) (param $len i32) (param $dptr i32) (param $dlen i32)
+    (result i32)
+    (local $arr i32) (local $cap i32) (local $count i32)
+    (local $cur i32) (local $pos i32) (local $segptr i32) (local $seglen i32)
+    (local $newarr i32) (local $newsz i32)
+    ;; initial capacity 8 parts
+    (local.set $cap (i32.const 8))
+    (local.set $arr (call $__malloc (i32.add (i32.const 8) (i32.mul (local.get $cap) (i32.const 8)))))
+    (i32.store (local.get $arr) (i32.const 0))
+    (i32.store offset=4 (local.get $arr) (local.get $cap))
+    ;; special case: empty delimiter → each char is a part (not implemented; treat as no-split)
+    (if (i32.eqz (local.get $dlen))
+      (then
+        ;; store the whole string as single part
+        (i32.store offset=8 (local.get $arr) (local.get $ptr))
+        (i32.store offset=12 (local.get $arr) (local.get $len))
+        (i32.store (local.get $arr) (i32.const 1))
+        (return (local.get $arr))
+      )
+    )
+    (block $done
+      (loop $loop
+        ;; find next delimiter from $cur
+        (local.set $pos (call $__str_indexof
+          (i32.add (local.get $ptr) (local.get $cur))
+          (i32.sub (local.get $len) (local.get $cur))
+          (local.get $dptr) (local.get $dlen)
+        ))
+        (if (i32.eq (local.get $pos) (i32.const -1))
+          (then
+            ;; last segment: from $cur to end
+            (local.set $segptr (i32.add (local.get $ptr) (local.get $cur)))
+            (local.set $seglen (i32.sub (local.get $len) (local.get $cur)))
+            (br $done)
+          )
+        )
+        (local.set $pos (i32.add (local.get $pos) (local.get $cur)))
+        (local.set $segptr (i32.add (local.get $ptr) (local.get $cur)))
+        (local.set $seglen (i32.sub (local.get $pos) (local.get $cur)))
+        ;; grow array if full
+        (if (i32.ge_u (local.get $count) (local.get $cap))
+          (then
+            (local.set $cap (i32.mul (local.get $cap) (i32.const 2)))
+            (local.set $newsz (i32.add (i32.const 8) (i32.mul (local.get $cap) (i32.const 8))))
+            (local.set $newarr (call $__malloc (local.get $newsz)))
+            (call $__str_gather (local.get $arr) (i32.add (i32.const 8) (i32.mul (local.get $count) (i32.const 8))) (local.get $newarr))
+            (local.set $arr (local.get $newarr))
+            (i32.store offset=4 (local.get $arr) (local.get $cap))
+          )
+        )
+        ;; store segment
+        (i32.store
+          (i32.add (local.get $arr) (i32.add (i32.const 8) (i32.mul (local.get $count) (i32.const 8))))
+          (local.get $segptr)
+        )
+        (i32.store offset=4
+          (i32.add (local.get $arr) (i32.add (i32.const 8) (i32.mul (local.get $count) (i32.const 8))))
+          (local.get $seglen)
+        )
+        (local.set $count (i32.add (local.get $count) (i32.const 1)))
+        (local.set $cur (i32.add (local.get $pos) (local.get $dlen)))
+        (if (i32.gt_u (local.get $cur) (local.get $len)) (then (br $done)))
+        (br $loop)
+      )
+    )
+    ;; store last segment
+    (if (i32.ge_u (local.get $count) (local.get $cap))
+      (then
+        (local.set $cap (i32.mul (local.get $cap) (i32.const 2)))
+        (local.set $newsz (i32.add (i32.const 8) (i32.mul (local.get $cap) (i32.const 8))))
+        (local.set $newarr (call $__malloc (local.get $newsz)))
+        (call $__str_gather (local.get $arr) (i32.add (i32.const 8) (i32.mul (local.get $count) (i32.const 8))) (local.get $newarr))
+        (local.set $arr (local.get $newarr))
+        (i32.store offset=4 (local.get $arr) (local.get $cap))
+      )
+    )
+    (i32.store
+      (i32.add (local.get $arr) (i32.add (i32.const 8) (i32.mul (local.get $count) (i32.const 8))))
+      (local.get $segptr)
+    )
+    (i32.store offset=4
+      (i32.add (local.get $arr) (i32.add (i32.const 8) (i32.mul (local.get $count) (i32.const 8))))
+      (local.get $seglen)
+    )
+    (local.set $count (i32.add (local.get $count) (i32.const 1)))
+    (i32.store (local.get $arr) (local.get $count))
+    (local.get $arr)
+  )`.trimEnd();
+  }
+
   private emitDataSection(): string {
     const segments: string[] = [];
     for (const [msg, [offset]] of this.dataMap) {
@@ -6405,7 +7058,8 @@ class WasicTranspiler {
       if (arrCallPre && !this.arrayVars.has(arrCallPre[1])) {
         const varName = arrCallPre[1];
         const elemType = mapType(arrCallPre[2]) as WatType;
-        this.arrayVars.set(varName, { elemType, ptr: -2, length: 0, dynamic: true });
+        const isStringArr = elemType === "string";
+        this.arrayVars.set(varName, { elemType, ptr: -2, length: 0, dynamic: true, isStringArr });
         declaredLocals.push([varName, "i32"]);
         locals.set(varName, "i32");
         continue;
@@ -6533,7 +7187,14 @@ class WasicTranspiler {
         const foArrName  = forOfPre[2];
         const foArrInfo  = this.arrayVars.get(foArrName);
         const foElemType: WatType = foArrInfo?.elemType ?? "i32";
-        if (!locals.has(foItemName)) {
+        if (foArrInfo?.isStringArr) {
+          // Phase 27: string[] — loop variable is a string (needs _ptr and _len locals)
+          if (!locals.has(foItemName)) {
+            declaredLocals.push([`${foItemName}_ptr`, "i32"], [`${foItemName}_len`, "i32"]);
+            locals.set(foItemName, "string");
+            this.stringVars.add(foItemName);
+          }
+        } else if (!locals.has(foItemName)) {
           declaredLocals.push([foItemName, foElemType]);
           locals.set(foItemName, foElemType);
         }
@@ -7005,7 +7666,8 @@ class WasicTranspiler {
         if (arrCallPre2 && !this.arrayVars.has(arrCallPre2[1])) {
           const varName2c = arrCallPre2[1];
           const elemType2c = mapType(arrCallPre2[2]) as WatType;
-          this.arrayVars.set(varName2c, { elemType: elemType2c, ptr: -2, length: 0, dynamic: true });
+          const isStringArr2c = elemType2c === "string";
+          this.arrayVars.set(varName2c, { elemType: elemType2c, ptr: -2, length: 0, dynamic: true, isStringArr: isStringArr2c });
           startLocals.set(varName2c, "i32");
           startDeclaredLocals.push([varName2c, "i32"]);
           continue;
@@ -7072,7 +7734,14 @@ class WasicTranspiler {
           const foArrName2  = forOfPre2[2];
           const foArrInfo2  = this.arrayVars.get(foArrName2);
           const foElemType2: WatType = foArrInfo2?.elemType ?? "i32";
-          if (!startLocals.has(foItemName2)) {
+          if (foArrInfo2?.isStringArr) {
+            // Phase 27: string[] — loop variable is a string (needs _ptr and _len locals)
+            if (!startLocals.has(foItemName2)) {
+              startDeclaredLocals.push([`${foItemName2}_ptr`, "i32"], [`${foItemName2}_len`, "i32"]);
+              startLocals.set(foItemName2, "string");
+              this.stringVars.add(foItemName2);
+            }
+          } else if (!startLocals.has(foItemName2)) {
             startDeclaredLocals.push([foItemName2, foElemType2]);
             startLocals.set(foItemName2, foElemType2);
           }
@@ -7248,7 +7917,7 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
   // WAT goes alongside the output WASM
   const watPath = out.replace(/\.wasm$/, ".wat");
 
-  if (outPath) await Deno.mkdir(dirname(outPath), { recursive: true });
+  if (outPath) await rt.mkdir(dirname(outPath), { recursive: true });
 
   let bundleResult: Awaited<ReturnType<typeof bundleImportsEx>>;
   try {
@@ -7266,7 +7935,7 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
 
   for (const entry of wasmImports) {
     try {
-      const bytes = await Deno.readFile(entry.filePath);
+      const bytes = await rt.readFile(entry.filePath);
       wasmBytesMap.set(entry.filePath, bytes);
       const mod = wabtMod.readWasm(bytes.buffer, { readDebugNames: true });
       const importedWat = mod.toText({ foldExprs: false });
@@ -7316,7 +7985,7 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
   }
 
   // Write WAT alongside the output for inspection / debugging
-  await Deno.writeTextFile(watPath, wat);
+  await rt.writeTextFile(watPath, wat);
 
   const result = await watToOptimisedWasm(wat, watPath, out);
   if (result.success) {
@@ -7353,7 +8022,7 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
   const out = outPath ?? `${srcDir}/${name}.wasm`;
   const watPath = out.replace(/\.wasm$/, ".wat");
 
-  if (outPath) await Deno.mkdir(dirname(outPath), { recursive: true });
+  if (outPath) await rt.mkdir(dirname(outPath), { recursive: true });
 
   let bundleResult2: Awaited<ReturnType<typeof bundleImportsEx>>;
   try {
@@ -7369,7 +8038,7 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
 
   for (const entry of wasmImports) {
     try {
-      const bytes = await Deno.readFile(entry.filePath);
+      const bytes = await rt.readFile(entry.filePath);
       wasmBytesMap2.set(entry.filePath, bytes);
       const mod = wabtMod2.readWasm(bytes.buffer, { readDebugNames: true });
       const importedWat = mod.toText({ foldExprs: false });
@@ -7412,7 +8081,7 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
     dataOffset2 += heapM ? parseInt(heapM[1]) : 260;
   }
 
-  await Deno.writeTextFile(watPath, wat);
+  await rt.writeTextFile(watPath, wat);
 
   const result = await watToOptimisedWasm(wat, watPath, out);
   if (result.success) {
@@ -7447,6 +8116,6 @@ export async function compileWasi(path: string, outPath?: string): Promise<void>
 
   const result = await compileWasiTs(path, outPath);
   if (!result.success) {
-    Deno.exit(1);
+    rt.exit(1);
   }
 }

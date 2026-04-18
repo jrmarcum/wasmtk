@@ -5,6 +5,7 @@
  */
 
 import { basename, dirname } from "@std/path";
+import { rt } from "./rt.ts";
 import wasm2js_compiler from "wasm2js";
 import binaryen from "binaryen";
 import wabt from "wabt";
@@ -63,7 +64,7 @@ function getTypeName(typeId: number): string {
 const wasiImports: WasiImports = {
   wasi_snapshot_preview1: {
     proc_exit: (code: number | bigint): void => {
-      if (Number(code) === 0) Deno.exit(0);
+      if (Number(code) === 0) rt.exit(0);
       throw new WebAssembly.RuntimeError(`exit:${code}`);
     },
     fd_write: (fd: number | bigint, iovs: number | bigint, iovsLen: number | bigint, nwrittenPtr: number | bigint): number => {
@@ -74,7 +75,7 @@ const wasiImports: WasiImports = {
         const ptr = view.getUint32(Number(iovs) + i * 8, true);
         const len = view.getUint32(Number(iovs) + i * 8 + 4, true);
         const buf = new Uint8Array(memory.buffer, ptr, len);
-        if (Number(fd) === 1) Deno.stdout.writeSync(buf); else Deno.stderr.writeSync(buf);
+        if (Number(fd) === 1) rt.stdout.writeSync(buf); else rt.stderr.writeSync(buf);
         nwritten += len;
       }
       view.setUint32(Number(nwrittenPtr), nwritten, true);
@@ -90,7 +91,7 @@ const wasiImports: WasiImports = {
         const ptr = view.getUint32(Number(iovs) + i * 8, true);
         const len = view.getUint32(Number(iovs) + i * 8 + 4, true);
         const buf = new Uint8Array(len);
-        const n = Deno.stdin.readSync(buf);
+        const n = rt.stdin.readSync(buf);
         if (n === null || n === 0) break;
         new Uint8Array(memory.buffer, ptr, n).set(buf.subarray(0, n));
         totalRead += n;
@@ -150,7 +151,7 @@ const wasiImports: WasiImports = {
 async function getWasmBytes(path: string): Promise<Uint8Array> {
   if (path.endsWith(".wat")) {
     try {
-      const watSource = await Deno.readTextFile(path);
+      const watSource = await rt.readTextFile(path);
       const wabtModule = await (wabt as unknown as () => Promise<WabtModule>)();
       const parsed = wabtModule.parseWat(path, watSource, { enable_all: true } as WasmFeatures);
       const { buffer } = parsed.toBinary({});
@@ -160,7 +161,7 @@ async function getWasmBytes(path: string): Promise<Uint8Array> {
       throw new Error(`[WAT Compilation Error] ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  return await Deno.readFile(path);
+  return await rt.readFile(path);
 }
 
 /**
@@ -170,7 +171,7 @@ async function getWasmBytes(path: string): Promise<Uint8Array> {
  */
 export async function runWasi(path: string, args: string[]): Promise<void> {
   if (path.endsWith(".ts") || path.endsWith(".js")) {
-    const command = new Deno.Command(Deno.execPath(), {
+    const command = new rt.Command(rt.execPath(), {
       args: ["run", "-A", path, ...args],
     });
     const process = command.spawn();
@@ -181,14 +182,14 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
   // Intercept Javy dynamic WAT files before attempting instantiation
   if (path.endsWith(".wat")) {
     try {
-      const watSource = await Deno.readTextFile(path);
+      const watSource = await rt.readTextFile(path);
       if (watSource.includes("javy_quickjs_provider") || watSource.includes("javy-default-plugin")) {
         const inferredTs = path.replace(/\.wat$/, ".ts");
         console.error(`❌ Cannot run Javy WAT: "${path}"`);
         console.error(`   This WAT is the app layer only — the QuickJS engine is not embedded.`);
         console.error(`   To run, use the original WASM: wasmtk run ${path.replace(/\.wat$/, ".wasm")}`);
         console.error(`   To rebuild after edits: wasmtk wasic ${inferredTs}`);
-        Deno.exit(1);
+        rt.exit(1);
       }
     } catch { /* not readable as text - fall through to normal handling */ }
   }
@@ -241,7 +242,7 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
               const len = (err as Record<string, (...a: unknown[]) => unknown>)["getArg"](tag, 1) as number;
               const memory = wasiInstance?.exports.memory as WebAssembly.Memory;
               const msg = new TextDecoder().decode(new Uint8Array(memory.buffer, ptr, len));
-              Deno.stderr.writeSync(new TextEncoder().encode(`error: Uncaught (in Wasm) Error: ${msg}\n`));
+              rt.stderr.writeSync(new TextEncoder().encode(`error: Uncaught (in Wasm) Error: ${msg}\n`));
             }
           } catch { /* ignore tag extraction errors */ }
           return;
@@ -249,7 +250,7 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
         throw err;
       }
     }
-  } catch (err) { console.error(`❌ Run error: ${err}`); Deno.exit(1); }
+  } catch (err) { console.error(`❌ Run error: ${err}`); rt.exit(1); }
 }
 
 /**
@@ -278,7 +279,7 @@ export async function callExport(path: string, fnName: string, params: string[])
     if (typeof fn !== "function") {
       console.error(`❌ mod: no exported function named "${fnName}" in ${path}`);
       console.error(`   Use "wasmtk info ${path}" to list available functions.`);
-      Deno.exit(1);
+      rt.exit(1);
     }
 
     const parsedArgs = params.map(p => {
@@ -290,7 +291,7 @@ export async function callExport(path: string, fnName: string, params: string[])
     if (res !== undefined) console.log(`${res}`);
   } catch (err) {
     console.error(`❌ mod error: ${err}`);
-    Deno.exit(1);
+    rt.exit(1);
   }
 }
 
@@ -356,10 +357,10 @@ export async function checkIsLibrary(path: string): Promise<boolean> {
 export async function wasm2js(path: string, outPath?: string): Promise<void> {
   const out = outPath ?? path.replace(/\.(wasm|wat)$/, ".js");
   try {
-    if (outPath) await Deno.mkdir(dirname(outPath), { recursive: true });
+    if (outPath) await rt.mkdir(dirname(outPath), { recursive: true });
     const wasmBuffer = await getWasmBytes(path);
     const result = wasm2js_compiler(wasmBuffer as BufferSource);
-    await Deno.writeTextFile(out, typeof result === "string" ? result : new TextDecoder().decode(result));
+    await rt.writeTextFile(out, typeof result === "string" ? result : new TextDecoder().decode(result));
     console.log(`✅ Success: ${out}`);
   } catch (err) { console.error(`❌ Conversion failed: ${err}`); }
 }
@@ -375,7 +376,7 @@ async function findSourceAlongside(wasmPath: string): Promise<string | null> {
   for (const ext of [".js", ".ts"]) {
     const candidate = base + ext;
     try {
-      await Deno.stat(candidate);
+      await rt.stat(candidate);
       return candidate;
     } catch { /* not found */ }
   }
@@ -393,12 +394,12 @@ async function findSourceAlongside(wasmPath: string): Promise<string | null> {
 export async function convertFile(p: string, outPath?: string): Promise<void> {
   const isWat = p.endsWith(".wat");
   const out = outPath ?? (isWat ? p.replace(".wat", ".wasm") : p.replace(".wasm", ".wat"));
-  if (outPath) await Deno.mkdir(dirname(outPath), { recursive: true });
+  if (outPath) await rt.mkdir(dirname(outPath), { recursive: true });
 
   try {
     if (isWat) {
       // --- WAT → WASM ---
-      const watSource = await Deno.readTextFile(p);
+      const watSource = await rt.readTextFile(p);
 
       // Detect Javy dynamic module by checking for javy_quickjs_provider imports in the WAT text
       if (watSource.includes("javy_quickjs_provider") || watSource.includes("javy-default-plugin")) {
@@ -417,12 +418,12 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
       const parsed = wabtModule.parseWat(p, watSource, { enable_all: true } as WasmFeatures);
       const { buffer } = parsed.toBinary({});
       parsed.destroy();
-      await Deno.writeFile(out, new Uint8Array(buffer));
+      await rt.writeFile(out, new Uint8Array(buffer));
       console.log(`✅ Converted to ${out}`);
 
     } else {
       // --- WASM → WAT ---
-      const wasmBytes = await Deno.readFile(p);
+      const wasmBytes = await rt.readFile(p);
       const isJavyBinary = detectJavyProvider(wasmBytes) !== null;
 
       if (isJavyBinary) {
@@ -439,7 +440,7 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
           const mod = wabtModule.readWasm(wasmBytes, { readDebugNames: true });
           const wat = mod.toText({ foldExprs: false, inlineExport: false });
           mod.destroy();
-          await Deno.writeTextFile(out, wat);
+          await rt.writeTextFile(out, wat);
           console.log(`✅ Converted to ${out}`);
           return;
         }
@@ -453,7 +454,7 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
         const tempPlugin = p.replace(".wasm", ".plugin.tmp.wasm");
 
         // Step 1: emit the default plugin
-        const emitPlugin = new Deno.Command(javyCmd, {
+        const emitPlugin = new rt.Command(javyCmd, {
           args: ["emit-plugin", "-o", tempPlugin],
         });
         const emitResult = await emitPlugin.output();
@@ -464,11 +465,11 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
         }
 
         // Step 2: build the dynamic app module against the emitted plugin
-        const javy = new Deno.Command(javyCmd, {
+        const javy = new rt.Command(javyCmd, {
           args: ["build", "-C", "dynamic", "-C", `plugin=${tempPlugin}`, sourcePath, "-o", tempWasm],
         });
         const javyResult = await javy.output();
-        try { await Deno.remove(tempPlugin); } catch { /* ignore */ }
+        try { await rt.remove(tempPlugin); } catch { /* ignore */ }
 
         if (!javyResult.success) {
           const errText = new TextDecoder().decode(javyResult.stderr);
@@ -477,14 +478,14 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
         }
 
         try {
-          const dynBytes = await Deno.readFile(tempWasm);
+          const dynBytes = await rt.readFile(tempWasm);
           const wabtModule = await (wabt as unknown as () => Promise<WabtModule>)();
           const mod = wabtModule.readWasm(dynBytes, { readDebugNames: true });
           const wat = mod.toText({ foldExprs: false, inlineExport: false });
           mod.destroy();
-          await Deno.writeTextFile(out, wat);
+          await rt.writeTextFile(out, wat);
         } finally {
-          try { await Deno.remove(tempWasm); } catch { /* ignore */ }
+          try { await rt.remove(tempWasm); } catch { /* ignore */ }
         }
 
         console.log(`✅ Converted to ${out}`);
@@ -499,7 +500,7 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
         const mod = wabtModule.readWasm(wasmBytes, { readDebugNames: true });
         const wat = mod.toText({ foldExprs: false, inlineExport: false });
         mod.destroy();
-        await Deno.writeTextFile(out, wat);
+        await rt.writeTextFile(out, wat);
         console.log(`✅ Converted to ${out}`);
       }
     }
@@ -514,8 +515,8 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
  */
 export async function bundleTs(p: string, outPath?: string): Promise<void> {
   const out = outPath || p.replace(".ts", ".js");
-  const b = new Deno.Command(Deno.execPath(), { args: ["bundle", "--quiet", p], stdout: "piped" });
+  const b = new rt.Command(rt.execPath(), { args: ["bundle", "--quiet", p], stdout: "piped" });
   const output = await b.output();
-  await Deno.writeTextFile(out, new TextDecoder().decode(output.stdout));
+  await rt.writeTextFile(out, new TextDecoder().decode(output.stdout));
   console.log(`✅ Bundled: ${out}`);
 }

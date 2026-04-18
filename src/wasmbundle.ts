@@ -42,6 +42,7 @@ import { basename } from "@std/path";
 import wabtInit from "wabt";
 import binaryen from "binaryen";
 import { extractExportNames, mergeWasmWat } from "./wasmmerge.ts";
+import { rt } from "./rt.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -100,7 +101,7 @@ async function promptConflict(
     : `  [2]  Prefix with alias         →  (use --alias ${fileNames.map((f) => `${f}=<name>`).join(",")})\n`;
 
   const encoder = new TextEncoder();
-  await Deno.stdout.write(
+  await rt.stdout.write(
     encoder.encode(
       `\nConflict: "${name}" exported by: ${fileNames.join(", ")}\n` +
         `  [1]  Prefix with module name  →  ${prefixExamples}\n` +
@@ -111,7 +112,7 @@ async function promptConflict(
     ),
   );
   const buf = new Uint8Array(16);
-  const n = await Deno.stdin.read(buf);
+  const n = await rt.stdin.read(buf);
   const choice = n ? new TextDecoder().decode(buf.subarray(0, n)).trim() : "4";
 
   if (choice === "1") return "prefix";
@@ -177,7 +178,7 @@ export async function runWasmBundle(
 ): Promise<void> {
   if (inputs.length === 0) {
     console.error("❌ No input files specified.");
-    Deno.exit(1);
+    rt.exit(1);
   }
 
   // ── Load wabt ─────────────────────────────────────────────────────────────
@@ -187,7 +188,7 @@ export async function runWasmBundle(
   console.log(`\nLoading ${inputs.length} module(s)...`);
   const modules: ModuleEntry[] = [];
   for (const filePath of inputs) {
-    const bytes = await Deno.readFile(filePath);
+    const bytes = await rt.readFile(filePath);
     const wabtMod = wabt.readWasm(bytes, { readDebugNames: true });
     const wat = wabtMod.toText({ foldExprs: false });
     wabtMod.destroy();
@@ -233,7 +234,7 @@ export async function runWasmBundle(
           `\n❌ --on-conflict=alias requires --alias for every conflicting module.\n` +
             `   Missing alias for: ${missing.map((f) => basename(f)).join(", ")}`,
         );
-        Deno.exit(1);
+        rt.exit(1);
       }
       resolution = "alias";
       const fileNames = files.map((f) => basename(f)).join(", ");
@@ -246,7 +247,7 @@ export async function runWasmBundle(
       console.error(
         `\n❌ Compile stopped. Rename "${name}" in your source and recompile.`,
       );
-      Deno.exit(1);
+      rt.exit(1);
     }
 
     for (const file of files) {
@@ -347,7 +348,7 @@ export async function runWasmBundle(
   }
 
   // ── Write output ──────────────────────────────────────────────────────────
-  await Deno.writeFile(outputPath, finalBytes);
+  await rt.writeFile(outputPath, finalBytes);
   const exportCount = exportDeclParts.length;
   console.log(
     `\n✅ ${inputs.length} module(s) bundled → ${outputPath}` +

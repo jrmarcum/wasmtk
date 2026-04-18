@@ -19,8 +19,88 @@ Most runners are either too minimal (breaking on complex Zig/Rust builds) or too
 
 ### Installation
 
+#### As a project dependency
+
+Add wasmtk as a dependency in your current project:
+
+Deno:
+
 ```bash
 deno add jsr:@jrmarcum/wasmtk
+```
+
+Bun:
+
+```bash
+bunx jsr add @jrmarcum/wasmtk
+```
+
+#### As a global CLI tool
+
+Install wasmtk as a globally available `wasmtk` command on your system:
+
+Deno:
+
+```bash
+deno task install
+```
+
+Bun:
+
+```bash
+bun add -g @jrmarcum/wasmtk
+```
+
+Bun installs global binaries to `~/.bun/bin`. Ensure this directory is on your `PATH` so the `wasmtk` command is available system-wide:
+
+macOS / Linux — add to `~/.bashrc`, `~/.zshrc`, or your shell's profile:
+
+```bash
+export PATH="$HOME/.bun/bin:$PATH"
+```
+
+Windows — use PowerShell to set the environment variable permanently without risking truncation of your existing `PATH`. If you have local user privileges only, set it at the user level (no admin required):
+
+```powershell
+[System.Environment]::SetEnvironmentVariable("PATH", "$env:USERPROFILE\.bun\bin;" + [System.Environment]::GetEnvironmentVariable("PATH", "User"), "User")
+```
+
+If you have administrator privileges and want it available system-wide for all users:
+
+```powershell
+[System.Environment]::SetEnvironmentVariable("PATH", "$env:USERPROFILE\.bun\bin;" + [System.Environment]::GetEnvironmentVariable("PATH", "Machine"), "Machine")
+```
+
+In either case, restart your terminal after running the command for the change to take effect.
+
+#### Run on demand without installing
+
+Execute wasmtk directly without any permanent installation:
+
+Deno:
+
+```bash
+deno run -A jsr:@jrmarcum/wasmtk
+```
+
+Bun requires a one-time registry configuration so it can resolve JSR packages. The `.npmrc` file must be placed in `~/.bun/bin` — the same directory where Bun installs global binaries. Create or edit it with the following command for your platform:
+
+macOS / Linux:
+
+```bash
+echo '@jsr:registry=https://npm.jsr.io' >> ~/.bun/bin/.npmrc
+```
+
+Windows (PowerShell):
+
+```powershell
+Add-Content "$env:USERPROFILE\.bun\bin\.npmrc" '@jsr:registry=https://npm.jsr.io'
+```
+
+Once configured, run on demand with:
+
+```bash
+bunx @jrmarcum/wasmtk
 ```
 
 ---

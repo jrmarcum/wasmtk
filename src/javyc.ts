@@ -8,6 +8,7 @@
  */
 
 import { basename, dirname } from "@std/path";
+import { rt } from "./rt.ts";
 
 const JAVY_VERSION = "v8.0.0";
 
@@ -17,8 +18,8 @@ const JAVY_VERSION = "v8.0.0";
  *   javy-{arch}-{os}-{version}.gz
  */
 function getJavyAssetName(): string {
-  const os = Deno.build.os;
-  const arch = Deno.build.arch;
+  const os = rt.build.os;
+  const arch = rt.build.arch;
   const archStr = arch === "aarch64" ? "arm" : "x86_64";
   let osStr: string;
   if (os === "darwin") osStr = "macos";
@@ -32,8 +33,8 @@ function getJavyAssetName(): string {
  * Uses ~/.deno/bin/ which is already on PATH after `deno install`.
  */
 export function getJavyInstallPath(): string {
-  const home = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? ".";
-  const ext = Deno.build.os === "windows" ? ".exe" : "";
+  const home = rt.env.get("HOME") ?? rt.env.get("USERPROFILE") ?? ".";
+  const ext = rt.build.os === "windows" ? ".exe" : "";
   return `${home}/.deno/bin/javy${ext}`;
 }
 
@@ -42,7 +43,7 @@ export function getJavyInstallPath(): string {
  */
 export async function isJavyAvailable(): Promise<boolean> {
   try {
-    const { success } = await new Deno.Command("javy", {
+    const { success } = await new rt.Command("javy", {
       args: ["--version"],
       stdout: "null",
       stderr: "null",
@@ -64,7 +65,7 @@ export async function ensureJavy(): Promise<void> {
   const installPath = getJavyInstallPath();
 
   try {
-    await Deno.stat(installPath);
+    await rt.stat(installPath);
     return; // already downloaded but not on PATH
   } catch { /* not yet installed */ }
 
@@ -83,14 +84,14 @@ export async function ensureJavy(): Promise<void> {
     new Blob([compressed]).stream().pipeThrough(new DecompressionStream("gzip"))
   ).arrayBuffer();
 
-  await Deno.mkdir(
-    `${Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? "."}/.deno/bin`,
+  await rt.mkdir(
+    `${rt.env.get("HOME") ?? rt.env.get("USERPROFILE") ?? "."}/.deno/bin`,
     { recursive: true }
   );
-  await Deno.writeFile(installPath, new Uint8Array(decompressed));
+  await rt.writeFile(installPath, new Uint8Array(decompressed));
 
-  if (Deno.build.os !== "windows") {
-    await new Deno.Command("chmod", { args: ["+x", installPath] }).output();
+  if (rt.build.os !== "windows") {
+    await new rt.Command("chmod", { args: ["+x", installPath] }).output();
   }
 
   console.log(`✅ Javy ${JAVY_VERSION} installed to ${installPath}`);
@@ -157,17 +158,17 @@ export async function compileJavy(path: string, outPath?: string): Promise<void>
   const wasmOut = outPath ?? `${srcDir}/${name}.wasm`;
   const jsOut = outPath ? outPath.replace(/\.wasm$/, ".js") : `${srcDir}/${name}.js`;
 
-  if (outPath) await Deno.mkdir(dirname(outPath), { recursive: true });
+  if (outPath) await rt.mkdir(dirname(outPath), { recursive: true });
 
-  const bundle = new Deno.Command(Deno.execPath(), {
+  const bundle = new rt.Command(rt.execPath(), {
     args: ["bundle", "--quiet", path],
     stdout: "piped",
   });
   const output = await bundle.output();
   const preamble = `const prompt = function(message) { if (message) { Javy.IO.writeSync(1, new TextEncoder().encode(message + " ")); } let input = ""; const buffer = new Uint8Array(1); while (true) { const n = Javy.IO.readSync(0, buffer); if (n > 0) { const char = new TextDecoder().decode(buffer); if (char === "\\n" || char === "\\r") break; input += char; } else if (n === 0) { continue; } else { break; } } return input.trim(); };`;
-  await Deno.writeTextFile(jsOut, preamble + new TextDecoder().decode(output.stdout));
+  await rt.writeTextFile(jsOut, preamble + new TextDecoder().decode(output.stdout));
   const javyCmd = (await isJavyAvailable()) ? "javy" : getJavyInstallPath();
-  const javy = new Deno.Command(javyCmd, {
+  const javy = new rt.Command(javyCmd, {
     args: ["build", jsOut, "-o", wasmOut],
   });
   if ((await javy.output()).success) console.log(`✅ Javy WASI: ${wasmOut}`);

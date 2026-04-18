@@ -37,6 +37,7 @@
 
 import { basename, dirname } from "@std/path";
 import { compileLibTs } from "./wasic.ts";
+import { rt } from "./rt.ts";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -67,7 +68,7 @@ export async function compileModule(path: string, outPath?: string): Promise<voi
   console.log(`✅ Building Library: ${basename(out)}`);
 
   try {
-    if (outPath) await Deno.mkdir(dirname(outPath), { recursive: true });
+    if (outPath) await rt.mkdir(dirname(outPath), { recursive: true });
 
     const result = await compileLibTs(path, out);
     if (!result.success) {

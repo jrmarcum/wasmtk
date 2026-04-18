@@ -3,6 +3,8 @@
  * @description Provides the WASI execution environment and import factories for WebAssembly modules.
  */
 
+import { rt } from "./rt.ts";
+
 let wasiInstance: WebAssembly.Instance | undefined;
 
 /**
@@ -15,7 +17,7 @@ export function createWasiImports(_args: string[], _env: Record<string, string>)
   return {
     wasi_snapshot_preview1: {
       proc_exit: (code: number | bigint): void => {
-        if (Number(code) === 0) Deno.exit(0);
+        if (Number(code) === 0) rt.exit(0);
         throw new WebAssembly.RuntimeError(`exit:${code}`);
       },
       fd_write: (fd: number | bigint, iovs: number | bigint, iovsLen: number | bigint, nwrittenPtr: number | bigint): number => {
@@ -26,7 +28,7 @@ export function createWasiImports(_args: string[], _env: Record<string, string>)
           const ptr = view.getUint32(Number(iovs) + i * 8, true);
           const len = view.getUint32(Number(iovs) + i * 8 + 4, true);
           const buf = new Uint8Array(memory.buffer, ptr, len);
-          if (Number(fd) === 1) Deno.stdout.writeSync(buf); else Deno.stderr.writeSync(buf);
+          if (Number(fd) === 1) rt.stdout.writeSync(buf); else rt.stderr.writeSync(buf);
           nwritten += len;
         }
         view.setUint32(Number(nwrittenPtr), nwritten, true);
@@ -41,7 +43,7 @@ export function createWasiImports(_args: string[], _env: Record<string, string>)
           const ptr = view.getUint32(Number(iovs) + i * 8, true);
           const len = view.getUint32(Number(iovs) + i * 8 + 4, true);
           const buf = new Uint8Array(len);
-          const n = Deno.stdin.readSync(buf);
+          const n = rt.stdin.readSync(buf);
           if (n === null || n === 0) break;
           new Uint8Array(memory.buffer, ptr, n).set(buf.subarray(0, n));
           totalRead += n;
@@ -96,9 +98,9 @@ export function createWasiImports(_args: string[], _env: Record<string, string>)
  * @param args Arguments passed to the module's _start function.
  */
 export async function executeWasm(path: string, args: string[] = []): Promise<void> {
-  const bytes = await Deno.readFile(path);
-  const imports = createWasiImports(args, Deno.env.toObject());
-  const { instance } = await WebAssembly.instantiate(bytes, imports);
+  const bytes = await rt.readFile(path);
+  const imports = createWasiImports(args, rt.env.toObject());
+  const { instance } = await WebAssembly.instantiate(bytes as BufferSource, imports);
   wasiInstance = instance;
   const start = instance.exports._start as CallableFunction;
   if (typeof start === "function") {

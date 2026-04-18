@@ -53,6 +53,7 @@
  */
 
 import { basename, dirname, join } from "@std/path";
+import { rt } from "./rt.ts";
 
 // ---------------------------------------------------------------------------
 // Phase 18 — WASM import types
@@ -206,7 +207,7 @@ export async function bundleImportsEx(entryPath: string): Promise<BundleResult> 
     // ── 1. Resolve canonical path ─────────────────────────────────────────
     let realPath: string;
     try {
-      realPath = await Deno.realPath(filePath);
+      realPath = await rt.realPath(filePath);
     } catch (err) {
       if (isEntry) throw err;
       return { source: "", exportRenames: new Map() };
@@ -221,7 +222,7 @@ export async function bundleImportsEx(entryPath: string): Promise<BundleResult> 
 
     let src: string;
     try {
-      src = await Deno.readTextFile(realPath);
+      src = await rt.readTextFile(realPath);
     } catch (err) {
       if (isEntry) throw err;
       return { source: "", exportRenames: new Map() };
