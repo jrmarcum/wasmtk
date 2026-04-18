@@ -223,7 +223,7 @@
     (local $i i32)
     (local $x i32)
     (local $n i32)
-    (local $val i32)
+    (local $val f64)
     (local $evens i32)
     (local $j i32)
     (local $__iface_tmp i32)
@@ -290,7 +290,7 @@
             (i32.const 0)
             (i32.const 1)
             (i32.const 128)))
-    (local.set $val (i32.const 2))
+    (local.set $val (f64.const 2))
     (block $switch_exit_3
       (block $case_default_3
         (block $case_3_1

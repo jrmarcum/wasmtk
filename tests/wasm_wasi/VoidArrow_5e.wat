@@ -232,7 +232,7 @@
   (func $noOp  
   )
 
-  (func $sink (param $n i32) 
+  (func $sink (param $_n i32) 
   )
   (func $_start (export "_start")
     (local $__iface_tmp i32)

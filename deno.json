@@ -27,6 +27,11 @@
       "deno.json"
     ]
   },
+  "publishConfig": {
+    "bin": {
+      "wasmtk": "./mod.ts"
+    }
+  },
   "imports": {
     "@std/cli/parse-args": "jsr:@std/cli@^1.0.0/parse-args",
     "@std/path": "jsr:@std/path@^1.1.2",

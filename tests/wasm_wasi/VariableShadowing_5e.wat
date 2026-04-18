@@ -221,9 +221,9 @@
   )
   (func $testShadowing (export "testShadowing") (param $x i32) (result i32)
     (local $getX i32)
-    (local $inner i32)
+    (local $_inner i32)
     (local.set $getX (call $__anon_0__factory (local.get $x)))
-    (local.set $inner (i32.const 100))
+    (local.set $_inner (i32.const 100))
     (return (call_indirect (type $ftype_i32_r_i32) (local.get $getX)  (i32.load (local.get $getX))))
   )
 
