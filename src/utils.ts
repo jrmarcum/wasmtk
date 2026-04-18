@@ -29,17 +29,13 @@ interface WabtModule {
 }
 
 /** The current version of the wasmtk toolkit. */
-export const VERSION = "1.2.8";
+export const VERSION = "1.2.9";
 
 let wasiInstance: WebAssembly.Instance | undefined;
 
 type WasmCallable = (...args: (number | bigint)[]) => number | bigint | void;
 type WasiImports = Record<string, Record<string, WasmCallable | WebAssembly.Memory>>;
 
-interface BinaryenModuleExt extends binaryen.Module {
-  getNumImports(): number;
-  getImportByIndex(index: number): number;
-}
 
 interface BinaryenLibExt {
   getImportInfo(importRef: number): { module: string; name: string; kind: number };
