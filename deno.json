@@ -1,6 +1,6 @@
 {
   "name": "@jrmarcum/wasmtk",
-  "version": "1.2.9",
+  "version": "1.3.0",
   "description": "A polyglot WASM toolkit for Deno: Run, inspect, and convert WASM/WAT and WASI modules with high compatibility.",
   "license": "MIT",
   "exports": {
@@ -40,10 +40,10 @@
   "tasks": {
     "dev": "deno run --watch main.ts",
     "cache": "deno cache main.ts",
-    "update-version": "deno run --allow-read --allow-write -e 'import { updateVersion } from \"./utils.ts\"; updateVersion();'",
-    "install": "deno task cache && deno install -g --allow-run --allow-read --allow-write --allow-env --allow-ffi --allow-net --config deno.json --force -n wasmtk main.ts",
+    "update-version": "deno run --allow-read --allow-write scripts/sync-version.ts",
+    "install": "deno task update-version && deno task cache && deno install -g --allow-run --allow-read --allow-write --allow-env --allow-ffi --allow-net --config deno.json --force -n wasmtk main.ts",
     "compile": "deno compile -A --output wasmtk main.ts",
-    "publish": "deno publish"
+    "publish": "deno task update-version && deno publish"
   },
   "nodeModulesDir": "none",
   "fmt": {
