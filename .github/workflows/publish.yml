@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - "v*"
-      - 'v*'
 
 jobs:
   publish:
@@ -24,8 +23,3 @@ jobs:
 
       - name: Publish to JSR
         run: deno publish
-      - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-      - run: deno publish
