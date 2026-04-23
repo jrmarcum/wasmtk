@@ -129,6 +129,7 @@ import {
   emitConsoleLog,
   getHelperWat,
   getArrPrintHelperWat,
+  getJoinHelperWat,
   type DataAllocator,
   type FuncLookup,
   type LogSegment,
@@ -458,6 +459,7 @@ class WasicTranspiler {
   private needsStringExtHelpers = false;  // Phase 27: trim/charCodeAt/case/replace/pad/repeat/split
   private needsStrGatherHelper = false;
   private needsArrPrintHelper = false;
+  private needsJoinHelper = false;
   private needsMatrix2DPrintHelper = false;   // Phase 6d
 
   // String data section: message → [offset, byteLength]
@@ -2213,7 +2215,7 @@ class WasicTranspiler {
     const dynamic = new Set<string>();
     for (const line of lines) {
       // Method calls that require heap layout
-      const m = line.match(/\b(\w+)\.(push|pop|shift|unshift|indexOf|includes|slice|forEach|map|filter|find|reduce)\s*\(/);
+      const m = line.match(/\b(\w+)\.(push|pop|shift|unshift|indexOf|includes|slice|forEach|map|filter|find|reduce|every|some|findIndex|at|reverse|fill|join|sort)\s*\(/);
       if (m) dynamic.add(m[1]);
       // Phase 6d: subscript method call: matrix[i].push(...) — outer array must be dynamic
       const subM = line.match(/\b(\w+)\[.+?\]\.(push|pop|shift|unshift)\s*\(/);
@@ -2926,10 +2928,11 @@ class WasicTranspiler {
 
     // Dynamic array read/query methods: arr.indexOf(val), arr.includes(val), arr.slice(start,end)
     // Dynamic array callback methods (expression form): arr.map(fn), arr.filter(fn), arr.find(fn), arr.reduce(fn,init)
-    const dynArrMethod = expr.match(/^(\w+)\.(indexOf|includes|slice|map|filter|find|reduce)\s*\(([\s\S]*)\)$/);
+    // Phase 28: arr.every(fn), arr.some(fn), arr.findIndex(fn), arr.at(n), arr.reverse(), arr.fill(val,...), arr.sort(fn?)
+    const dynArrMethod = expr.match(/^(\w+)\.(indexOf|includes|slice|map|filter|find|reduce|every|some|findIndex|at|reverse|fill|sort)\s*\(([\s\S]*)\)$/);
     if (dynArrMethod) {
       const arrName  = dynArrMethod[1];
-      const method   = dynArrMethod[2] as "indexOf"|"includes"|"slice"|"map"|"filter"|"find"|"reduce";
+      const method   = dynArrMethod[2] as "indexOf"|"includes"|"slice"|"map"|"filter"|"find"|"reduce"|"every"|"some"|"findIndex"|"at"|"reverse"|"fill"|"sort";
       const argsStr  = dynArrMethod[3].trim();
       const arrInfo  = this.arrayVars.get(arrName);
       if (arrInfo?.dynamic) {
@@ -2953,6 +2956,63 @@ class WasicTranspiler {
           const startWat = args[0]?.trim() ? this.emitExpr(args[0].trim(), locals, "i32") : "(i32.const 0)";
           const endWat   = args[1]?.trim() ? this.emitExpr(args[1].trim(), locals, "i32") : `(i32.load (local.get $${arrName}))`;
           return `(call $__dynarr_${key} (local.get $${arrName}) ${startWat} ${endWat})`;
+        }
+        // Phase 28: every / some — predicate over all elements
+        if (method === "every" || method === "some") {
+          const key = `${method}_${elemType}`;
+          this.dynArrHelpers.add(key);
+          this.getOrCreateFuncType([elemType], "i32");
+          const args = this.splitArgs(argsStr);
+          const fnIdx = this.getFuncTableIdx(args[0]?.trim() ?? "");
+          return `(call $__dynarr_${key} (local.get $${arrName}) (i32.const ${fnIdx}))`;
+        }
+        // Phase 28: findIndex — returns index of first match or -1
+        if (method === "findIndex") {
+          const key = `findindex_${elemType}`;
+          this.dynArrHelpers.add(key);
+          this.getOrCreateFuncType([elemType], "i32");
+          const args = this.splitArgs(argsStr);
+          const fnIdx = this.getFuncTableIdx(args[0]?.trim() ?? "");
+          return `(call $__dynarr_${key} (local.get $${arrName}) (i32.const ${fnIdx}))`;
+        }
+        // Phase 28: at(n) — element at index (supports negative wrap)
+        if (method === "at") {
+          const key = `at_${elemType}`;
+          this.dynArrHelpers.add(key);
+          const nWat = this.emitExpr(argsStr, locals, "i32");
+          return `(call $__dynarr_${key} (local.get $${arrName}) ${nWat})`;
+        }
+        // Phase 28: reverse() — in-place reversal, returns arr ptr
+        if (method === "reverse") {
+          const key = `reverse_${elemType}`;
+          this.dynArrHelpers.add(key);
+          return `(call $__dynarr_${key} (local.get $${arrName}))`;
+        }
+        // Phase 28: fill(val, start?, end?) — fills range, returns arr ptr
+        if (method === "fill") {
+          const key = `fill_${elemType}`;
+          this.dynArrHelpers.add(key);
+          const args = this.splitArgs(argsStr);
+          const valWat   = args[0]?.trim() ? this.emitExpr(args[0].trim(), locals, elemType) : zeroOf(elemType);
+          const startWat = args[1]?.trim() ? this.emitExpr(args[1].trim(), locals, "i32") : "(i32.const 0)";
+          const endWat   = args[2]?.trim() ? this.emitExpr(args[2].trim(), locals, "i32") : `(i32.load (local.get $${arrName}))`;
+          return `(call $__dynarr_${key} (local.get $${arrName}) ${valWat} ${startWat} ${endWat})`;
+        }
+        // Phase 28: sort(fn?) — in-place insertion sort, returns arr ptr
+        if (method === "sort") {
+          const args = this.splitArgs(argsStr);
+          const fnName = args[0]?.trim() ?? "";
+          if (fnName) {
+            const key = `sortcmp_${elemType}`;
+            this.dynArrHelpers.add(key);
+            this.getOrCreateFuncType([elemType, elemType], "i32");
+            const fnIdx = this.getFuncTableIdx(fnName);
+            return `(call $__dynarr_${key} (local.get $${arrName}) (i32.const ${fnIdx}))`;
+          } else {
+            const key = `sort_${elemType}`;
+            this.dynArrHelpers.add(key);
+            return `(call $__dynarr_${key} (local.get $${arrName}))`;
+          }
         }
         // Callback methods: map, filter, find, reduce
         const args = this.splitArgs(argsStr);
@@ -4193,6 +4253,11 @@ class WasicTranspiler {
           locals.set(nlVarName, "string");
           return this.emitStringAssign(nlVarName, nlInitExpr, locals);
         }
+        // Track find() result variables so console.log can print "undefined" for not-found sentinel.
+        // Must happen here too because nullableLetMatch returns early, bypassing the letMatch path.
+        if (/^\w+\.find\s*\(/.test(nlInitExpr) && (nlInner === "i32" || nlInner === "f64")) {
+          this.findResultVars.add(nlVarName);
+        }
         // Detect call to a nullable-returning function to propagate the flag
         const nlFnCallM = nlInitExpr.match(/^(\w+)\s*\(/);
         const nlCalledFn = nlFnCallM ? this.functions.find(f => f.name === nlFnCallM[1]) : null;
@@ -4426,10 +4491,11 @@ class WasicTranspiler {
     }
 
     // Dynamic array callback methods (statement form): arr.forEach(fn), arr.map(fn), etc.
-    const dynArrCallbackStmt = line.match(/^(\w+)\.(forEach|map|filter|find|reduce)\s*\(([\s\S]*?)\)\s*;?$/);
+    // Phase 28: also every, some, findIndex
+    const dynArrCallbackStmt = line.match(/^(\w+)\.(forEach|map|filter|find|reduce|every|some|findIndex)\s*\(([\s\S]*?)\)\s*;?$/);
     if (dynArrCallbackStmt) {
       const arrName  = dynArrCallbackStmt[1];
-      const method   = dynArrCallbackStmt[2] as "forEach"|"map"|"filter"|"find"|"reduce";
+      const method   = dynArrCallbackStmt[2] as string;
       const argsStr  = dynArrCallbackStmt[3].trim();
       const arrInfo  = this.arrayVars.get(arrName);
       if (arrInfo?.dynamic) {
@@ -4451,12 +4517,55 @@ class WasicTranspiler {
           this.getOrCreateFuncType([elemType], "i32");
         } else if (methodLc === "reduce") {
           this.getOrCreateFuncType([elemType, elemType], elemType);
+        } else if (methodLc === "every" || methodLc === "some" || methodLc === "findindex") {
+          this.getOrCreateFuncType([elemType], "i32");
         }
         if (methodLc === "reduce") {
           const initWat = args[1]?.trim() ? this.emitExpr(args[1].trim(), locals, elemType) : zeroOf(elemType);
           return `(drop (call $__dynarr_${key} (local.get $${arrName}) (i32.const ${fnIdx}) ${initWat}))`;
         }
         return `(drop (call $__dynarr_${key} (local.get $${arrName}) (i32.const ${fnIdx})))`;
+      }
+    }
+
+    // Phase 28: Dynamic array mutator methods (statement form): arr.reverse(), arr.fill(val,...), arr.sort(fn?)
+    const dynArrMutatorStmt = line.match(/^(\w+)\.(reverse|fill|sort)\s*\(([\s\S]*?)\)\s*;?$/);
+    if (dynArrMutatorStmt) {
+      const arrName = dynArrMutatorStmt[1];
+      const method  = dynArrMutatorStmt[2] as "reverse"|"fill"|"sort";
+      const argsStr = dynArrMutatorStmt[3].trim();
+      const arrInfo = this.arrayVars.get(arrName);
+      if (arrInfo?.dynamic) {
+        const elemType = arrInfo.elemType as WatType;
+        if (method === "reverse") {
+          const key = `reverse_${elemType}`;
+          this.dynArrHelpers.add(key);
+          return `(drop (call $__dynarr_${key} (local.get $${arrName})))`;
+        }
+        if (method === "fill") {
+          const key = `fill_${elemType}`;
+          this.dynArrHelpers.add(key);
+          const args = this.splitArgs(argsStr);
+          const valWat   = args[0]?.trim() ? this.emitExpr(args[0].trim(), locals, elemType) : zeroOf(elemType);
+          const startWat = args[1]?.trim() ? this.emitExpr(args[1].trim(), locals, "i32") : "(i32.const 0)";
+          const endWat   = args[2]?.trim() ? this.emitExpr(args[2].trim(), locals, "i32") : `(i32.load (local.get $${arrName}))`;
+          return `(drop (call $__dynarr_${key} (local.get $${arrName}) ${valWat} ${startWat} ${endWat}))`;
+        }
+        if (method === "sort") {
+          const args = this.splitArgs(argsStr);
+          const fnName = args[0]?.trim() ?? "";
+          if (fnName) {
+            const key = `sortcmp_${elemType}`;
+            this.dynArrHelpers.add(key);
+            this.getOrCreateFuncType([elemType, elemType], "i32");
+            const fnIdx = this.getFuncTableIdx(fnName);
+            return `(drop (call $__dynarr_${key} (local.get $${arrName}) (i32.const ${fnIdx})))`;
+          } else {
+            const key = `sort_${elemType}`;
+            this.dynArrHelpers.add(key);
+            return `(drop (call $__dynarr_sort_${elemType} (local.get $${arrName})))`;
+          }
+        }
       }
     }
 
@@ -4569,9 +4678,10 @@ class WasicTranspiler {
           }
           segments.push({ kind: "literal", text: " }\n" });
           this.needsNumericHelpers = true;
-          const { statements, needsStrGather, needsArrPrintHelper } = emitConsoleLog(segments, (text) => this.allocString(text), "    ", 1, this.iovBase, this.scratchBase);
+          const { statements, needsStrGather, needsArrPrintHelper, needsJoinHelper } = emitConsoleLog(segments, (text) => this.allocString(text), "    ", 1, this.iovBase, this.scratchBase);
           if (needsStrGather) this.needsStrGatherHelper = true;
           if (needsArrPrintHelper) this.needsArrPrintHelper = true;
+          if (needsJoinHelper) this.needsJoinHelper = true;
           return [ptrStmt, ...statements].join("\n      ");
         }
       }
@@ -4588,10 +4698,11 @@ class WasicTranspiler {
         const normalSegs: LogSegment[] = isFindF64
           ? [{ kind: "f64var" as const, name: logSingleArg }, { kind: "literal" as const, text: "\n" }]
           : [{ kind: "i32var" as const, name: logSingleArg }, { kind: "literal" as const, text: "\n" }];
-        const { statements: normalStmts, needsStrGather: nsg, needsArrPrintHelper: naph } =
+        const { statements: normalStmts, needsStrGather: nsg, needsArrPrintHelper: naph, needsJoinHelper: njh } =
           emitConsoleLog(normalSegs, (text) => this.allocString(text), "      ", 1, this.iovBase, this.scratchBase);
         if (nsg) this.needsStrGatherHelper = true;
         if (naph) this.needsArrPrintHelper = true;
+        if (njh) this.needsJoinHelper = true;
         return [
           `    (if ${cond}`,
           `      (then`,
@@ -4614,10 +4725,11 @@ class WasicTranspiler {
         const normalSegs: LogSegment[] = isF64
           ? [{ kind: "f64var" as const, name: logSingleArg }, { kind: "literal" as const, text: "\n" }]
           : [{ kind: "i32var" as const, name: logSingleArg }, { kind: "literal" as const, text: "\n" }];
-        const { statements: normalStmts, needsStrGather: nsg2, needsArrPrintHelper: naph2 } =
+        const { statements: normalStmts, needsStrGather: nsg2, needsArrPrintHelper: naph2, needsJoinHelper: njh2 } =
           emitConsoleLog(normalSegs, (text) => this.allocString(text), "      ", 1, this.iovBase, this.scratchBase);
         if (nsg2) this.needsStrGatherHelper = true;
         if (naph2) this.needsArrPrintHelper = true;
+        if (njh2) this.needsJoinHelper = true;
         return [
           `    (if (local.get $${logSingleArg}__null)`,
           `      (then`,
@@ -4641,9 +4753,10 @@ class WasicTranspiler {
             { kind: "i32expr" as const, wat: chainedWat },
             { kind: "literal" as const, text: "\n" },
           ];
-          const { statements: cs, needsStrGather: csg, needsArrPrintHelper: caph } = emitConsoleLog(chainedSegs, (text) => this.allocString(text), "    ", 1, this.iovBase, this.scratchBase);
+          const { statements: cs, needsStrGather: csg, needsArrPrintHelper: caph, needsJoinHelper: cjh } = emitConsoleLog(chainedSegs, (text) => this.allocString(text), "    ", 1, this.iovBase, this.scratchBase);
           if (csg) this.needsStrGatherHelper = true;
           if (caph) this.needsArrPrintHelper = true;
+          if (cjh) this.needsJoinHelper = true;
           return cs.join("\n      ");
         }
       }
@@ -4712,16 +4825,21 @@ class WasicTranspiler {
               return { type: (field2.funcType.result ?? "i32") as string, wat: result };
             }
           }
+          // Boolean-returning array methods: every, some, includes
+          if (["every", "some", "includes"].includes(methodName2) && this.arrayVars.has(receiver2)) {
+            return { type: "bool", wat: result };
+          }
         }
         // Phase 5h: emitExpr succeeded (e.g. chained factoryFn().method()) — return as i32
         return { type: "i32", wat: result };
       };
       const globalsMap = new Map([...this.moduleGlobals.entries()].map(([k, v]) => [k, watBaseType(v.type)]));
       const segments = parseConsoleLogArgs(logMatch[1], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFn, globalsMap);
-      const { statements, needsHelpers, needsStrGather, needsArrPrintHelper } = emitConsoleLog(segments, allocator, "    ", 1, this.iovBase, this.scratchBase);
+      const { statements, needsHelpers, needsStrGather, needsArrPrintHelper, needsJoinHelper } = emitConsoleLog(segments, allocator, "    ", 1, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
       if (needsStrGather) this.needsStrGatherHelper = true;
       if (needsArrPrintHelper) this.needsArrPrintHelper = true;
+      if (needsJoinHelper) this.needsJoinHelper = true;
       return statements.join("\n      ");
     }
 
@@ -4793,10 +4911,11 @@ class WasicTranspiler {
       };
       const globalsMapErr = new Map([...this.moduleGlobals.entries()].map(([k, v]) => [k, watBaseType(v.type)]));
       const segments = parseConsoleLogArgs(errMatch[2], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFnErr, globalsMapErr);
-      const { statements, needsHelpers, needsStrGather, needsArrPrintHelper: errAph } = emitConsoleLog(segments, allocator, "    ", 2, this.iovBase, this.scratchBase);
+      const { statements, needsHelpers, needsStrGather, needsArrPrintHelper: errAph, needsJoinHelper: errJh } = emitConsoleLog(segments, allocator, "    ", 2, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
       if (needsStrGather) this.needsStrGatherHelper = true;
       if (errAph) this.needsArrPrintHelper = true;
+      if (errJh) this.needsJoinHelper = true;
       return statements.join("\n      ");
     }
 
@@ -5675,6 +5794,7 @@ class WasicTranspiler {
     if (this.needsStringExtHelpers) parts.push(this.getStringExtHelperWat());
     if (this.needsNumericHelpers)  parts.push(getHelperWat());
     if (this.needsArrPrintHelper)  parts.push(getArrPrintHelperWat());
+    if (this.needsJoinHelper)      parts.push(getJoinHelperWat());
     if (this.mathHelpers.size > 0) parts.push(this.emitMathHelpers());
     if (this.dynArrHelpers.size > 0) parts.push(this.emitDynArrHelpers());
     if (this.needsMatrix2DPrintHelper) parts.push(this.emitMatrix2DPrintHelper());
@@ -6142,6 +6262,217 @@ class WasicTranspiler {
       )
     )
     (local.get $newptr)
+  )`);
+      } else if (method === "every") {
+        const ftName = this.getOrCreateFuncType([elemType], "i32");
+        parts.push(`  ;; Dynamic array every_${elemType}: returns 1 if fn(elem) is truthy for all elements, else 0.
+  (func ${name} (param $arr i32) (param $fn i32) (result i32)
+    (local $i i32)
+    (local $len i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.ge_u (local.get $i) (local.get $len)))
+        (if (i32.eqz
+              (call_indirect (type ${ftName})
+                (${loadOp} (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift}))))
+                (local.get $fn)))
+          (then (return (i32.const 0)))
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)
+      )
+    )
+    (i32.const 1)
+  )`);
+      } else if (method === "some") {
+        const ftName = this.getOrCreateFuncType([elemType], "i32");
+        parts.push(`  ;; Dynamic array some_${elemType}: returns 1 if fn(elem) is truthy for any element, else 0.
+  (func ${name} (param $arr i32) (param $fn i32) (result i32)
+    (local $i i32)
+    (local $len i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.ge_u (local.get $i) (local.get $len)))
+        (if (call_indirect (type ${ftName})
+              (${loadOp} (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift}))))
+              (local.get $fn))
+          (then (return (i32.const 1)))
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)
+      )
+    )
+    (i32.const 0)
+  )`);
+      } else if (method === "findindex") {
+        const ftName = this.getOrCreateFuncType([elemType], "i32");
+        parts.push(`  ;; Dynamic array findindex_${elemType}: returns index of first match or -1.
+  (func ${name} (param $arr i32) (param $fn i32) (result i32)
+    (local $i i32)
+    (local $len i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.ge_u (local.get $i) (local.get $len)))
+        (if (call_indirect (type ${ftName})
+              (${loadOp} (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift}))))
+              (local.get $fn))
+          (then (return (local.get $i)))
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)
+      )
+    )
+    (i32.const -1)
+  )`);
+      } else if (method === "at") {
+        parts.push(`  ;; Dynamic array at_${elemType}: element at index n (negative wraps from end).
+  (func ${name} (param $arr i32) (param $n i32) (result ${valType})
+    (local $len i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (if (i32.lt_s (local.get $n) (i32.const 0))
+      (then (local.set $n (i32.add (local.get $len) (local.get $n))))
+    )
+    (${loadOp} (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $n) (i32.const ${shift}))))
+  )`);
+      } else if (method === "reverse") {
+        parts.push(`  ;; Dynamic array reverse_${elemType}: in-place reversal, returns arr ptr.
+  (func ${name} (param $arr i32) (result i32)
+    (local $i i32)
+    (local $j i32)
+    (local $tmp ${valType})
+    (local $len i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (local.set $j (i32.sub (local.get $len) (i32.const 1)))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.ge_u (local.get $i) (local.get $j)))
+        (local.set $tmp (${loadOp} (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift})))))
+        (${storeOp}
+          (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift})))
+          (${loadOp} (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $j) (i32.const ${shift})))))
+        (${storeOp}
+          (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $j) (i32.const ${shift})))
+          (local.get $tmp))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (local.set $j (i32.sub (local.get $j) (i32.const 1)))
+        (br $lp)
+      )
+    )
+    (local.get $arr)
+  )`);
+      } else if (method === "fill") {
+        parts.push(`  ;; Dynamic array fill_${elemType}: fill [start,end) with val, clamped to bounds.
+  (func ${name} (param $arr i32) (param $val ${valType}) (param $start i32) (param $end i32) (result i32)
+    (local $len i32)
+    (local $i i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (if (i32.lt_s (local.get $start) (i32.const 0)) (then (local.set $start (i32.const 0))))
+    (if (i32.gt_s (local.get $start) (local.get $len)) (then (local.set $start (local.get $len))))
+    (if (i32.lt_s (local.get $end) (i32.const 0)) (then (local.set $end (i32.const 0))))
+    (if (i32.gt_s (local.get $end) (local.get $len)) (then (local.set $end (local.get $len))))
+    (local.set $i (local.get $start))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.ge_u (local.get $i) (local.get $end)))
+        (${storeOp}
+          (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift})))
+          (local.get $val))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)
+      )
+    )
+    (local.get $arr)
+  )`);
+      } else if (method === "sort") {
+        const cmpOp = isF64 ? "f64.gt" : "i32.gt_s";
+        parts.push(`  ;; Dynamic array sort_${elemType}: in-place insertion sort (ascending), returns arr ptr.
+  (func ${name} (param $arr i32) (result i32)
+    (local $i i32)
+    (local $j i32)
+    (local $key ${valType})
+    (local $len i32)
+    (local $base i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (local.set $base (i32.add (local.get $arr) (i32.const 8)))
+    (local.set $i (i32.const 1))
+    (block $outer
+      (loop $olp
+        (br_if $outer (i32.ge_u (local.get $i) (local.get $len)))
+        (local.set $key (${loadOp} (i32.add (local.get $base) (i32.shl (local.get $i) (i32.const ${shift})))))
+        (local.set $j (i32.sub (local.get $i) (i32.const 1)))
+        (block $inner
+          (loop $ilp
+            (br_if $inner (i32.lt_s (local.get $j) (i32.const 0)))
+            (if (${cmpOp}
+                  (${loadOp} (i32.add (local.get $base) (i32.shl (local.get $j) (i32.const ${shift}))))
+                  (local.get $key))
+              (then
+                (${storeOp}
+                  (i32.add (local.get $base) (i32.shl (i32.add (local.get $j) (i32.const 1)) (i32.const ${shift})))
+                  (${loadOp} (i32.add (local.get $base) (i32.shl (local.get $j) (i32.const ${shift})))))
+                (local.set $j (i32.sub (local.get $j) (i32.const 1)))
+                (br $ilp)
+              )
+              (else (br $inner))
+            )
+          )
+        )
+        (${storeOp}
+          (i32.add (local.get $base) (i32.shl (i32.add (local.get $j) (i32.const 1)) (i32.const ${shift})))
+          (local.get $key))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $olp)
+      )
+    )
+    (local.get $arr)
+  )`);
+      } else if (method === "sortcmp") {
+        const ftName = this.getOrCreateFuncType([elemType, elemType], "i32");
+        parts.push(`  ;; Dynamic array sortcmp_${elemType}: in-place insertion sort with comparator, returns arr ptr.
+  (func ${name} (param $arr i32) (param $fn i32) (result i32)
+    (local $i i32)
+    (local $j i32)
+    (local $key ${valType})
+    (local $aj ${valType})
+    (local $len i32)
+    (local $base i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (local.set $base (i32.add (local.get $arr) (i32.const 8)))
+    (local.set $i (i32.const 1))
+    (block $outer
+      (loop $olp
+        (br_if $outer (i32.ge_u (local.get $i) (local.get $len)))
+        (local.set $key (${loadOp} (i32.add (local.get $base) (i32.shl (local.get $i) (i32.const ${shift})))))
+        (local.set $j (i32.sub (local.get $i) (i32.const 1)))
+        (block $inner
+          (loop $ilp
+            (br_if $inner (i32.lt_s (local.get $j) (i32.const 0)))
+            (local.set $aj (${loadOp} (i32.add (local.get $base) (i32.shl (local.get $j) (i32.const ${shift})))))
+            (if (i32.gt_s
+                  (call_indirect (type ${ftName}) (local.get $aj) (local.get $key) (local.get $fn))
+                  (i32.const 0))
+              (then
+                (${storeOp}
+                  (i32.add (local.get $base) (i32.shl (i32.add (local.get $j) (i32.const 1)) (i32.const ${shift})))
+                  (local.get $aj))
+                (local.set $j (i32.sub (local.get $j) (i32.const 1)))
+                (br $ilp)
+              )
+              (else (br $inner))
+            )
+          )
+        )
+        (${storeOp}
+          (i32.add (local.get $base) (i32.shl (i32.add (local.get $j) (i32.const 1)) (i32.const ${shift})))
+          (local.get $key))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $olp)
+      )
+    )
+    (local.get $arr)
   )`);
       }
     }

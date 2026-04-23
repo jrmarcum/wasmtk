@@ -102,7 +102,8 @@ export type LogSegment =
   | { kind: "strvar"; ptrLocal: string; lenLocal: string }   // string variable (ptr + len i32 locals)
   | { kind: "boolvar"; name: string }                        // bool-typed local (i32, 0=false 1=true)
   | { kind: "boolexpr"; wat: string }                        // arbitrary WAT expression yielding bool i32
-  | { kind: "arrptr"; wat: string; elemType: string };       // WAT expression yielding a dynamic array ptr
+  | { kind: "arrptr"; wat: string; elemType: string }        // WAT expression yielding a dynamic array ptr
+  | { kind: "joinarr"; arrWat: string; sepPtr: number; sepLen: number; elemType: string }; // arr.join(sep)
 
 // ---------------------------------------------------------------------------
 // Argument parser
@@ -276,7 +277,9 @@ function parseSingleArg(
     const result = dotCallLookup(token);
     if (result) {
       const kind = result.type === "f64" || result.type === "f32" ? "f64expr" as const
-                 : result.type === "i64" ? "i64expr" as const : "i32expr" as const;
+                 : result.type === "i64" ? "i64expr" as const
+                 : result.type === "bool" ? "boolexpr" as const
+                 : "i32expr" as const;
       return [{ kind, wat: result.wat }];
     }
   }
@@ -324,6 +327,20 @@ function parseSingleArg(
   if (instanceofTernaryMatch && locals.get(instanceofTernaryMatch[1]) === "string") {
     const v = instanceofTernaryMatch[1];
     return [{ kind: "strvar", ptrLocal: `${v}_ptr`, lenLocal: `${v}_len` }];
+  }
+
+  // ── Phase 28: arr.join(sep) — write joined string to gather scratch
+  const joinMatch = token.match(/^(\w+)\.join\(("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)?\)$/);
+  if (joinMatch && allocString) {
+    const arrName = joinMatch[1];
+    const arrInfo = arrayLookup?.(arrName);
+    if (arrInfo?.dynamic) {
+      const sepRaw = joinMatch[2];
+      const sep = sepRaw ? sepRaw.slice(1, -1) : ",";
+      const [sepPtr, sepLen] = allocString(sep);
+      const arrWat = arrInfo.ptr === -1 ? `(local.get $${arrName})` : `(local.get $${arrName})`;
+      return [{ kind: "joinarr", arrWat, sepPtr, sepLen, elemType: arrInfo.elemType }];
+    }
   }
 
   // ── Function call: name(arg, arg, ...)
@@ -842,7 +859,7 @@ export function emitConsoleLog(
   fd = 1,
   iovBase = IOV_BASE,
   scratchBase = SCRATCH_BASE,
-): { statements: string[]; needsHelpers: boolean; needsStrGather: boolean; needsArrPrintHelper: boolean } {
+): { statements: string[]; needsHelpers: boolean; needsStrGather: boolean; needsArrPrintHelper: boolean; needsJoinHelper: boolean } {
   const nwrittenOffset = iovBase + (NWRITTEN_OFFSET - IOV_BASE); // = iovBase + 128
   // Step 1: merge consecutive literal segments to minimise iov count.
   // e.g. [{literal,"x: "},{literal," "},{literal,"\n"}] → [{literal,"x:  \n"}]
@@ -875,9 +892,9 @@ export function emitConsoleLog(
   // strvar uses memory.copy into scratch; boolvar uses conditional memory.copy.
   // boolexpr (arbitrary WAT) stays in per-iov mode (evaluated multiple times would be unsafe).
   const gatherable = (s: LogSegment) =>
-    s.kind === "literal" || numericKinds.has(s.kind) || s.kind === "strvar" || s.kind === "boolvar" || s.kind === "arrptr";
-  const arrptrKinds = new Set(["arrptr"]);
-  // Single strvar/boolvar/arrptr segments also use gather so the newline can be inlined.
+    s.kind === "literal" || numericKinds.has(s.kind) || s.kind === "strvar" || s.kind === "boolvar" || s.kind === "arrptr" || s.kind === "joinarr";
+  const arrptrKinds = new Set(["arrptr", "joinarr"]);
+  // Single strvar/boolvar/arrptr/joinarr segments also use gather so the newline can be inlined.
   const useGather = activeSegs.every(gatherable) &&
     (activeSegs.length > 1 || strBoolKinds.has(activeSegs[0]?.kind ?? "") || arrptrKinds.has(activeSegs[0]?.kind ?? ""));
 
@@ -885,6 +902,7 @@ export function emitConsoleLog(
   let needsHelpers = false;
   let needsStrGather = false;
   let needsArrPrintHelper = false;
+  let needsJoinHelper = false;
 
   if (useGather) {
     // ── Gather-buffer mode ────────────────────────────────────────────────────
@@ -983,6 +1001,22 @@ export function emitConsoleLog(
                          : "$__write_i32arr_to_scratch";
         statements.push(
           `${indent}(call ${helperName} ${seg.wat} (i32.const ${scratchBase}) (i32.const ${cursorAddr}))`,
+        );
+      } else if (seg.kind === "joinarr") {
+        // Phase 28: arr.join(sep) — write joined string into scratch via helper
+        needsJoinHelper = true;
+        needsHelpers = true; // $__dynarr_join_to_scratch_* depends on $__i32_to_str / $__f64_to_str
+        if (!runtimeCursor) {
+          statements.push(
+            `${indent}(i32.store (i32.const ${cursorAddr}) (i32.const ${compileCursor}))`,
+          );
+          runtimeCursor = true;
+        }
+        const joinHelper = seg.elemType === "f64"
+          ? "$__dynarr_join_to_scratch_f64"
+          : "$__dynarr_join_to_scratch_i32";
+        statements.push(
+          `${indent}(call ${joinHelper} ${seg.arrWat} (i32.const ${seg.sepPtr}) (i32.const ${seg.sepLen}) (i32.const ${scratchBase}) (i32.const ${cursorAddr}))`,
         );
       } else {
         // Numeric segment — convert directly into scratch at current cursor position
@@ -1129,7 +1163,7 @@ export function emitConsoleLog(
     );
   }
 
-  return { statements, needsHelpers, needsStrGather, needsArrPrintHelper };
+  return { statements, needsHelpers, needsStrGather, needsArrPrintHelper, needsJoinHelper };
 }
 
 // ---------------------------------------------------------------------------
@@ -1412,6 +1446,101 @@ export function getArrPrintHelperWat(): string {
     (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 93))
     (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
     ;; Update cursor
+    (i32.store (local.get $cursor_addr) (local.get $cur))
+  )`;
+}
+
+/**
+ * Phase 28: Returns WAT helper functions that write arr.join(sep) output
+ * into the scratch gather buffer.
+ *
+ * Signatures:
+ *   $__dynarr_join_to_scratch_i32(arr, sep_ptr, sep_len, scratch_base, cursor_addr)
+ *   $__dynarr_join_to_scratch_f64(arr, sep_ptr, sep_len, scratch_base, cursor_addr)
+ * Depends on: $__i32_to_str / $__f64_to_str (from getHelperWat)
+ */
+export function getJoinHelperWat(): string {
+  return `
+  ;; ── join i32[] to scratch ──────────────────────────────────────────────────
+  (func $__dynarr_join_to_scratch_i32
+    (param $arr i32) (param $sep_ptr i32) (param $sep_len i32)
+    (param $scratch_base i32) (param $cursor_addr i32)
+    (local $len i32)
+    (local $idx i32)
+    (local $cur i32)
+    (local $si i32)
+    (local $slen i32)
+    (local $elem i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (local.set $cur (i32.load (local.get $cursor_addr)))
+    (block $done
+      (loop $loop
+        (br_if $done (i32.ge_u (local.get $idx) (local.get $len)))
+        ;; Write separator before each element except the first
+        (if (i32.gt_u (local.get $idx) (i32.const 0))
+          (then
+            (local.set $si (i32.const 0))
+            (block $sep_done
+              (loop $sep_lp
+                (br_if $sep_done (i32.ge_u (local.get $si) (local.get $sep_len)))
+                (i32.store8
+                  (i32.add (i32.add (local.get $scratch_base) (local.get $cur)) (local.get $si))
+                  (i32.load8_u (i32.add (local.get $sep_ptr) (local.get $si))))
+                (local.set $si (i32.add (local.get $si) (i32.const 1)))
+                (br $sep_lp)
+              )
+            )
+            (local.set $cur (i32.add (local.get $cur) (local.get $sep_len)))
+          )
+        )
+        ;; Convert element to decimal string and write into scratch
+        (local.set $elem (i32.load (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $idx) (i32.const 2)))))
+        (local.set $slen (call $__i32_to_str (local.get $elem) (i32.add (local.get $scratch_base) (local.get $cur))))
+        (local.set $cur (i32.add (local.get $cur) (local.get $slen)))
+        (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
+        (br $loop)
+      )
+    )
+    (i32.store (local.get $cursor_addr) (local.get $cur))
+  )
+  ;; ── join f64[] to scratch ──────────────────────────────────────────────────
+  (func $__dynarr_join_to_scratch_f64
+    (param $arr i32) (param $sep_ptr i32) (param $sep_len i32)
+    (param $scratch_base i32) (param $cursor_addr i32)
+    (local $len i32)
+    (local $idx i32)
+    (local $cur i32)
+    (local $si i32)
+    (local $slen i32)
+    (local $elem f64)
+    (local.set $len (i32.load (local.get $arr)))
+    (local.set $cur (i32.load (local.get $cursor_addr)))
+    (block $done
+      (loop $loop
+        (br_if $done (i32.ge_u (local.get $idx) (local.get $len)))
+        (if (i32.gt_u (local.get $idx) (i32.const 0))
+          (then
+            (local.set $si (i32.const 0))
+            (block $sep_done
+              (loop $sep_lp
+                (br_if $sep_done (i32.ge_u (local.get $si) (local.get $sep_len)))
+                (i32.store8
+                  (i32.add (i32.add (local.get $scratch_base) (local.get $cur)) (local.get $si))
+                  (i32.load8_u (i32.add (local.get $sep_ptr) (local.get $si))))
+                (local.set $si (i32.add (local.get $si) (i32.const 1)))
+                (br $sep_lp)
+              )
+            )
+            (local.set $cur (i32.add (local.get $cur) (local.get $sep_len)))
+          )
+        )
+        (local.set $elem (f64.load (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $idx) (i32.const 3)))))
+        (local.set $slen (call $__f64_to_str (local.get $elem) (i32.add (local.get $scratch_base) (local.get $cur))))
+        (local.set $cur (i32.add (local.get $cur) (local.get $slen)))
+        (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
+        (br $loop)
+      )
+    )
     (i32.store (local.get $cursor_addr) (local.get $cur))
   )`;
 }

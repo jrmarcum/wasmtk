@@ -242,7 +242,7 @@
     (local $q i32)
     (local $r i32)
     (local $__obj_ret i32)
-    (local.set $q (i32.div_s (local.get $a) (local.get $b)))
+    (local.set $q (i32.or (i32.div_s (local.get $a) (local.get $b)) (i32.const 0)))
     (local.set $r (i32.rem_s (local.get $a) (local.get $b)))
     (local.set $__obj_ret (call $__malloc (i32.const 8)))
       (i32.store offset=0 (local.get $__obj_ret) (local.get $q))

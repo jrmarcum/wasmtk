@@ -2,7 +2,7 @@
   (import "wasi_snapshot_preview1" "proc_exit" (func $proc_exit (param i32)))
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
   (memory (export "memory") 2)
-  (global $__heap_ptr (mut i32) (i32.const 274))
+  (global $__heap_ptr (mut i32) (i32.const 279))
   (global $__nullable_ret_flag (mut i32) (i32.const 0))
   (type $ftype_i32_r_void (func (param i32)))
   (type $ftype_i32_r_i32 (func (param i32) (result i32)))
@@ -765,10 +765,10 @@
             (i32.const 128)))
     (local.set $found (call $__dynarr_find_i32 (local.get $nums) (i32.const 3)))
       (local.set $found__null (i32.const 0))
-        (if (local.get $found__null)
+        (if (i32.eq (local.get $found) (i32.const -1))
       (then
         (i32.store (i32.const 0) (i32.const 269))
-        (i32.store (i32.const 4) (i32.const 5))
+        (i32.store (i32.const 4) (i32.const 10))
         (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 128)))
       )
       (else
@@ -785,10 +785,10 @@
     )
     (local.set $notFound (call $__dynarr_find_i32 (local.get $nums) (i32.const 4)))
       (local.set $notFound__null (i32.const 0))
-        (if (local.get $notFound__null)
+        (if (i32.eq (local.get $notFound) (i32.const -1))
       (then
         (i32.store (i32.const 0) (i32.const 269))
-        (i32.store (i32.const 4) (i32.const 5))
+        (i32.store (i32.const 4) (i32.const 10))
         (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 128)))
       )
       (else
@@ -854,5 +854,5 @@
   (elem (i32.const 0) $printElem $doubleIt $isOver25 $isOver15 $isNeg $addUp $dbl $sumF)
   (data (i32.const 260) "\74\72\75\65")
   (data (i32.const 264) "\66\61\6c\73\65")
-  (data (i32.const 269) "\6e\75\6c\6c\0a")
+  (data (i32.const 269) "\75\6e\64\65\66\69\6e\65\64\0a")
 )
