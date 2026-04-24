@@ -1107,6 +1107,30 @@ export function emitConsoleLog(
         );
         lastNumericScratch = -1;
         lastNumericIovLen  = -1;
+      } else if (seg.kind === "arrptr") {
+        needsArrPrintHelper = true;
+        needsHelpers = true;
+        const helperName = seg.elemType === "f64" ? "$__write_f64arr_to_scratch" : "$__write_i32arr_to_scratch";
+        statements.push(
+          `${indent}(i32.store (i32.const ${iovPtr}) (i32.const ${scratchBase}))`,
+          `${indent}(i32.store (i32.const ${iovLen}) (i32.const 0))`,
+          `${indent}(call ${helperName} ${seg.wat} (i32.const ${scratchBase}) (i32.const ${iovLen}))`,
+        );
+        lastNumericScratch = -1;
+        lastNumericIovLen  = -1;
+      } else if (seg.kind === "joinarr") {
+        needsJoinHelper = true;
+        needsHelpers = true;
+        const joinHelper = seg.elemType === "f64"
+          ? "$__dynarr_join_to_scratch_f64"
+          : "$__dynarr_join_to_scratch_i32";
+        statements.push(
+          `${indent}(i32.store (i32.const ${iovPtr}) (i32.const ${scratchBase}))`,
+          `${indent}(i32.store (i32.const ${iovLen}) (i32.const 0))`,
+          `${indent}(call ${joinHelper} ${seg.arrWat} (i32.const ${seg.sepPtr}) (i32.const ${seg.sepLen}) (i32.const ${scratchBase}) (i32.const ${iovLen}))`,
+        );
+        lastNumericScratch = -1;
+        lastNumericIovLen  = -1;
       } else {
         // Numeric segment
         if (numericSlot >= SCRATCH_SLOTS) {  // SCRATCH_SLOTS = 4 (constant)
