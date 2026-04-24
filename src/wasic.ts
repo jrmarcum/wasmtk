@@ -4878,6 +4878,16 @@ class WasicTranspiler {
             return { type: retType, watLoad: `(call $${getFuncName} ${baseWat})` };
           }
         }
+        // Phase 29: static field — ClassName.fieldName → (global.get $ClassName_fieldName)
+        const staticCd = this.classDefs.get(vn);
+        if (staticCd) {
+          const globalKey = `${vn}_${fn}`;
+          const gInfo = this.moduleGlobals.get(globalKey);
+          if (gInfo) {
+            const gType = watBaseType(gInfo.type);
+            return { type: gType, watLoad: `(global.get $${globalKey})` };
+          }
+        }
         const sv = this.structVars.get(vn);
         if (!sv) return undefined;
         const f = sv.def.fields.find(fi => fi.name === fn);
@@ -4969,6 +4979,16 @@ class WasicTranspiler {
             const retType = getFn?.result ?? "f64";
             const baseWat = cv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
             return { type: retType, watLoad: `(call $${getFuncName} ${baseWat})` };
+          }
+        }
+        // Phase 29: static field — ClassName.fieldName → (global.get $ClassName_fieldName)
+        const staticCd = this.classDefs.get(vn);
+        if (staticCd) {
+          const globalKey = `${vn}_${fn}`;
+          const gInfo = this.moduleGlobals.get(globalKey);
+          if (gInfo) {
+            const gType = watBaseType(gInfo.type);
+            return { type: gType, watLoad: `(global.get $${globalKey})` };
           }
         }
         const sv = this.structVars.get(vn);
