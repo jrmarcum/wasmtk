@@ -1,5 +1,5 @@
 /**
- * run_bundle_tests.ts
+ * bundle_tests.ts
  *
  * Bundle Compiler Test Suite
  *
@@ -12,7 +12,7 @@
  * A test PASSES only when all three steps succeed.
  *
  * Usage:
- *   deno run --allow-read --allow-run run_bundle_tests.ts [folder]
+ *   deno run --allow-read --allow-run bundle_tests.ts [folder]
  *
  * Defaults to tests/wasm_wasi_bundle/ relative to this script's location.
  */
@@ -37,7 +37,7 @@ const scriptDir = import.meta.dirname ?? Deno.cwd();
 const targetDir = Deno.args[0] ?? join(scriptDir, "wasm_wasi_bundle");
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Step runner (mirrors run_wasi_tests.ts)
+// Step runner (mirrors wasi_tests.ts)
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface StepResult {

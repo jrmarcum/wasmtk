@@ -1,5 +1,5 @@
 /**
- * run_wasi_javy_tests.ts
+ * wasi_javy_tests.ts
  *
  * WASI Javy Compiler Test Suite
  *
@@ -13,7 +13,7 @@
  * three steps succeed.  The summary lists Processed / Passed / Failed.
  *
  * Usage:
- *   deno run --allow-read --allow-run run_wasi_javy_tests.ts [folder]
+ *   deno run --allow-read --allow-run wasi_javy_tests.ts [folder]
  *
  * Defaults to the wasm_wasi_javy directory if no folder is given.
  */

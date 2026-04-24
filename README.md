@@ -127,10 +127,10 @@ wasmtk/
 ├── scripts/
 │   └── sync-version.ts  # Version sync — propagates deno.json version → package.json + src/utils.ts
 ├── tests/               # Test suite
-│   ├── run_wasi_tests.ts
-│   ├── run_bundle_tests.ts
-│   ├── run_mod_tests.ts
-│   ├── run_wasi_javy_tests.ts
+│   ├── wasi_tests.ts
+│   ├── bundle_tests.ts
+│   ├── mod_tests.ts
+│   ├── wasi_javy_tests.ts
 │   ├── wasm_wasi/       # wasic test programs (one per feature/phase)
 │   ├── wasm_wasi_bundle/
 │   ├── wasm_wasi_javy/
@@ -231,6 +231,7 @@ wasmtk run myprogram.wasm
 | Float types | `f32`, `f64` |
 | BigInt literals | `42n` → i64 |
 | Numeric enums | `enum Dir { Up = 0, Down = 1 }` — members fold to i32 constants |
+| String enums | `enum Dir { Up = "up", Down = "down" }` — members resolve to static string data; usable in `console.log` and `const x: string = Dir.Up` assignments |
 | `never` return type | Marks a function that never returns — no WAT result clause; `(unreachable)` appended to body |
 | `void` return type | Explicit zero-return annotation — no WAT result clause (fully supported) |
 | `const enum` | Identical to numeric enum — members inlined as `i32` constants at every use site |
@@ -414,11 +415,14 @@ export function _start() { ... }
 | Constructor | `constructor(params) { }` → `Foo_constructor(__self: i32, params)` |
 | Instance methods | `method(): retType { }` → `Foo_method(__self: i32)` — `this` maps to `local.get $__self` |
 | Static methods | `static method(params): retType { }` → `Foo_method(params)` — no hidden param |
-| `this.field` read/write | Load/store at field offset from `__self` pointer |
+| Static fields | `static count: i32 = 0` → named WASM global `$Foo_count`; read as `Foo.count`, written as `Foo.count = val` from any context including constructors and static methods |
+| Getters | `get prop(): T { }` → `Foo_get_prop(__self: i32): T`; `instance.prop` (no parens) dispatches to getter in expression, statement, and `console.log` contexts |
+| Setters | `set prop(val: T) { }` → `Foo_set_prop(__self: i32, val: T)`; `instance.prop = val` dispatches to setter |
+| `this.field` read/write | Load/store at field offset from `__self` pointer; getter/setter dispatch checked first |
 | `new Foo(args)` | Allocates struct in linear memory (static); calls constructor |
 | `instance.method(args)` | Dispatches to `Foo_method(instancePtr, args...)` |
 | `Foo.staticMethod(args)` | Dispatches to `Foo_staticMethod(args...)` |
-| `instance.field` | Field read/write via instance pointer in classVars |
+| `instance.field` | Field read/write via instance pointer in classVars; getter/setter checked before raw load/store |
 | Class instance params | Functions accepting `obj: Foo` receive an `i32` struct pointer |
 
 #### Current Limitations
@@ -630,7 +634,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | 23 | Tuple types `[A, B, C]` | Anonymous fixed-layout struct in linear memory; positional fields `_0`, `_1`, …; `type Pair = [i32, i32]` alias parsed in `parseStructs()`; inline `[T1, T2]` annotations; `getOrCreateTupleDef()` / `makeTupleStructDef()` create synthetic `__Tuple_T1_T2` StructDef; `mapType` extended for `[` prefix and `__Tuple_` prefix → i32; tuple params register in structVars via `structType`; `emitStatement` handles tuple literal init, named alias init, destructuring, element write, `return [e0, e1]`; strict `tupleFieldMatch` regex in `emitExpr` avoids greedy-match confusion with arithmetic; dynamic-array fallback guarded by `!structVars.has(var)`; `console_log.ts` handles `t[N]` via `structLookup` for correct type inference |
 | bug fix | `Math.*` inside `console.log` with float-literal args | `console.log(Math.abs(-4.5))`, `Math.min(3.0, 5.0)`, `Math.max(3.0, 5.0)` produced invalid WAT (`i32.const -4.5`, `i32.const 3.0`, etc.) — root cause: `parseSingleArg` in `console_log.ts` routed these tokens through `dotCallLookup` (which called `emitExpr(..., "i32")`) before the dedicated `Math.*` handler ran; fix: added `!token.startsWith("Math.")` guard on the `dotCallLookup` check; all `Math.*` tokens now reach the correct handler which emits `f64.abs`, `f64.min`, `f64.max`; `MathIntrinsics_7a.ts` compiles and passes — 84/84 suite |
 | bug fix | wasic compile-time rejection of undefined external dot-call receivers | `receiver.method(args)` where `receiver` is not a declared class instance, class, or interface variable was silently dropped — producing WASM that compiled successfully but omitted the call entirely. Fix: `emitStatement`'s `dotCallStmt` block now checks `classVars`/`classDefs`/`interfaceVars`; if the receiver is unknown it exits with `❌ wasic: 'receiver' is not defined — 'receiver.method(...)' cannot be compiled` and a hint to import the function directly. `ExternalMapping_11b.ts` — 86/86 suite |
-| enhancement | Test runner `// @expect-fail` marker for negative tests | `run_wasi_tests.ts` reads `// @expect-fail: compile, run-ts, run-wasm` from the first 10 lines of any test file. `runStep` accepts an `expectedFail` flag and prints `✓ compile failed as expected` for expected failures. A step that fails-as-expected counts as OK in the verdict; run-wasm is treated as N/A when compile fails as expected. Overall result prints `✅ PASSED (expected failures: compile)`. `ExternalMapping_11b.ts` uses `// @expect-fail: compile` — 86/86 suite |
+| enhancement | Test runner `// @expect-fail` marker for negative tests | `wasi_tests.ts` reads `// @expect-fail: compile, run-ts, run-wasm` from the first 10 lines of any test file. `runStep` accepts an `expectedFail` flag and prints `✓ compile failed as expected` for expected failures. A step that fails-as-expected counts as OK in the verdict; run-wasm is treated as N/A when compile fails as expected. Overall result prints `✅ PASSED (expected failures: compile)`. `ExternalMapping_11b.ts` uses `// @expect-fail: compile` — 86/86 suite |
 | bug fix | `tsbundler` `applyRenames` mangled `console.log` in imported modules | When a non-entry module exported a function whose name matched a built-in method (e.g. `export function log(...)`), `applyRenames` renamed every occurrence including `console.log(...)` — turning the function body into an empty stub (no WASI output). Root cause: lookbehind `(?<!\w)` allows a match after `.` because `.` is not a word character. Fix: changed to `(?<![\w.])` so a dot before the identifier prevents the match; `console.log` and all other method-call forms are left untouched while standalone call sites are correctly renamed. `ExternalMapping_11c.ts` — 85/85 suite |
 | bug fix | `arr.find()` printed raw sentinel instead of `undefined` | `console.log(notFound)` where `notFound = arr.find(isNeg)` and no element matched printed `-1` (i32 sentinel) or `NaN` (f64 sentinel) instead of `undefined`, diverging from TypeScript semantics. Fix: `emitStatement` now tracks variables declared from `.find()` calls in `findResultVars`; when a `findResultVar` is the sole argument to `console.log`, the emitter wraps the print in a sentinel check — `(if (i32.eq val (i32.const -1)) (then print "undefined\n") (else print val))` — so not-found results display `undefined` exactly as TypeScript does. `ArrayMethods_12.ts` — 85/85 suite |
 | perf fix (2026-04-17) | `runWasi` library-detection no longer double-compiles | `checkIsLibrary(path)` called a redundant `WebAssembly.compile()` after `WebAssembly.instantiate()` had already succeeded. Fix: inline check `!wasiInstance.exports._start` on the live instance — eliminates one disk read and one compile round-trip for library-call paths |
@@ -644,6 +648,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | bug fix (2026-04-18) | `switch` on `number`/`f64` variables; `String(e)` and `instanceof Error` ternary in catch | **`switch` f64 type:** `switch` on a `number`-typed (`f64`) variable emitted `i32.eq`/`i32.const`, causing a Binaryen assertion abort. Fix: switch emission detects the WAT type via `locals`/`moduleGlobals` and uses `f64.eq`/`f64.const` when the type is `f64`. **Catch string patterns:** `String(e)` and `e instanceof Error ? e.message : String(e)` in catch blocks emitted undefined `$String`/`$e` symbols. Fix: two early-exit guards in `parseSingleArg` (`console_log.ts`) — both patterns now resolve to the caught string's `$e_ptr`/`$e_len` locals — 88/88 suite |
 | 28 (2026-04-23) | Extended array methods | `every(fn)`, `some(fn)`, `findIndex(fn)`, `at(i)`, `reverse()`, `fill(val, start?, end?)`, `join(sep?)`, `sort()`, `sort(cmpFn)` — all on dynamic `i32[]` and `f64[]`; **`every`/`some`**: predicate loop helpers (`$__dynarr_every_T` / `$__dynarr_some_T`) return i32 1/0; `dotCallLookupFn` returns `type: "bool"` for `every`, `some`, and `includes` on array receivers; `parseSingleArg` maps `type === "bool"` → `boolexpr` — `true`/`false` output matches TypeScript; **`findIndex`**: predicate scan, returns index or -1; **`at`**: negative index wraps via `len + n`; **`reverse`**: two-pointer in-place swap; **`fill`**: range fill with start/end clamped to `[0, len]`; **`join`**: new `joinarr` `LogSegment` kind; `getJoinHelperWat()` emits `$__dynarr_join_to_scratch_i32/f64` which writes the joined string directly into the gather scratch buffer (avoids returning a string pair); separator allocated in data section at compile time; `needsJoinHelper` flag wired through all 6 `emitConsoleLog` call sites and `emitHelpers`; **`sort()`**: in-place insertion sort ascending; **`sort(cmpFn)`**: insertion sort with `call_indirect` comparator; `findDynamicArrays` regex extended for all Phase 28 methods; **bug fix**: `T \| undefined`-typed `.find()` variables now correctly populate `findResultVars` (nullable let match handler was returning early, bypassing `findResultVars.add()`); **`Tuples_23`**: `(a / b) \| 0` pattern documents integer-division semantics for test files where TypeScript float division would diverge — 89/89 suite |
 | bug fix (2026-04-24) | `arrptr`/`joinarr` segments in per-iov path | `console_log.ts` `emitConsoleLog` has two emission strategies: gather mode (all segments gatherable) and per-iov mode (fallback when a non-gatherable segment such as `boolexpr` is present). `arrptr` and `joinarr` LogSegment kinds were only handled in the gather path — when per-iov mode was forced (e.g. a `boolexpr` + an array in the same `console.log`), the array segment fell through to the final numeric `else` which accessed `.wat` (absent on `joinarr`), producing a TypeScript lint error and incorrect WAT at runtime. Fix: explicit `else if` branches added for both kinds in the per-iov outer chain; each initialises the iov's `buf_len` field to 0 (cursor start), sets `buf` to `scratchBase`, and calls the same array/join helper as gather mode — `mem[iovLen]` holds the byte count after the call, satisfying the iov contract without additional bookkeeping |
+| 29 (2026-04-24) | Class enhancements | **Static fields:** `static count: i32 = 0` → named mutable WASM global `$ClassName_count`; registered during `parseClasses()` directly into `moduleGlobals`; `ClassName.field` reads emit `(global.get $ClassName_field)`, writes emit `(global.set ...)`; accessible from constructors, instance methods, and static methods. **Getters:** `get prop(): T { return this._prop; }` → `ClassName_get_prop(__self: i32): T`; `obj.prop` (no parens) dispatches to getter in `emitExpr`, in `structLookupFn` (console.log), and via `this.prop` inside methods — getter check runs before raw field load. **Setters:** `set prop(val: T) { this._prop = val; }` → `ClassName_set_prop(__self: i32, val: T)`; `obj.prop = val` dispatches to setter in `emitStatement` for both `this.field = val` and `obj.field = val` paths — setter check runs before raw field store. **String enums:** `enum Direction { Up = "up", Down = "down" }` → `enumStringValues: Map<string, string>`; `const dir: string = Direction.Up` allocates the string in the data section via `emitStringAssign`; `console.log(Direction.Up)` emits a `{ kind: "literal", text: "up" }` segment via new `enumStringLookup` callback threaded through `parseConsoleLogArgs` / `parseSingleArg` / `parseTemplateLiteral` in `console_log.ts`; `ClassDef.methods` entries gained `isGetter?` / `isSetter?` flags |
 
 ---
 
@@ -858,7 +863,6 @@ Phases 29–40 extend `wasic` incrementally. Early phases add compile-time conve
 
 | Phase | Feature | Strategy |
 | --- | --- | --- |
-| 29 | Class enhancements | Static class fields → named WASM globals; `get`/`set` accessors → desugared to `ClassName_get_x` / `ClassName_set_x` functions; `private`/`protected`/`public` enforced at compile time; string enums → i32 constants with string lookup table |
 | 30 | Struct / object enhancements + `namespace` | Struct arrays `Vec2[]` → dynamic array of i32 pointers; string arrays `string[]` → interleaved ptr+len `i32[]`; spread in object literals `{ ...base, x: 1 }` → field-by-field copy; `namespace Foo { }` → desugared to prefixed functions (same as module mangling) |
 | 31 | TypedArrays | `Int32Array`, `Float64Array`, `Uint8Array`, `Int16Array`, etc. → typed views over `$__malloc` regions; constructor, `.subarray()`, `.fill()`, `.copyWithin()`, `.sort()` methods; reuse Phase 28 array infrastructure with fixed element widths |
 | 32 | Discriminated union types | Tagged union: `tag: i32` + data region sized to largest variant; numeric literal unions as enum constants; string literal unions as compile-time i32 map; struct unions as tagged-union layout — benefits from Phase 30 struct infrastructure |
@@ -964,7 +968,7 @@ wasmtk wasic entry.ts   # jstyper sees mathlib.d.ts, skips inference, uses hand-
 | ✅ 25 (optional chaining / nullish) | `??` / `??=` / `\|\|=` / `&&=` fully compiled; transparent in function bodies |
 | ✅ 26 (for...of / destructuring) | Transparent — body patterns, not type annotations |
 | 27–28 (string/array methods) | Transparent — method calls in bodies, not signatures |
-| 29 (class enhancements) | String enum member types usable in `.d.ts` annotations |
+| ✅ 29 (class enhancements) | String enum member types usable in `.d.ts` annotations; static fields, getters, setters compile correctly in wasic |
 | 30 (struct arrays) | `Vec2[]` and `string[]` become valid annotation types in `.d.ts` |
 | 31 (TypedArrays) | `Int32Array` etc. usable as annotation types |
 | 32 (discriminated unions) | Hand-edited `.d.ts` can declare tagged union shapes |

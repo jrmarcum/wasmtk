@@ -1,5 +1,5 @@
 /**
- * run__wasi_tests.ts
+ * wasi_tests.ts
  *
  * WASI Compiler Test Suite
  *
@@ -13,7 +13,7 @@
  * three steps succeed.  The summary lists Processed / Passed / Failed.
  *
  * Usage:
- *   deno run --allow-read --allow-run run__wasi_tests.ts [folder]
+ *   deno run --allow-read --allow-run wasi_tests.ts [folder]
  *
  * Defaults to the current directory if no folder is given.
  */
@@ -134,7 +134,7 @@ async function startTestSuite() {
     if (
       entry.isFile &&
       entry.name.endsWith(".ts") &&
-      !entry.name.startsWith("run_")   // exclude run__wasi_tests.ts, run_mod_tests.ts, etc.
+      !entry.name.endsWith("_tests.ts")   // exclude wasi_tests.ts, mod_tests.ts, etc.
     ) {
       files.push(entry.name);
     }

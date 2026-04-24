@@ -266,7 +266,7 @@ interface StructDef {
 interface ClassDef {
   name: string;
   struct: StructDef;
-  methods: Array<{ name: string; isStatic: boolean; isConstructor: boolean }>;
+  methods: Array<{ name: string; isStatic: boolean; isConstructor: boolean; isGetter?: boolean; isSetter?: boolean }>;
 }
 
 interface FuncDef {
@@ -541,6 +541,8 @@ class WasicTranspiler {
   get warnings(): readonly string[] { return this.diagnostics; }
   // Enum member name lookup: "EnumName.MemberName" → i32 value
   private enumValues: Map<string, number> = new Map();
+  // Phase 29: string-valued enum members: "EnumName.MemberName" → string value
+  private enumStringValues: Map<string, string> = new Map();
   private loopCounter = 0;
   // Stack of { breakLabel, continueLabel? } entries for break/continue emission.
   // switch pushes only breakLabel; loops push both.
@@ -1856,14 +1858,20 @@ class WasicTranspiler {
       const enumName = m[1];
       const body = m[2];
       let autoVal = 0;
-      // Each member: optional whitespace, name, optional = value, optional comma
-      const memberRe = /(\w+)\s*(?:=\s*(-?\d+))?\s*,?/g;
+      // Each member: name, optional = (number | "string" | 'string'), optional comma
+      const memberRe = /(\w+)\s*(?:=\s*(?:(-?\d+)|"([^"]*)"|'([^']*)')\s*)?\s*,?/g;
       let mm: RegExpExecArray | null;
       while ((mm = memberRe.exec(body)) !== null) {
         const memberName = mm[1];
-        const val = mm[2] !== undefined ? parseInt(mm[2], 10) : autoVal;
-        this.enumValues.set(`${enumName}.${memberName}`, val);
-        autoVal = val + 1;
+        if (mm[3] !== undefined || mm[4] !== undefined) {
+          // Phase 29: string-valued member
+          this.enumStringValues.set(`${enumName}.${memberName}`, mm[3] ?? mm[4]!);
+        } else {
+          // Numeric member (explicit or auto-increment)
+          const val = mm[2] !== undefined ? parseInt(mm[2], 10) : autoVal;
+          this.enumValues.set(`${enumName}.${memberName}`, val);
+          autoVal = val + 1;
+        }
       }
     }
   }
@@ -2023,16 +2031,27 @@ class WasicTranspiler {
         const opens = (rawLine.match(/\{/g) ?? []).length;
         const closes = (rawLine.match(/\}/g) ?? []).length;
 
-        if (fieldDepth === 0 && line && !line.includes("(") && !/\bstatic\b/.test(line)) {
-          // Phase 21: capture readonly modifier before stripping all access modifiers
-          const isReadonly = /\breadonly\b/.test(line);
-          const fm = line.match(/^(?:(?:private|protected|public|readonly)\s+)*(\w+)\s*[!?]?\s*:\s*([\w\[\]]+)/);
-          if (fm) {
-            const type = mapType(fm[2]);
-            const size = (type === "f64" || type === "i64") ? 8 : 4;
-            if (fieldOffset % size !== 0) fieldOffset = Math.ceil(fieldOffset / size) * size;
-            fields.push({ name: fm[1], type, offset: fieldOffset, size, ...(isReadonly ? { readonly: true } : {}) });
-            fieldOffset += size;
+        if (fieldDepth === 0 && line && !line.includes("(")) {
+          if (/\bstatic\b/.test(line)) {
+            // Phase 29: static field with initializer — strip all modifiers, then match name: type = init
+            const stripped = line.replace(/\b(?:private|protected|public|readonly|static|abstract|override)\b/g, "").trim();
+            const sfm = stripped.match(/^(\w+)\s*[!?]?\s*:\s*([\w\[\]]+)\s*=\s*(.+)/);
+            if (sfm) {
+              const sfType = mapType(sfm[2]) as WatType;
+              const sfInit = sfm[3].trim().replace(/;$/, "");
+              this.moduleGlobals.set(`${className}_${sfm[1]}`, { type: sfType, mutable: true, initExpr: sfInit });
+            }
+          } else {
+            // Phase 21: capture readonly modifier before stripping all access modifiers
+            const isReadonly = /\breadonly\b/.test(line);
+            const fm = line.match(/^(?:(?:private|protected|public|readonly)\s+)*(\w+)\s*[!?]?\s*:\s*([\w\[\]]+)/);
+            if (fm) {
+              const type = mapType(fm[2]);
+              const size = (type === "f64" || type === "i64") ? 8 : 4;
+              if (fieldOffset % size !== 0) fieldOffset = Math.ceil(fieldOffset / size) * size;
+              fields.push({ name: fm[1], type, offset: fieldOffset, size, ...(isReadonly ? { readonly: true } : {}) });
+              fieldOffset += size;
+            }
           }
         }
 
@@ -2082,6 +2101,9 @@ class WasicTranspiler {
                 const SKIP = ["if", "while", "for", "switch", "catch", "new", "return", "typeof", "instanceof"];
                 if (!SKIP.includes(methodName)) {
                   const isStatic = /\bstatic\s+\w+\s*$/.test(beforeParen);
+                  // Phase 29: detect get/set accessor prefix
+                  const isGetter = /\bget\s+\w+\s*$/.test(beforeParen);
+                  const isSetter = /\bset\s+\w+\s*$/.test(beforeParen);
 
                   // Parse return type (between `)` and `{`)
                   const betweenParenAndBrace = src.slice(afterClose, scanPos);
@@ -2103,6 +2125,8 @@ class WasicTranspiler {
                   const isConstructor = methodName === "constructor";
                   const funcName = isConstructor
                     ? `${className}_constructor`
+                    : isGetter ? `${className}_get_${methodName}`
+                    : isSetter ? `${className}_set_${methodName}`
                     : `${className}_${methodName}`;
 
                   const parsedParams = this.parseParams(rawParams);
@@ -2121,7 +2145,7 @@ class WasicTranspiler {
                     });
                   }
 
-                  classDef.methods.push({ name: methodName, isStatic, isConstructor });
+                  classDef.methods.push({ name: methodName, isStatic, isConstructor, isGetter, isSetter });
                 }
               }
             }
@@ -2434,6 +2458,19 @@ class WasicTranspiler {
         `(local.set $${varName}_ptr (i32.const ${offset}))`,
         `${ind}(local.set $${varName}_len (i32.const ${len}))`,
       ].join("\n");
+    }
+
+    // Phase 29: string enum value — EnumName.MemberName
+    const strEnumAssignMatch = initExpr.match(/^(\w+)\.(\w+)$/);
+    if (strEnumAssignMatch) {
+      const strVal = this.enumStringValues.get(`${strEnumAssignMatch[1]}.${strEnumAssignMatch[2]}`);
+      if (strVal !== undefined) {
+        const [offset, len] = this.allocString(strVal);
+        return [
+          `(local.set $${varName}_ptr (i32.const ${offset}))`,
+          `${ind}(local.set $${varName}_len (i32.const ${len}))`,
+        ].join("\n");
+      }
     }
 
     // Another string variable
@@ -3056,6 +3093,11 @@ class WasicTranspiler {
       const dotFieldMatch = expr.match(/^this\.(\w+)$/);
       if (dotFieldMatch) {
         const cd = this.classDefs.get(this.currentMethodClass);
+        // Phase 29: getter dispatch before raw field load
+        const getter = cd?.methods.find(m => m.isGetter && m.name === dotFieldMatch[1]);
+        if (getter) {
+          return `(call $${this.currentMethodClass}_get_${dotFieldMatch[1]} (local.get $__self))`;
+        }
         const field = cd?.struct.fields.find(f => f.name === dotFieldMatch[1]);
         if (field) {
           const loadOp = field.type === "f64" ? "f64.load"
@@ -3072,13 +3114,21 @@ class WasicTranspiler {
       if (this.enumValues.has(enumKey)) {
         return `(i32.const ${this.enumValues.get(enumKey)})`;
       }
+      // Phase 29: static field read — ClassName.fieldName → (global.get $ClassName_fieldName)
+      const staticCd = this.classDefs.get(enumDotMatch[1]);
+      if (staticCd) {
+        const globalKey = `${enumDotMatch[1]}_${enumDotMatch[2]}`;
+        if (this.moduleGlobals.has(globalKey)) {
+          return `(global.get $${globalKey})`;
+        }
+      }
     }
 
     // Struct field read: p.field  (where p is a known struct variable)
     // This check must come after enum dot-match (which has already returned if it matched).
     const structFieldMatch = expr.match(/^(\w+)\.(\w+)$/);
     if (structFieldMatch) {
-      // Class instance field read (takes priority over struct field)
+      // Class instance field/getter read (takes priority over struct field)
       const cv = this.classVars.get(structFieldMatch[1]);
       if (cv) {
         const cd = this.classDefs.get(cv.className);
@@ -3088,6 +3138,12 @@ class WasicTranspiler {
                        : field.type === "i64" ? "i64.load" : "i32.load";
           const baseWat = cv.ptr === -1 ? `(local.get $${structFieldMatch[1]})` : `(i32.const ${cv.ptr})`;
           return `(${loadOp} (i32.add ${baseWat} (i32.const ${field.offset})))`;
+        }
+        // Phase 29: getter dispatch
+        const getter = cd?.methods.find(m => m.isGetter && m.name === structFieldMatch[2]);
+        if (getter) {
+          const baseWat = cv.ptr === -1 ? `(local.get $${structFieldMatch[1]})` : `(i32.const ${cv.ptr})`;
+          return `(call $${cv.className}_get_${structFieldMatch[2]} ${baseWat})`;
         }
       }
       const sv = this.structVars.get(structFieldMatch[1]);
@@ -4382,6 +4438,15 @@ class WasicTranspiler {
     const thisWriteMatch = line.match(/^this\.(\w+)\s*=\s*(.+?);?$/);
     if (thisWriteMatch && this.currentMethodClass) {
       const cd = this.classDefs.get(this.currentMethodClass);
+      // Phase 29: setter dispatch before raw field store
+      const setter = cd?.methods.find(m => m.isSetter && m.name === thisWriteMatch[1]);
+      if (setter) {
+        const setFuncName = `${this.currentMethodClass}_set_${thisWriteMatch[1]}`;
+        const setterFn = this.functions.find(f => f.name === setFuncName);
+        const paramType = setterFn?.params[1]?.type ?? "i32";
+        const valWat = this.emitExpr(thisWriteMatch[2], locals, paramType);
+        return `(call $${setFuncName} (local.get $__self) ${valWat})`;
+      }
       const field = cd?.struct.fields.find(f => f.name === thisWriteMatch[1]);
       if (field) {
         // Phase 21: readonly guard — only allow writes inside the constructor
@@ -4404,6 +4469,16 @@ class WasicTranspiler {
       const wCv = this.classVars.get(structWriteMatch[1]);
       if (wCv) {
         const wCd = this.classDefs.get(wCv.className);
+        // Phase 29: setter dispatch before raw field store
+        const setter = wCd?.methods.find(m => m.isSetter && m.name === structWriteMatch[2]);
+        if (setter) {
+          const setFuncName = `${wCv.className}_set_${structWriteMatch[2]}`;
+          const setterFn = this.functions.find(f => f.name === setFuncName);
+          const paramType = setterFn?.params[1]?.type ?? "i32";
+          const baseWat = wCv.ptr === -1 ? `(local.get $${structWriteMatch[1]})` : `(i32.const ${wCv.ptr})`;
+          const valWat = this.emitExpr(structWriteMatch[3], locals, paramType);
+          return `(call $${setFuncName} ${baseWat} ${valWat})`;
+        }
         const wField = wCd?.struct.fields.find(f => f.name === structWriteMatch[2]);
         if (wField) {
           // Phase 21: readonly guard for class instance fields accessed via variable
@@ -4417,6 +4492,18 @@ class WasicTranspiler {
           const baseWat = wCv.ptr === -1 ? `(local.get $${structWriteMatch[1]})` : `(i32.const ${wCv.ptr})`;
           const valWat = this.emitExpr(structWriteMatch[3], locals, wField.type);
           return `(${storeOp} (i32.add ${baseWat} (i32.const ${wField.offset})) ${valWat})`;
+        }
+      }
+      // Phase 29: static field write — ClassName.fieldName = val → (global.set $ClassName_fieldName val)
+      if (!wCv) {
+        const staticWriteCd = this.classDefs.get(structWriteMatch[1]);
+        if (staticWriteCd) {
+          const globalKey = `${structWriteMatch[1]}_${structWriteMatch[2]}`;
+          if (this.moduleGlobals.has(globalKey)) {
+            const gType = this.moduleGlobals.get(globalKey)!.type;
+            const valWat = this.emitExpr(structWriteMatch[3], locals, gType);
+            return `(global.set $${globalKey} ${valWat})`;
+          }
         }
       }
       const sv = this.structVars.get(structWriteMatch[1]);
@@ -4763,6 +4850,7 @@ class WasicTranspiler {
       const allocator: DataAllocator = (text) => this.allocString(text);
       const lookup: FuncLookup = (name) => this.functions.find(f => f.name === name);
       const enumLookup = (key: string) => this.enumValues.get(key);
+      const enumStringLookupFn = (key: string) => this.enumStringValues.get(key);
       const arrayLookupFn = (name: string) => this.arrayVars.get(name);
       // Pre-register any Math helpers used inside console.log args so they are
       // emitted even when the call only appears inside console.log (not in emitExpr).
@@ -4779,6 +4867,15 @@ class WasicTranspiler {
             const loadOp = f.type === "f64" ? "f64.load" : f.type === "i64" ? "i64.load" : "i32.load";
             const baseWat = cv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
             return { type: f.type, watLoad: `(${loadOp} (i32.add ${baseWat} (i32.const ${f.offset})))` };
+          }
+          // Phase 29: getter dispatch
+          const getter = cd?.methods.find(m => m.isGetter && m.name === fn);
+          if (getter) {
+            const getFuncName = `${cv.className}_get_${fn}`;
+            const getFn = this.functions.find(gf => gf.name === getFuncName);
+            const retType = getFn?.result ?? "f64";
+            const baseWat = cv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
+            return { type: retType, watLoad: `(call $${getFuncName} ${baseWat})` };
           }
         }
         const sv = this.structVars.get(vn);
@@ -4834,7 +4931,7 @@ class WasicTranspiler {
         return { type: "i32", wat: result };
       };
       const globalsMap = new Map([...this.moduleGlobals.entries()].map(([k, v]) => [k, watBaseType(v.type)]));
-      const segments = parseConsoleLogArgs(logMatch[1], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFn, globalsMap);
+      const segments = parseConsoleLogArgs(logMatch[1], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFn, globalsMap, enumStringLookupFn);
       const { statements, needsHelpers, needsStrGather, needsArrPrintHelper, needsJoinHelper } = emitConsoleLog(segments, allocator, "    ", 1, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
       if (needsStrGather) this.needsStrGatherHelper = true;
@@ -4850,6 +4947,7 @@ class WasicTranspiler {
       const allocator: DataAllocator = (text) => this.allocString(text);
       const lookup: FuncLookup = (name) => this.functions.find(f => f.name === name);
       const enumLookup = (key: string) => this.enumValues.get(key);
+      const enumStringLookupFnErr = (key: string) => this.enumStringValues.get(key);
       const arrayLookupFn = (name: string) => this.arrayVars.get(name);
       if (errMatch[2].includes("Math.")) this.mathHelpers.add("math_pow");
       const structLookupFn: StructFieldLookup = (vn, fn) => {
@@ -4862,6 +4960,15 @@ class WasicTranspiler {
             const loadOp = f.type === "f64" ? "f64.load" : f.type === "i64" ? "i64.load" : "i32.load";
             const baseWat = cv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
             return { type: f.type, watLoad: `(${loadOp} (i32.add ${baseWat} (i32.const ${f.offset})))` };
+          }
+          // Phase 29: getter dispatch
+          const getter = cd?.methods.find(m => m.isGetter && m.name === fn);
+          if (getter) {
+            const getFuncName = `${cv.className}_get_${fn}`;
+            const getFn = this.functions.find(gf => gf.name === getFuncName);
+            const retType = getFn?.result ?? "f64";
+            const baseWat = cv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
+            return { type: retType, watLoad: `(call $${getFuncName} ${baseWat})` };
           }
         }
         const sv = this.structVars.get(vn);
@@ -4910,7 +5017,7 @@ class WasicTranspiler {
         return { type: "i32", wat: result };
       };
       const globalsMapErr = new Map([...this.moduleGlobals.entries()].map(([k, v]) => [k, watBaseType(v.type)]));
-      const segments = parseConsoleLogArgs(errMatch[2], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFnErr, globalsMapErr);
+      const segments = parseConsoleLogArgs(errMatch[2], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFnErr, globalsMapErr, enumStringLookupFnErr);
       const { statements, needsHelpers, needsStrGather, needsArrPrintHelper: errAph, needsJoinHelper: errJh } = emitConsoleLog(segments, allocator, "    ", 2, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
       if (needsStrGather) this.needsStrGatherHelper = true;

@@ -168,13 +168,14 @@ function parseSingleArg(
   arrayLookup?: ArrayLookup,
   structLookup?: StructFieldLookup,
   dotCallLookup?: DotCallLookup,
-  globals?: Map<string, string>
+  globals?: Map<string, string>,
+  enumStringLookup?: (key: string) => string | undefined
 ): LogSegment[] {
   token = token.trim();
 
   // ── Template literal: `text ${expr} text ...`
   if (token.startsWith("`") && token.endsWith("`")) {
-    return parseTemplateLiteral(token.slice(1, -1), locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals);
+    return parseTemplateLiteral(token.slice(1, -1), locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup);
   }
 
   // ── Double-quoted string literal
@@ -207,8 +208,8 @@ function parseSingleArg(
     const rhsIsStr = /^["'`]/.test(rhs) || locals.get(rhs) === "string";
     if (lhsIsStr || rhsIsStr) {
       return [
-        ...parseSingleArg(lhs, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals),
-        ...parseSingleArg(rhs, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals),
+        ...parseSingleArg(lhs, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup),
+        ...parseSingleArg(rhs, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup),
       ];
     }
     // Arithmetic + — fall through to the expression handler below
@@ -250,13 +251,18 @@ function parseSingleArg(
     return [{ kind: "strvar", ptrLocal: `${errMsgMatch[1]}_ptr`, lenLocal: `${errMsgMatch[1]}_len` }];
   }
 
-  // ── Enum member access: EnumName.MemberName → i32 constant
+  // ── Enum member access: EnumName.MemberName → i32 constant or string literal
   const enumMatch = token.match(/^(\w+)\.(\w+)$/);
-  if (enumMatch && enumLookup) {
+  if (enumMatch) {
     const key = `${enumMatch[1]}.${enumMatch[2]}`;
-    const val = enumLookup(key);
-    if (val !== undefined) {
-      return [{ kind: "i32expr", wat: `(i32.const ${val})` }];
+    if (enumLookup) {
+      const val = enumLookup(key);
+      if (val !== undefined) return [{ kind: "i32expr", wat: `(i32.const ${val})` }];
+    }
+    // Phase 29: string enum member → literal text
+    if (enumStringLookup) {
+      const strVal = enumStringLookup(key);
+      if (strVal !== undefined) return [{ kind: "literal", text: strVal }];
     }
   }
 
@@ -463,7 +469,8 @@ function parseTemplateLiteral(
   arrayLookup?: ArrayLookup,
   structLookup?: StructFieldLookup,
   dotCallLookup?: DotCallLookup,
-  globals?: Map<string, string>
+  globals?: Map<string, string>,
+  enumStringLookup?: (key: string) => string | undefined
 ): LogSegment[] {
   const segments: LogSegment[] = [];
   let i = 0;
@@ -482,7 +489,7 @@ function parseTemplateLiteral(
         j++;
       }
       const expr = body.slice(i + 2, j - 1).trim();
-      segments.push(...parseSingleArg(expr, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals));
+      segments.push(...parseSingleArg(expr, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup));
       i = j;
       textStart = j;
     } else {
@@ -817,14 +824,15 @@ export function parseConsoleLogArgs(
   arrayLookup?: ArrayLookup,
   structLookup?: StructFieldLookup,
   dotCallLookup?: DotCallLookup,
-  globals?: Map<string, string>
+  globals?: Map<string, string>,
+  enumStringLookup?: (key: string) => string | undefined
 ): LogSegment[] {
   const args = splitTopLevelArgs(argsStr);
   const segments: LogSegment[] = [];
 
   for (let i = 0; i < args.length; i++) {
     if (i > 0) segments.push({ kind: "literal", text: " " }); // space between args
-    segments.push(...parseSingleArg(args[i], locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals));
+    segments.push(...parseSingleArg(args[i], locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup));
   }
 
   // Always terminate with a newline (console.log behaviour)

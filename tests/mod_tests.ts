@@ -1,5 +1,5 @@
 /**
- * run_mod_tests.ts
+ * mod_tests.ts
  *
  * WASM Library Module Test Runner
  *
@@ -9,7 +9,7 @@
  *   3. Reports pass/fail with a summary
  *
  * Usage:
- *   deno run --allow-read run_mod_tests.ts [folder]
+ *   deno run --allow-read mod_tests.ts [folder]
  *
  * Test spec format (<module>.test.json):
  *   {
