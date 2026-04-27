@@ -571,6 +571,12 @@ class WasicTranspiler {
   // Module-level scalar globals (const/let/var at top level): varName → { type, mutable, initExpr }
   private moduleGlobals = new Map<string, { type: WatType; mutable: boolean; initExpr: string }>();
 
+  // Phase 30: namespace names (populated by expandNamespaces before any parse pass)
+  private namespaceDefs: Set<string> = new Set();
+  // Phase 30: runtime field initializers for struct literals with non-constant values
+  // varName → { fieldName: exprString } — emitted as store instructions after local.set $p
+  private structVarRuntimeInits: Map<string, Record<string, string>> = new Map();
+
   constructor(source: string, mode: "wasi" | "library" = "wasi", externalFuncs: ExternalFuncDef[] = []) {
     this.src = stripComments(source);
     this.mode = mode;
@@ -1519,6 +1525,12 @@ class WasicTranspiler {
           continue;
         }
 
+        // Namespace declaration — skip body (already expanded by expandNamespaces)
+        if (/^(?:export\s+)?namespace\s+\w+/.test(line)) {
+          depth += opens - closes;
+          continue;
+        }
+
         // Pattern 3: if (import.meta.main) { … }
         if (/^if\s*\(\s*import\.meta\.main\s*\)/.test(line)) {
           depth += opens - closes;
@@ -1877,6 +1889,56 @@ class WasicTranspiler {
   }
 
   // -------------------------------------------------------------------------
+  // Phase 30 — namespace source expansion
+  // -------------------------------------------------------------------------
+  /**
+   * Transforms `namespace Name { export function f(...) {...}  export const C: T = val; }`
+   * into top-level `function Name_f(...) {...}  const Name_C: T = val;`.
+   * Records every namespace name in `this.namespaceDefs` so call sites can resolve
+   * `Name.f(args)` → `(call $Name_f args)` and `Name.C` → `(global.get $Name_C)`.
+   */
+  private expandNamespaces(src: string): string {
+    const nsRe = /(?:export\s+)?namespace\s+(\w+)\s*\{/g;
+    let m: RegExpExecArray | null;
+    const replacements: Array<{ start: number; end: number; text: string }> = [];
+    while ((m = nsRe.exec(src)) !== null) {
+      const nsName = m[1];
+      const bodyStart = m.index + m[0].length;
+      let depth = 1, ci = bodyStart;
+      while (ci < src.length && depth > 0) {
+        if (src[ci] === "{") depth++;
+        else if (src[ci] === "}") depth--;
+        ci++;
+      }
+      const bodyEnd = ci - 1; // points at the closing `}`
+      const body = src.slice(bodyStart, bodyEnd);
+      this.namespaceDefs.add(nsName);
+
+      // Replace `export function` → `function Name_`, `export const/let` → `const/let Name_`
+      let transformed = body;
+      transformed = transformed.replace(
+        /\bexport\s+function\s+(\w+)/g,
+        (_m2, fn) => `function ${nsName}_${fn}`
+      );
+      transformed = transformed.replace(
+        /\bexport\s+(const|let)\s+(\w+)/g,
+        (_m2, kw, vn) => `${kw} ${nsName}_${vn}`
+      );
+      // Remove any remaining `export` keywords (e.g. re-exports)
+      transformed = transformed.replace(/\bexport\s+/g, "");
+
+      replacements.push({ start: m.index, end: ci, text: transformed + "\n" });
+    }
+    // Apply replacements in reverse order to keep indices valid
+    let result = src;
+    for (let i = replacements.length - 1; i >= 0; i--) {
+      const { start, end, text } = replacements[i];
+      result = result.slice(0, start) + text + result.slice(end);
+    }
+    return result;
+  }
+
+  // -------------------------------------------------------------------------
   // Pass 0b – collect struct/interface declarations
   // -------------------------------------------------------------------------
   /**
@@ -1885,20 +1947,36 @@ class WasicTranspiler {
    */
   private parseStructs(): void {
     const patterns = [
-      /(?:export\s+)?interface\s+(\w+)\s*\{([^}]*)\}/g,
+      // Phase 30: capture optional `extends BaseType` between name and `{`
+      /(?:export\s+)?interface\s+(\w+)(?:\s+extends\s+(\w+))?\s*\{([^}]*)\}/g,
       /(?:export\s+)?type\s+(\w+)\s*=\s*\{([^}]*)\}/g,
     ];
-    for (const re of patterns) {
+    for (const reIdx of [0, 1]) {
+      const re = patterns[reIdx];
       let m: RegExpExecArray | null;
       while ((m = re.exec(this.src)) !== null) {
         const name = m[1];
-        const body = m[2];
+        // Phase 30: for interface pattern (reIdx===0), m[2]=extendsBase, m[3]=body;
+        //           for type pattern (reIdx===1), m[2]=body, no extends.
+        const extendsBase = reIdx === 0 ? (m[2] ?? null) : null;
+        const body = reIdx === 0 ? m[3] : m[2];
         const fields: StructField[] = [];
         let offset = 0;
         // Match optional "readonly" prefix, then "fieldName: typeName;" or "fieldName?: typeName;"
         // Detect method-type fields: name: (params) => ReturnType
         const methodFieldRe = /(\w+)\??:\s*\(([^)]*)\)\s*=>\s*([\w\[\]|]+)/g;
         const methodFieldNames = new Set<string>();
+        // Phase 30: prepend inherited fields from `extends BaseType`
+        if (extendsBase) {
+          const baseDef = this.structDefs.get(extendsBase);
+          if (baseDef) {
+            for (const bf of baseDef.fields) {
+              fields.push({ ...bf }); // copy with original offsets
+            }
+            offset = baseDef.totalSize;
+          }
+        }
+
         let mf: RegExpExecArray | null;
         while ((mf = methodFieldRe.exec(body)) !== null) {
           const fieldName = mf[1];
@@ -1925,6 +2003,8 @@ class WasicTranspiler {
           const isReadonly = fm[1] === "readonly";
           const fieldName = fm[2];
           if (methodFieldNames.has(fieldName)) continue; // already handled as method field
+          // Skip fields already inherited from extends
+          if (fields.some(f => f.name === fieldName)) continue;
           const type = mapType(fm[3]);
           const size = (type === "f64" || type === "i64") ? 8 : 4;
           // Natural alignment: round offset up to a multiple of size
@@ -3122,6 +3202,13 @@ class WasicTranspiler {
           return `(global.get $${globalKey})`;
         }
       }
+      // Phase 30: namespace constant — Namespace.constName → (global.get $Namespace_constName)
+      if (this.namespaceDefs.has(enumDotMatch[1])) {
+        const globalKey = `${enumDotMatch[1]}_${enumDotMatch[2]}`;
+        if (this.moduleGlobals.has(globalKey)) {
+          return `(global.get $${globalKey})`;
+        }
+      }
     }
 
     // Struct field read: p.field  (where p is a known struct variable)
@@ -3395,6 +3482,19 @@ class WasicTranspiler {
             this.emitExpr(a, locals, fieldExpr.funcType!.params[idx] ?? "i32" as WatType)
           );
           return `(call_indirect (type ${typeName}) (local.tee $__iface_tmp ${loadClosure}) ${emittedArgs.join(" ")} (i32.load (local.get $__iface_tmp)))`.trim();
+        }
+      }
+
+      // Phase 30: namespace function call — Namespace.func(args) → (call $Namespace_func args)
+      if (this.namespaceDefs.has(receiver)) {
+        const funcName = `${receiver}_${methodName}`;
+        const fn = this.functions.find(f => f.name === funcName);
+        if (fn) {
+          const emittedArgs = args.flatMap((a, i) => {
+            const pt = fn.params[i]?.type ?? defaultType;
+            return [this.emitExpr(a, locals, pt)];
+          });
+          return `(call $${funcName} ${emittedArgs.join(" ")})`.trim();
         }
       }
     }
@@ -3888,13 +3988,15 @@ class WasicTranspiler {
             stmts.push(`(local.set $__obj_ret (call $__malloc (i32.const ${structDef.totalSize})))`);
             for (const pair of pairs) {
               const ci = pair.indexOf(":");
-              if (ci === -1) continue;
-              const key = pair.slice(0, ci).trim();
-              const valExpr = pair.slice(ci + 1).trim();
+              // Phase 30: shorthand property { x } treated as { x: x }
+              const key = ci !== -1 ? pair.slice(0, ci).trim() : pair.trim();
+              const valExpr = ci !== -1 ? pair.slice(ci + 1).trim() : key;
+              if (!key) continue;
               const field = structDef.fields.find(f => f.name === key);
               if (!field) continue;
-              const valWat = this.emitExpr(valExpr, locals, "i32");
-              stmts.push(`(i32.store offset=${field.offset} (local.get $__obj_ret) ${valWat})`);
+              const storeOp = field.type === "f64" ? "f64.store" : field.type === "i64" ? "i64.store" : "i32.store";
+              const valWat = this.emitExpr(valExpr, locals, field.type);
+              stmts.push(`(${storeOp} offset=${field.offset} (local.get $__obj_ret) ${valWat})`);
             }
             stmts.push(`(return (local.get $__obj_ret))`);
             return stmts.join("\n      ");
@@ -4229,11 +4331,27 @@ class WasicTranspiler {
 
     // Struct object literal init: const/let p: TypeName = { ... }
     // The pre-scan allocated static memory; emit local.set $p (i32.const ptr).
+    // Phase 30: also emits runtime stores for shorthand-property fields.
     // Must come BEFORE the generic letMatch handler below.
     const structLetMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\{/);
     if (structLetMatch) {
       const sv = this.structVars.get(structLetMatch[1]);
-      if (sv && sv.ptr >= 0) return `(local.set $${structLetMatch[1]} (i32.const ${sv.ptr}))`;
+      if (sv && sv.ptr >= 0) {
+        const stmts = [`(local.set $${structLetMatch[1]} (i32.const ${sv.ptr}))`];
+        const runtimeInits = this.structVarRuntimeInits.get(structLetMatch[1]);
+        if (runtimeInits) {
+          for (const [fieldName, exprStr] of Object.entries(runtimeInits)) {
+            const field = sv.def.fields.find(f => f.name === fieldName);
+            if (field) {
+              const storeOp = field.type === "f64" ? "f64.store"
+                           : field.type === "i64" ? "i64.store" : "i32.store";
+              const valWat = this.emitExpr(exprStr, locals, field.type);
+              stmts.push(`(${storeOp} offset=${field.offset} (i32.const ${sv.ptr}) ${valWat})`);
+            }
+          }
+        }
+        return stmts.join("\n      ");
+      }
     }
 
     // Object destructuring: const { x, y } = structVar  or  const { x: localX } = structVar
@@ -4888,6 +5006,15 @@ class WasicTranspiler {
             return { type: gType, watLoad: `(global.get $${globalKey})` };
           }
         }
+        // Phase 30: namespace constant — Namespace.constName
+        if (this.namespaceDefs.has(vn)) {
+          const globalKey = `${vn}_${fn}`;
+          const gInfo = this.moduleGlobals.get(globalKey);
+          if (gInfo) {
+            const gType = watBaseType(gInfo.type);
+            return { type: gType, watLoad: `(global.get $${globalKey})` };
+          }
+        }
         const sv = this.structVars.get(vn);
         if (!sv) return undefined;
         const f = sv.def.fields.find(fi => fi.name === fn);
@@ -4918,6 +5045,14 @@ class WasicTranspiler {
           // Static method
           const staticCd = this.classDefs.get(receiver2);
           if (staticCd) {
+            const fn2 = this.functions.find(f => f.name === `${receiver2}_${methodName2}`);
+            if (fn2) {
+              const retType = fn2.result ?? "i32";
+              return { type: retType as string, wat: this.emitExpr(token, locals, retType) };
+            }
+          }
+          // Phase 30: namespace function call
+          if (this.namespaceDefs.has(receiver2)) {
             const fn2 = this.functions.find(f => f.name === `${receiver2}_${methodName2}`);
             if (fn2) {
               const retType = fn2.result ?? "i32";
@@ -4991,6 +5126,15 @@ class WasicTranspiler {
             return { type: gType, watLoad: `(global.get $${globalKey})` };
           }
         }
+        // Phase 30: namespace constant
+        if (this.namespaceDefs.has(vn)) {
+          const globalKey = `${vn}_${fn}`;
+          const gInfo = this.moduleGlobals.get(globalKey);
+          if (gInfo) {
+            const gType = watBaseType(gInfo.type);
+            return { type: gType, watLoad: `(global.get $${globalKey})` };
+          }
+        }
         const sv = this.structVars.get(vn);
         if (!sv) return undefined;
         const f = sv.def.fields.find(fi => fi.name === fn);
@@ -5019,6 +5163,14 @@ class WasicTranspiler {
           }
           const staticCd = this.classDefs.get(receiver2);
           if (staticCd) {
+            const fn2 = this.functions.find(f => f.name === `${receiver2}_${methodName2}`);
+            if (fn2) {
+              const retType = fn2.result ?? "i32";
+              return { type: retType as string, wat: this.emitExpr(token, locals, retType) };
+            }
+          }
+          // Phase 30: namespace function call
+          if (this.namespaceDefs.has(receiver2)) {
             const fn2 = this.functions.find(f => f.name === `${receiver2}_${methodName2}`);
             if (fn2) {
               const retType = fn2.result ?? "i32";
@@ -5160,10 +5312,25 @@ class WasicTranspiler {
         }
       }
 
-      // Receiver is not `this`, not a class instance, not a class, and not an interface variable:
-      // it is an undeclared/unimported identifier. Fail compilation with a descriptive note.
+      // Phase 30: namespace function call as statement
+      if (this.namespaceDefs.has(receiver)) {
+        const funcName = `${receiver}_${methodName}`;
+        const fn = this.functions.find(f => f.name === funcName);
+        if (fn) {
+          const emittedArgs = args.flatMap((a, i) => {
+            const pt = fn.params[i]?.type ?? ("i32" as WatType);
+            return [this.emitExpr(a, locals, pt)];
+          });
+          const call = `(call $${funcName} ${emittedArgs.join(" ")})`.trim();
+          return fn.result ? `(drop ${call})` : call;
+        }
+      }
+
+      // Receiver is not `this`, not a class instance, not a class, not an interface variable,
+      // and not a namespace: it is an undeclared/unimported identifier.
       if (receiver !== "this") {
-        const isKnown = this.classVars.has(receiver) || this.classDefs.has(receiver) || this.interfaceVars.has(receiver);
+        const isKnown = this.classVars.has(receiver) || this.classDefs.has(receiver)
+          || this.interfaceVars.has(receiver) || this.namespaceDefs.has(receiver);
         if (!isKnown) {
           console.error(`❌ wasic: '${receiver}' is not defined — '${receiver}.${methodName}(...)' cannot be compiled`);
           console.error(`   Note: '${receiver}' was not imported or declared in this module.`);
@@ -7280,6 +7447,7 @@ class WasicTranspiler {
     // Reset per-function array, struct, and find-result tracking
     this.arrayVars              = new Map();
     this.structVars             = new Map();
+    this.structVarRuntimeInits  = new Map();
     this.classVars              = new Map();
     this.interfaceVars          = new Map();
     this.findResultVars         = new Set();
@@ -7430,20 +7598,36 @@ class WasicTranspiler {
         }
       }
       // Struct object literal: const p: Point = { x: 1.5, y: 2.5 }
+      // Phase 30: also handles shorthand properties { x, y } (treated as { x: x, y: y })
       const structPre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\{([^}]*)\}/);
       if (structPre) {
         const varName  = structPre[1];
         const typeName = structPre[2];
         const def = this.structDefs.get(typeName);
         if (def) {
-          // Parse field initializers from "{ x: 1.5, y: 2.5 }"
+          // Parse field initializers from "{ x: 1.5, y: 2.5 }" and shorthand "{ x, y }"
           const initFields: Record<string, string> = {};
+          const runtimeInits: Record<string, string> = {};
           const initRe = /(\w+)\s*:\s*([^,}]+)/g;
           let im: RegExpExecArray | null;
+          const namedTokens = new Set<string>();
           while ((im = initRe.exec(structPre[3])) !== null) {
             initFields[im[1]] = im[2].trim();
+            namedTokens.add(im[1]);
           }
-              const ptr = this.allocStructData(def, initFields);
+          // Detect shorthand tokens (identifiers not followed by `:`)
+          const shorthandRe = /\b(\w+)\b(?!\s*:)/g;
+          let sh: RegExpExecArray | null;
+          while ((sh = shorthandRe.exec(structPre[3])) !== null) {
+            const tok = sh[1];
+            if (!namedTokens.has(tok) && def.fields.some(f => f.name === tok)) {
+              runtimeInits[tok] = tok;
+            }
+          }
+          if (Object.keys(runtimeInits).length > 0) {
+            this.structVarRuntimeInits.set(varName, runtimeInits);
+          }
+          const ptr = this.allocStructData(def, initFields);
           this.structVars.set(varName, { def, ptr });
           // Declare an i32 local to hold the pointer (mirrors array var pattern)
           declaredLocals.push([varName, "i32"]);
@@ -7624,7 +7808,10 @@ class WasicTranspiler {
                 // Phase 23: tuple return — register in structVars (ptr=-1) so t[N] field access works
                 this.structVars.set(m[1], { def: retDef, ptr: -1 });
               } else {
+                // Phase 30: also register in structVars (ptr=-1) so plain field reads work
+                // (interfaceVars handles method dispatch; structVars handles field load/store)
                 this.interfaceVars.set(m[1], calledFn.resultTsName);
+                this.structVars.set(m[1], { def: retDef, ptr: -1 });
               }
               declaredLocals.push([m[1], "i32"]);
               locals.set(m[1], "i32");
@@ -7957,6 +8144,8 @@ class WasicTranspiler {
   transpile(_moduleName: string): string {
     // Pre-pass: expand generic templates by monomorphization before any other parsing
     this.src = this.expandGenerics(this.src);
+    // Phase 30: expand namespace blocks into prefixed top-level declarations
+    this.src = this.expandNamespaces(this.src);
     this.parseEnums();
     this.parseStructs();
     this.parseClasses();
@@ -7991,6 +8180,7 @@ class WasicTranspiler {
       // Reset per-function state so dynamic array helpers work for top-level code.
       this.arrayVars                   = new Map();
       this.structVars                  = new Map();
+      this.structVarRuntimeInits       = new Map();
       this.classVars                   = new Map();
       this.nullableVarInnerType        = new Map();
       this.currentFuncIsNullableReturn = false;
@@ -8041,6 +8231,40 @@ class WasicTranspiler {
             }
             startLocals.set(namedTuplePre2[1], "i32");
             startDeclaredLocals.push([namedTuplePre2[1], "i32"]);
+            continue;
+          }
+        }
+        // Phase 30: struct object literal (mirrors emitFunction pre-scan)
+        const structPre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\{([^}]*)\}/);
+        if (structPre2) {
+          const varName2 = structPre2[1];
+          const typeName2 = structPre2[2];
+          const def2 = this.structDefs.get(typeName2);
+          if (def2) {
+            const initFields2: Record<string, string> = {};
+            const runtimeInits2: Record<string, string> = {};
+            const initRe2 = /(\w+)\s*:\s*([^,}]+)/g;
+            let im2: RegExpExecArray | null;
+            const namedTokens2 = new Set<string>();
+            while ((im2 = initRe2.exec(structPre2[3])) !== null) {
+              initFields2[im2[1]] = im2[2].trim();
+              namedTokens2.add(im2[1]);
+            }
+            const shorthandRe2 = /\b(\w+)\b(?!\s*:)/g;
+            let sh2: RegExpExecArray | null;
+            while ((sh2 = shorthandRe2.exec(structPre2[3])) !== null) {
+              const tok2 = sh2[1];
+              if (!namedTokens2.has(tok2) && def2.fields.some(f => f.name === tok2)) {
+                runtimeInits2[tok2] = tok2;
+              }
+            }
+            if (Object.keys(runtimeInits2).length > 0) {
+              this.structVarRuntimeInits.set(varName2, runtimeInits2);
+            }
+            const ptr2 = this.allocStructData(def2, initFields2);
+            this.structVars.set(varName2, { def: def2, ptr: ptr2 });
+            startLocals.set(varName2, "i32");
+            startDeclaredLocals.push([varName2, "i32"]);
             continue;
           }
         }
@@ -8172,7 +8396,9 @@ class WasicTranspiler {
               if (calledFnS.resultTsName.startsWith("__Tuple_")) {
                 this.structVars.set(m[1], { def: retDefS, ptr: -1 });
               } else {
+                // Phase 30: also register in structVars so plain field reads work
                 this.interfaceVars.set(m[1], calledFnS.resultTsName);
+                this.structVars.set(m[1], { def: retDefS, ptr: -1 });
               }
               startLocals.set(m[1], "i32");
               startDeclaredLocals.push([m[1], "i32"]);
