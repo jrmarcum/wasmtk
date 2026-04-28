@@ -319,6 +319,21 @@ function mapType(ts: string): WatType {
   return "f64"; // number, f64, or unknown → f64
 }
 
+/** Phase 31: Returns element access info for a TypedArray constructor name, or undefined if not a TypedArray. */
+function getTypedArrayInfo(name: string): { elemType: WatType; loadOp: string; storeOp: string; shift: number; bytesPerElem: number } | undefined {
+  switch (name) {
+    case "Int8Array":    return { elemType: "i32", loadOp: "i32.load8_s",  storeOp: "i32.store8",   shift: 0, bytesPerElem: 1 };
+    case "Uint8Array":   return { elemType: "i32", loadOp: "i32.load8_u",  storeOp: "i32.store8",   shift: 0, bytesPerElem: 1 };
+    case "Int16Array":   return { elemType: "i32", loadOp: "i32.load16_s", storeOp: "i32.store16",  shift: 1, bytesPerElem: 2 };
+    case "Uint16Array":  return { elemType: "i32", loadOp: "i32.load16_u", storeOp: "i32.store16",  shift: 1, bytesPerElem: 2 };
+    case "Int32Array":   return { elemType: "i32", loadOp: "i32.load",     storeOp: "i32.store",    shift: 2, bytesPerElem: 4 };
+    case "Uint32Array":  return { elemType: "i32", loadOp: "i32.load",     storeOp: "i32.store",    shift: 2, bytesPerElem: 4 };
+    case "Float32Array": return { elemType: "f32", loadOp: "f32.load",     storeOp: "f32.store",    shift: 2, bytesPerElem: 4 };
+    case "Float64Array": return { elemType: "f64", loadOp: "f64.load",     storeOp: "f64.store",    shift: 3, bytesPerElem: 8 };
+    default: return undefined;
+  }
+}
+
 /** Phase 24: Detects T|null or T|undefined union annotation; returns the inner WAT type or null.
  *  Returns null if the annotation is not a nullable union, or if the union has more than one
  *  non-null/non-undefined member (complex unions are not supported). */
@@ -474,6 +489,12 @@ class WasicTranspiler {
     is2D?: boolean; rows?: string[][];   // Phase 6d: i32[][] multi-dimensional array
     isStringArr?: boolean;               // Phase 27: string[] from split() — 8-byte (ptr,len) elements
   }> = new Map();
+
+  // Phase 31: typed array variable tracking: varName → {taType, elemType, loadOp, storeOp, shift, bytesPerElem, length}
+  // Always held in a local (ptr-2 semantics). Reset at the start of each emitFunction call.
+  private typedArrayVars: Map<string, { taType: string; elemType: WatType; loadOp: string; storeOp: string; shift: number; bytesPerElem: number; length: number }> = new Map();
+  // Phase 31: which TypedArray WAT helper functions are needed. Key format: "fill_i32", "fill_f64".
+  private typedArrHelpers: Set<string> = new Set();
 
   // Tracks which dynamic-array WAT helper functions are needed for this module.
   // Key format: "push_i32", "pop_f64", "shift_i32", "unshift_f64", etc.
@@ -2852,6 +2873,16 @@ class WasicTranspiler {
       }
     }
 
+    // Phase 31: TypedArray .byteLength property
+    const byteLenMatch = expr.match(/^(\w+)\.byteLength$/);
+    if (byteLenMatch) {
+      const taInfoBL = this.typedArrayVars.get(byteLenMatch[1]);
+      if (taInfoBL) {
+        const lenWat = `(i32.load (local.get $${byteLenMatch[1]}))`;
+        return taInfoBL.shift === 0 ? lenWat : `(i32.shl ${lenWat} (i32.const ${taInfoBL.shift}))`;
+      }
+    }
+
     // String method calls returning i32 (can appear in any expression context)
     // str.indexOf(sub) → i32 offset or -1
     const strIndexOfMatch = expr.match(/^(\w+)\.indexOf\s*\((.+)\)$/);
@@ -2987,7 +3018,7 @@ class WasicTranspiler {
     }
 
     // Array element read: arr[idx]
-    const bracketMatch = expr.match(/^(\w+)\[(.+)\]$/);
+    const bracketMatch = expr.match(/^(\w+)\[([^\]]*)\]$/);
     if (bracketMatch) {
       // Phase 23: fallback tuple element read (handles edge cases where bracketMatch fires)
       const svE = this.structVars.get(bracketMatch[1]);
@@ -3014,6 +3045,15 @@ class WasicTranspiler {
           ? `(i32.add ${baseWat} (i32.const 8))`
           : baseWat;
         return `(${loadOp} (i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift}))))`;
+      }
+      // Phase 31: TypedArray element read
+      const taInfoBr = this.typedArrayVars.get(bracketMatch[1]);
+      if (taInfoBr) {
+        const idxWat = this.emitExpr(bracketMatch[2], locals, "i32");
+        const addrWat = taInfoBr.shift === 0
+          ? `(i32.add (i32.add (local.get $${bracketMatch[1]}) (i32.const 8)) ${idxWat})`
+          : `(i32.add (i32.add (local.get $${bracketMatch[1]}) (i32.const 8)) (i32.shl ${idxWat} (i32.const ${taInfoBr.shift})))`;
+        return `(${taInfoBr.loadOp} ${addrWat})`;
       }
       // Phase 12: fallback — i32 local holding a dynamic i32[] array pointer (captured or assigned)
       // Phase 23: skip if variable is a struct/tuple pointer (not a dynamic array)
@@ -4382,6 +4422,45 @@ class WasicTranspiler {
       return stmts.join("\n      ");
     }
 
+    // Phase 31: TypedArray initialization — must come BEFORE newDeclMatch.
+    {
+      const taInitMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*\w+)?\s*=\s*new\s+(Int8Array|Uint8Array|Int16Array|Uint16Array|Int32Array|Uint32Array|Float32Array|Float64Array)\s*\((.*)\)\s*;?$/);
+      if (taInitMatch) {
+        const varName  = taInitMatch[1];
+        const taType   = taInitMatch[2];
+        const argsStr  = taInitMatch[3].trim();
+        const taInfo   = getTypedArrayInfo(taType)!;
+        const { bytesPerElem, shift, storeOp, elemType } = taInfo;
+        const stmts: string[] = [];
+        if (argsStr.startsWith("[")) {
+          // Literal array initializer: new Int32Array([1, 2, 3])
+          const elemsStr = argsStr.slice(1).replace(/\]\s*$/, "");
+          const elems = elemsStr.split(",").map(s => s.trim()).filter(Boolean);
+          const n = elems.length;
+          stmts.push(`(local.set $${varName} (call $__malloc (i32.const ${8 + n * bytesPerElem})))`);
+          stmts.push(`(i32.store (local.get $${varName}) (i32.const ${n}))`);
+          for (let idx = 0; idx < elems.length; idx++) {
+            const offset = 8 + idx * bytesPerElem;
+            const valWat = this.emitExpr(elems[idx], locals, elemType);
+            stmts.push(`(${storeOp} (i32.add (local.get $${varName}) (i32.const ${offset})) ${valWat})`);
+          }
+        } else if (/^\d+$/.test(argsStr)) {
+          // Literal length: new Int32Array(5) — zero-fill relies on WASM zeroed memory
+          const n = parseInt(argsStr, 10);
+          stmts.push(`(local.set $${varName} (call $__malloc (i32.const ${8 + n * bytesPerElem})))`);
+          stmts.push(`(i32.store (local.get $${varName}) (i32.const ${n}))`);
+        } else {
+          // Runtime length: new Int32Array(n) — n may be a variable or expression
+          const lenWat = this.emitExpr(argsStr, locals, "i32");
+          const sizeWat = shift === 0
+            ? `(i32.add (i32.const 8) ${lenWat})`
+            : `(i32.add (i32.const 8) (i32.shl ${lenWat} (i32.const ${shift})))`;
+          stmts.push(`(local.set $${varName} (call $__malloc ${sizeWat}))`);
+          stmts.push(`(i32.store (local.get $${varName}) ${lenWat})`);
+        }
+        return stmts.join("\n      ");
+      }
+    }
     // Class instance declaration: const obj: ClassName = new ClassName(args)
     const newDeclMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*[A-Z]\w*)?\s*=\s*new\s+([A-Z]\w*)\s*\(([\s\S]*?)\)\s*;?$/);
     if (newDeclMatch) {
@@ -4774,6 +4853,44 @@ class WasicTranspiler {
       }
     }
 
+    // Phase 31: TypedArray method statements: arr.fill(val), arr.fill(val, start), arr.fill(val, start, end)
+    const taMethodStmt = line.match(/^(\w+)\.(fill|set)\s*\(([\s\S]*)\)\s*;?$/);
+    if (taMethodStmt) {
+      const arrName = taMethodStmt[1];
+      const method  = taMethodStmt[2];
+      const argsStr = taMethodStmt[3].trim();
+      const taInfoS = this.typedArrayVars.get(arrName);
+      if (taInfoS) {
+        if (method === "fill") {
+          const args     = this.splitArgs(argsStr);
+          const val      = args[0] ?? "0";
+          const startArg = args[1];
+          const endArg   = args[2];
+          const helperKey = `fill_${taInfoS.elemType}`;
+          this.typedArrHelpers.add(helperKey);
+          const valWat   = this.emitExpr(val, locals, taInfoS.elemType);
+          const startWat = startArg ? this.emitExpr(startArg.trim(), locals, "i32") : "(i32.const 0)";
+          const endWat   = endArg
+            ? this.emitExpr(endArg.trim(), locals, "i32")
+            : `(i32.load (local.get $${arrName}))`;
+          return `(call $__ta_fill_${taInfoS.elemType} (local.get $${arrName}) ${valWat} ${startWat} ${endWat})`;
+        }
+        if (method === "set") {
+          // arr.set(srcArr) — copy all elements; limited to same-type i32 arrays
+          const args     = this.splitArgs(argsStr);
+          const srcName  = args[0]?.trim() ?? "";
+          const offsetArg = args[1]?.trim();
+          const srcInfo  = this.typedArrayVars.get(srcName) ?? this.arrayVars.get(srcName);
+          if (srcInfo) {
+            const helperKey = `set_${taInfoS.elemType}`;
+            this.typedArrHelpers.add(helperKey);
+            const offsetWat = offsetArg ? this.emitExpr(offsetArg, locals, "i32") : "(i32.const 0)";
+            return `(call $__ta_set_${taInfoS.elemType} (local.get $${arrName}) (local.get $${srcName}) ${offsetWat})`;
+          }
+        }
+      }
+    }
+
     // Array element write: arr[idx] = val
     const arrWriteMatch = line.match(/^(\w+)\s*\[(.+?)\]\s*=\s*(.+?);?$/);
     if (arrWriteMatch) {
@@ -4803,6 +4920,16 @@ class WasicTranspiler {
           ? `(i32.add ${baseWat} (i32.const 8))`
           : baseWat;
         return `(${storeOp} (i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift}))) ${valWat})`;
+      }
+      // Phase 31: TypedArray element write: arr[idx] = val
+      const taInfoW = this.typedArrayVars.get(arrWriteMatch[1]);
+      if (taInfoW) {
+        const idxWat = this.emitExpr(arrWriteMatch[2], locals, "i32");
+        const valWat = this.emitExpr(arrWriteMatch[3], locals, taInfoW.elemType);
+        const addrWat = taInfoW.shift === 0
+          ? `(i32.add (i32.add (local.get $${arrWriteMatch[1]}) (i32.const 8)) ${idxWat})`
+          : `(i32.add (i32.add (local.get $${arrWriteMatch[1]}) (i32.const 8)) (i32.shl ${idxWat} (i32.const ${taInfoW.shift})))`;
+        return `(${taInfoW.storeOp} ${addrWat} ${valWat})`;
       }
     }
 
@@ -4860,6 +4987,27 @@ class WasicTranspiler {
           `    (i32.store (i32.const ${this.iovBase + 4}) (i32.add (i32.load (i32.const ${this.iovBase + 4})) (i32.const 1)))`,
           `    (drop (call $fd_write (i32.const 1) (i32.const ${this.iovBase}) (i32.const 1) (i32.const ${this.iovBase + 128})))`,
         ].join("\n");
+      }
+      // Phase 31: console.log of a TypedArray variable → print "TypedArrayName(len) [ ... ]"
+      const logSingleArgRaw = logMatch[1].trim();
+      const taInfoLog = this.typedArrayVars.get(logSingleArgRaw);
+      if (taInfoLog) {
+        this.needsArrPrintHelper = true;
+        this.needsNumericHelpers = true;
+        const lenWat = `(i32.load (local.get $${logSingleArgRaw}))`;
+        const ptrWat = `(local.get $${logSingleArgRaw})`;
+        const segments: LogSegment[] = [
+          { kind: "literal", text: `${taInfoLog.taType}(` },
+          { kind: "i32expr", wat: lenWat },
+          { kind: "literal", text: ") " },
+          { kind: "arrptr", wat: ptrWat, elemType: taInfoLog.elemType === "f64" ? "f64" : "i32" },
+          { kind: "literal", text: "\n" },
+        ];
+        const { statements: taStmts, needsStrGather: taSG } = emitConsoleLog(
+          segments, (text) => this.allocString(text), "    ", 1, this.iovBase, this.scratchBase
+        );
+        if (taSG) this.needsStrGatherHelper = true;
+        return taStmts.join("\n      ");
       }
       // Phase 13b: console.log(structReturningFn(...)) → print { field: val, ... }
       const logSingleArg = logMatch[1].trim();
@@ -4969,7 +5117,13 @@ class WasicTranspiler {
       const lookup: FuncLookup = (name) => this.functions.find(f => f.name === name);
       const enumLookup = (key: string) => this.enumValues.get(key);
       const enumStringLookupFn = (key: string) => this.enumStringValues.get(key);
-      const arrayLookupFn = (name: string) => this.arrayVars.get(name);
+      const arrayLookupFn = (name: string) => {
+        const av = this.arrayVars.get(name);
+        if (av) return av;
+        const ta = this.typedArrayVars.get(name);
+        if (ta) return { elemType: ta.elemType, ptr: -2 as const, length: ta.length, dynamic: true as const, shift: ta.shift, customLoadOp: ta.loadOp };
+        return undefined;
+      };
       // Pre-register any Math helpers used inside console.log args so they are
       // emitted even when the call only appears inside console.log (not in emitExpr).
       if (logMatch[1].includes("Math.")) {
@@ -5013,6 +5167,15 @@ class WasicTranspiler {
           if (gInfo) {
             const gType = watBaseType(gInfo.type);
             return { type: gType, watLoad: `(global.get $${globalKey})` };
+          }
+        }
+        // Phase 31: TypedArray .length and .byteLength properties
+        const taInfoSL = this.typedArrayVars.get(vn);
+        if (taInfoSL) {
+          if (fn === "length") return { type: "i32", watLoad: `(i32.load (local.get $${vn}))` };
+          if (fn === "byteLength") {
+            const lenW = `(i32.load (local.get $${vn}))`;
+            return { type: "i32", watLoad: taInfoSL.shift === 0 ? lenW : `(i32.shl ${lenW} (i32.const ${taInfoSL.shift}))` };
           }
         }
         const sv = this.structVars.get(vn);
@@ -5093,7 +5256,13 @@ class WasicTranspiler {
       const lookup: FuncLookup = (name) => this.functions.find(f => f.name === name);
       const enumLookup = (key: string) => this.enumValues.get(key);
       const enumStringLookupFnErr = (key: string) => this.enumStringValues.get(key);
-      const arrayLookupFn = (name: string) => this.arrayVars.get(name);
+      const arrayLookupFn = (name: string) => {
+        const av = this.arrayVars.get(name);
+        if (av) return av;
+        const ta = this.typedArrayVars.get(name);
+        if (ta) return { elemType: ta.elemType, ptr: -2 as const, length: ta.length, dynamic: true as const, shift: ta.shift, customLoadOp: ta.loadOp };
+        return undefined;
+      };
       if (errMatch[2].includes("Math.")) this.mathHelpers.add("math_pow");
       const structLookupFn: StructFieldLookup = (vn, fn) => {
         // Check class instance vars first
@@ -5133,6 +5302,15 @@ class WasicTranspiler {
           if (gInfo) {
             const gType = watBaseType(gInfo.type);
             return { type: gType, watLoad: `(global.get $${globalKey})` };
+          }
+        }
+        // Phase 31: TypedArray .length and .byteLength
+        const taInfoSLE = this.typedArrayVars.get(vn);
+        if (taInfoSLE) {
+          if (fn === "length") return { type: "i32", watLoad: `(i32.load (local.get $${vn}))` };
+          if (fn === "byteLength") {
+            const lenW2 = `(i32.load (local.get $${vn}))`;
+            return { type: "i32", watLoad: taInfoSLE.shift === 0 ? lenW2 : `(i32.shl ${lenW2} (i32.const ${taInfoSLE.shift}))` };
           }
         }
         const sv = this.structVars.get(vn);
@@ -6091,6 +6269,7 @@ class WasicTranspiler {
     if (this.needsJoinHelper)      parts.push(getJoinHelperWat());
     if (this.mathHelpers.size > 0) parts.push(this.emitMathHelpers());
     if (this.dynArrHelpers.size > 0) parts.push(this.emitDynArrHelpers());
+    if (this.typedArrHelpers.size > 0) parts.push(this.emitTypedArrHelpers());
     if (this.needsMatrix2DPrintHelper) parts.push(this.emitMatrix2DPrintHelper());
     return parts.join("\n");
   }
@@ -6133,6 +6312,71 @@ class WasicTranspiler {
     (local.get $result)
   )`,
     ].join("\n\n");
+  }
+
+  /** Phase 31: Emits TypedArray helper functions (fill, set) for each requested element type. */
+  private emitTypedArrHelpers(): string {
+    const parts: string[] = [];
+    for (const key of this.typedArrHelpers) {
+      if (key.startsWith("fill_")) {
+        const elemType = key.slice(5) as WatType;
+        const watElem  = watBaseType(elemType);
+        const shift    = elemType === "f64" || elemType === "i64" ? 3
+                       : elemType === "f32" ? 2 : 2;
+        const storeOp  = elemType === "f64" ? "f64.store"
+                       : elemType === "f32" ? "f32.store"
+                       : elemType === "i64" ? "i64.store" : "i32.store";
+        parts.push(`  ;; Phase 31: TypedArray fill — fills elements [start,end) with val
+  (func $__ta_fill_${elemType} (param $arr i32) (param $val ${watElem}) (param $start i32) (param $end i32)
+    (local $i i32)
+    (local $data i32)
+    (local.set $data (i32.add (local.get $arr) (i32.const 8)))
+    (local.set $i (local.get $start))
+    (block $done
+      (loop $loop
+        (br_if $done (i32.ge_u (local.get $i) (local.get $end)))
+        (${storeOp} (i32.add (local.get $data) (i32.shl (local.get $i) (i32.const ${shift}))) (local.get $val))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop)
+      )
+    )
+  )`);
+      }
+      if (key.startsWith("set_")) {
+        const elemType = key.slice(4) as WatType;
+        const watElem  = watBaseType(elemType);
+        const shift    = elemType === "f64" || elemType === "i64" ? 3
+                       : elemType === "f32" ? 2 : 2;
+        const loadOp   = elemType === "f64" ? "f64.load"
+                       : elemType === "f32" ? "f32.load"
+                       : elemType === "i64" ? "i64.load" : "i32.load";
+        const storeOp  = elemType === "f64" ? "f64.store"
+                       : elemType === "f32" ? "f32.store"
+                       : elemType === "i64" ? "i64.store" : "i32.store";
+        parts.push(`  ;; Phase 31: TypedArray set — copies elements from src into dst starting at offset
+  (func $__ta_set_${elemType} (param $dst i32) (param $src i32) (param $offset i32)
+    (local $i i32)
+    (local $len i32)
+    (local $dst_data i32)
+    (local $src_data i32)
+    (local.set $len (i32.load (local.get $src)))
+    (local.set $dst_data (i32.add (local.get $dst) (i32.const 8)))
+    (local.set $src_data (i32.add (local.get $src) (i32.const 8)))
+    (local.set $i (i32.const 0))
+    (block $done
+      (loop $loop
+        (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+        (${storeOp}
+          (i32.add (local.get $dst_data) (i32.shl (i32.add (local.get $i) (local.get $offset)) (i32.const ${shift})))
+          (${loadOp} (i32.add (local.get $src_data) (i32.shl (local.get $i) (i32.const ${shift})))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop)
+      )
+    )
+  )`);
+      }
+    }
+    return parts.join("\n\n");
   }
 
   /** Phase 6d: Emits $__print_2d_i32_arr — writes "[ [ 1, 2 ], [ 3, 4 ] ]" to buf, returns bytes written. */
@@ -7446,6 +7690,7 @@ class WasicTranspiler {
 
     // Reset per-function array, struct, and find-result tracking
     this.arrayVars              = new Map();
+    this.typedArrayVars         = new Map();
     this.structVars             = new Map();
     this.structVarRuntimeInits  = new Map();
     this.classVars              = new Map();
@@ -7469,6 +7714,11 @@ class WasicTranspiler {
         } else {
           this.arrayVars.set(p.name, { elemType: p.arrayElemType, ptr: -1, length: 0 });
         }
+      }
+      // Phase 31: TypedArray param — register in typedArrayVars for correct element access
+      if (p.structType) {
+        const taInfoParam = getTypedArrayInfo(p.structType);
+        if (taInfoParam) this.typedArrayVars.set(p.name, { taType: p.structType, ...taInfoParam, length: 0 });
       }
       // Struct param: register in structVars with ptr=-1 (runtime pointer via local.get)
       if (p.structType) {
@@ -7512,6 +7762,27 @@ class WasicTranspiler {
         declaredLocals.push([funcTypedDecl[1], "i32"]);
         locals.set(funcTypedDecl[1], "i32");
         continue;
+      }
+      // Phase 31: TypedArray declaration — must come BEFORE newClassPre since TypedArray names are PascalCase.
+      // Handles: const arr = new Int32Array(n), new Int32Array([...]), new Float64Array(n), etc.
+      {
+        const taNewPre = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*\w+)?\s*=\s*new\s+(Int8Array|Uint8Array|Int16Array|Uint16Array|Int32Array|Uint32Array|Float32Array|Float64Array)\s*\((.*)\)\s*;?$/);
+        if (taNewPre) {
+          const varName = taNewPre[1];
+          const taType  = taNewPre[2];
+          const argStr  = taNewPre[3].trim();
+          const taInfo  = getTypedArrayInfo(taType)!;
+          let length = 0;
+          if (/^\d+$/.test(argStr)) length = parseInt(argStr, 10);
+          else if (argStr.startsWith("[")) {
+            const elems = argStr.slice(1).replace(/\]\s*$/, "").split(",").filter(s => s.trim().length > 0);
+            length = elems.length;
+          }
+          this.typedArrayVars.set(varName, { taType, ...taInfo, length });
+          declaredLocals.push([varName, "i32"]);
+          locals.set(varName, "i32");
+          continue;
+        }
       }
       // Class instance: const obj: ClassName = new ClassName(args) or const obj = new ClassName(args)
       const newClassPre = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*([A-Z]\w*))?\s*=\s*new\s+([A-Z]\w*)\s*\(/);
@@ -8179,6 +8450,7 @@ class WasicTranspiler {
       // String variables expand to two i32 locals ($name_ptr, $name_len).
       // Reset per-function state so dynamic array helpers work for top-level code.
       this.arrayVars                   = new Map();
+      this.typedArrayVars              = new Map();
       this.structVars                  = new Map();
       this.structVarRuntimeInits       = new Map();
       this.classVars                   = new Map();
@@ -8283,6 +8555,26 @@ class WasicTranspiler {
                 startDeclaredLocals.push([b, field2.type]);
               }
             }
+            continue;
+          }
+        }
+        // Phase 31: TypedArray declaration (mirrors emitFunction pre-scan)
+        {
+          const taNewPre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*\w+)?\s*=\s*new\s+(Int8Array|Uint8Array|Int16Array|Uint16Array|Int32Array|Uint32Array|Float32Array|Float64Array)\s*\((.*)\)\s*;?$/);
+          if (taNewPre2) {
+            const varName2 = taNewPre2[1];
+            const taType2  = taNewPre2[2];
+            const argStr2  = taNewPre2[3].trim();
+            const taInfo2  = getTypedArrayInfo(taType2)!;
+            let length2 = 0;
+            if (/^\d+$/.test(argStr2)) length2 = parseInt(argStr2, 10);
+            else if (argStr2.startsWith("[")) {
+              const elems2 = argStr2.slice(1).replace(/\]\s*$/, "").split(",").filter(s => s.trim().length > 0);
+              length2 = elems2.length;
+            }
+            this.typedArrayVars.set(varName2, { taType: taType2, ...taInfo2, length: length2 });
+            startLocals.set(varName2, "i32");
+            startDeclaredLocals.push([varName2, "i32"]);
             continue;
           }
         }

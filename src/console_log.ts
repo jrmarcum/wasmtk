@@ -75,7 +75,13 @@ export type DataAllocator = (text: string) => [offset: number, byteLen: number];
 /** Callback to resolve an array variable by name: returns its element type, base ptr, and length.
  *  ptr=-1 means runtime local (param). ptr=-2 means dynamic heap array (local with 8-byte header).
  *  dynamic=true means the array has a [length, capacity] header at its pointer. */
-export type ArrayLookup = (name: string) => { elemType: string; ptr: number; length: number; dynamic?: boolean } | undefined;
+export type ArrayLookup = (name: string) => {
+  elemType: string; ptr: number; length: number; dynamic?: boolean;
+  /** Phase 31: override shift for sub-word TypedArrays (0=byte, 1=halfword, 2=word, 3=dword) */
+  shift?: number;
+  /** Phase 31: override load instruction for sub-word TypedArrays */
+  customLoadOp?: string;
+} | undefined;
 
 /**
  * Callback to resolve a struct field access `varName.fieldName`.
@@ -404,14 +410,20 @@ function parseSingleArg(
   if (bracketMatch && arrayLookup) {
     const arrInfo = arrayLookup(bracketMatch[1]);
     if (arrInfo) {
-      const loadOp  = arrInfo.elemType === "f64" ? "f64.load"
-                    : arrInfo.elemType === "i64" ? "i64.load" : "i32.load";
-      const shift   = (arrInfo.elemType === "f64" || arrInfo.elemType === "i64") ? 3 : 2;
+      // Phase 31: respect custom shift/loadOp for sub-word TypedArrays (Uint8Array, Int16Array, etc.)
+      const loadOp  = arrInfo.customLoadOp
+                    ?? (arrInfo.elemType === "f64" ? "f64.load"
+                    : arrInfo.elemType === "i64" ? "i64.load" : "i32.load");
+      const shift   = arrInfo.shift !== undefined ? arrInfo.shift
+                    : (arrInfo.elemType === "f64" || arrInfo.elemType === "i64") ? 3 : 2;
       const idxWat  = exprToWat(bracketMatch[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup);
       // Dynamic arrays (ptr=-2) have a [length, capacity] header at the pointer; data starts at +8.
       const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic) ? `(local.get $${bracketMatch[1]})` : `(i32.const ${arrInfo.ptr})`;
       const dataBase = arrInfo.dynamic ? `(i32.add ${baseWat} (i32.const 8))` : baseWat;
-      const wat     = `(${loadOp} (i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift}))))`;
+      const addrWat = shift === 0
+        ? `(i32.add ${dataBase} ${idxWat})`
+        : `(i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift})))`;
+      const wat     = `(${loadOp} ${addrWat})`;
       const kind    = arrInfo.elemType === "f64" ? "f64expr" as const
                     : arrInfo.elemType === "i64" ? "i64expr" as const : "i32expr" as const;
       return [{ kind, wat }];
@@ -578,13 +590,19 @@ function exprToWat(
   if (bracketM && arrayLookup) {
     const ai = arrayLookup(bracketM[1]);
     if (ai) {
-      const loadOp  = ai.elemType === "f64" ? "f64.load" : ai.elemType === "i64" ? "i64.load" : "i32.load";
-      const shift   = (ai.elemType === "f64" || ai.elemType === "i64") ? 3 : 2;
+      // Phase 31: respect custom shift/loadOp for sub-word TypedArrays
+      const loadOp  = ai.customLoadOp
+                    ?? (ai.elemType === "f64" ? "f64.load" : ai.elemType === "i64" ? "i64.load" : "i32.load");
+      const shift   = ai.shift !== undefined ? ai.shift
+                    : (ai.elemType === "f64" || ai.elemType === "i64") ? 3 : 2;
       const idxWat  = exprToWat(bracketM[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup);
       // Dynamic arrays have a [length, capacity] header; data starts at ptr+8.
       const baseWat = (ai.ptr === -1 || ai.dynamic) ? `(local.get $${bracketM[1]})` : `(i32.const ${ai.ptr})`;
       const dataBase = ai.dynamic ? `(i32.add ${baseWat} (i32.const 8))` : baseWat;
-      return `(${loadOp} (i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift}))))`;
+      const addrWat = shift === 0
+        ? `(i32.add ${dataBase} ${idxWat})`
+        : `(i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift})))`;
+      return `(${loadOp} ${addrWat})`;
     }
   }
 
@@ -1467,6 +1485,52 @@ export function getArrPrintHelperWat(): string {
         ;; Load element at arr_ptr+8+idx*4 and convert to decimal string
         (local.set $elem (i32.load (i32.add (i32.add (local.get $arr_ptr) (i32.const 8)) (i32.shl (local.get $idx) (i32.const 2)))))
         (local.set $slen (call $__i32_to_str (local.get $elem) (i32.add (local.get $scratch_base) (local.get $cur))))
+        (local.set $cur (i32.add (local.get $cur) (local.get $slen)))
+        (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
+        (br $loop)
+      )
+    )
+    ;; Write " ]"
+    (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 32))
+    (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+    (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 93))
+    (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+    ;; Update cursor
+    (i32.store (local.get $cursor_addr) (local.get $cur))
+  )
+  ;; ── write f64[] to scratch ────────────────────────────────────────────────
+  ;; Appends "[ elem, elem, ... ]" into the gather buffer.
+  ;; arr_ptr layout: [length:i32, 0:i32, elem0:f64, elem1:f64, ...]
+  (func $__write_f64arr_to_scratch (param $arr_ptr i32) (param $scratch_base i32) (param $cursor_addr i32)
+    (local $len i32)
+    (local $idx i32)
+    (local $cur i32)
+    (local $elem f64)
+    (local $slen i32)
+    (local.set $len (i32.load (local.get $arr_ptr)))
+    (local.set $cur (i32.load (local.get $cursor_addr)))
+    ;; Write "[ "
+    (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 91))
+    (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+    (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 32))
+    (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+    ;; Loop over elements
+    (local.set $idx (i32.const 0))
+    (block $done
+      (loop $loop
+        (br_if $done (i32.ge_u (local.get $idx) (local.get $len)))
+        ;; Write ", " separator between elements
+        (if (i32.gt_u (local.get $idx) (i32.const 0))
+          (then
+            (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 44))
+            (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+            (i32.store8 (i32.add (local.get $scratch_base) (local.get $cur)) (i32.const 32))
+            (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+          )
+        )
+        ;; Load element at arr_ptr+8+idx*8 and convert to decimal string
+        (local.set $elem (f64.load (i32.add (i32.add (local.get $arr_ptr) (i32.const 8)) (i32.shl (local.get $idx) (i32.const 3)))))
+        (local.set $slen (call $__f64_to_str (local.get $elem) (i32.add (local.get $scratch_base) (local.get $cur))))
         (local.set $cur (i32.add (local.get $cur) (local.get $slen)))
         (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
         (br $loop)
