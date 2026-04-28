@@ -1,5 +1,4 @@
 /**
- * 
  * @module console_log
  * @description Converts TypeScript console.log(...) calls into WASI fd_write WAT instructions.
  *
