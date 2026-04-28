@@ -196,12 +196,32 @@
     (i32.sub (local.get $end) (local.get $orig))
   )
 
+  ;; ── f64 powers of 10 helper (used by $__f64_to_str shortening loop) ─────────
+  (func $__pow10_f64 (param $n i32) (result f64)
+    (if (i32.le_s (local.get $n) (i32.const 0))  (then (return (f64.const 1))))
+    (if (i32.eq  (local.get $n) (i32.const 1))   (then (return (f64.const 10))))
+    (if (i32.eq  (local.get $n) (i32.const 2))   (then (return (f64.const 100))))
+    (if (i32.eq  (local.get $n) (i32.const 3))   (then (return (f64.const 1000))))
+    (if (i32.eq  (local.get $n) (i32.const 4))   (then (return (f64.const 10000))))
+    (if (i32.eq  (local.get $n) (i32.const 5))   (then (return (f64.const 100000))))
+    (if (i32.eq  (local.get $n) (i32.const 6))   (then (return (f64.const 1000000))))
+    (if (i32.eq  (local.get $n) (i32.const 7))   (then (return (f64.const 10000000))))
+    (if (i32.eq  (local.get $n) (i32.const 8))   (then (return (f64.const 100000000))))
+    (if (i32.eq  (local.get $n) (i32.const 9))   (then (return (f64.const 1000000000))))
+    (if (i32.eq  (local.get $n) (i32.const 10))  (then (return (f64.const 10000000000))))
+    (if (i32.eq  (local.get $n) (i32.const 11))  (then (return (f64.const 100000000000))))
+    (if (i32.eq  (local.get $n) (i32.const 12))  (then (return (f64.const 1000000000000))))
+    (if (i32.eq  (local.get $n) (i32.const 13))  (then (return (f64.const 10000000000000))))
+    (if (i32.eq  (local.get $n) (i32.const 14))  (then (return (f64.const 100000000000000))))
+    (f64.const 1000000000000000)
+  )
+
   ;; ── f64 → decimal string ──────────────────────────────────────────────────
-  ;; Writes the decimal representation of $val at $buf, returns byte count.
-  ;; Outputs the integer part plus up to 15 significant decimal digits.
-  ;; Uses ×1e15 i64 arithmetic: 1e15 < 2^53 so the scaled fractional value
-  ;; fits exactly in the representable integer range of f64, and the full
-  ;; 15-digit result fits in i64. Trailing zeros are stripped from the output.
+  ;; Writes the shortest decimal representation of $val at $buf, returns byte count.
+  ;; Step 1: ×1e15 + f64.nearest gives up to 15 fractional digits.
+  ;; Step 2: "shortest round-trip" loop strips any digit whose removal still
+  ;;         reconstructs the exact same f64 via f64(ipart)+f64(trial)/f64(10^k).
+  ;;         This eliminates spurious trailing digits caused by ×1e15 rounding.
   ;; Values outside [-2147483648, 2147483647] for the integer part are clamped.
   (func $__f64_to_str (param $val f64) (param $buf i32) (result i32)
     (local $len i32)
@@ -210,6 +230,10 @@
     (local $flen i32)
     (local $fdigits i64)
     (local $ptr i32)
+    (local $cur_fpart i64)
+    (local $cur_len i32)
+    (local $trial i64)
+    (local $recon f64)
     (local.set $ptr (local.get $buf))
     ;; Handle negative
     (if (f64.lt (local.get $val) (f64.const 0))
@@ -223,9 +247,7 @@
     (local.set $ipart (i32.trunc_f64_s (local.get $val)))
     (local.set $len (call $__i32_to_str (local.get $ipart) (local.get $ptr)))
     (local.set $ptr (i32.add (local.get $ptr) (local.get $len)))
-    ;; Fractional part: multiply remainder by 1e15, round to nearest integer.
-    ;; f64.nearest corrects truncation error from f64 values slightly below
-    ;; their true decimal (e.g. 3.14159 stored as 3.14158999…).
+    ;; Step 1: ×1e15, round to nearest integer → up to 15 fractional digits.
     (local.set $fpart
       (i64.trunc_f64_s
         (f64.nearest
@@ -236,14 +258,42 @@
         )
       )
     )
+    ;; Step 2: shorten — strip digits from the right as long as the decimal
+    ;; still round-trips to the original f64.  Powers of 10 in [1,1e15] are
+    ;; exact in f64 (≤50 significant bits), so the reconstruction arithmetic
+    ;; is reliable and the loop never produces a false positive.
+    (local.set $cur_fpart (local.get $fpart))
+    (local.set $cur_len   (i32.const 15))
+    (block $shorten_done
+      (loop $shorten_loop
+        (br_if $shorten_done (i32.le_s (local.get $cur_len) (i32.const 1)))
+        (local.set $trial (i64.div_u (local.get $cur_fpart) (i64.const 10)))
+        (local.set $recon
+          (f64.add
+            (f64.convert_i32_s (local.get $ipart))
+            (f64.div
+              (f64.convert_i64_s (local.get $trial))
+              (call $__pow10_f64 (i32.sub (local.get $cur_len) (i32.const 1)))
+            )
+          )
+        )
+        (if (f64.ne (local.get $recon) (local.get $val))
+          (then (br $shorten_done))
+        )
+        (local.set $cur_fpart (local.get $trial))
+        (local.set $cur_len   (i32.sub (local.get $cur_len) (i32.const 1)))
+        (br $shorten_loop)
+      )
+    )
+    (local.set $fpart (local.get $cur_fpart))
     (if (i64.ne (local.get $fpart) (i64.const 0))
       (then
         ;; Decimal point
         (i32.store8 (local.get $ptr) (i32.const 46))
         (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
-        ;; Write 15-digit fractional string then strip trailing zeros
+        ;; Write $cur_len-digit fractional string (least significant digit first)
         (local.set $fdigits (local.get $fpart))
-        (local.set $flen (i32.const 15))
+        (local.set $flen    (local.get $cur_len))
         (block $fdone
           (loop $floop
             (br_if $fdone (i32.eqz (local.get $flen)))
@@ -252,12 +302,12 @@
               (i32.add (i32.const 48) (i32.wrap_i64 (i64.rem_u (local.get $fdigits) (i64.const 10))))
             )
             (local.set $fdigits (i64.div_u (local.get $fdigits) (i64.const 10)))
-            (local.set $flen (i32.sub (local.get $flen) (i32.const 1)))
+            (local.set $flen    (i32.sub   (local.get $flen)    (i32.const 1)))
             (br $floop)
           )
         )
         ;; Strip trailing zeros
-        (local.set $flen (i32.const 15))
+        (local.set $flen (local.get $cur_len))
         (block $strip
           (loop $striploop
             (br_if $strip (i32.eqz (local.get $flen)))

@@ -2140,6 +2140,48 @@ class WasicTranspiler {
   }
 
   // -------------------------------------------------------------------------
+  // Phase 33: intersection type parser
+  // -------------------------------------------------------------------------
+  /**
+   * Detects `type Name = A & B [& C ...]` declarations, merges all struct fields
+   * from each constituent type into a new flat StructDef, and registers it in
+   * structDefs.  Must be called AFTER parseStructs() and parseClasses() so that
+   * the constituent types are already registered.  Processes matches in source
+   * order so that chained intersections (e.g. type D = C & E where C is itself
+   * an intersection) work correctly in a single pass.
+   */
+  private parseIntersectionTypes(): void {
+    const re = /(?:export\s+)?type\s+(\w+)\s*=\s*([\w]+(?:\s*&\s*[\w]+)+)\s*;?/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(this.src)) !== null) {
+      const name = m[1];
+      if (this.structDefs.has(name)) continue; // already registered as plain struct / DU / etc.
+      const parts = m[2].split("&").map(p => p.trim()).filter(Boolean);
+      if (parts.length < 2) continue;
+
+      const fields: StructField[] = [];
+      let offset = 0;
+      const seenFields = new Set<string>();
+
+      for (const part of parts) {
+        const partDef = this.structDefs.get(part);
+        if (!partDef) continue; // skip unknown / non-struct types
+        for (const f of partDef.fields) {
+          if (seenFields.has(f.name)) continue; // first definition wins on conflict
+          seenFields.add(f.name);
+          if (offset % f.size !== 0) offset = Math.ceil(offset / f.size) * f.size;
+          fields.push({ ...f, offset });
+          offset += f.size;
+        }
+      }
+
+      if (fields.length > 0) {
+        this.structDefs.set(name, { name, fields, totalSize: offset });
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Phase 23: tuple struct builder
   // -------------------------------------------------------------------------
   /**
@@ -8607,6 +8649,7 @@ class WasicTranspiler {
     this.parseDiscriminatedUnions(); // Phase 32: must precede parseStructs so DU types are pre-registered
     this.parseStructs();
     this.parseClasses();
+    this.parseIntersectionTypes(); // Phase 33: after parseStructs+parseClasses so constituent types are registered
     this.parseNamedFuncTypeAliases();   // Phase 5g: must precede parseFunctions so parseParams can resolve aliases
     this.parseFunctions();
     this.parseArrowFunctions();

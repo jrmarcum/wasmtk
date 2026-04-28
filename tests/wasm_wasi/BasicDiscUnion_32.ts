@@ -21,7 +21,7 @@ function describeShape(s: Shape): void {
 function getArea(s: Shape): f64 {
   switch (s.kind) {
     case "circle":
-      return s.radius * s.radius * 3.14159;
+      return s.radius * s.radius * 3.1415926535897931;
     case "rect":
       return s.width * s.height;
     default:
