@@ -263,6 +263,20 @@ interface StructDef {
   totalSize: number;
 }
 
+// Phase 32: discriminated union variant descriptor
+interface DiscUnionVariant {
+  tag: string;       // literal string value (e.g. "circle")
+  tagIndex: number;  // integer stored in memory (0, 1, 2, …)
+  fieldNames: Set<string>; // non-discriminant fields belonging to this variant
+}
+
+// Phase 32: discriminated union type descriptor
+interface DiscUnionDef {
+  name: string;
+  discriminant: string;  // the common literal-typed field (e.g. "kind")
+  variants: DiscUnionVariant[];
+}
+
 interface ClassDef {
   name: string;
   struct: StructDef;
@@ -513,6 +527,8 @@ class WasicTranspiler {
 
   // Struct type definitions parsed from interface/type declarations.
   private structDefs: Map<string, StructDef> = new Map();
+  // Phase 32: discriminated union definitions: typeName → DiscUnionDef
+  private discUnionDefs: Map<string, DiscUnionDef> = new Map();
   // Per-function struct variable tracking: varName → { def, ptr }
   // ptr=-1 means the struct comes from a parameter (runtime pointer); ptr>=0 is a static address.
   // Reset at the start of each emitFunction call.
@@ -1977,6 +1993,8 @@ class WasicTranspiler {
       let m: RegExpExecArray | null;
       while ((m = re.exec(this.src)) !== null) {
         const name = m[1];
+        // Phase 32: skip discriminated union types already registered by parseDiscriminatedUnions()
+        if (this.structDefs.has(name)) continue;
         // Phase 30: for interface pattern (reIdx===0), m[2]=extendsBase, m[3]=body;
         //           for type pattern (reIdx===1), m[2]=body, no extends.
         const extendsBase = reIdx === 0 ? (m[2] ?? null) : null;
@@ -2046,6 +2064,78 @@ class WasicTranspiler {
       if (this.structDefs.has(name)) continue; // already parsed as object-type alias
       const def = this.makeTupleStructDef(name, ta[2]);
       if (def.fields.length > 0) this.structDefs.set(name, def);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Phase 32: discriminated union type parser
+  // -------------------------------------------------------------------------
+  /**
+   * Detects `type Name = { disc: "lit1"; ...fields } | { disc: "lit2"; ...fields } | …`
+   * declarations, builds a flat "super-struct" StructDef that holds all unique variant
+   * fields after a leading i32 discriminant tag, and registers both the StructDef and a
+   * DiscUnionDef.  Must be called BEFORE parseStructs() so that parseStructs() can skip
+   * already-registered names.
+   */
+  private parseDiscriminatedUnions(): void {
+    // Match: type Name = (optional leading |) { ...block } | { ...block } (2+ variants)
+    const outerRe = /(?:export\s+)?type\s+(\w+)\s*=\s*((?:\s*\|?\s*\{[^}]*\})+)/g;
+    let m: RegExpExecArray | null;
+    while ((m = outerRe.exec(this.src)) !== null) {
+      const name = m[1];
+      const blocksStr = m[2];
+      // Collect individual variant blocks
+      const blockRe = /\{([^}]*)\}/g;
+      type RawVariant = { disc: string; discVal: string; fields: Array<{ name: string; type: string }> };
+      const rawVariants: RawVariant[] = [];
+      let bm: RegExpExecArray | null;
+      while ((bm = blockRe.exec(blocksStr)) !== null) {
+        const body = bm[1];
+        // Discriminant field: fieldName: "literal" or fieldName: 'literal'
+        const discM = body.match(/(\w+)\s*:\s*["']([^"']+)["']/);
+        if (!discM) continue;
+        const discField = discM[1];
+        const discVal   = discM[2];
+        // Remaining plain-type fields (name: TypeName — no quotes, no parens)
+        const fields: Array<{ name: string; type: string }> = [];
+        const fieldRe2 = /(\w+)\s*:\s*([\w\[\]]+)/g;
+        let fm: RegExpExecArray | null;
+        while ((fm = fieldRe2.exec(body)) !== null) {
+          if (fm[1] !== discField) fields.push({ name: fm[1], type: fm[2] });
+        }
+        rawVariants.push({ disc: discField, discVal, fields });
+      }
+      // Require at least 2 variants with the same discriminant field name
+      if (rawVariants.length < 2) continue;
+      const discName = rawVariants[0].disc;
+      if (!rawVariants.every(v => v.disc === discName)) continue;
+
+      // Build flat combined StructDef: i32 disc tag first, then all unique fields in order
+      const structFields: StructField[] = [];
+      structFields.push({ name: discName, type: "i32", offset: 0, size: 4 });
+      let offset = 4;
+      const seenFieldNames = new Set<string>([discName]);
+      for (const rv of rawVariants) {
+        for (const f of rv.fields) {
+          if (seenFieldNames.has(f.name)) continue;
+          seenFieldNames.add(f.name);
+          const type = mapType(f.type) as WatType;
+          const size = (type === "f64" || type === "i64") ? 8 : 4;
+          if (offset % size !== 0) offset = Math.ceil(offset / size) * size;
+          structFields.push({ name: f.name, type, offset, size });
+          offset += size;
+        }
+      }
+
+      const def: StructDef = { name, fields: structFields, totalSize: offset };
+      this.structDefs.set(name, def);
+
+      const variants: DiscUnionVariant[] = rawVariants.map((rv, idx) => ({
+        tag: rv.discVal,
+        tagIndex: idx,
+        fieldNames: new Set(rv.fields.map(f => f.name)),
+      }));
+      this.discUnionDefs.set(name, { name, discriminant: discName, variants });
     }
   }
 
@@ -2814,8 +2904,20 @@ class WasicTranspiler {
         const inner = expr.slice(0, asIdx).trim();
         const targetTypeStr = expr.slice(asIdx + 4).trim().split(/[\s<]/)[0]; // first word (strip generics)
         const targetType = mapType(targetTypeStr);
-        const srcType: WatType = /^\w+$/.test(inner) && locals.has(inner)
-          ? locals.get(inner)! : defaultType;
+        let srcType: WatType;
+        if (/^\w+$/.test(inner) && locals.has(inner)) {
+          srcType = locals.get(inner)!;
+        } else {
+          const sfM = inner.match(/^(\w+)\.(\w+)$/);
+          if (sfM) {
+            const sv = this.structVars.get(sfM[1]);
+            const field = sv?.def.fields.find(f => f.name === sfM[2]);
+            srcType = (field?.type as WatType) ?? defaultType;
+          } else {
+            // compound expressions default to i32 (arithmetic result)
+            srcType = "i32";
+          }
+        }
         return this.emitTypeCast(inner, srcType, targetType, locals);
       }
     }
@@ -3757,6 +3859,30 @@ class WasicTranspiler {
         const ptrLocal = locals.get(lhsQQ) === "string" ? `${lhsQQ}_ptr` : lhsQQ;
         const nullCkP  = `(i32.eqz (local.get $${ptrLocal}))`;
         return `(if (result ${ctxBt}) ${nullCkP} (then ${rhsWatP}) (else ${lhsWatP}))`;
+      }
+    }
+
+    // Phase 32: discriminated union discriminant comparison: varName.disc === "lit" or "lit" === varName.disc
+    {
+      const duCmpRe = /^(\w+)\.(\w+)\s*(===|!==|==|!=)\s*["']([^"']+)["']$|^["']([^"']+)["']\s*(===|!==|==|!=)\s*(\w+)\.(\w+)$/;
+      const dcm = expr.match(duCmpRe);
+      if (dcm) {
+        // Groups: lhs form → [1]=varN [2]=fieldN [3]=op [4]=lit ; rhs form → [5]=lit [6]=op [7]=varN [8]=fieldN
+        const varN  = dcm[1] ?? dcm[7];
+        const fieldN = dcm[2] ?? dcm[8];
+        const op    = dcm[3] ?? dcm[6];
+        const lit   = dcm[4] ?? dcm[5];
+        const sv = this.structVars.get(varN!);
+        if (sv) {
+          const du = this.discUnionDefs.get(sv.def.name);
+          if (du && du.discriminant === fieldN) {
+            const tagIdx = du.variants.find(v => v.tag === lit)?.tagIndex ?? -1;
+            const baseWat = sv.ptr === -1 ? `(local.get $${varN})` : `(i32.const ${sv.ptr})`;
+            const loadWat = `(i32.load ${baseWat})`;
+            const eqOp = (op === "!=" || op === "!==") ? "i32.ne" : "i32.eq";
+            return `(${eqOp} ${loadWat} (i32.const ${tagIdx}))`;
+          }
+        }
       }
     }
 
@@ -5739,6 +5865,35 @@ class WasicTranspiler {
           const [eb, ec] = this.extractBlock(lines, i + 1);
           elseBody = eb;
           i += ec + 1;
+        } else if (/^}\s*else\s*if\s*\(/.test(terminator)) {
+          // Phase 32: else-if chain — build a synthetic else body ["if (cond) {", body…, "} else if {", ...]
+          // i is already at first body line of the else-if block (same as "} else {" case)
+          const synElse: string[] = [];
+          const cMei = terminator.match(/^}\s*else\s*if\s*\((.+)\)\s*\{?$/)!;
+          synElse.push(`if (${cMei[1]}) {`);
+          const [eib0, eic0, eiterm0] = this.extractBlock(lines, i);
+          synElse.push(...eib0);
+          i += eic0;
+          let curTerm = eiterm0;
+          // Collect any further else-if links
+          while (/^}\s*else\s*if\s*\(/.test(curTerm)) {
+            synElse.push(curTerm);  // separator line: "} else if (cond2) {"
+            const [eibN, eicN, eitermN] = this.extractBlock(lines, i);
+            synElse.push(...eibN);
+            i += eicN;
+            curTerm = eitermN;
+          }
+          // Final else or closing brace
+          if (curTerm === "} else {") {
+            synElse.push("} else {");
+            const [eibF, eicF] = this.extractBlock(lines, i);
+            synElse.push(...eibF);
+            synElse.push("}");
+            i += eicF;
+          } else {
+            synElse.push("}");
+          }
+          elseBody = synElse;
         }
 
         const condExpr = this.emitExpr(cond, locals, "i32");
@@ -6056,7 +6211,22 @@ class WasicTranspiler {
             if (gt === "f64" || gt === "f32") switchType = "f64";
           }
         }
-        const switchValWat = this.emitExpr(switchExpr, locals, switchType);
+        // Phase 32: detect discriminated union discriminant access: varName.discField
+        let duSwitchDef: DiscUnionDef | null = null;
+        const swDotM = switchExpr.match(/^(\w+)\.(\w+)$/);
+        if (swDotM) {
+          const swSv = this.structVars.get(swDotM[1]);
+          if (swSv) {
+            const swDu = this.discUnionDefs.get(swSv.def.name);
+            if (swDu && swDu.discriminant === swDotM[2]) duSwitchDef = swDu;
+          }
+        }
+        const switchValWat = duSwitchDef
+          ? (() => {
+              const sv2 = this.structVars.get(swDotM![1])!;
+              return `(i32.load ${sv2.ptr === -1 ? `(local.get $${swDotM![1]})` : `(i32.const ${sv2.ptr})`})`;
+            })()
+          : this.emitExpr(switchExpr, locals, switchType);
         const nonDefault = cases.filter(c => !c.isDefault);
         const defaultCase = cases.find(c => c.isDefault);
         // Ordered: non-default cases first, default last
@@ -6081,6 +6251,12 @@ class WasicTranspiler {
         for (let k = 0; k < nonDefault.length; k++) {
           const c = nonDefault[k];
           const condWat = c.values.map(v => {
+            // Phase 32: DU discriminant switch — convert string literal case to integer tag index
+            if (duSwitchDef) {
+              const tagStr = v.replace(/^["']|["']$/g, "");
+              const tagIdx = duSwitchDef.variants.find(vv => vv.tag === tagStr)?.tagIndex ?? -1;
+              return `(i32.eq ${switchValWat} (i32.const ${tagIdx}))`;
+            }
             if (switchType === "f64") {
               return `(f64.eq ${switchValWat} ${this.emitExpr(v, locals, "f64")})`;
             }
@@ -7898,6 +8074,16 @@ class WasicTranspiler {
           if (Object.keys(runtimeInits).length > 0) {
             this.structVarRuntimeInits.set(varName, runtimeInits);
           }
+          // Phase 32: discriminated union — convert discriminant string literal to integer tag index
+          const duDefPre = this.discUnionDefs.get(typeName);
+          if (duDefPre) {
+            const discVal = initFields[duDefPre.discriminant];
+            if (discVal !== undefined) {
+              const tagStr = discVal.replace(/^["']|["']$/g, "");
+              const variant = duDefPre.variants.find(v => v.tag === tagStr);
+              if (variant) initFields[duDefPre.discriminant] = String(variant.tagIndex);
+            }
+          }
           const ptr = this.allocStructData(def, initFields);
           this.structVars.set(varName, { def, ptr });
           // Declare an i32 local to hold the pointer (mirrors array var pattern)
@@ -8418,6 +8604,7 @@ class WasicTranspiler {
     // Phase 30: expand namespace blocks into prefixed top-level declarations
     this.src = this.expandNamespaces(this.src);
     this.parseEnums();
+    this.parseDiscriminatedUnions(); // Phase 32: must precede parseStructs so DU types are pre-registered
     this.parseStructs();
     this.parseClasses();
     this.parseNamedFuncTypeAliases();   // Phase 5g: must precede parseFunctions so parseParams can resolve aliases
@@ -8532,6 +8719,16 @@ class WasicTranspiler {
             }
             if (Object.keys(runtimeInits2).length > 0) {
               this.structVarRuntimeInits.set(varName2, runtimeInits2);
+            }
+            // Phase 32: discriminated union — convert discriminant string literal to integer tag index
+            const duDefPre2 = this.discUnionDefs.get(typeName2);
+            if (duDefPre2) {
+              const discVal2 = initFields2[duDefPre2.discriminant];
+              if (discVal2 !== undefined) {
+                const tagStr2 = discVal2.replace(/^["']|["']$/g, "");
+                const variant2 = duDefPre2.variants.find(v => v.tag === tagStr2);
+                if (variant2) initFields2[duDefPre2.discriminant] = String(variant2.tagIndex);
+              }
             }
             const ptr2 = this.allocStructData(def2, initFields2);
             this.structVars.set(varName2, { def: def2, ptr: ptr2 });

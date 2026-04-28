@@ -463,10 +463,13 @@ function parseSingleArg(
   }
 
   // ── Arithmetic / numeric expression
-  // Infer i64 vs f64 from the leading identifier's declared type
+  // Infer i64 / i32 / f64 from the leading identifier's declared type
   const leadId = token.match(/^(\w+)/)?.[1];
   if (leadId && locals.get(leadId) === "i64") {
     return [{ kind: "i64expr", wat: exprToWat(token, locals, "i64", funcLookup, allocString, arrayLookup, structLookup) }];
+  }
+  if (leadId && (locals.get(leadId) === "i32" || locals.get(leadId) === "bool")) {
+    return [{ kind: "i32expr", wat: exprToWat(token, locals, "i32", funcLookup, allocString, arrayLookup, structLookup) }];
   }
   return [{ kind: "f64expr", wat: exprToWat(token, locals, "f64", funcLookup, allocString, arrayLookup, structLookup) }];
 }
@@ -781,7 +784,10 @@ function exprToWat(
     const rhs    = expr.slice(idx + op.length).trim();
     // Infer i64 from LHS local type so i64 expressions don't get cast to f64
     const lhsLocalType = /^\w+$/.test(lhs) ? locals.get(lhs) : undefined;
-    const opType = alwaysI32 ? "i32" : (lhsLocalType === "i64" ? "i64" : numType);
+    const opType = alwaysI32 ? "i32"
+                 : lhsLocalType === "i64" ? "i64"
+                 : lhsLocalType === "i32" || lhsLocalType === "bool" ? "i32"
+                 : numType;
     const watOp  = (opType === "f64" || opType === "f32") ? f64op
                  : opType === "i64" ? i32op.replace(/^i32\./, "i64.") : i32op;
     return `(${watOp} ${exprToWat(lhs, locals, opType, funcLookup, allocString, arrayLookup, structLookup)} ${exprToWat(rhs, locals, opType, funcLookup, allocString, arrayLookup, structLookup)})`;
