@@ -978,7 +978,8 @@ wasmtk wasic entry.ts   # jstyper sees mathlib.d.ts, skips inference, uses hand-
 | ✅ 34 (type predicates) | `param is Type` return annotations now supported; predicates compile to bool-returning WAT functions |
 | ✅ 35 (`typeof`/`keyof`) | `typeof x` in conditions/assignments now compile-time-resolved; `keyof T` in type positions normalised to `string` by source pre-pass |
 | ✅ 36 (conditional types) | `T extends U ? X : Y` declarations now fully resolved at compile time by `expandConditionalTypes()`; hand-edited `.d.ts` can use resolved concrete types directly without generic syntax |
-| 37–38 (flat/math) | Transparent — body calls, not signature types |
+| ✅ 37 (`flat`/`flatMap`) | Transparent — body calls, not signature types |
+| 38 (extended math) | Transparent — body calls, not signature types |
 | 40 (WASM base64 bundling for JS build and Javy compile) | WASM binary embedded as base64 in JS output; Javy compile integration |
 
 **Out-of-scope JS patterns (warning + skip):**
