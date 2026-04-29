@@ -1,4 +1,5 @@
 /**
+ * 
  * @module main
  * @description The primary CLI entry point for wasmtk.
  * * Supports a comprehensive suite of WebAssembly development tools:
