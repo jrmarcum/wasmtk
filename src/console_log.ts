@@ -355,6 +355,23 @@ function parseSingleArg(
     }
   }
 
+  // ── Phase 35: typeof x → compile-time type-name string literal
+  const typeofPSAMatch = token.match(/^typeof\s+(\w+)$/);
+  if (typeofPSAMatch) {
+    const vn = typeofPSAMatch[1]!;
+    const t = locals.get(vn) ?? globals?.get(vn);
+    let typeStr: string;
+    if (t === "string") typeStr = "string";
+    else if (t === "bool") typeStr = "boolean";
+    else if (t === "f64" || t === "f32") typeStr = "number";
+    else if (t === "i64") typeStr = "bigint";
+    else if (t === "i32") {
+      const arrInfo = arrayLookup?.(vn);
+      typeStr = arrInfo ? "object" : "number";
+    } else typeStr = "undefined";
+    return [{ kind: "literal", text: typeStr }];
+  }
+
   // ── Function call: name(arg, arg, ...)
   // Look up the callee's parameter types so each argument gets the correct const kind.
   const callMatch = token.match(/^(\w+)\s*\((.*)?\)$/);

@@ -310,6 +310,8 @@ interface FuncDef {
 /** Maps TypeScript type annotation strings to WAT types (or the "string"/"never" pseudo-types).
  *  "void" is handled by callers before mapType is invoked and never reaches this function. */
 function mapType(ts: string): WatType {
+  // Phase 35: keyof T in type annotation positions → string (compile-time key type resolves to string)
+  if (/^keyof\s+\w+/.test(ts.trim())) return "string";
   // Strip union null/undefined modifiers: "string | null" → "string", "T | undefined" → "T"
   const stripped = ts.split("|").map(p => p.trim()).filter(p => p !== "null" && p !== "undefined");
   const base = (stripped[0] ?? ts).trim();
@@ -418,6 +420,8 @@ function inferInitType(
   functions?: FuncDef[]
 ): WatType {
   const e = initExpr.trim();
+  // Phase 35: typeof x → the typeof operator always produces a string value
+  if (/^typeof\s+\w+$/.test(e)) return "string";
   // 0. boolean literals
   if (e === "true" || e === "false") return "bool";
   // 1. bigint literal
@@ -2694,6 +2698,17 @@ class WasicTranspiler {
       ].join("\n");
     }
 
+    // Phase 35: typeof x → static type-name string (e.g. "number", "string", "boolean")
+    const typeofSAMatch = initExpr.match(/^typeof\s+(\w+)$/);
+    if (typeofSAMatch) {
+      const typeStr = this.resolveTypeofString(typeofSAMatch[1]!, locals);
+      const [offset, len] = this.allocString(typeStr);
+      return [
+        `(local.set $${varName}_ptr (i32.const ${offset}))`,
+        `${ind}(local.set $${varName}_len (i32.const ${len}))`,
+      ].join("\n");
+    }
+
     // String literal
     const litMatch = initExpr.match(/^"([^"]*)"$/) ?? initExpr.match(/^'([^']*)'$/);
     if (litMatch) {
@@ -2922,6 +2937,23 @@ class WasicTranspiler {
       return `(i32.const ${offset}) (i32.const ${len})`;
     }
     return `(i32.const 0) (i32.const 0)`;
+  }
+
+  // -------------------------------------------------------------------------
+  // Phase 35: typeof helper
+  // -------------------------------------------------------------------------
+  /** Returns the TypeScript runtime typeof string for a known local or module global. */
+  private resolveTypeofString(varName: string, locals: Map<string, WatType>): string {
+    const t = locals.get(varName) ?? this.moduleGlobals.get(varName)?.type;
+    if (t === "string") return "string";
+    if (t === "bool") return "boolean";
+    if (t === "f64" || t === "f32") return "number";
+    if (t === "i64") return "bigint";
+    if (t === "i32") {
+      if (this.structVars.has(varName) || this.typedArrayVars.has(varName) || this.arrayVars.has(varName)) return "object";
+      return "number";
+    }
+    return "undefined";
   }
 
   // -------------------------------------------------------------------------
@@ -3912,6 +3944,32 @@ class WasicTranspiler {
         const ptrLocal = locals.get(lhsQQ) === "string" ? `${lhsQQ}_ptr` : lhsQQ;
         const nullCkP  = `(i32.eqz (local.get $${ptrLocal}))`;
         return `(if (result ${ctxBt}) ${nullCkP} (then ${rhsWatP}) (else ${lhsWatP}))`;
+      }
+    }
+
+    // Phase 35: typeof x === "typename" | "typename" === typeof x → compile-time boolean constant.
+    // Evaluated entirely at compile time from the variable's known WAT type.
+    {
+      const typeofCmpRe = /^typeof\s+(\w+)\s*(===|!==|==|!=)\s*["'](\w+)["']$|^["'](\w+)["']\s*(===|!==|==|!=)\s*typeof\s+(\w+)$/;
+      const tcm = expr.match(typeofCmpRe);
+      if (tcm) {
+        const varN     = (tcm[1] ?? tcm[6])!;
+        const op       = (tcm[2] ?? tcm[5])!;
+        const typeName = (tcm[3] ?? tcm[4])!;
+        const actual   = this.resolveTypeofString(varN, locals);
+        const matches  = actual === typeName;
+        const result   = (op === "!=" || op === "!==") ? !matches : matches;
+        return `(i32.const ${result ? 1 : 0})`;
+      }
+    }
+
+    // Phase 35: standalone typeof x → i32 ptr to static type name string (for use in i32 expression contexts)
+    {
+      const typeofExpr = expr.match(/^typeof\s+(\w+)$/);
+      if (typeofExpr) {
+        const typeStr = this.resolveTypeofString(typeofExpr[1]!, locals);
+        const [ptr] = this.allocString(typeStr);
+        return `(i32.const ${ptr})`;
       }
     }
 
@@ -8688,6 +8746,11 @@ class WasicTranspiler {
     this.src = this.expandGenerics(this.src);
     // Phase 30: expand namespace blocks into prefixed top-level declarations
     this.src = this.expandNamespaces(this.src);
+    // Phase 35: normalize `keyof T` in type annotation positions to `string` before any parsing.
+    // This allows `key: keyof Person` and `const k: keyof T = "x"` to work via the existing string path.
+    // Also strip `type Alias = keyof T` declarations (they become the `string` type inline).
+    this.src = this.src.replace(/:\s*keyof\s+\w+/g, ": string");
+    this.src = this.src.replace(/(?:export\s+)?type\s+\w+\s*=\s*keyof\s+\w+\s*;?/gm, "");
     this.parseEnums();
     this.parseDiscriminatedUnions(); // Phase 32: must precede parseStructs so DU types are pre-registered
     this.parseStructs();
