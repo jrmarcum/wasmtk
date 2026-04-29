@@ -2487,7 +2487,7 @@ class WasicTranspiler {
     const dynamic = new Set<string>();
     for (const line of lines) {
       // Method calls that require heap layout
-      const m = line.match(/\b(\w+)\.(push|pop|shift|unshift|indexOf|includes|slice|forEach|map|filter|find|reduce|every|some|findIndex|at|reverse|fill|join|sort)\s*\(/);
+      const m = line.match(/\b(\w+)\.(push|pop|shift|unshift|indexOf|includes|slice|forEach|map|filter|find|reduce|every|some|findIndex|at|reverse|fill|join|sort|flat|flatMap)\s*\(/);
       if (m) dynamic.add(m[1]);
       // Phase 6d: subscript method call: matrix[i].push(...) — outer array must be dynamic
       const subM = line.match(/\b(\w+)\[.+?\]\.(push|pop|shift|unshift)\s*\(/);
@@ -3273,10 +3273,11 @@ class WasicTranspiler {
     // Dynamic array read/query methods: arr.indexOf(val), arr.includes(val), arr.slice(start,end)
     // Dynamic array callback methods (expression form): arr.map(fn), arr.filter(fn), arr.find(fn), arr.reduce(fn,init)
     // Phase 28: arr.every(fn), arr.some(fn), arr.findIndex(fn), arr.at(n), arr.reverse(), arr.fill(val,...), arr.sort(fn?)
-    const dynArrMethod = expr.match(/^(\w+)\.(indexOf|includes|slice|map|filter|find|reduce|every|some|findIndex|at|reverse|fill|sort)\s*\(([\s\S]*)\)$/);
+    // Phase 37: arr.flat(), arr.flatMap(fn)
+    const dynArrMethod = expr.match(/^(\w+)\.(indexOf|includes|slice|map|filter|find|reduce|every|some|findIndex|at|reverse|fill|sort|flat|flatMap)\s*\(([\s\S]*)\)$/);
     if (dynArrMethod) {
       const arrName  = dynArrMethod[1];
-      const method   = dynArrMethod[2] as "indexOf"|"includes"|"slice"|"map"|"filter"|"find"|"reduce"|"every"|"some"|"findIndex"|"at"|"reverse"|"fill"|"sort";
+      const method   = dynArrMethod[2] as "indexOf"|"includes"|"slice"|"map"|"filter"|"find"|"reduce"|"every"|"some"|"findIndex"|"at"|"reverse"|"fill"|"sort"|"flat"|"flatMap";
       const argsStr  = dynArrMethod[3].trim();
       const arrInfo  = this.arrayVars.get(arrName);
       if (arrInfo?.dynamic) {
@@ -3357,6 +3358,22 @@ class WasicTranspiler {
             this.dynArrHelpers.add(key);
             return `(call $__dynarr_${key} (local.get $${arrName}))`;
           }
+        }
+        // Phase 37: flat() — one-level flatten of a 2D array
+        if (method === "flat") {
+          if (!arrInfo.is2D) return `(;? flat() requires 2D array ;)`;
+          const key = `flat_${elemType}`;
+          this.dynArrHelpers.add(key);
+          return `(call $__dynarr_${key} (local.get $${arrName}))`;
+        }
+        // Phase 37: flatMap(fn) — map each element to an array, then flatten
+        if (method === "flatMap") {
+          const key = `flatmap_${elemType}`;
+          this.dynArrHelpers.add(key);
+          this.getOrCreateFuncType([elemType], "i32"); // fn: (elem) → i32 ptr to inner array
+          const args = this.splitArgs(argsStr);
+          const fnIdx = this.getFuncTableIdx(args[0]?.trim() ?? "");
+          return `(call $__dynarr_${key} (local.get $${arrName}) (i32.const ${fnIdx}))`;
         }
         // Callback methods: map, filter, find, reduce
         const args = this.splitArgs(argsStr);
@@ -7330,6 +7347,141 @@ class WasicTranspiler {
       )
     )
     (local.get $arr)
+  )`);
+      } else if (method === "flat") {
+        // Outer array holds i32 pointers (shift=2) to inner arrays of elemType.
+        const innerShift   = isF64 ? 3 : 2;
+        const innerLoadOp  = isF64 ? "f64.load"  : "i32.load";
+        const innerStoreOp = isF64 ? "f64.store" : "i32.store";
+        const innerValType = isF64 ? "f64" : "i32";
+        parts.push(`  ;; Dynamic array flat_${elemType}: one-level flatten of 2D array (outer=i32 ptrs, inner=${elemType}).
+  (func ${name} (param $arr i32) (result i32)
+    (local $outerLen i32)
+    (local $i i32)
+    (local $innerPtr i32)
+    (local $innerLen i32)
+    (local $totalLen i32)
+    (local $result i32)
+    (local $j i32)
+    (local $dst i32)
+    ;; Pass 1: sum inner lengths
+    (local.set $outerLen (i32.load (local.get $arr)))
+    (local.set $i (i32.const 0))
+    (block $done1
+      (loop $lp1
+        (br_if $done1 (i32.ge_u (local.get $i) (local.get $outerLen)))
+        (local.set $innerPtr (i32.load
+          (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const 2)))))
+        (local.set $totalLen (i32.add (local.get $totalLen) (i32.load (local.get $innerPtr))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp1)
+      )
+    )
+    ;; Allocate result array
+    (local.set $result (call $__malloc
+      (i32.add (i32.const 8) (i32.shl (local.get $totalLen) (i32.const ${innerShift})))))
+    (i32.store (local.get $result) (local.get $totalLen))
+    (i32.store offset=4 (local.get $result) (local.get $totalLen))
+    ;; Pass 2: copy inner elements
+    (local.set $i (i32.const 0))
+    (block $done2
+      (loop $lp2
+        (br_if $done2 (i32.ge_u (local.get $i) (local.get $outerLen)))
+        (local.set $innerPtr (i32.load
+          (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const 2)))))
+        (local.set $innerLen (i32.load (local.get $innerPtr)))
+        (local.set $j (i32.const 0))
+        (block $idone
+          (loop $ilp
+            (br_if $idone (i32.ge_u (local.get $j) (local.get $innerLen)))
+            (${innerStoreOp}
+              (i32.add (i32.add (local.get $result) (i32.const 8))
+                (i32.shl (local.get $dst) (i32.const ${innerShift})))
+              (${innerLoadOp}
+                (i32.add (i32.add (local.get $innerPtr) (i32.const 8))
+                  (i32.shl (local.get $j) (i32.const ${innerShift})))))
+            (local.set $j (i32.add (local.get $j) (i32.const 1)))
+            (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
+            (br $ilp)
+          )
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp2)
+      )
+    )
+    (local.get $result)
+  )`);
+      } else if (method === "flatmap") {
+        // fn: (elemType) → i32  (i32 = ptr to inner array of elemType)
+        const ftName = this.getOrCreateFuncType([elemType], "i32");
+        const innerShift   = isF64 ? 3 : 2;
+        const innerLoadOp  = isF64 ? "f64.load"  : "i32.load";
+        const innerStoreOp = isF64 ? "f64.store" : "i32.store";
+        parts.push(`  ;; Dynamic array flatmap_${elemType}: map each elem to inner array via fn, then flatten.
+  (func ${name} (param $arr i32) (param $fn i32) (result i32)
+    (local $len i32)
+    (local $i i32)
+    (local $elem ${valType})
+    (local $innerPtr i32)
+    (local $innerLen i32)
+    (local $totalLen i32)
+    (local $tmparr i32)
+    (local $result i32)
+    (local $j i32)
+    (local $dst i32)
+    (local.set $len (i32.load (local.get $arr)))
+    ;; Allocate temp storage for inner ptrs (len * 4 bytes, no header)
+    (local.set $tmparr (call $__malloc (i32.shl (local.get $len) (i32.const 2))))
+    ;; Pass 1: call fn(elem) for each, store inner ptr, accumulate total length
+    (local.set $i (i32.const 0))
+    (block $done1
+      (loop $lp1
+        (br_if $done1 (i32.ge_u (local.get $i) (local.get $len)))
+        (local.set $elem (${loadOp}
+          (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const ${shift})))))
+        (local.set $innerPtr
+          (call_indirect (type ${ftName}) (local.get $elem) (local.get $fn)))
+        (i32.store
+          (i32.add (local.get $tmparr) (i32.shl (local.get $i) (i32.const 2)))
+          (local.get $innerPtr))
+        (local.set $totalLen (i32.add (local.get $totalLen) (i32.load (local.get $innerPtr))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp1)
+      )
+    )
+    ;; Allocate result array
+    (local.set $result (call $__malloc
+      (i32.add (i32.const 8) (i32.shl (local.get $totalLen) (i32.const ${innerShift})))))
+    (i32.store (local.get $result) (local.get $totalLen))
+    (i32.store offset=4 (local.get $result) (local.get $totalLen))
+    ;; Pass 2: copy elements from each inner array
+    (local.set $i (i32.const 0))
+    (block $done2
+      (loop $lp2
+        (br_if $done2 (i32.ge_u (local.get $i) (local.get $len)))
+        (local.set $innerPtr (i32.load
+          (i32.add (local.get $tmparr) (i32.shl (local.get $i) (i32.const 2)))))
+        (local.set $innerLen (i32.load (local.get $innerPtr)))
+        (local.set $j (i32.const 0))
+        (block $idone
+          (loop $ilp
+            (br_if $idone (i32.ge_u (local.get $j) (local.get $innerLen)))
+            (${innerStoreOp}
+              (i32.add (i32.add (local.get $result) (i32.const 8))
+                (i32.shl (local.get $dst) (i32.const ${innerShift})))
+              (${innerLoadOp}
+                (i32.add (i32.add (local.get $innerPtr) (i32.const 8))
+                  (i32.shl (local.get $j) (i32.const ${innerShift})))))
+            (local.set $j (i32.add (local.get $j) (i32.const 1)))
+            (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
+            (br $ilp)
+          )
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp2)
+      )
+    )
+    (local.get $result)
   )`);
       }
     }
