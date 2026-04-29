@@ -1908,6 +1908,89 @@ class WasicTranspiler {
   }
 
   // -------------------------------------------------------------------------
+  // Phase 36 — Simple conditional types source expansion
+  // -------------------------------------------------------------------------
+  /**
+   * Resolves `type Name<T> = T extends U ? X : Y` (generic) and
+   * `type Name = A extends B ? X : Y` (non-generic) declarations by
+   * evaluating the extends check at compile time and rewriting all use
+   * sites to the resolved concrete type.
+   *
+   * Runs AFTER expandGenerics (so monomorphized use sites are covered),
+   * BEFORE expandNamespaces and all other parse passes.
+   */
+  private expandConditionalTypes(src: string): string {
+    // Matches: [export] type Name<T> = CheckExpr extends Upper ? TrueType : FalseType [;]
+    //      or: [export] type Name     = CheckExpr extends Upper ? TrueType : FalseType [;]
+    const re = /(?:export\s+)?type\s+(\w+)\s*(?:<(\w+)>)?\s*=\s*([\w\[\]]+)\s+extends\s+([\w\[\]]+)\s*\?\s*([\w\[\]]+)\s*:\s*([\w\[\]]+)\s*;?/g;
+
+    // Conservative type-compatibility check for wasic's compile-time type system.
+    const extendsCheck = (concrete: string, upper: string): boolean => {
+      const c = concrete.trim();
+      const u = upper.trim();
+      if (c === u) return true;
+      const isNum = (s: string) => ["i32", "i64", "f32", "f64", "number"].includes(s);
+      if (isNum(c) && u === "number") return true;
+      if ((c === "bool" || c === "boolean") && (u === "bool" || u === "boolean")) return true;
+      return false;
+    };
+
+    interface CondTemplate {
+      typeParam: string | null;
+      checkExpr: string;
+      upper: string;
+      trueType: string;
+      falseType: string;
+    }
+
+    const templates = new Map<string, CondTemplate>();
+    const removals: Array<{ start: number; end: number }> = [];
+
+    let m: RegExpExecArray | null;
+    re.lastIndex = 0;
+    while ((m = re.exec(src)) !== null) {
+      templates.set(m[1], {
+        typeParam: m[2] ?? null,
+        checkExpr: m[3],
+        upper: m[4],
+        trueType: m[5],
+        falseType: m[6],
+      });
+      removals.push({ start: m.index, end: m.index + m[0].length });
+    }
+
+    if (templates.size === 0) return src;
+
+    // Remove declarations in reverse order to preserve string offsets.
+    let out = src;
+    for (const { start, end } of [...removals].sort((a, b) => b.start - a.start)) {
+      out = out.slice(0, start) + out.slice(end);
+    }
+
+    // Resolve each conditional type at its use sites.
+    for (const [name, tmpl] of templates) {
+      if (tmpl.typeParam === null) {
+        // Non-generic: evaluate once, replace all bare uses.
+        const resolved = extendsCheck(tmpl.checkExpr, tmpl.upper) ? tmpl.trueType : tmpl.falseType;
+        out = out.replace(new RegExp(`\\b${name}\\b`, "g"), resolved);
+      } else {
+        // Generic: resolve each Name<ConcreteType> use site.
+        const useRe = new RegExp(`\\b${name}\\s*<([\\w\\[\\]]+)>`, "g");
+        out = out.replace(useRe, (_: string, concrete: string) => {
+          const check = tmpl.checkExpr === tmpl.typeParam ? concrete : tmpl.checkExpr;
+          const upper = tmpl.upper   === tmpl.typeParam ? concrete : tmpl.upper;
+          const cond  = extendsCheck(check, upper);
+          const raw   = cond ? tmpl.trueType : tmpl.falseType;
+          // If the selected branch is the type param itself, substitute the concrete type.
+          return raw === tmpl.typeParam ? concrete : raw;
+        });
+      }
+    }
+
+    return out;
+  }
+
+  // -------------------------------------------------------------------------
   // Pass 0 – collect enum declarations
   // -------------------------------------------------------------------------
   /**
@@ -8744,6 +8827,9 @@ class WasicTranspiler {
   transpile(_moduleName: string): string {
     // Pre-pass: expand generic templates by monomorphization before any other parsing
     this.src = this.expandGenerics(this.src);
+    // Phase 36: resolve conditional type declarations before any parse pass.
+    // Runs after expandGenerics so monomorphized use sites are also resolved.
+    this.src = this.expandConditionalTypes(this.src);
     // Phase 30: expand namespace blocks into prefixed top-level declarations
     this.src = this.expandNamespaces(this.src);
     // Phase 35: normalize `keyof T` in type annotation positions to `string` before any parsing.
