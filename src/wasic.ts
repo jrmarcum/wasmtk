@@ -613,6 +613,9 @@ class WasicTranspiler {
   // Phase 30: runtime field initializers for struct literals with non-constant values
   // varName → { fieldName: exprString } — emitted as store instructions after local.set $p
   private structVarRuntimeInits: Map<string, Record<string, string>> = new Map();
+  // Phase 34: type predicate functions: funcName → { paramName, targetType }
+  // These functions return bool (i32) and annotate narrowing via "param is Type" return syntax.
+  private typePredicateFuncs: Map<string, { paramName: string; targetType: string }> = new Map();
 
   constructor(source: string, mode: "wasi" | "library" = "wasi", externalFuncs: ExternalFuncDef[] = []) {
     this.src = stripComments(source);
@@ -1137,10 +1140,18 @@ class WasicTranspiler {
 
       // After `)` expect optional `: returnType` then `{`
       // Return type may include array suffix: i32[], i32[][], ClassName, tuple [T1,T2], T|null, etc.
-      const restMatch = src.slice(afterClose).match(/^\s*(?::\s*([\w]+(?:\[\])*(?:\s*\|\s*(?:null|undefined))*|\[[^\]]*\]))?\s*\{/);
+      // Phase 34: also matches type predicate annotations "param is Type".
+      const restMatch = src.slice(afterClose).match(/^\s*(?::\s*([\w]+\s+is\s+[\w]+|[\w]+(?:\[\])*(?:\s*\|\s*(?:null|undefined))*|\[[^\]]*\]))?\s*\{/);
       if (!restMatch) continue; // malformed header — skip
 
       let rawResult = (restMatch[1] ?? "void").trim();
+      // Phase 34: detect type predicate return annotation "param is Type"
+      // e.g. function isCircle(s: Shape): s is Circle { ... }
+      const typePredicateMatch = rawResult.match(/^(\w+)\s+is\s+(\w+)$/);
+      if (typePredicateMatch) {
+        this.typePredicateFuncs.set(name, { paramName: typePredicateMatch[1], targetType: typePredicateMatch[2] });
+        rawResult = "bool"; // type predicates return bool (i32 in WAT)
+      }
       // Phase 24: detect T|null or T|undefined return type — register in nullableFuncReturnType
       // and strip the union annotation so the WAT result type is just the base type.
       const nullableRetInner = parseNullableAnnotation(rawResult);
@@ -5939,7 +5950,39 @@ class WasicTranspiler {
         }
 
         const condExpr = this.emitExpr(cond, locals, "i32");
+        // Phase 34: type predicate narrowing — if cond is "predFn(arg)" where predFn is a
+        // registered type predicate, temporarily narrow arg's struct def to the target type
+        // in the then-branch.  Save and restore state around emitBlock(ifBody, ...).
+        let narrowKey: string | null = null;
+        let narrowOrigStruct: { def: StructDef; ptr: number } | undefined;
+        let narrowOrigClass: { className: string; ptr: number } | undefined;
+        const predCallMatch = cond.match(/^(\w+)\s*\(\s*(\w+)\s*\)$/);
+        if (predCallMatch) {
+          const predInfo = this.typePredicateFuncs.get(predCallMatch[1]);
+          if (predInfo) {
+            narrowKey = predCallMatch[2];
+            narrowOrigStruct = this.structVars.get(narrowKey);
+            narrowOrigClass  = this.classVars.get(narrowKey);
+            const targetDef = this.structDefs.get(predInfo.targetType);
+            const targetCls = this.classDefs.get(predInfo.targetType);
+            if (targetDef) {
+              // Preserve the current pointer (static address or -1 for params); only swap the def.
+              const curPtr = narrowOrigStruct?.ptr ?? -1;
+              this.structVars.set(narrowKey, { def: targetDef, ptr: curPtr });
+            } else if (targetCls) {
+              const curPtr = narrowOrigClass?.ptr ?? -1;
+              this.classVars.set(narrowKey, { className: predInfo.targetType, ptr: curPtr });
+            }
+          }
+        }
         const ifWat = this.emitBlock(ifBody, locals, funcResult, indent + "  ");
+        // Restore pre-narrowing state
+        if (narrowKey !== null) {
+          if (narrowOrigStruct !== undefined) this.structVars.set(narrowKey, narrowOrigStruct);
+          else this.structVars.delete(narrowKey);
+          if (narrowOrigClass !== undefined) this.classVars.set(narrowKey, narrowOrigClass);
+          else this.classVars.delete(narrowKey);
+        }
         if (elseBody.length > 0) {
           const elseWat = this.emitBlock(elseBody, locals, funcResult, indent + "  ");
           out.push(`${indent}(if ${condExpr}`);
