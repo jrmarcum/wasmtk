@@ -364,6 +364,19 @@ export function mergeWasmWat(
     });
   }
 
+  /** Replace `global.get N` / `global.set N` numeric refs with named $refs. */
+  function renameGlobalRefs(text: string): string {
+    return text
+      .replace(/\bglobal\.get\s+(\d+)\b/g, (match, numStr) => {
+        const name = `$${prefix}_global${parseInt(numStr)}`;
+        return `global.get ${name}`;
+      })
+      .replace(/\bglobal\.set\s+(\d+)\b/g, (match, numStr) => {
+        const name = `$${prefix}_global${parseInt(numStr)}`;
+        return `global.set ${name}`;
+      });
+  }
+
   /**
    * Shift i32.const values >= DATA_PTR_THRESHOLD (260) by dataReloc.
    * These are assumed to be static-data pointers; small literals are left alone.
@@ -418,6 +431,7 @@ export function mergeWasmWat(
       const newName = funcName.get(idx) ?? `$${prefix}__fn${idx}`;
       let body = form.replace(/\(func\s+\(;(\d+);\)(?:\s+\(type\s+\d+\))?/, `(func ${newName}`);
       body = renameCallSites(body);
+      body = renameGlobalRefs(body);
       body = relocateDataPtrs(body);
       funcParts.push(body);
       continue;

@@ -122,6 +122,7 @@ import { basename, dirname } from "@std/path";
 import { rt } from "./rt.ts";
 import { bundleImportsEx } from "./tsbundler.ts";
 import { mergeWasmWat, type ExternalFuncDef } from "./wasmmerge.ts";
+import { MATHLIB_BYTES } from "./wasm/mathlib_bytes.ts";
 import {
   IOV_BASE,
   SCRATCH_BASE,
@@ -525,6 +526,11 @@ class WasicTranspiler {
 
   // Set to true when any throw/try/catch is emitted; causes (tag $__exn_tag) to be emitted.
   private needsExceptionTag = false;
+
+  // Phase 38: set when any extended math helper (sin/cos/log/exp/…) is used.
+  private needsMathLib38 = false;
+  /** True when the compiled module calls any Phase 38 Math.* function (sin/cos/exp/log/…). */
+  get needsMathLib(): boolean { return this.needsMathLib38; }
 
   // Compilation mode: "wasi" emits _start + WASI scaffolding; "library" emits only export functions.
   private mode: "wasi" | "library" = "wasi";
@@ -3511,7 +3517,18 @@ class WasicTranspiler {
 
       // Function calls: Math.fn(args)
       const mathCallMatch = expr.match(/^Math\.(\w+)\(([\s\S]*)\)$/);
+      // Guard: the greedy `[\s\S]*` may match the last ')' in a compound expression
+      // like `Math.sin(a) * Math.sin(a) + ...`. Verify argsStr has no unmatched ')'
+      // at depth 0 — if it does, this isn't a standalone Math call.
+      let _mathCallOk = false;
       if (mathCallMatch) {
+        let _d = 0; _mathCallOk = true;
+        for (const _c of mathCallMatch[2]) {
+          if (_c === '(') _d++;
+          else if (_c === ')') { if (_d === 0) { _mathCallOk = false; break; } _d--; }
+        }
+      }
+      if (mathCallMatch && _mathCallOk) {
         const mathFn  = mathCallMatch[1];
         const argsStr = mathCallMatch[2].trim();
         const args    = argsStr ? this.splitArgs(argsStr) : [];
@@ -3593,18 +3610,23 @@ class WasicTranspiler {
           return `(f64.promote_f32 (f32.demote_f64 ${this.emitExpr(args[0] ?? "0", locals, "f64")}))`;
         }
 
-        // Functions that require a math library — not available in the direct-compile path
-        const NEEDS_LIBRARY = new Set([
-          "sin","cos","tan","asin","acos","atan","atan2",
+        // Phase 38: extended math library — inline WAT helpers (Binaryen dead-strips unused)
+        const MATH38_UNARY = new Set([
+          "sin","cos","tan","asin","acos","atan",
           "log","log2","log10","exp","expm1","log1p",
-          "random","cbrt","sinh","cosh","tanh","asinh","acosh","atanh",
+          "cbrt","sinh","cosh","tanh","asinh","acosh","atanh",
         ]);
-        if (NEEDS_LIBRARY.has(mathFn)) {
-          this.diagnostics.push(
-            `Unsupported: Math.${mathFn}() requires a floating-point math library — ` +
-            `use \`wasmtk javyc\` for full Math support, or a future bundler phase`
-          );
-          return zeroOf(defaultType);
+        if (mathFn === "random") {
+          this.needsMathLib38 = true;
+          return `(call $mathlib_random)`;
+        }
+        if (MATH38_UNARY.has(mathFn)) {
+          this.needsMathLib38 = true;
+          return `(call $mathlib_${mathFn} ${this.emitExpr(args[0] ?? "0", locals, "f64")})`;
+        }
+        if (mathFn === "atan2") {
+          this.needsMathLib38 = true;
+          return `(call $mathlib_atan2 ${this.emitExpr(args[0] ?? "0", locals, "f64")} ${this.emitExpr(args[1] ?? "0", locals, "f64")})`;
         }
       }
     }
@@ -5381,7 +5403,10 @@ class WasicTranspiler {
       // Pre-register any Math helpers used inside console.log args so they are
       // emitted even when the call only appears inside console.log (not in emitExpr).
       if (logMatch[1].includes("Math.")) {
-        this.mathHelpers.add("math_pow");  // triggers all-helpers emission in emitMathHelpers
+        this.mathHelpers.add("math_pow");
+        if (/Math\.(?:sin|cos|tan|asin|acos|atan|log|log2|log10|exp|cbrt|sinh|cosh|tanh|asinh|acosh|atanh|expm1|log1p|random)/.test(logMatch[1])) {
+          this.needsMathLib38 = true;
+        }
       }
       const structLookupFn: StructFieldLookup = (vn, fn) => {
         // Check class instance vars first
@@ -5517,7 +5542,12 @@ class WasicTranspiler {
         if (ta) return { elemType: ta.elemType, ptr: -2 as const, length: ta.length, dynamic: true as const, shift: ta.shift, customLoadOp: ta.loadOp };
         return undefined;
       };
-      if (errMatch[2].includes("Math.")) this.mathHelpers.add("math_pow");
+      if (errMatch[2].includes("Math.")) {
+        this.mathHelpers.add("math_pow");
+        if (/Math\.(?:sin|cos|tan|asin|acos|atan|log|log2|log10|exp|cbrt|sinh|cosh|tanh|asinh|acosh|atanh|expm1|log1p|random)/.test(errMatch[2])) {
+          this.needsMathLib38 = true;
+        }
+      }
       const structLookupFn: StructFieldLookup = (vn, fn) => {
         // Check class instance vars first
         const cv = this.classVars.get(vn);
@@ -9471,6 +9501,12 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
     dataOffset += heapM ? parseInt(heapM[1]) : 260 /* DATA_BASE fallback */;
   }
 
+  // Phase 38: auto-merge mathlib.wasm when extended Math.* functions were used
+  if (transpiler.needsMathLib) {
+    const { mergedWat } = mergeOneWasmImport(wat, MATHLIB_BYTES, "mathlib", dataOffset, wabtMod);
+    wat = mergedWat;
+  }
+
   // Write WAT alongside the output for inspection / debugging
   await rt.writeTextFile(watPath, wat);
 
@@ -9566,6 +9602,12 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
     mod2.destroy();
     const heapM = wat2.match(/\(global\s+\(;0;\)\s+\(mut i32\)\s+\(i32\.const\s+(\d+)\)\)/);
     dataOffset2 += heapM ? parseInt(heapM[1]) : 260;
+  }
+
+  // Phase 38: auto-merge mathlib.wasm when extended Math.* functions were used
+  if (transpiler.needsMathLib) {
+    const { mergedWat } = mergeOneWasmImport(wat, MATHLIB_BYTES, "mathlib", dataOffset2, wabtMod2);
+    wat = mergedWat;
   }
 
   await rt.writeTextFile(watPath, wat);

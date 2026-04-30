@@ -307,7 +307,7 @@ function parseSingleArg(
           const outerArgList = parts.outerRaw ? splitTopLevelArgs(parts.outerRaw) : [];
           const outerWat = outerArgList.map((a, i) => {
             const ptype = factorySig.params[i]?.type ?? "i32";
-            return exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup);
+            return exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup, globals);
           }).join(" ");
           const innerSig = funcLookup?.(`${factoryHead}__inner`);
           const captureCount = innerSig?.closureCaptures?.length ?? 0;
@@ -315,7 +315,7 @@ function parseSingleArg(
           const innerArgList = parts.innerRaw ? splitTopLevelArgs(parts.innerRaw) : [];
           const innerWat = innerArgList.map((a, i) => {
             const ptype = innerCallParams[i]?.type ?? "i32";
-            return exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup);
+            return exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup, globals);
           }).join(" ");
           const wat = `(call $${factoryHead}__trampoline (call $${factoryHead} ${outerWat}) ${innerWat})`.trim();
           const innerResult = innerSig?.result;
@@ -384,9 +384,9 @@ function parseSingleArg(
     const watArgsList = argList.flatMap((a, i) => {
       const ptype = sig?.params[i]?.type ?? "i32";
       if (ptype === "string") {
-        return [exprToWat(a.trim(), locals, "string", funcLookup, allocString, arrayLookup, structLookup)];
+        return [exprToWat(a.trim(), locals, "string", funcLookup, allocString, arrayLookup, structLookup, globals)];
       }
-      return [exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup)];
+      return [exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup, globals)];
     });
     // Fill in default values for omitted trailing params
     if (sig) {
@@ -394,7 +394,7 @@ function parseSingleArg(
       for (let i = argList.length; i < baseParamCount; i++) {
         const param = sig.params[i];
         if (param.defaultValue !== undefined) {
-          watArgsList.push(exprToWat(param.defaultValue, locals, param.type, funcLookup, allocString, arrayLookup, structLookup));
+          watArgsList.push(exprToWat(param.defaultValue, locals, param.type, funcLookup, allocString, arrayLookup, structLookup, globals));
         }
       }
     }
@@ -433,7 +433,7 @@ function parseSingleArg(
                     : arrInfo.elemType === "i64" ? "i64.load" : "i32.load");
       const shift   = arrInfo.shift !== undefined ? arrInfo.shift
                     : (arrInfo.elemType === "f64" || arrInfo.elemType === "i64") ? 3 : 2;
-      const idxWat  = exprToWat(bracketMatch[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup);
+      const idxWat  = exprToWat(bracketMatch[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
       // Dynamic arrays (ptr=-2) have a [length, capacity] header at the pointer; data starts at +8.
       const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic) ? `(local.get $${bracketMatch[1]})` : `(i32.const ${arrInfo.ptr})`;
       const dataBase = arrInfo.dynamic ? `(i32.add ${baseWat} (i32.const 8))` : baseWat;
@@ -448,7 +448,7 @@ function parseSingleArg(
   }
   // Phase 12/5h: fallback — i32 local holding a dynamic i32[] array pointer (captured or method-returned)
   if (bracketMatch && locals.get(bracketMatch[1]) === "i32") {
-    const idxWat = exprToWat(bracketMatch[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup);
+    const idxWat = exprToWat(bracketMatch[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
     return [{ kind: "i32expr" as const, wat: `(i32.load (i32.add (i32.add (local.get $${bracketMatch[1]}) (i32.const 8)) (i32.shl ${idxWat} (i32.const 2))))` }];
   }
 
@@ -473,22 +473,22 @@ function parseSingleArg(
     const mathCallM = token.match(/^Math\.(\w+)\(/);
     const mathFn = mathCallM?.[1];
     if (mathFn === "clz32" || mathFn === "imul") {
-      return [{ kind: "i32expr", wat: exprToWat(token, locals, "i32", funcLookup, allocString, arrayLookup, structLookup) }];
+      return [{ kind: "i32expr", wat: exprToWat(token, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals) }];
     }
     // All other Math functions produce f64
-    return [{ kind: "f64expr", wat: exprToWat(token, locals, "f64", funcLookup, allocString, arrayLookup, structLookup) }];
+    return [{ kind: "f64expr", wat: exprToWat(token, locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals) }];
   }
 
   // ── Arithmetic / numeric expression
   // Infer i64 / i32 / f64 from the leading identifier's declared type
   const leadId = token.match(/^(\w+)/)?.[1];
   if (leadId && locals.get(leadId) === "i64") {
-    return [{ kind: "i64expr", wat: exprToWat(token, locals, "i64", funcLookup, allocString, arrayLookup, structLookup) }];
+    return [{ kind: "i64expr", wat: exprToWat(token, locals, "i64", funcLookup, allocString, arrayLookup, structLookup, globals) }];
   }
   if (leadId && (locals.get(leadId) === "i32" || locals.get(leadId) === "bool")) {
-    return [{ kind: "i32expr", wat: exprToWat(token, locals, "i32", funcLookup, allocString, arrayLookup, structLookup) }];
+    return [{ kind: "i32expr", wat: exprToWat(token, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals) }];
   }
-  return [{ kind: "f64expr", wat: exprToWat(token, locals, "f64", funcLookup, allocString, arrayLookup, structLookup) }];
+  return [{ kind: "f64expr", wat: exprToWat(token, locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals) }];
 }
 
 /** Parses a template literal body (contents between backticks) into segments. */
@@ -545,7 +545,8 @@ function exprToWat(
   funcLookup?: FuncLookup,
   allocString?: DataAllocator,
   arrayLookup?: ArrayLookup,
-  structLookup?: StructFieldLookup
+  structLookup?: StructFieldLookup,
+  globals?: Map<string, string>
 ): string {
   expr = expr.trim();
 
@@ -615,7 +616,7 @@ function exprToWat(
                     ?? (ai.elemType === "f64" ? "f64.load" : ai.elemType === "i64" ? "i64.load" : "i32.load");
       const shift   = ai.shift !== undefined ? ai.shift
                     : (ai.elemType === "f64" || ai.elemType === "i64") ? 3 : 2;
-      const idxWat  = exprToWat(bracketM[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup);
+      const idxWat  = exprToWat(bracketM[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
       // Dynamic arrays have a [length, capacity] header; data starts at ptr+8.
       const baseWat = (ai.ptr === -1 || ai.dynamic) ? `(local.get $${bracketM[1]})` : `(i32.const ${ai.ptr})`;
       const dataBase = ai.dynamic ? `(i32.add ${baseWat} (i32.const 8))` : baseWat;
@@ -650,17 +651,25 @@ function exprToWat(
       return `(f64.const ${MATH_CONSTS[mathConstM[1]]})`;
     }
     const mathCallM = expr.match(/^Math\.(\w+)\(([\s\S]*)\)$/);
+    let _mathCLOk = false;
     if (mathCallM) {
+      let _d = 0; _mathCLOk = true;
+      for (const _c of mathCallM[2]) {
+        if (_c === '(') _d++;
+        else if (_c === ')') { if (_d === 0) { _mathCLOk = false; break; } _d--; }
+      }
+    }
+    if (mathCallM && _mathCLOk) {
       const fn   = mathCallM[1];
       const aStr = mathCallM[2].trim();
       const a    = aStr ? splitTopLevelArgs(aStr) : [];
-      const arg0 = exprToWat(a[0] ?? "0", locals, "f64", funcLookup, allocString, arrayLookup, structLookup);
-      const arg1 = exprToWat(a[1] ?? "0", locals, "f64", funcLookup, allocString, arrayLookup, structLookup);
-      if (fn === "clz32")  return `(i32.clz ${exprToWat(a[0] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup)})`;
-      if (fn === "imul")   return `(i32.mul ${exprToWat(a[0] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup)} ${exprToWat(a[1] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup)})`;
-      if (fn === "abs")    return expectedType === "i32" ? `(call $__i32_abs ${exprToWat(a[0] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup)})` : `(f64.abs ${arg0})`;
-      if (fn === "min")    return expectedType === "i32" ? `(call $__i32_min ${exprToWat(a[0] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup)} ${exprToWat(a[1] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup)})` : `(f64.min ${arg0} ${arg1})`;
-      if (fn === "max")    return expectedType === "i32" ? `(call $__i32_max ${exprToWat(a[0] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup)} ${exprToWat(a[1] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup)})` : `(f64.max ${arg0} ${arg1})`;
+      const arg0 = exprToWat(a[0] ?? "0", locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals);
+      const arg1 = exprToWat(a[1] ?? "0", locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals);
+      if (fn === "clz32")  return `(i32.clz ${exprToWat(a[0] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)})`;
+      if (fn === "imul")   return `(i32.mul ${exprToWat(a[0] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)} ${exprToWat(a[1] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)})`;
+      if (fn === "abs")    return expectedType === "i32" ? `(call $__i32_abs ${exprToWat(a[0] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)})` : `(f64.abs ${arg0})`;
+      if (fn === "min")    return expectedType === "i32" ? `(call $__i32_min ${exprToWat(a[0] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)} ${exprToWat(a[1] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)})` : `(f64.min ${arg0} ${arg1})`;
+      if (fn === "max")    return expectedType === "i32" ? `(call $__i32_max ${exprToWat(a[0] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)} ${exprToWat(a[1] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)})` : `(f64.max ${arg0} ${arg1})`;
       if (fn === "sqrt")   return `(f64.sqrt ${arg0})`;
       if (fn === "floor")  return `(f64.floor ${arg0})`;
       if (fn === "ceil")   return `(f64.ceil ${arg0})`;
@@ -670,11 +679,21 @@ function exprToWat(
       if (fn === "sign")   return `(if (result f64) (f64.eq ${arg0} (f64.const 0)) (then (f64.const 0)) (else (f64.copysign (f64.const 1) ${arg0})))`;
       if (fn === "hypot")  return `(f64.sqrt (f64.add (f64.mul ${arg0} ${arg0}) (f64.mul ${arg1} ${arg1})))`;
       if (fn === "fround") return `(f64.promote_f32 (f32.demote_f64 ${arg0}))`;
+      // Phase 38: extended math library functions
+      const MATH38_UNARY = ["sin","cos","tan","asin","acos","atan",
+        "log","log2","log10","exp","expm1","log1p",
+        "cbrt","sinh","cosh","tanh","asinh","acosh","atanh"];
+      if (MATH38_UNARY.includes(fn)) return `(call $mathlib_${fn} ${arg0})`;
+      if (fn === "atan2")  return `(call $mathlib_atan2 ${arg0} ${arg1})`;
+      if (fn === "random") return `(call $mathlib_random)`;
     }
   }
 
-  // Simple identifier — only emit local.get if it is actually a declared local
-  if (/^\w+$/.test(expr) && locals.has(expr)) return `(local.get $${expr})`;
+  // Simple identifier — check locals first, then module globals
+  if (/^\w+$/.test(expr)) {
+    if (locals.has(expr)) return `(local.get $${expr})`;
+    if (globals?.has(expr)) return `(global.get $${expr})`;
+  }
 
   // Phase 5f: chained call — factoryFn(outerArgs)(innerArgs) closure factory
   {
@@ -687,7 +706,7 @@ function exprToWat(
           const outerArgList = parts.outerRaw ? splitTopLevelArgs(parts.outerRaw) : [];
           const outerWat = outerArgList.map((a, i) => {
             const ptype = factorySig.params[i]?.type ?? "i32";
-            return exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup);
+            return exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup, globals);
           }).join(" ");
           const innerSig = funcLookup?.(`${factoryHead}__inner`);
           const captureCount = innerSig?.closureCaptures?.length ?? 0;
@@ -695,7 +714,7 @@ function exprToWat(
           const innerArgList = parts.innerRaw ? splitTopLevelArgs(parts.innerRaw) : [];
           const innerWat = innerArgList.map((a, i) => {
             const ptype = innerCallParams[i]?.type ?? "i32";
-            return exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup);
+            return exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup, globals);
           }).join(" ");
           return `(call $${factoryHead}__trampoline (call $${factoryHead} ${outerWat}) ${innerWat})`.trim();
         }
@@ -713,7 +732,7 @@ function exprToWat(
     // String params expand to two stack values
     const watArgsList = argList.flatMap((a, i) => {
       const ptype = sig?.params[i]?.type ?? "i32";
-      return [exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup)];
+      return [exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup, globals)];
     });
     // Fill in default values for omitted trailing params
     if (sig) {
@@ -721,7 +740,7 @@ function exprToWat(
       for (let i = argList.length; i < baseParamCount; i++) {
         const param = sig.params[i];
         if (param.defaultValue !== undefined) {
-          watArgsList.push(exprToWat(param.defaultValue, locals, param.type, funcLookup, allocString, arrayLookup, structLookup));
+          watArgsList.push(exprToWat(param.defaultValue, locals, param.type, funcLookup, allocString, arrayLookup, structLookup, globals));
         }
       }
     }
@@ -730,7 +749,7 @@ function exprToWat(
 
   // Parenthesised sub-expression — unwrap and recurse
   if (expr.startsWith("(") && expr.endsWith(")")) {
-    return exprToWat(expr.slice(1, -1), locals, expectedType, funcLookup, allocString, arrayLookup, structLookup);
+    return exprToWat(expr.slice(1, -1), locals, expectedType, funcLookup, allocString, arrayLookup, structLookup, globals);
   }
 
   const isFloat = expectedType === "f64" || expectedType === "f32";
@@ -739,19 +758,19 @@ function exprToWat(
 
   // Unary ! — logical not → i32.eqz
   if (expr.startsWith("!") && !expr.startsWith("!=")) {
-    return `(i32.eqz ${exprToWat(expr.slice(1).trim(), locals, "i32", funcLookup, allocString, arrayLookup, structLookup)})`;
+    return `(i32.eqz ${exprToWat(expr.slice(1).trim(), locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)})`;
   }
 
   // Unary ~ — bitwise not → i32.xor with -1
   if (expr.startsWith("~")) {
-    return `(i32.xor ${exprToWat(expr.slice(1).trim(), locals, "i32", funcLookup, allocString, arrayLookup, structLookup)} (i32.const -1))`;
+    return `(i32.xor ${exprToWat(expr.slice(1).trim(), locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)} (i32.const -1))`;
   }
 
   // Unary - on a non-literal (e.g. -x, -(a+b))
   if (expr.startsWith("-") && !/^-\d/.test(expr)) {
     const inner = expr.slice(1).trim();
-    if (isFloat) return `(${expectedType}.neg ${exprToWat(inner, locals, numType, funcLookup, allocString, arrayLookup, structLookup)})`;
-    return `(i32.sub (i32.const 0) ${exprToWat(inner, locals, "i32", funcLookup, allocString, arrayLookup, structLookup)})`;
+    if (isFloat) return `(${expectedType}.neg ${exprToWat(inner, locals, numType, funcLookup, allocString, arrayLookup, structLookup, globals)})`;
+    return `(i32.sub (i32.const 0) ${exprToWat(inner, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)})`;
   }
 
   // Ternary: cond ? then : else
@@ -764,7 +783,7 @@ function exprToWat(
       const thenPart = rest.slice(0, ternC).trim();
       const elsePart = rest.slice(ternC + 1).trim();
       const resType  = isFloat ? expectedType : "i32";
-      return `(if (result ${resType}) ${exprToWat(cond, locals, "i32", funcLookup, allocString, arrayLookup, structLookup)} (then ${exprToWat(thenPart, locals, resType, funcLookup, allocString, arrayLookup, structLookup)}) (else ${exprToWat(elsePart, locals, resType, funcLookup, allocString, arrayLookup, structLookup)}))`;
+      return `(if (result ${resType}) ${exprToWat(cond, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)} (then ${exprToWat(thenPart, locals, resType, funcLookup, allocString, arrayLookup, structLookup, globals)}) (else ${exprToWat(elsePart, locals, resType, funcLookup, allocString, arrayLookup, structLookup, globals)}))`;
     }
   }
 
@@ -807,7 +826,7 @@ function exprToWat(
                  : numType;
     const watOp  = (opType === "f64" || opType === "f32") ? f64op
                  : opType === "i64" ? i32op.replace(/^i32\./, "i64.") : i32op;
-    return `(${watOp} ${exprToWat(lhs, locals, opType, funcLookup, allocString, arrayLookup, structLookup)} ${exprToWat(rhs, locals, opType, funcLookup, allocString, arrayLookup, structLookup)})`;
+    return `(${watOp} ${exprToWat(lhs, locals, opType, funcLookup, allocString, arrayLookup, structLookup, globals)} ${exprToWat(rhs, locals, opType, funcLookup, allocString, arrayLookup, structLookup, globals)})`;
   }
 
   // Fallback: emit a comment and a zero of the expected type
