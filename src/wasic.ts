@@ -6710,7 +6710,6 @@ class WasicTranspiler {
       }
       if (key.startsWith("set_")) {
         const elemType = key.slice(4) as WatType;
-        const watElem  = watBaseType(elemType);
         const shift    = elemType === "f64" || elemType === "i64" ? 3
                        : elemType === "f32" ? 2 : 2;
         const loadOp   = elemType === "f64" ? "f64.load"
@@ -7383,7 +7382,6 @@ class WasicTranspiler {
         const innerShift   = isF64 ? 3 : 2;
         const innerLoadOp  = isF64 ? "f64.load"  : "i32.load";
         const innerStoreOp = isF64 ? "f64.store" : "i32.store";
-        const innerValType = isF64 ? "f64" : "i32";
         parts.push(`  ;; Dynamic array flat_${elemType}: one-level flatten of 2D array (outer=i32 ptrs, inner=${elemType}).
   (func ${name} (param $arr i32) (result i32)
     (local $outerLen i32)

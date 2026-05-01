@@ -367,11 +367,11 @@ export function mergeWasmWat(
   /** Replace `global.get N` / `global.set N` numeric refs with named $refs. */
   function renameGlobalRefs(text: string): string {
     return text
-      .replace(/\bglobal\.get\s+(\d+)\b/g, (match, numStr) => {
+      .replace(/\bglobal\.get\s+(\d+)\b/g, (_match, numStr) => {
         const name = `$${prefix}_global${parseInt(numStr)}`;
         return `global.get ${name}`;
       })
-      .replace(/\bglobal\.set\s+(\d+)\b/g, (match, numStr) => {
+      .replace(/\bglobal\.set\s+(\d+)\b/g, (_match, numStr) => {
         const name = `$${prefix}_global${parseInt(numStr)}`;
         return `global.set ${name}`;
       });
