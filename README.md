@@ -42,7 +42,7 @@ Install wasmtk as a globally available `wasmtk` command on your system:
 Deno:
 
 ```bash
-deno task install
+deno install -g -n wasmtk --allow-run --allow-read --allow-write --allow-env --allow-ffi --allow-net jsr:@jrmarcum/wasmtk
 ```
 
 Bun:
@@ -158,10 +158,14 @@ wasmtk provides three distinct compilation paths. Choosing the right one depends
 
 ### `wasmtk wasic` — Direct TypeScript-to-WASM (WASI Standalone)
 
-Compiles a TypeScript source file directly to a **standalone WASI module** with no embedded JavaScript runtime. The compiler translates TypeScript syntax directly into WebAssembly Text (WAT) and then to a `.wasm` binary via a bundler pre-pass that resolves imports, followed by the WasicTranspiler, wabt, and Binaryen `-Oz` optimization.
+Compiles a TypeScript or WAT source file to a **standalone WASI module** with no embedded JavaScript runtime. Two input paths are supported:
+
+- **`.ts`** — runs through the tsbundler import pre-pass, WasicTranspiler, wabt, and Binaryen `-Oz`
+- **`.wat`** — assembled directly by wabt and optimized by Binaryen `-Oz` (no transpiler step)
 
 ```bash
-wasmtk wasic myprogram.ts
+wasmtk wasic myprogram.ts       # TypeScript → WAT → optimized .wasm
+wasmtk wasic myprogram.wat      # WAT → optimized .wasm (direct, no transpiler)
 wasmtk run myprogram.wasm
 ```
 
@@ -381,19 +385,29 @@ The bundler pre-pass (`tsbundler.ts`) runs before compilation and merges all imp
 
 #### Entry Point Patterns
 
-Any of the following makes a function the WASI `_start` entry point:
+Any of the following produces a WASI `_start` export in the compiled `.wasm`:
 
 ```typescript
-// 1. top-level call
+// 1. Named main() + call
 function main() { ... }
 main();
 
-// 2. exported _start
+// 2. Explicit _start export
 export function _start() { ... }
 
-// 3. IIFE
-(function main() { ... })();
+// 3. IIFE (any function name)
+(function run() { ... })();
+
+// 4. Deno entry guard
+if (import.meta.main) {
+  // statements here become the _start body
+}
+
+// 5. Bare top-level statements
+console.log("hello");   // any statement at module scope, not inside a function
 ```
+
+Patterns 1–3 route through a named function that `_start` calls. Patterns 4–5 collect the statements directly into the `_start` body. All five are recognized automatically — no annotation needed.
 
 ---
 
@@ -540,6 +554,28 @@ See [Phase 19 — `wasmbundle` CLI](#phase-19--wasmbundle-cli) and [Phase 20 —
 
 ---
 
+### `wasmtk run` — Multi-Format Executor
+
+Runs a file directly. Accepts four input formats:
+
+| Input | Behavior |
+| --- | --- |
+| `.wasm` | Instantiates and executes the WASM module via the built-in WASI runtime |
+| `.wat` | Assembled by wabt, then executed as above |
+| `.ts` | Passed through to the Deno/Bun runtime (`deno run -A` / `bun run`) — not compiled to WASM |
+| `.js` | Same passthrough to the Deno/Bun runtime |
+
+```bash
+wasmtk run myprogram.wasm
+wasmtk run myprogram.wat
+wasmtk run myprogram.ts
+wasmtk run myprogram.js
+```
+
+The `.ts` and `.js` paths are native runtime passthrough — they do not go through wasic or any WASM compilation step. Use them to run a TypeScript file as-is for comparison against its compiled WASM output.
+
+---
+
 ## Programmatic API
 
 Each compiler is a standalone importable module. You can use them directly in Deno without going through the CLI:
@@ -659,6 +695,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | enhancement (2026-05-01) | `$__f64_to_str` shortest-round-trip pass | **Problem:** the ×1e15 approach occasionally produced a spurious extra trailing digit — e.g. `78.539816339744831` instead of `78.53981633974483` — because multiplying the fractional remainder by `1e15` in IEEE 754 introduces a ±1 ULP rounding error in the last digit. **Fix:** a "shortest round-trip" loop added after the ×1e15 step. Starting from 15 fractional digits, it repeatedly tries stripping the last digit (dividing `fpart` by 10) and checking whether `f64(ipart) + f64(trial) / f64(10^k)` still reconstructs the exact original double via `f64.eq`. Stripping stops at the first k where reconstruction diverges. Powers of 10 from `1` to `1e15` are all exactly representable in f64 (≤ 50 significant bits), so the reconstruction arithmetic introduces no additional error beyond the comparison itself. A new `$__pow10_f64` WAT helper returns `10^n` for n in [0, 15] via a chain of `if`/`return` branches. Per-binary overhead: ~200–300 bytes additional WAT (the helper function + extra locals and loop in `$__f64_to_str`). Known remaining delta: `Math.SQRT2` prints `1.414213562373095` (WASM) vs `1.4142135623730951` (JavaScript) — this requires MORE digits than ×1e15 can supply and is not fixed by the shortening pass |
 | 36 (2026-05-04) | Simple conditional types `T extends U ? X : Y` | **`expandConditionalTypes(src)`:** new private method on `WasicTranspiler`, inserted after `expandGenerics` and before `expandNamespaces` in `transpile()` — pure source-level text transformation. **Generic form** (`type Toggle<T> = T extends i32 ? f64 : i32`): declaration removed from source; every `Toggle<ConcreteType>` use site is rewritten by resolving the condition against the concrete argument. **Non-generic form** (`type AlwaysI32 = f64 extends number ? i32 : string`): condition evaluated once at declaration time; all bare occurrences of the type name replaced with the resolved concrete type. **`extendsCheck(concrete, upper)`**: conservative compile-time compatibility — same string, any numeric type extends `number`, `bool`/`boolean` cross-match. Runs after `expandGenerics` so monomorphized call sites produced by generic expansion are also resolved; runs before all other parse passes so no downstream pass ever sees a conditional type declaration or use site. **Limitations:** `infer` not supported; nested conditional types require two passes; conditional types referencing other conditional types by name have source-order dependency. Four test files: `BasicConditionalType_36`, `ConditionalTypeParams_36`, `ConditionalTypeNonGeneric_36`, `Phase36Combined_36` — 124/124 suite |
 | 37 (2026-07-14) | `flat()` / `flatMap(fn)` | **`flat()`:** one-level flatten of `i32[][]` or `f64[][]` into a 1D array — two-pass WAT helper `$__dynarr_flat_T`: (1) walk outer array (i32 ptrs, shift=2), sum all inner `.length` headers to get `totalLen`; (2) allocate result array of `totalLen` elements; (3) copy inner elements using the element type's shift/load/store. **`flatMap(fn)`:** for each element of a 1D array, call `fn(elem)` via `call_indirect` (functype `(T) → i32`, the i32 being a pointer to an inner `T[]`), then flatten — two-pass WAT helper `$__dynarr_flatmap_T`: allocates a raw temp buffer (`len × 4` bytes, no header) to store inner array ptrs from pass 1, accumulates `totalLen`, allocates result in pass 2, copies. Calling `fn` exactly once per element avoids side-effect duplication. `findDynamicArrays` regex extended to include `flat` and `flatMap` so source arrays are auto-promoted to dynamic layout. `flat()` guards `arrInfo.is2D` — calling it on a 1D array is a compile-time stub. `flatMap` callbacks must be named functions (no inline arrows); the callback's TypeScript return type (`T[]`) maps to WAT `(result i32)` — the same convention as all other array-returning functions. Three test files: `FlatArray_37`, `FlatMapArray_37`, `Phase37Combined_37` — 127/127 suite |
+| 38 (2026-07-14) | Extended math via external `mathlib.wasm` | **Architecture:** `src/wasm/mathlib.wat` is a standalone WAT module (21 exported functions) compiled to `src/wasm/mathlib.wasm` (binary embedded as `MATHLIB_BYTES` in `src/wasm/mathlib_bytes.ts`). When any Phase 38 `Math.*` function appears in a compiled file, `transpiler.needsMathLib` is set and `compileWasiTs`/`compileLibraryTs` call `mergeOneWasmImport(wat, MATHLIB_BYTES, "mathlib", ...)` to splice the library into the WAT before Binaryen sees it — so dead-stripping and inlining work across the full merged module. **Naming:** wasic emits `(call $mathlib_sin arg)` etc.; `mergeWasmWat` applies the `"mathlib"` prefix to all exported symbols. **Global relocation:** `renameGlobalRefs()` in `wasmmerge.ts` rewrites numeric `global.get N` / `global.set N` references in merged bodies to named `$mathlib_globalN` refs, necessary because the RNG state global (i64) shifts index after the main module's globals are prepended. **`$atan` two-stage range reduction:** complement (z→1/z for z>1) + mid-range ((z-1)/(z+1) for z>tan(π/8)≈0.4142) before the fdlibm aT[0..10] minimax polynomial; four result cases based on which reductions applied; formula `r = z − z³t` (subtraction). **Bug fixes:** (1) greedy `Math.fn(...)` regex in both `wasic.ts` and `console_log.ts` now validates that argsStr has no unmatched `)` at depth 0 — compound expressions like `Math.sin(a) * Math.sin(a) + Math.cos(a) * Math.cos(a)` previously matched as a single `Math.sin(...)` call; (2) `exprToWat` in `console_log.ts` gained a `globals?: Map<string, string>` 8th parameter so module-level f64 globals used as arguments to nested Math calls (e.g. `Math.exp(x)`) emit `(global.get $x)` instead of a comment stub. Five test files: `MathTrig_38`, `MathExpLog_38`, `MathHyperbolic_38`, `MathRandom_38`, `Phase38Combined_38` — 132/132 suite |
 
 ---
 
