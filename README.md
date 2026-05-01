@@ -696,6 +696,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | 36 (2026-05-04) | Simple conditional types `T extends U ? X : Y` | **`expandConditionalTypes(src)`:** new private method on `WasicTranspiler`, inserted after `expandGenerics` and before `expandNamespaces` in `transpile()` — pure source-level text transformation. **Generic form** (`type Toggle<T> = T extends i32 ? f64 : i32`): declaration removed from source; every `Toggle<ConcreteType>` use site is rewritten by resolving the condition against the concrete argument. **Non-generic form** (`type AlwaysI32 = f64 extends number ? i32 : string`): condition evaluated once at declaration time; all bare occurrences of the type name replaced with the resolved concrete type. **`extendsCheck(concrete, upper)`**: conservative compile-time compatibility — same string, any numeric type extends `number`, `bool`/`boolean` cross-match. Runs after `expandGenerics` so monomorphized call sites produced by generic expansion are also resolved; runs before all other parse passes so no downstream pass ever sees a conditional type declaration or use site. **Limitations:** `infer` not supported; nested conditional types require two passes; conditional types referencing other conditional types by name have source-order dependency. Four test files: `BasicConditionalType_36`, `ConditionalTypeParams_36`, `ConditionalTypeNonGeneric_36`, `Phase36Combined_36` — 124/124 suite |
 | 37 (2026-07-14) | `flat()` / `flatMap(fn)` | **`flat()`:** one-level flatten of `i32[][]` or `f64[][]` into a 1D array — two-pass WAT helper `$__dynarr_flat_T`: (1) walk outer array (i32 ptrs, shift=2), sum all inner `.length` headers to get `totalLen`; (2) allocate result array of `totalLen` elements; (3) copy inner elements using the element type's shift/load/store. **`flatMap(fn)`:** for each element of a 1D array, call `fn(elem)` via `call_indirect` (functype `(T) → i32`, the i32 being a pointer to an inner `T[]`), then flatten — two-pass WAT helper `$__dynarr_flatmap_T`: allocates a raw temp buffer (`len × 4` bytes, no header) to store inner array ptrs from pass 1, accumulates `totalLen`, allocates result in pass 2, copies. Calling `fn` exactly once per element avoids side-effect duplication. `findDynamicArrays` regex extended to include `flat` and `flatMap` so source arrays are auto-promoted to dynamic layout. `flat()` guards `arrInfo.is2D` — calling it on a 1D array is a compile-time stub. `flatMap` callbacks must be named functions (no inline arrows); the callback's TypeScript return type (`T[]`) maps to WAT `(result i32)` — the same convention as all other array-returning functions. Three test files: `FlatArray_37`, `FlatMapArray_37`, `Phase37Combined_37` — 127/127 suite |
 | 38 (2026-07-14) | Extended math via external `mathlib.wasm` | **Architecture:** `src/wasm/mathlib.wat` is a standalone WAT module (21 exported functions) compiled to `src/wasm/mathlib.wasm` (binary embedded as `MATHLIB_BYTES` in `src/wasm/mathlib_bytes.ts`). When any Phase 38 `Math.*` function appears in a compiled file, `transpiler.needsMathLib` is set and `compileWasiTs`/`compileLibraryTs` call `mergeOneWasmImport(wat, MATHLIB_BYTES, "mathlib", ...)` to splice the library into the WAT before Binaryen sees it — so dead-stripping and inlining work across the full merged module. **Naming:** wasic emits `(call $mathlib_sin arg)` etc.; `mergeWasmWat` applies the `"mathlib"` prefix to all exported symbols. **Global relocation:** `renameGlobalRefs()` in `wasmmerge.ts` rewrites numeric `global.get N` / `global.set N` references in merged bodies to named `$mathlib_globalN` refs, necessary because the RNG state global (i64) shifts index after the main module's globals are prepended. **`$atan` two-stage range reduction:** complement (z→1/z for z>1) + mid-range ((z-1)/(z+1) for z>tan(π/8)≈0.4142) before the fdlibm aT[0..10] minimax polynomial; four result cases based on which reductions applied; formula `r = z − z³t` (subtraction). **Bug fixes:** (1) greedy `Math.fn(...)` regex in both `wasic.ts` and `console_log.ts` now validates that argsStr has no unmatched `)` at depth 0 — compound expressions like `Math.sin(a) * Math.sin(a) + Math.cos(a) * Math.cos(a)` previously matched as a single `Math.sin(...)` call; (2) `exprToWat` in `console_log.ts` gained a `globals?: Map<string, string>` 8th parameter so module-level f64 globals used as arguments to nested Math calls (e.g. `Math.exp(x)`) emit `(global.get $x)` instead of a comment stub. Five test files: `MathTrig_38`, `MathExpLog_38`, `MathHyperbolic_38`, `MathRandom_38`, `Phase38Combined_38` — 132/132 suite |
+| 39 (2026-07-14) | `jstyper` — `.d.ts`-based JS import pre-processor | **Architecture:** `src/jstyper.ts` — pure regex/brace-counting implementation with no external dependencies. **Pipeline:** `parseJsFunctions()` extracts function bodies from `.js` (regular functions + arrow functions, block and expression bodies, nested-brace-safe via string-aware `extractBraceBlock()`); `parseDtsFunctions()` extracts typed signatures from `.d.ts` (`export declare function` / `declare function` forms); `generateTypedTs()` merges bodies + types into a typed `.ts` wasic can compile. **Type mapping:** `number→f64`, `int→i32`, `float\|double→f64`; WASM primitives (`i32`, `i64`, `f32`, `f64`, `bool`, `string`, `void`, `never`) pass through unchanged; `any` controlled by `--any-policy`. **`--dts-only` mode:** `generateSkeletonDts()` emits a `number`-typed skeleton `.d.ts` with `@auto-generated by jstyper` header for hand-editing. **`--dry-run`:** prints output to stdout without writing files. **`--any-policy` modes:** `skip` (exclude function + warning with corrected declaration), `warn` (include with `i32` fallback + warning), `default` (include with `i32` silently). **Actionable diagnostics:** every warning and error is multi-line with a "Fix:" block naming the specific file, showing the corrected declaration verbatim, listing valid WASM types, and (for skip mode) offering the `--any-policy=warn` escape hatch; `correctedDecl()` helper reconstructs the declaration with `any→i32` substituted. **CLI:** `wasmtk jstyper <file.js> [--dts-only] [--dry-run] [--any-policy=skip\|warn\|default] [-n out]`. **Tests:** four wasic-compiled `wasm_wasi` test files (`JstyperBasic_39`, `JstyperF64_39`, `JstyperMixed_39`, `Phase39Combined_39`) + `tests/jstyper_tests.ts` unit runner (73 assertions covering all parsing, generation, and pipeline paths). **New files:** `src/jstyper.ts`, `tests/jstyper_tests.ts`, `tests/jstyper_fixtures/` (3 fixture pairs). **Changed:** `main.ts` (`case "jstyper"`, `--dts-only`/`--dry-run`/`--any-policy` flags), `deno.json` (`"./jstyper"` export). Four wasic test files: `JstyperBasic_39`, `JstyperF64_39`, `JstyperMixed_39`, `Phase39Combined_39` — 136/136 suite |
 
 ---
 
@@ -906,131 +907,84 @@ The TypeScript-to-JS bundler command is renamed from `bundle` to `tsbundle` to c
 
 ### Planned Phases
 
-Phases 38–40 extend `wasic` incrementally. Early phases add compile-time conveniences and core language features; middle phases build out the runtime data model; later phases complete the type system. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
+Phase 40 extends the toolchain with host-interface binding. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
 
 | Phase | Feature | Strategy |
 | --- | --- | --- |
-| 38 | Extended math via external library | `Math.sin/cos/tan/asin/acos/atan/atan2`, `Math.log/log2/log10/exp/expm1/log1p`, `Math.hypot/cbrt/sinh/cosh/tanh`, `Math.random()` (WASI `random_get`) — imported as a pre-compiled `src/wasm/mathlib.wasm` via the Phase 18 bundler |
-| 39 | `jstyper` — JavaScript import pre-processor | Generates `.d.ts` from `.js` via `npm:typescript`; merges typed signatures with JS bodies to produce `.ts` for wasic; `.js` never modified; existing `.d.ts` / `@types/` used directly; sequenced last so all supported types are available as annotations |
 | 40 | External interface mapping (WIT / custom section) | `modc` / `wasic` accept a `.wit` file or WASM custom section declaring an external interface (e.g. `interface Logger { log(msgPtr: i32): void; }`); compiler verifies call sites match the declared signature; host provides the concrete implementation at link time — upgrades the current compile-time rejection (`❌ wasic: 'logger' is not defined`) to a full signature-verified binding; see `tests/wasm_wasi/ExternalMapping_11b.ts` |
 
 ---
 
-#### Phase 39 — `jstyper`: JavaScript Import Pre-processor
+#### Phase 39 — `jstyper`: JavaScript Import Pre-processor ✅
 
-Phase 39 adds a new pipeline stage that sits upstream of `tsbundler` and `wasic`. When a `.ts` file imports from a `.js` module, `jstyper` produces a `.ts` equivalent that wasic can compile — without ever modifying the original `.js` file.
+`jstyper` converts a plain JavaScript file into a typed TypeScript file that wasic can compile to WASM. Type information comes from a hand-edited `.d.ts` declaration file — the `.js` source is never modified, and the `.d.ts` is a permanent, auditable artefact.
 
-The key design decision: type information comes from a **`.d.ts` declaration file**, not from inline annotation injection. The `.d.ts` is either generated automatically by the TypeScript compiler or supplied manually, and it remains a permanent, auditable, editable artefact alongside the `.js` source. It is sequenced last so that every type wasic supports is available as a valid annotation.
-
-**Pipeline:**
-
-```text
-Step 1 — Resolve type declarations
-  helper.d.ts exists?   →  use it directly (skip inference)
-  @types/helper exists? →  use it directly (skip inference)
-  neither exists?        →  run tsc (allowJs + declaration) to generate helper.d.ts
-
-Step 2 — Parse helper.d.ts
-  Extract typed function signatures: declare function add(a: number, b: number): number;
-  Extract typed variable declarations: declare const PI: number;
-  Hoist object literal shapes to named interface declarations
-
-Step 3 — Merge with helper.js bodies
-  For each declaration in .d.ts, find matching function body in .js
-  Replace untyped JS header with typed TS signature
-  Emit helper.ts  (types from .d.ts, bodies from .js)
-
-Step 4 — Feed helper.ts into existing tsbundler pipeline
-  wasic/modc pipeline unchanged
-```
-
-**Two usage modes:**
+**Workflow:**
 
 ```bash
-# Standalone — generate and inspect the .d.ts and .ts artefacts
-wasmtk jstyper helper.js                   # generates helper.d.ts + helper.ts
-wasmtk jstyper helper.js --dts-only        # generate helper.d.ts only for review/editing
-wasmtk jstyper helper.js --dry-run         # print merged .ts to stdout without writing
-wasmtk jstyper helper.js --any-policy skip # skip functions where type resolves to 'any'
-
-# Transparent — fires automatically during wasic/modc compilation
-import { add } from "./mathlib.js";        # jstyper runs on mathlib.js automatically
-wasmtk wasic entry.ts                      # no extra steps needed
-```
-
-**Manual refinement workflow:**
-
-Because `.d.ts` is a separate, editable file, developers can refine inferred types to precise WASM types that `tsc` can never infer on its own:
-
-```bash
-wasmtk jstyper mathlib.js --dts-only   # generates mathlib.d.ts with inferred types
+# Step 1 — generate a skeleton .d.ts with number placeholders
+wasmtk jstyper mathlib.js --dts-only
 ```
 
 ```typescript
-// mathlib.d.ts — auto-generated, then hand-edited
-// Before: declare function add(a: number, b: number): number;
+// mathlib.d.ts — auto-generated skeleton, then hand-edited
+// Before: export declare function add(a: number, b: number): number;
 // After:
-declare function add(a: i32, b: i32): i32;          // precise integer type
-declare function lerp(a: f32, b: f32, t: f32): f32; // precise float type
+export declare function add(a: i32, b: i32): i32;        // precise integer type
+export declare function lerp(a: f64, b: f64, t: f64): f64; // precise float type
 ```
 
 ```bash
-wasmtk wasic entry.ts   # jstyper sees mathlib.d.ts, skips inference, uses hand-edited types
+# Step 2 — merge JS bodies with typed .d.ts → produces mathlib.ts
+wasmtk jstyper mathlib.js
+
+# Step 3 — compile to WASM as usual
+wasmtk wasic mathlib.ts
+```
+
+**All CLI flags:**
+
+```bash
+wasmtk jstyper <file.js>                 # merge .js + .d.ts → typed .ts
+wasmtk jstyper <file.js> --dts-only      # generate skeleton .d.ts only
+wasmtk jstyper <file.js> --dry-run       # print output to stdout, don't write
+wasmtk jstyper <file.js> --any-policy=skip   # exclude functions with 'any' types
+wasmtk jstyper <file.js> --any-policy=warn   # include with i32 fallback + warning (default)
+wasmtk jstyper <file.js> --any-policy=default # include with i32 fallback, silent
+wasmtk jstyper <file.js> -n out.ts       # override output path
 ```
 
 **Type mapping:**
 
-| `.d.ts` declared type | Merged `.ts` annotation | wasic result | Requires phase |
-| --- | --- | --- | --- |
-| `number` | `: number` | `f64` | None |
-| `string` | `: string` | `string` | None |
-| `boolean` | `: boolean` | `bool` | None |
-| `bigint` | `: bigint` | `i64` | None |
-| `i32`, `i64`, `f32`, `f64` (hand-edited) | exact annotation | exact WASM type | None |
-| `T[]` | `: T[]` | `i32` (pointer) | None |
-| `void` | `: void` | `void` | ✅ Phase 21 |
-| `never` | `: never` | `never` | ✅ Phase 21 |
-| `T \| null` | `: T \| null` | `T` (null stripped) | Phase 24 for runtime correctness |
-| `{ x: number; y: number }` | hoisted `interface` + `: Name` | `i32` (struct pointer) | None |
-| `any` | `: number` + warning | `f64` | None (configurable via `--any-policy`) |
-| `[A, B]` | hand-edited `.d.ts` → `type T = [A, B]` alias | `i32` (tuple pointer) | Phase 23 complete — inline tuple annotations supported |
-| `Promise<T>`, `Generator<...>` | warning + skip | — | Out of scope |
+| `.d.ts` type | Merged `.ts` type | wasic WASM result |
+| --- | --- | --- |
+| `i32`, `i64`, `f32`, `f64` | exact | exact WASM type |
+| `bool`, `boolean` | exact | `i32` (1/0) |
+| `string`, `void`, `never` | exact | as-is |
+| `number` | `f64` | `f64` |
+| `int` | `i32` | `i32` |
+| `float`, `double` | `f64` | `f64` |
+| `any` | `i32` + warning (configurable) | `i32` |
 
-**Phases 21–38 benefit as they land:**
+**Actionable diagnostics** — every warning and error includes the specific `.d.ts` filename, a verbatim corrected declaration, and the list of valid WASM types. For `--any-policy=skip`, a hint to use `--any-policy=warn` is appended. Example:
 
-| Phase | jstyper benefit after landing |
-| --- | --- |
-| ✅ 21 (`void`, `never`, `readonly`) | `: void` on zero-return functions correct; `readonly` stripped |
-| ✅ 22 (compile-time ops) | `const enum` members usable as annotation values; `as` assertions passthrough |
-| ✅ 23 (tuples) | tsc rarely infers true tuples from raw JS; hand-edited `.d.ts` can declare `type T = [A, B]` → full tuple support |
-| ✅ 24 (`null`/`undefined`) | `T \| null` in `.d.ts` survives merge; nullable locals, null checks, `??`, `??=` fully supported |
-| ✅ 25 (optional chaining / nullish) | `??` / `??=` / `\|\|=` / `&&=` fully compiled; transparent in function bodies |
-| ✅ 26 (for...of / destructuring) | Transparent — body patterns, not type annotations |
-| 27–28 (string/array methods) | Transparent — method calls in bodies, not signatures |
-| ✅ 29 (class enhancements) | String enum member types usable in `.d.ts` annotations; static fields, getters, setters compile correctly in wasic |
-| 30 (struct arrays) | `Vec2[]` and `string[]` become valid annotation types in `.d.ts` |
-| ✅ 31 (TypedArrays) | `Int32Array`, `Float64Array`, `Uint8Array` etc. now fully supported as annotation types; `shift`/`customLoadOp` in `ArrayLookup` means sub-word loads in `.d.ts`-driven programs produce correct byte reads |
-| 32 (discriminated unions) | Hand-edited `.d.ts` can declare tagged union shapes |
-| ✅ 33 (intersections) | `A & B` merged struct types fully supported as annotation types |
-| ✅ 34 (type predicates) | `param is Type` return annotations now supported; predicates compile to bool-returning WAT functions |
-| ✅ 35 (`typeof`/`keyof`) | `typeof x` in conditions/assignments now compile-time-resolved; `keyof T` in type positions normalised to `string` by source pre-pass |
-| ✅ 36 (conditional types) | `T extends U ? X : Y` declarations now fully resolved at compile time by `expandConditionalTypes()`; hand-edited `.d.ts` can use resolved concrete types directly without generic syntax |
-| ✅ 37 (`flat`/`flatMap`) | Transparent — body calls, not signature types |
-| 38 (extended math) | Transparent — body calls, not signature types |
-| 40 (WASM base64 bundling for JS build and Javy compile) | WASM binary embedded as base64 in JS output; Javy compile integration |
+```text
+⚠  jstyper: skipping 'process' — param 'data' is typed 'any' in utils.d.ts
+  Fix: replace 'any' with a concrete type in utils.d.ts:
+    export declare function process(x: i32, data: i32): i32;
+  Valid WASM types: i32, i64, f32, f64, bool, string, void
+  Or use --any-policy=warn to include it as i32 for now.
+```
 
-**Out-of-scope JS patterns (warning + skip):**
+**Implementation:** `src/jstyper.ts` — pure regex/brace-counting, no external dependencies. `parseJsFunctions()` handles regular functions, block-body arrows, and expression-body arrows. `parseDtsFunctions()` handles `export declare function` and `declare function` forms. `generateSkeletonDts()` produces the `--dts-only` output. `generateTypedTs()` merges and maps types.
 
-- CommonJS (`module.exports`, `require()`)
-- `async function` / `function*`
-- Prototype-based methods (`.prototype` assignments)
-- `arguments` object usage
-- Recursive object types
-- `Symbol`, `Map`, `Set`, `WeakMap`, `Promise`, `Generator`
+**Test coverage:** four wasic-compiled integration tests in `tests/wasm_wasi/` + `tests/jstyper_tests.ts` (73 unit assertions covering all parsing, generation, any-policy modes, and file I/O paths).
 
-**New files:** `jstyper.ts`
+**Known limitations:** no automatic `.d.ts` generation via `tsc` (no `npm:typescript` dependency — skeleton uses `number` placeholders for hand-editing); arrow functions with a single unparenthesised parameter (`x => x * 2`) are not parsed; transparent tsbundler integration (auto-detection of `.js` imports during `wasmtk wasic`) is Phase 40 preparation.
 
-**Changed files:** `deno.json` (add `npm:typescript` import + `./jstyper` export), `tsbundler.ts` (`.js` detection hook between lines 319–321), `main.ts` (`case "jstyper"` + help text)
+**Files added:** `src/jstyper.ts`, `tests/jstyper_tests.ts`, `tests/jstyper_fixtures/` (3 `.js` + `.d.ts` fixture pairs).
+
+**Files changed:** `main.ts` (`case "jstyper"`, `--dts-only`/`--dry-run`/`--any-policy` flags), `deno.json` (`"./jstyper"` export).
 
 ---
 

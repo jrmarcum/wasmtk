@@ -1,6 +1,6 @@
 {
   "name": "@jrmarcum/wasmtk",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "description": "A polyglot WASM toolkit for Deno: Run, inspect, and convert WASM/WAT and WASI modules with high compatibility.",
   "license": "MIT",
   "exports": {
@@ -14,7 +14,8 @@
     "./tsbundler": "./src/tsbundler.ts",
     "./console_log": "./src/console_log.ts",
     "./wasmbundle": "./src/wasmbundle.ts",
-    "./wasmmerge": "./src/wasmmerge.ts"
+    "./wasmmerge": "./src/wasmmerge.ts",
+    "./jstyper": "./src/jstyper.ts"
   },
   "bin": {
     "wasmtk": "./main.ts"

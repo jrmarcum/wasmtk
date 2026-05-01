@@ -24,6 +24,7 @@ import {
   convertFile,
   bundleTs
 } from "./src/utils.ts";
+import { runJstyper } from "./src/jstyper.ts";
 
 /**
  * Main entry point for the wasmtk CLI application.
@@ -51,8 +52,8 @@ async function main(): Promise<void> {
       h: "help",
       n: "name",
     },
-    boolean: ["version", "help"],
-    string: ["name", "on-conflict", "alias"],
+    boolean: ["version", "help", "dts-only", "dry-run"],
+    string: ["name", "on-conflict", "alias", "any-policy"],
   });
 
   if (args.version) {
@@ -79,6 +80,7 @@ Usage:
   wasmtk convert <file>                   Convert .wasm -> .wat and .wat -> .wasm
   wasmtk tsbundle <file.ts>               Bundle a .ts project to a single .js file
   wasmtk wasmbundle <a.wasm> [b.wasm...]  Bundle multiple .wasm files into a single library
+  wasmtk jstyper <file.js>               Convert .js + .d.ts to typed .ts for wasic compilation
 
 Options:
   -v, -V, --version            Show version information
@@ -88,6 +90,9 @@ Options:
       --on-conflict=alias      (wasmbundle) Auto-prefix conflicting exports with --alias values
       --on-conflict=exclude    (wasmbundle) Auto-exclude conflicting exports
       --alias a.wasm=x,...     (wasmbundle) Alias prefixes for conflict resolution
+      --dts-only               (jstyper) Generate skeleton .d.ts instead of .ts
+      --dry-run                (jstyper) Print output to stdout, don't write files
+      --any-policy=skip|warn|default  (jstyper) How to handle 'any' typed params/returns
     `);
     return;
   }
@@ -127,6 +132,20 @@ Options:
     case "tsbundle":
       await bundleTs(target, outPath ?? target.replace(/\.ts$/, ".js"));
       break;
+    case "jstyper": {
+      const anyPolicyRaw = args["any-policy"] as string | undefined;
+      const anyPolicy =
+        anyPolicyRaw === "skip" || anyPolicyRaw === "warn" || anyPolicyRaw === "default"
+          ? (anyPolicyRaw as "skip" | "warn" | "default")
+          : "warn";
+      await runJstyper(target, {
+        dtsOnly: args["dts-only"] as boolean | undefined,
+        dryRun: args["dry-run"] as boolean | undefined,
+        anyPolicy,
+        outPath,
+      });
+      break;
+    }
     case "wasmbundle": {
       const { runWasmBundle } = await import("./src/wasmbundle.ts");
       const inputFiles = args._.slice(1).map(String);
