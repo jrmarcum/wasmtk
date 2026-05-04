@@ -237,6 +237,30 @@ function watBaseType(t: WatType): "i32" | "i64" | "f32" | "f64" {
   return t as "i32" | "i64" | "f32" | "f64";
 }
 
+// Phase 41: WIT file generation helpers
+
+/** Converts a WatType to the corresponding WIT value type. Returns null for void/never. */
+function watTypeToWit(t: WatType | null): string | null {
+  if (!t || t === "never") return null;
+  switch (t) {
+    case "i32":    return "s32";
+    case "i64":    return "s64";
+    case "f32":    return "f32";
+    case "f64":    return "f64";
+    case "bool":   return "bool";
+    case "string": return "s32"; // linear-memory pointer (wasic string ABI uses ptr+len)
+    default:       return "s32";
+  }
+}
+
+/** Converts camelCase or snake_case identifiers to WIT kebab-case. */
+function toKebabCase(s: string): string {
+  return s
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/_/g, "-")
+    .toLowerCase();
+}
+
 interface FuncParam {
   name: string;
   type: WatType;
@@ -626,6 +650,14 @@ class WasicTranspiler {
   // Phase 34: type predicate functions: funcName → { paramName, targetType }
   // These functions return bool (i32) and annotate narrowing via "param is Type" return syntax.
   private typePredicateFuncs: Map<string, { paramName: string; targetType: string }> = new Map();
+
+  // Phase 40: external interface declarations via `declare const varName: { method(params): retType }`
+  // externalInterfaceTypes: interfaceName → methodName → { params, result }
+  private externalInterfaceTypes: Map<string, Map<string, { params: WatType[]; result: WatType | null }>> = new Map();
+  // externalBindings: varName → interfaceName
+  private externalBindings: Map<string, string> = new Map();
+  // usedExternalMethods: "$varName_method" → sig (populated during emission; drives WAT import generation)
+  private usedExternalMethods: Map<string, { params: WatType[]; result: WatType | null }> = new Map();
 
   constructor(source: string, mode: "wasi" | "library" = "wasi", externalFuncs: ExternalFuncDef[] = []) {
     this.src = stripComments(source);
@@ -3763,6 +3795,21 @@ class WasicTranspiler {
           return `(call $${funcName} ${emittedArgs.join(" ")})`.trim();
         }
       }
+
+      // Phase 40: external interface binding call in expression position
+      if (this.externalBindings.has(receiver)) {
+        const ifaceName = this.externalBindings.get(receiver)!;
+        const iface = this.externalInterfaceTypes.get(ifaceName);
+        const methodSig = iface?.get(methodName);
+        if (methodSig) {
+          const watFuncName = `$${receiver}_${methodName}`;
+          this.usedExternalMethods.set(watFuncName, methodSig);
+          const emittedArgs = args.map((a, i) =>
+            this.emitExpr(a, locals, methodSig.params[i] ?? ("i32" as WatType))
+          );
+          return `(call ${watFuncName} ${emittedArgs.join(" ")})`.trim();
+        }
+      }
     }
 
     // Spread call: foo(...arr) — passes arr pointer directly to rest-param function
@@ -5788,15 +5835,32 @@ class WasicTranspiler {
         }
       }
 
+      // Phase 40: external interface binding call as statement
+      if (this.externalBindings.has(receiver)) {
+        const ifaceName = this.externalBindings.get(receiver)!;
+        const iface = this.externalInterfaceTypes.get(ifaceName);
+        const methodSig = iface?.get(methodName);
+        if (methodSig) {
+          const watFuncName = `$${receiver}_${methodName}`;
+          this.usedExternalMethods.set(watFuncName, methodSig);
+          const emittedArgs = args.map((a, i) =>
+            this.emitExpr(a, locals, methodSig.params[i] ?? ("i32" as WatType))
+          );
+          const call = `(call ${watFuncName} ${emittedArgs.join(" ")})`.trim();
+          return methodSig.result ? `(drop ${call})` : call;
+        }
+      }
+
       // Receiver is not `this`, not a class instance, not a class, not an interface variable,
-      // and not a namespace: it is an undeclared/unimported identifier.
+      // not a namespace, and not a declared external binding: it is an undeclared/unimported identifier.
       if (receiver !== "this") {
         const isKnown = this.classVars.has(receiver) || this.classDefs.has(receiver)
-          || this.interfaceVars.has(receiver) || this.namespaceDefs.has(receiver);
+          || this.interfaceVars.has(receiver) || this.namespaceDefs.has(receiver)
+          || this.externalBindings.has(receiver);
         if (!isKnown) {
           console.error(`❌ wasic: '${receiver}' is not defined — '${receiver}.${methodName}(...)' cannot be compiled`);
           console.error(`   Note: '${receiver}' was not imported or declared in this module.`);
-          console.error(`   If '${receiver}' is an external module, import the required function(s) directly (e.g. import { ${methodName} } from "...").`);
+          console.error(`   If '${receiver}' is an external module, use: declare const ${receiver}: { ${methodName}(...): ReturnType }`);
           rt.exit(1);
         }
       }
@@ -6613,6 +6677,13 @@ class WasicTranspiler {
       lines.push(
         `  (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))`
       );
+    }
+    // Phase 40: emit import declarations for each external interface method actually called.
+    for (const [funcName, sig] of this.usedExternalMethods) {
+      const fieldName = funcName.slice(1); // strip leading "$"
+      const paramStr = sig.params.map(p => `(param ${watBaseType(p)})`).join(" ");
+      const resultStr = sig.result ? ` (result ${watBaseType(sig.result)})` : "";
+      lines.push(`  (import "env" "${fieldName}" (func ${funcName}${paramStr ? " " + paramStr : ""}${resultStr}))`);
     }
     return lines.join("\n");
   }
@@ -8921,6 +8992,115 @@ class WasicTranspiler {
     }
   }
 
+  // Phase 41: generate a WIT (WebAssembly Interface Types) file describing this module.
+  // Must be called AFTER transpile() so usedExternalMethods is fully populated.
+  generateWit(moduleName: string): string {
+    const pkg = toKebabCase(moduleName);
+    const lines: string[] = [
+      `// Generated by wasmtk wasic — do not edit manually`,
+      `package local:${pkg};`,
+      ``,
+      `world ${pkg} {`,
+    ];
+
+    // External imports (Phase 40 bindings → WIT import statements)
+    for (const [watFuncName, sig] of this.usedExternalMethods) {
+      const fieldName = watFuncName.slice(1); // strip leading "$"
+      const witName   = toKebabCase(fieldName);
+      const paramStr  = sig.params.map((p, i) => `p${i}: ${watTypeToWit(p) ?? "s32"}`).join(", ");
+      const resultWit = watTypeToWit(sig.result);
+      const resultStr = resultWit ? ` -> ${resultWit}` : "";
+      lines.push(`  import ${witName}: func(${paramStr})${resultStr};`);
+    }
+
+    // Exported user functions (Phase 40 imports are excluded — they have no body)
+    const INTERNAL = new Set(["_start", "_initialize"]);
+    const exportedFns = this.functions.filter(
+      f => f.exported && !f.isClosureFactory && !INTERNAL.has(f.name)
+    );
+
+    if (this.usedExternalMethods.size > 0 && exportedFns.length > 0) lines.push("");
+
+    for (const fn of exportedFns) {
+      const witName   = toKebabCase(fn.name);
+      const paramParts: string[] = [];
+      for (const p of fn.params) {
+        if (p.name === "__self") continue; // class `this` pointer — not part of public API
+        if (p.type === "string") {
+          // wasic string ABI: two i32 locals (ptr + len)
+          paramParts.push(`${toKebabCase(p.name)}-ptr: s32`);
+          paramParts.push(`${toKebabCase(p.name)}-len: s32`);
+        } else {
+          const wt = watTypeToWit(p.type);
+          if (wt) paramParts.push(`${toKebabCase(p.name)}: ${wt}`);
+        }
+      }
+      const paramStr  = paramParts.join(", ");
+      const resultWit = watTypeToWit(fn.result);
+      const resultStr = resultWit ? ` -> ${resultWit}` : "";
+      lines.push(`  export ${witName}: func(${paramStr})${resultStr};`);
+    }
+
+    lines.push(`}`);
+    return lines.join("\n") + "\n";
+  }
+
+  // Phase 40: parse method signatures from an interface body string.
+  private parseExternalInterfaceBody(body: string): Map<string, { params: WatType[]; result: WatType | null }> {
+    const methods = new Map<string, { params: WatType[]; result: WatType | null }>();
+    const methodRe = /(\w+)\s*\(([^)]*)\)\s*:\s*([\w\[\]]+)/g;
+    let mm: RegExpExecArray | null;
+    while ((mm = methodRe.exec(body)) !== null) {
+      const mname = mm[1];
+      const rawParams = mm[2];
+      const rawResult = mm[3].trim();
+      const params: WatType[] = rawParams.trim()
+        ? rawParams.split(",").map(p => {
+            const ci = p.indexOf(":");
+            const rawT = ci !== -1 ? p.slice(ci + 1).trim() : "i32";
+            return mapType(rawT) as WatType;
+          })
+        : [];
+      const result: WatType | null = rawResult === "void" ? null : mapType(rawResult) as WatType;
+      methods.set(mname, { params, result });
+    }
+    return methods;
+  }
+
+  // Phase 40: extract and remove `declare interface` and `declare const` external bindings from source.
+  private parseExternalDeclarations(): void {
+    // 1. Named interface declarations: declare interface Name { method(p): retType; ... }
+    const ifaceRe = /declare\s+interface\s+(\w+)\s*\{([^}]*)\}/g;
+    let m: RegExpExecArray | null;
+    while ((m = ifaceRe.exec(this.src)) !== null) {
+      this.externalInterfaceTypes.set(m[1], this.parseExternalInterfaceBody(m[2]));
+    }
+    this.src = this.src.replace(/declare\s+interface\s+\w+\s*\{[^}]*\}/g, "");
+
+    // 2. Inline object-type bindings: declare const varName: { method(p): retType; ... };
+    const inlineRe = /declare\s+const\s+(\w+)\s*:\s*\{([^}]*)\}\s*;?/g;
+    while ((m = inlineRe.exec(this.src)) !== null) {
+      const varName = m[1];
+      const syntheticName = `__ext_${varName}`;
+      this.externalInterfaceTypes.set(syntheticName, this.parseExternalInterfaceBody(m[2]));
+      this.externalBindings.set(varName, syntheticName);
+    }
+    this.src = this.src.replace(/declare\s+const\s+\w+\s*:\s*\{[^}]*\}\s*;?/g, "");
+
+    // 3. Named-type bindings: declare const varName: InterfaceName;
+    const namedRe = /declare\s+const\s+(\w+)\s*:\s*(\w+)\s*;?/g;
+    while ((m = namedRe.exec(this.src)) !== null) {
+      const varName = m[1];
+      const typeName = m[2];
+      if (this.externalInterfaceTypes.has(typeName)) {
+        this.externalBindings.set(varName, typeName);
+      }
+    }
+    this.src = this.src.replace(/declare\s+const\s+(\w+)\s*:\s*\w+\s*;?/g, (_full, vn) =>
+      this.externalBindings.has(vn) ? "" : _full
+    );
+  }
+
   transpile(_moduleName: string): string {
     // Pre-pass: expand generic templates by monomorphization before any other parsing
     this.src = this.expandGenerics(this.src);
@@ -8931,6 +9111,8 @@ class WasicTranspiler {
     // Also strip `type Alias = keyof T` declarations (they become the `string` type inline).
     this.src = this.src.replace(/:\s*keyof\s+\w+/g, ": string");
     this.src = this.src.replace(/(?:export\s+)?type\s+\w+\s*=\s*keyof\s+\w+\s*;?/gm, "");
+    // Phase 40: extract external interface declarations before any other parse pass.
+    this.parseExternalDeclarations();
     this.parseEnums();
     this.parseDiscriminatedUnions(); // Phase 32: must precede parseStructs so DU types are pre-registered
     this.parseStructs();
@@ -9510,8 +9692,12 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
 
   const result = await watToOptimisedWasm(wat, watPath, out);
   if (result.success) {
+    // Phase 41: emit .wit interface file alongside the compiled .wasm
+    const witPath = out.replace(/\.wasm$/, ".wit");
+    await rt.writeTextFile(witPath, transpiler.generateWit(name));
     console.log(`✅ WASI: ${out} (${result.sizeBytes} bytes)`);
     console.log(`   WAT:  ${watPath}`);
+    console.log(`   WIT:  ${witPath}`);
     if (wasmImports.length > 0) {
       console.log(`   Merged: ${wasmImports.map(e => e.prefix).join(", ")}`);
     }
@@ -9612,8 +9798,12 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
 
   const result = await watToOptimisedWasm(wat, watPath, out);
   if (result.success) {
+    // Phase 41: emit .wit interface file alongside the compiled .wasm
+    const witPath = out.replace(/\.wasm$/, ".wit");
+    await rt.writeTextFile(witPath, transpiler.generateWit(name));
     console.log(`✅ Library: ${out} (${result.sizeBytes} bytes)`);
     console.log(`   WAT:  ${watPath}`);
+    console.log(`   WIT:  ${witPath}`);
     if (wasmImports.length > 0) {
       console.log(`   Merged: ${wasmImports.map(e => e.prefix).join(", ")}`);
     }

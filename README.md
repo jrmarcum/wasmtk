@@ -315,6 +315,30 @@ wasmtk run myprogram.wasm
 | Tuple return | `function minMax(a: i32, b: i32): [i32, i32] { return [a, b]; }` — heap-allocates struct via `$__malloc`, stores fields, returns pointer |
 | Tuple parameters | `function sumPair(p: Pair): i32 { return p[0] + p[1]; }` — received as i32 pointer; fields loaded at offsets |
 
+##### External Interface Bindings
+
+| Feature | Notes |
+| --- | --- |
+| Inline external binding | `declare const host: { log(ptr: i32): void; getTime(): i32 }` — each method compiles to `(import "env" "host_log" ...)` and `(import "env" "host_getTime" ...)` in the WASM binary |
+| Named external interface | `declare interface Logger { log(ptr: i32): void }` then `declare const logger: Logger` — two-declaration form; interface can be reused across multiple bindings |
+| Multiple external bindings | Any number of `declare const` / `declare interface` bindings in one file; each gets its own set of `(import "env" ...)` declarations |
+| Supported method types | Parameters and return types: `i32`, `i64`, `f32`, `f64`, `bool`, `void` — same type set as the wasic function ABI |
+| Call-site verification | Methods called on the binding are type-checked at compile time against the declared signature |
+| Host stub proxy | The test runner provides a no-op Proxy for `env` imports — any undeclared method returns `0`; real host implementations replace these stubs |
+
+##### WIT File Generation
+
+After every successful `wasmtk wasic` or `wasmtk modc` compilation a `.wit` file is written alongside the `.wasm` output.
+
+| Feature | Notes |
+| --- | --- |
+| Automatic generation | `.wit` written at the same path as the output `.wasm` (e.g. `mylib.wasm` → `mylib.wit`) with no extra flags required |
+| Export section | Each `export function` becomes a WIT `export name: func(...)` declaration; internal runtime helpers and closure factories are excluded |
+| Import section | Phase 40 external bindings that are actually called in the source become WIT `import name: func(...)` declarations |
+| WIT types | `i32→s32`, `i64→s64`, `f32→f32`, `f64→f64`, `bool→bool`; `void` return → no `-> type` clause |
+| Kebab-case names | Function names are automatically converted to WIT-compliant kebab-case (e.g. `logMessage` → `log-message`) |
+| Package format | `package local:module-name; world module-name { ... }` |
+
 ##### Generics
 
 `wasic` monomorphizes generic functions and structs at compile time — zero runtime overhead, no boxing, no type-erasure penalty.
@@ -445,7 +469,6 @@ Patterns 1–3 route through a named function that `_start` calls. Patterns 4–
 | --- | --- |
 | Class inheritance (`extends`) | Deferred — virtual dispatch via vtable requires heap |
 | Multi-dimensional arrays beyond `i32[][]` | Phase 6d covers `i32[][]`; `f64[][]` and deeper nesting not yet implemented |
-| External interface mapping | Calls to an undeclared/unimported object (e.g. `logger.log(ptr)` where `logger` was never imported) are **rejected at compile time** with `❌ wasic: 'logger' is not defined` and a hint to import the function directly — no WIT / custom-section binding yet; Phase 40 will upgrade this static rejection to a full signature-verified binding; see `tests/wasm_wasi/ExternalMapping_11b.ts` |
 
 > **Why the limitations?** `wasic` compiles directly to raw WAT with no runtime. Dynamic allocation, garbage collection, and prototype semantics cannot be expressed without an embedded runtime library. Use `wasmtk javyc` for programs that need them today.
 
@@ -697,6 +720,8 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | 37 (2026-07-14) | `flat()` / `flatMap(fn)` | **`flat()`:** one-level flatten of `i32[][]` or `f64[][]` into a 1D array — two-pass WAT helper `$__dynarr_flat_T`: (1) walk outer array (i32 ptrs, shift=2), sum all inner `.length` headers to get `totalLen`; (2) allocate result array of `totalLen` elements; (3) copy inner elements using the element type's shift/load/store. **`flatMap(fn)`:** for each element of a 1D array, call `fn(elem)` via `call_indirect` (functype `(T) → i32`, the i32 being a pointer to an inner `T[]`), then flatten — two-pass WAT helper `$__dynarr_flatmap_T`: allocates a raw temp buffer (`len × 4` bytes, no header) to store inner array ptrs from pass 1, accumulates `totalLen`, allocates result in pass 2, copies. Calling `fn` exactly once per element avoids side-effect duplication. `findDynamicArrays` regex extended to include `flat` and `flatMap` so source arrays are auto-promoted to dynamic layout. `flat()` guards `arrInfo.is2D` — calling it on a 1D array is a compile-time stub. `flatMap` callbacks must be named functions (no inline arrows); the callback's TypeScript return type (`T[]`) maps to WAT `(result i32)` — the same convention as all other array-returning functions. Three test files: `FlatArray_37`, `FlatMapArray_37`, `Phase37Combined_37` — 127/127 suite |
 | 38 (2026-07-14) | Extended math via external `mathlib.wasm` | **Architecture:** `src/wasm/mathlib.wat` is a standalone WAT module (21 exported functions) compiled to `src/wasm/mathlib.wasm` (binary embedded as `MATHLIB_BYTES` in `src/wasm/mathlib_bytes.ts`). When any Phase 38 `Math.*` function appears in a compiled file, `transpiler.needsMathLib` is set and `compileWasiTs`/`compileLibraryTs` call `mergeOneWasmImport(wat, MATHLIB_BYTES, "mathlib", ...)` to splice the library into the WAT before Binaryen sees it — so dead-stripping and inlining work across the full merged module. **Naming:** wasic emits `(call $mathlib_sin arg)` etc.; `mergeWasmWat` applies the `"mathlib"` prefix to all exported symbols. **Global relocation:** `renameGlobalRefs()` in `wasmmerge.ts` rewrites numeric `global.get N` / `global.set N` references in merged bodies to named `$mathlib_globalN` refs, necessary because the RNG state global (i64) shifts index after the main module's globals are prepended. **`$atan` two-stage range reduction:** complement (z→1/z for z>1) + mid-range ((z-1)/(z+1) for z>tan(π/8)≈0.4142) before the fdlibm aT[0..10] minimax polynomial; four result cases based on which reductions applied; formula `r = z − z³t` (subtraction). **Bug fixes:** (1) greedy `Math.fn(...)` regex in both `wasic.ts` and `console_log.ts` now validates that argsStr has no unmatched `)` at depth 0 — compound expressions like `Math.sin(a) * Math.sin(a) + Math.cos(a) * Math.cos(a)` previously matched as a single `Math.sin(...)` call; (2) `exprToWat` in `console_log.ts` gained a `globals?: Map<string, string>` 8th parameter so module-level f64 globals used as arguments to nested Math calls (e.g. `Math.exp(x)`) emit `(global.get $x)` instead of a comment stub. Five test files: `MathTrig_38`, `MathExpLog_38`, `MathHyperbolic_38`, `MathRandom_38`, `Phase38Combined_38` — 132/132 suite |
 | 39 (2026-07-14) | `jstyper` — `.d.ts`-based JS import pre-processor | **Architecture:** `src/jstyper.ts` — pure regex/brace-counting implementation with no external dependencies. **Pipeline:** `parseJsFunctions()` extracts function bodies from `.js` (regular functions + arrow functions, block and expression bodies, nested-brace-safe via string-aware `extractBraceBlock()`); `parseDtsFunctions()` extracts typed signatures from `.d.ts` (`export declare function` / `declare function` forms); `generateTypedTs()` merges bodies + types into a typed `.ts` wasic can compile. **Type mapping:** `number→f64`, `int→i32`, `float\|double→f64`; WASM primitives (`i32`, `i64`, `f32`, `f64`, `bool`, `string`, `void`, `never`) pass through unchanged; `any` controlled by `--any-policy`. **`--dts-only` mode:** `generateSkeletonDts()` emits a `number`-typed skeleton `.d.ts` with `@auto-generated by jstyper` header for hand-editing. **`--dry-run`:** prints output to stdout without writing files. **`--any-policy` modes:** `skip` (exclude function + warning with corrected declaration), `warn` (include with `i32` fallback + warning), `default` (include with `i32` silently). **Actionable diagnostics:** every warning and error is multi-line with a "Fix:" block naming the specific file, showing the corrected declaration verbatim, listing valid WASM types, and (for skip mode) offering the `--any-policy=warn` escape hatch; `correctedDecl()` helper reconstructs the declaration with `any→i32` substituted. **CLI:** `wasmtk jstyper <file.js> [--dts-only] [--dry-run] [--any-policy=skip\|warn\|default] [-n out]`. **Tests:** four wasic-compiled `wasm_wasi` test files (`JstyperBasic_39`, `JstyperF64_39`, `JstyperMixed_39`, `Phase39Combined_39`) + `tests/jstyper_tests.ts` unit runner (73 assertions covering all parsing, generation, and pipeline paths). **New files:** `src/jstyper.ts`, `tests/jstyper_tests.ts`, `tests/jstyper_fixtures/` (3 fixture pairs). **Changed:** `main.ts` (`case "jstyper"`, `--dts-only`/`--dry-run`/`--any-policy` flags), `deno.json` (`"./jstyper"` export). Four wasic test files: `JstyperBasic_39`, `JstyperF64_39`, `JstyperMixed_39`, `Phase39Combined_39` — 136/136 suite |
+| 40 (2026-07-14) | External interface mapping via `declare const` / `declare interface` | **`declare const host: { log(ptr: i32): void; getTime(): i32 }`** — inline object type; each method compiles to `(import "env" "host_log" ...)` + `(import "env" "host_getTime" ...)`. **`declare interface Logger { ... }` + `declare const logger: Logger`** — named form; interface defined once, bound by name. **`parseExternalDeclarations()`** three-pass preprocessor strips declarations before other parsers; `externalInterfaceTypes` + `externalBindings` maps drive call-site emission; `usedExternalMethods` tracks actually-called methods and drives `emitWasiImports()` to emit `(import "env" ...)` declarations. **Runner stub proxy:** `env` import object in test runner is a JavaScript `Proxy` — any unrecognised key returns a no-op `() => 0` stub, allowing Phase 40 WASM modules to instantiate without a real host. **Error message improvement:** undeclared dot-call receivers now suggest the Phase 40 `declare const` syntax. `ExternalMapping_11b.ts` upgraded from `@expect-fail: compile` to a fully-passing test. Six test files: `BasicExternalDecl_40`, `ExternalInterfaceType_40`, `MultiMethodExternal_40`, `ExternalReturnValue_40`, `Phase40Combined_40`, `ExternalMapping_11b` (upgraded) — 142/142 suite |
+| 41 (2026-07-14) | WIT file generation | After every successful `wasic` or `modc` compilation, a `.wit` file is written alongside the `.wasm` output. **`watTypeToWit()`** maps WAT types to WIT types (`i32→s32`, `i64→s64`, `f32→f32`, `f64→f64`, `bool→bool`). **`toKebabCase()`** converts camelCase/snake_case function names to WIT-compliant kebab-case. **`generateWit(moduleName)`** public method on `WasicTranspiler` produces `package local:name; world name { import ...; export ...; }` — imports from `usedExternalMethods` (Phase 40 externals); exports from `this.functions` filtered by `exported && !isClosureFactory && !INTERNAL`. **`_start`/`_initialize` excluded from exports; `__self` params skipped.** Compile log prints `WIT: <path>` alongside the existing `WAT: <path>` line. Four test files: `BasicWitGen_41`, `WitReturnTypes_41`, `WitWithExternalImports_41`, `Phase41Combined_41` — 146/146 suite |
 
 ---
 
@@ -907,11 +932,97 @@ The TypeScript-to-JS bundler command is renamed from `bundle` to `tsbundle` to c
 
 ### Planned Phases
 
-Phase 40 extends the toolchain with host-interface binding. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
+All planned phases through 41 are complete. No additional phases are currently scheduled. Future phases may extend the WIT pipeline (multi-component linking), add string ABI improvements, or expand the `jstyper` integration. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
 
-| Phase | Feature | Strategy |
-| --- | --- | --- |
-| 40 | External interface mapping (WIT / custom section) | `modc` / `wasic` accept a `.wit` file or WASM custom section declaring an external interface (e.g. `interface Logger { log(msgPtr: i32): void; }`); compiler verifies call sites match the declared signature; host provides the concrete implementation at link time — upgrades the current compile-time rejection (`❌ wasic: 'logger' is not defined`) to a full signature-verified binding; see `tests/wasm_wasi/ExternalMapping_11b.ts` |
+---
+
+#### Phase 41 — WIT File Generation ✅
+
+Every `wasmtk wasic` and `wasmtk modc` compilation now automatically produces a `.wit` file alongside the `.wasm` output with no extra flags. The WIT file describes the module's complete host-visible interface using the [WebAssembly Interface Types](https://component-model.bytecodealliance.org/design/wit.html) format.
+
+**Output format:**
+
+```wit
+package local:my-module;
+
+world my-module {
+  import host-log: func(ptr: s32);
+  import host-get-time: func() -> s32;
+
+  export add: func(a: s32, b: s32) -> s32;
+  export multiply: func(a: f64, b: f64) -> f64;
+}
+```
+
+**Import section** — every Phase 40 external binding method that is actually called in the source (tracked in `usedExternalMethods`) becomes a WIT `import` entry. The method name (without the `$` prefix) is converted to kebab-case.
+
+**Export section** — every `export function` in the TypeScript source (excluding `_start`, `_initialize`, and internal closure factories) becomes a WIT `export` entry. Parameters typed as `string` are represented as `s32` (pointer); wasic's ptr+len ABI is not fully expressible in WIT at this time.
+
+**Type mapping:**
+
+| WAT type | WIT type |
+| --- | --- |
+| `i32` | `s32` |
+| `i64` | `s64` |
+| `f32` | `f32` |
+| `f64` | `f64` |
+| `bool` | `bool` |
+| `void` / no return | *(no `-> type` clause)* |
+| `string` | `s32` *(pointer only)* |
+
+**Compile log output:**
+
+```text
+   WAT:  myprogram.wat
+   WIT:  myprogram.wit
+   OUT:  myprogram.wasm
+```
+
+**Implementation:** `watTypeToWit()` module-level helper for type mapping; `toKebabCase()` for identifier conversion; `generateWit(moduleName)` public method on `WasicTranspiler`; called in `compileWasiTs()` and `compileLibTs()` after `watToOptimisedWasm()` succeeds.
+
+**Test coverage:** four wasic-compiled integration tests — `BasicWitGen_41` (i32/f64 exports), `WitReturnTypes_41` (all four return type variants), `WitWithExternalImports_41` (import + export sections together), `Phase41Combined_41` (full combination of Phase 40 imports and Phase 41 WIT generation).
+
+**Known limitations:** string parameters are represented as `s32` (pointer only — the length parameter of wasic's ptr+len ABI is not visible in WIT); generic / template-instantiated function names appear in their monomorphized form (`add_i32`, `add_f64`).
+
+---
+
+#### Phase 40 — External Interface Mapping ✅
+
+Phase 40 adds `declare const` / `declare interface` syntax for binding TypeScript source code to host-provided WASM imports. External methods are verified at compile time against their declared signatures and emit `(import "env" "...")` declarations in the output WASM.
+
+**Two binding forms:**
+
+```typescript
+// Form 1 — inline object type
+declare const host: {
+  log(ptr: i32): void;
+  getTime(): i32;
+};
+
+// Form 2 — named interface
+declare interface Logger {
+  log(ptr: i32): void;
+  getLevel(): i32;
+}
+declare const logger: Logger;
+```
+
+**Compiled WAT output:**
+
+```wat
+(import "env" "host_log"     (func $host_log     (param i32)))
+(import "env" "host_getTime" (func $host_getTime (result i32)))
+```
+
+The import field name (`host_log`) is the binding variable name + `_` + method name. The same string becomes the WAT function name (with `$` prefix).
+
+**Pipeline:** `parseExternalDeclarations()` runs as a three-pass preprocessor in `transpile()` — (1) `declare interface` declarations populate `externalInterfaceTypes`, (2) inline `declare const` forms create synthetic interface entries, (3) named `declare const` forms look up `externalInterfaceTypes` and register in `externalBindings`. All declarations are stripped from source before any downstream parser sees them. Call-site emission records each actually-called method in `usedExternalMethods`; `emitWasiImports()` iterates `usedExternalMethods` to produce the final `(import "env" ...)` declarations.
+
+**Test runner support:** the `env` import object in `runWasi` is now a JavaScript `Proxy` that stubs any undeclared key with `() => 0` — WASM modules with external bindings instantiate without a real host implementation.
+
+**Test coverage:** six test files — `BasicExternalDecl_40`, `ExternalInterfaceType_40`, `MultiMethodExternal_40`, `ExternalReturnValue_40`, `Phase40Combined_40`, and `ExternalMapping_11b` (upgraded from a negative compile-error test to a fully-passing Phase 40 test).
+
+**Known limitations:** nested object types in method signatures (`declare const x: { method(a: { b: i32 }): void }`) are not supported. Only the inline and named-interface forms are recognised. Bare `declare function` / `declare module` / `declare class` are not handled.
 
 ---
 
@@ -980,7 +1091,7 @@ wasmtk jstyper <file.js> -n out.ts       # override output path
 
 **Test coverage:** four wasic-compiled integration tests in `tests/wasm_wasi/` + `tests/jstyper_tests.ts` (73 unit assertions covering all parsing, generation, any-policy modes, and file I/O paths).
 
-**Known limitations:** no automatic `.d.ts` generation via `tsc` (no `npm:typescript` dependency — skeleton uses `number` placeholders for hand-editing); arrow functions with a single unparenthesised parameter (`x => x * 2`) are not parsed; transparent tsbundler integration (auto-detection of `.js` imports during `wasmtk wasic`) is Phase 40 preparation.
+**Known limitations:** no automatic `.d.ts` generation via `tsc` (no `npm:typescript` dependency — skeleton uses `number` placeholders for hand-editing); arrow functions with a single unparenthesised parameter (`x => x * 2`) are not parsed; transparent tsbundler integration (auto-detection of `.js` imports during `wasmtk wasic`) is deferred to a future phase.
 
 **Files added:** `src/jstyper.ts`, `tests/jstyper_tests.ts`, `tests/jstyper_fixtures/` (3 `.js` + `.d.ts` fixture pairs).
 
