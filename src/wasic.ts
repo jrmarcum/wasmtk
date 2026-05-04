@@ -248,7 +248,7 @@ function watTypeToWit(t: WatType | null): string | null {
     case "f32":    return "f32";
     case "f64":    return "f64";
     case "bool":   return "bool";
-    case "string": return "s32"; // linear-memory pointer (wasic string ABI uses ptr+len)
+    case "string": return "string"; // WIT native string type; jco handles ptr+len lifting
     default:       return "s32";
   }
 }
@@ -9026,14 +9026,8 @@ class WasicTranspiler {
       const paramParts: string[] = [];
       for (const p of fn.params) {
         if (p.name === "__self") continue; // class `this` pointer — not part of public API
-        if (p.type === "string") {
-          // wasic string ABI: two i32 locals (ptr + len)
-          paramParts.push(`${toKebabCase(p.name)}-ptr: s32`);
-          paramParts.push(`${toKebabCase(p.name)}-len: s32`);
-        } else {
-          const wt = watTypeToWit(p.type);
-          if (wt) paramParts.push(`${toKebabCase(p.name)}: ${wt}`);
-        }
+        const wt = watTypeToWit(p.type);
+        if (wt) paramParts.push(`${toKebabCase(p.name)}: ${wt}`);
       }
       const paramStr  = paramParts.join(", ");
       const resultWit = watTypeToWit(fn.result);

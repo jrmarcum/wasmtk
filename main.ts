@@ -81,6 +81,7 @@ Usage:
   wasmtk tsbundle <file.ts>               Bundle a .ts project to a single .js file
   wasmtk wasmbundle <a.wasm> [b.wasm...]  Bundle multiple .wasm files into a single library
   wasmtk jstyper <file.js>               Convert .js + .d.ts to typed .ts for wasic compilation
+  wasmtk componentize <file.ts|.wasm>    Wrap a wasic module as a WASI p2 component (requires jco)
 
 Options:
   -v, -V, --version            Show version information
@@ -93,6 +94,7 @@ Options:
       --dts-only               (jstyper) Generate skeleton .d.ts instead of .ts
       --dry-run                (jstyper) Print output to stdout, don't write files
       --any-policy=skip|warn|default  (jstyper) How to handle 'any' typed params/returns
+      (componentize) Requires jco: npm install -g @bytecodealliance/jco
     `);
     return;
   }
@@ -164,6 +166,16 @@ Options:
         }
       }
       await runWasmBundle(inputFiles, bundleOut, onConflict, aliases);
+      break;
+    }
+    case "componentize": {
+      const { runComponentize } = await import("./src/componentize.ts");
+      let wasmTarget = target;
+      if (target.endsWith(".ts")) {
+        await compileWasi(target);
+        wasmTarget = target.replace(/\.ts$/, ".wasm");
+      }
+      await runComponentize(wasmTarget, outPath);
       break;
     }
     default:

@@ -2,6 +2,6 @@
 package local:truthiness-and-branching-core;
 
 world truthiness-and-branching-core {
-  export is-truthy-string: func(a-ptr: s32, a-len: s32) -> bool;
+  export is-truthy-string: func(a: string) -> bool;
   export ternary-compare: func(a: f64, b: f64) -> s32;
 }

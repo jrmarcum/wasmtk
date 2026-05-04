@@ -2,8 +2,8 @@
 package local:lexigraphical-comparisons-core;
 
 world lexigraphical-comparisons-core {
-  export test-string-lt: func(a-ptr: s32, a-len: s32, b-ptr: s32, b-len: s32) -> bool;
-  export test-string-gt: func(a-ptr: s32, a-len: s32, b-ptr: s32, b-len: s32) -> bool;
-  export test-string-le: func(a-ptr: s32, a-len: s32, b-ptr: s32, b-len: s32) -> bool;
-  export test-string-ge: func(a-ptr: s32, a-len: s32, b-ptr: s32, b-len: s32) -> bool;
+  export test-string-lt: func(a: string, b: string) -> bool;
+  export test-string-gt: func(a: string, b: string) -> bool;
+  export test-string-le: func(a: string, b: string) -> bool;
+  export test-string-ge: func(a: string, b: string) -> bool;
 }
