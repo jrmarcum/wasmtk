@@ -195,12 +195,12 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
     // Phase 40: use a Proxy so any external interface method not explicitly listed
     // receives a no-op stub (returns 0) rather than causing an instantiation LinkError.
     const envBase: Record<string, (...args: unknown[]) => unknown> = {
-      "console.log": (ptr: number) => {
+      "console.log": (ptr: unknown) => {
         if (!wasiInstance) return;
         const memory = wasiInstance.exports.memory as WebAssembly.Memory;
-        const view = new Uint32Array(memory.buffer, ptr - 4, 1);
+        const view = new Uint32Array(memory.buffer, (ptr as number) - 4, 1);
         const len = view[0];
-        const strBuf = new Uint16Array(memory.buffer, ptr, len / 2);
+        const strBuf = new Uint16Array(memory.buffer, ptr as number, len / 2);
         console.log(String.fromCharCode(...strBuf));
       },
       abort: (): void => { throw new WebAssembly.RuntimeError("abort"); },
