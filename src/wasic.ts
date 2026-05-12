@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @module wasic
  * @description Standalone WASI compiler producing compact WebAssembly modules
  * without external toolchains or embedded JS runtimes.
@@ -136,6 +136,7 @@ import {
   type LogSegment,
   type StructFieldLookup,
   type DotCallLookup,
+  type ClosureVarLookup,
 } from "./console_log.ts";
 
 // ---------------------------------------------------------------------------
@@ -330,6 +331,10 @@ interface FuncDef {
   sharedMutableCaptures?: Set<string>;
   /** Phase 5h: captured params that are heap cell pointers (boxed) rather than plain values. */
   boxedCaptures?: Set<string>;
+  /** For inner functions with mutable captures: maps capture name → {type, offset} in the closure struct.
+   *  When set, the inner function takes $__closure_ptr (i32) as its first param and accesses
+   *  mutable captures via f64.load/f64.store (or i32.load/i32.store) through the closure pointer. */
+  closureCaptureLayout?: Map<string, { type: WatType; offset: number }>;
 }
 
 /** Maps TypeScript type annotation strings to WAT types (or the "string"/"never" pseudo-types).
@@ -484,11 +489,43 @@ function inferInitType(
   return "f64";
 }
 
-/** Strips JS/TS comments from source. */
+/** Strips JS/TS comments from source, respecting string literals. */
 function stripComments(src: string): string {
-  return src
-    .replace(/\/\/[^\n]*/g, "")
-    .replace(/\/\*[\s\S]*?\*\//g, "");
+  let result = "";
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === '"' || ch === "'") {
+      // String literal — copy verbatim until matching unescaped closing quote
+      result += src[i++];
+      while (i < src.length) {
+        const sc = src[i];
+        if (sc === '\\') { result += src[i++]; if (i < src.length) result += src[i++]; continue; }
+        result += src[i++];
+        if (sc === ch) break;
+      }
+    } else if (ch === '`') {
+      // Template literal — copy verbatim until closing backtick (no nested ${} handling needed)
+      result += src[i++];
+      while (i < src.length) {
+        const sc = src[i];
+        if (sc === '\\') { result += src[i++]; if (i < src.length) result += src[i++]; continue; }
+        result += src[i++];
+        if (sc === '`') break;
+      }
+    } else if (ch === '/' && src[i + 1] === '/') {
+      // Line comment — skip to end of line
+      while (i < src.length && src[i] !== '\n') i++;
+    } else if (ch === '/' && src[i + 1] === '*') {
+      // Block comment — skip to */
+      i += 2;
+      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++;
+      if (i < src.length) i += 2;
+    } else {
+      result += src[i++];
+    }
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -586,6 +623,8 @@ class WasicTranspiler {
   private currentBoxedCaptures: Set<string> = new Set();
   // Phase 5h: shared mutable captures for the enclosing factory function currently being emitted.
   private currentSharedMutableCaptures: Set<string> = new Set();
+  // Mutable closure captures for the inner function currently being emitted: name → {type, offset}.
+  private currentClosureCaptureLayout: Map<string, { type: WatType; offset: number }> = new Map();
 
   // Tracks which Math.* WAT helper functions are needed (emitted on demand)
   private mathHelpers: Set<string> = new Set();
@@ -638,9 +677,14 @@ class WasicTranspiler {
   // Phase 24: set to true when any nullable-return function is compiled — triggers
   // emission of the $__nullable_ret_flag global in the WAT module.
   private needsNullableResultFlag = false;
+  // String-return side channel: set to true when any user-defined string-returning
+  // function is compiled — triggers emission of $__str_ret_ptr and $__str_ret_len globals.
+  private needsStringRetGlobals = false;
 
   // Module-level scalar globals (const/let/var at top level): varName → { type, mutable, initExpr }
   private moduleGlobals = new Map<string, { type: WatType; mutable: boolean; initExpr: string }>();
+  // Module-level string constants: varName → [dataOffset, byteLen] — pre-allocated in data section
+  private moduleStringConsts = new Map<string, [number, number]>();
 
   // Phase 30: namespace names (populated by expandNamespaces before any parse pass)
   private namespaceDefs: Set<string> = new Set();
@@ -1183,7 +1227,8 @@ class WasicTranspiler {
       // After `)` expect optional `: returnType` then `{`
       // Return type may include array suffix: i32[], i32[][], ClassName, tuple [T1,T2], T|null, etc.
       // Phase 34: also matches type predicate annotations "param is Type".
-      const restMatch = src.slice(afterClose).match(/^\s*(?::\s*([\w]+\s+is\s+[\w]+|[\w]+(?:\[\])*(?:\s*\|\s*(?:null|undefined))*|\[[^\]]*\]))?\s*\{/);
+      // Also matches function-type return annotations like `() => number` or `(a: i32) => f64`.
+      const restMatch = src.slice(afterClose).match(/^\s*(?::\s*([\w]+\s+is\s+[\w]+|[\w]+(?:\[\])*(?:\s*\|\s*(?:null|undefined))*|\[[^\]]*\]|\([^)]*\)\s*=>\s*[\w]+))?\s*\{/);
       if (!restMatch) continue; // malformed header — skip
 
       let rawResult = (restMatch[1] ?? "void").trim();
@@ -1206,6 +1251,8 @@ class WasicTranspiler {
         const def = this.getOrCreateTupleDef(rawResult);
         if (def) rawResult = def.name;
       }
+      // Function-type return annotation like `() => number` — maps to i32 (closure ptr)
+      if (/^\([^)]*\)\s*=>/.test(rawResult)) rawResult = "i32";
       const result: WatType | null =
         rawResult === "void" || rawResult === "" ? null : mapType(rawResult);
 
@@ -1239,6 +1286,22 @@ class WasicTranspiler {
             for (const ch of next) { if (ch === "{") depth++; else if (ch === "}") depth--; }
           }
           bodyLines.push(joined.trim());
+        } else if (/^return\s+function\s*\(/.test(l)) {
+          // Multi-line `return function(params): retType { body }` — join then rewrite to arrow
+          let depth = 0, joined = l;
+          for (const ch of l) { if (ch === "{") depth++; else if (ch === "}") depth--; }
+          while (depth > 0 && li + 1 < rawLines.length) {
+            li++;
+            const next = rawLines[li];
+            joined += "\n" + next;  // preserve newlines so parseReturnArrow splits body correctly
+            for (const ch of next) { if (ch === "{") depth++; else if (ch === "}") depth--; }
+          }
+          // Rewrite: `return function(params): retType { body }` → `return (params): retType => { body }`
+          const rewrit = joined.trim().replace(
+            /^return\s+function\s*(\([\s\S]*?\))(\s*:\s*[\w\[\]|]+)?\s*\{([\s\S]*)\}\s*;?$/,
+            (_m, params, ret, body) => `return ${params}${ret ?? ""} => {${body}};`
+          );
+          bodyLines.push(rewrit);
         } else {
           bodyLines.push(l);
         }
@@ -1700,6 +1763,19 @@ class WasicTranspiler {
           remaining.push(line);
           continue;
         }
+        // Pre-register string literal constants before the numeric/enum guard so
+        // functions can reference them via moduleStringConsts.
+        const isStringLit = /^"[^"]*"$/.test(initExpr) || /^'[^']*'$/.test(initExpr);
+        if (isStringLit) {
+          const typeHere = (typeStr ? mapType(typeStr) : "string") as WatType;
+          if (typeHere === "string") {
+            const strVal = initExpr.slice(1, -1);
+            const [offset, len] = this.allocString(strVal);
+            this.moduleStringConsts.set(name, [offset, len]);
+          }
+          remaining.push(line); // keep in startBodyLines for _start assignment
+          continue;
+        }
         // Only accept pure constant initialisers valid in WAT global init expressions:
         //   numeric/bigint literals  e.g. 0, 3.14, -5, 42n
         //   known enum member refs   e.g. Color.Red
@@ -1713,7 +1789,7 @@ class WasicTranspiler {
           ? mapType(typeStr)
           : inferInitType(initExpr, new Map(), this.enumValues, this.functions)) as WatType;
         if (!type || type === "string") {
-          remaining.push(line); // string / unknown globals not yet supported
+          remaining.push(line); // unknown type or unhandled string form — leave in startBodyLines
           continue;
         }
         this.moduleGlobals.set(name, { type, mutable: keyword !== "const", initExpr });
@@ -2493,11 +2569,15 @@ class WasicTranspiler {
     return entry;
   }
 
-  /** Allocates a static numeric array in the data section. Returns base pointer. */
+  /** Allocates a static numeric array in the data section with an 8-byte header.
+   *  Layout: [length i32][capacity i32][elem0][elem1]...
+   *  Returns pointer to the header (same format as dynamic arrays). */
   private allocArrayData(elements: string[], elemType: WatType): number {
     const ptr = this.dataOffset;
     const elemSize = (elemType === "f64" || elemType === "i64") ? 8 : 4;
-    let encoded = "";
+    // 8-byte header: length (i32) + capacity (i32, same as length for static)
+    const header = encodeI32LE(elements.length) + encodeI32LE(elements.length);
+    let encoded = header;
     for (const elem of elements) {
       const e = elem.trim();
       if (elemType === "f64" || elemType === "f32") {
@@ -2512,7 +2592,7 @@ class WasicTranspiler {
       }
     }
     if (encoded) this.rawDataSegments.push({ ptr, bytes: encoded });
-    this.dataOffset += elements.length * elemSize;
+    this.dataOffset += 8 + elements.length * elemSize;
     return ptr;
   }
 
@@ -2669,10 +2749,12 @@ class WasicTranspiler {
       "(local.get $__rest_ptr)",
     ].join(" ");
     const callExpr = `(call $${fnName} ${callArgs})`;
-    if (expectReturn) {
-      lines.push(callExpr);
-    } else {
+    if (fnDef.result !== null && !expectReturn) {
+      // Non-void function used as statement — discard the return value
       lines.push(`(drop ${callExpr})`);
+    } else {
+      // Void function (nothing to drop) or return value is needed
+      lines.push(callExpr);
     }
     return lines.join("\n      ");
   }
@@ -2726,6 +2808,9 @@ class WasicTranspiler {
     locals: Map<string, WatType>
   ): string {
     this.stringVars.add(varName);
+    // If this module-level string was pre-registered as a static const, invalidate it now
+    // because the variable is being (re)assigned and is no longer a static constant.
+    this.moduleStringConsts.delete(varName);
     const ind = "      ";
 
     // Phase 24: null/undefined → set ptr=0, len=0 (null string pointer convention)
@@ -2745,6 +2830,146 @@ class WasicTranspiler {
         `(local.set $${varName}_ptr (i32.const ${offset}))`,
         `${ind}(local.set $${varName}_len (i32.const ${len}))`,
       ].join("\n");
+    }
+
+    // Template literal: `...${expr}...`
+    if (initExpr.startsWith("`") && initExpr.endsWith("`")) {
+      const parts = this.splitTemplateLiteral(initExpr.slice(1, -1));
+      // Single text segment → string literal
+      if (parts.length === 1 && parts[0].kind === "text") {
+        const [offset, len] = this.allocString(parts[0].value);
+        return [`(local.set $${varName}_ptr (i32.const ${offset}))`, `${ind}(local.set $${varName}_len (i32.const ${len}))`].join("\n");
+      }
+      // Single expression → String(expr) or string-var/fn copy
+      if (parts.length === 1 && parts[0].kind === "expr") {
+        const e = parts[0].value.trim();
+        const eType = this.inferExprType(e, locals);
+        if (eType === "string") return this.emitStringAssign(varName, e, locals);
+        return this.emitStringAssign(varName, `String(${e})`, locals);
+      }
+      // Multi-part: build concat chain using emitConcat helper
+      const tmplStmts: string[] = [];
+      let tmplHasFirst = false;
+      const emitTmplConcat = (ptrWat2: string, lenWat2: string) => {
+        if (!tmplHasFirst) {
+          tmplStmts.push(`(local.set $${varName}_ptr ${ptrWat2})`);
+          tmplStmts.push(`(local.set $${varName}_len ${lenWat2})`);
+          tmplHasFirst = true;
+        } else {
+          this.needsStringOpHelpers = true;
+          tmplStmts.push(`(call $__str_concat (local.get $${varName}_ptr) (local.get $${varName}_len) ${ptrWat2} ${lenWat2})`);
+          tmplStmts.push(`(local.set $${varName}_len)`);
+          tmplStmts.push(`(local.set $${varName}_ptr)`);
+        }
+      };
+      let numericTmpIdx = 0;
+      for (const seg of parts) {
+        if (seg.kind === "text") {
+          if (!seg.value) continue;
+          const [off, ln] = this.allocString(seg.value);
+          emitTmplConcat(`(i32.const ${off})`, `(i32.const ${ln})`);
+        } else {
+          const e = seg.value.trim();
+          const eType = this.inferExprType(e, locals);
+          if (eType === "string") {
+            if (/^\w+$/.test(e) && this.moduleStringConsts.has(e)) {
+              const [off, ln] = this.moduleStringConsts.get(e)!;
+              emitTmplConcat(`(i32.const ${off})`, `(i32.const ${ln})`);
+            } else if (/^\w+$/.test(e) && locals.get(e) === "string") {
+              emitTmplConcat(`(local.get $${e}_ptr)`, `(local.get $${e}_len)`);
+            } else {
+              // String-returning function call in template
+              const strFnM2 = e.match(/^(\w+)\s*\(/);
+              const strFn2 = strFnM2 ? this.functions.find(f => f.name === strFnM2[1] && f.result === "string") : undefined;
+              if (strFn2) {
+                const rawArgs2 = e.slice(strFnM2![1].length + 1, e.endsWith(")") ? -1 : e.length).trim();
+                const argList2 = rawArgs2 ? this.splitArgs(rawArgs2) : [];
+                const watArgs2 = argList2.flatMap((a, i) => {
+                  const p = strFn2.params[i];
+                  if (!p) return [this.emitExpr(a.trim(), locals, "i32")];
+                  if (p.type === "string") return [this.emitStringPtrLen(a.trim(), locals)];
+                  return [this.emitExpr(a.trim(), locals, p.type)];
+                });
+                tmplStmts.push(watArgs2.length > 0 ? `(call $${strFn2.name} ${watArgs2.join(" ")})` : `(call $${strFn2.name})`);
+                emitTmplConcat(`(global.get $__str_ret_ptr)`, `(global.get $__str_ret_len)`);
+              }
+            }
+          } else {
+            // Numeric segment: convert to string using the pre-declared shared temp pair $__tmpl_num_ptr/$__tmpl_num_len.
+            // We reuse the same pair for every numeric segment (safe because each concat happens immediately after).
+            numericTmpIdx++;
+            this.needsNumericHelpers = true;
+            const helper = eType === "f64" ? "$__f64_to_str" : eType === "i64" ? "$__i64_to_str" : "$__i32_to_str";
+            const valWat = this.emitExpr(e, locals, eType);
+            tmplStmts.push(`(local.set $__tmpl_num_ptr (call $__malloc (i32.const 32)))`);
+            tmplStmts.push(`(local.set $__tmpl_num_len (call ${helper} ${valWat} (local.get $__tmpl_num_ptr)))`);
+            emitTmplConcat(`(local.get $__tmpl_num_ptr)`, `(local.get $__tmpl_num_len)`);
+          }
+        }
+      }
+      if (!tmplHasFirst) {
+        const [off, ln] = this.allocString("");
+        tmplStmts.push(`(local.set $${varName}_ptr (i32.const ${off}))`);
+        tmplStmts.push(`(local.set $${varName}_len (i32.const ${ln}))`);
+      }
+      return tmplStmts.join(`\n${ind}`);
+    }
+    // Ternary: cond ? stringExpr1 : stringExpr2
+    {
+      const qIdx = this.findBinaryOp(initExpr, "?");
+      if (qIdx !== -1) {
+        const rest = initExpr.slice(qIdx + 1);
+        const cIdx = this.findBinaryOp(rest, ":");
+        if (cIdx !== -1) {
+          const cond     = initExpr.slice(0, qIdx).trim();
+          const thenExpr = rest.slice(0, cIdx).trim();
+          const elseExpr = rest.slice(cIdx + 1).trim();
+          // Both branches must be string expressions
+          if (this.isStringExpr(thenExpr, locals) && this.isStringExpr(elseExpr, locals)) {
+            const condWat  = this.emitExpr(cond, locals, "i32");
+            const thenWat  = this.emitStringAssign(`${varName}__then`, thenExpr, locals);
+            const elseWat  = this.emitStringAssign(`${varName}__else`, elseExpr, locals);
+            // Rewrite assignments to target varName
+            const fixBranch = (wat: string, from: string): string =>
+              wat.replace(new RegExp(`\\$${from}_(ptr|len)`, "g"), `$${varName}_$1`);
+            return [
+              `(if ${condWat}`,
+              `${ind}  (then`,
+              `${ind}    ${fixBranch(thenWat, `${varName}__then`)}`,
+              `${ind}  )`,
+              `${ind}  (else`,
+              `${ind}    ${fixBranch(elseWat, `${varName}__else`)}`,
+              `${ind}  )`,
+              `${ind})`,
+            ].join("\n");
+          }
+        }
+      }
+    }
+
+    // Call to a string-returning user function: funcName(args)
+    {
+      const callM = initExpr.match(/^(\w+)\s*\((.*)?\)\s*;?$/);
+      if (callM) {
+        const callee = callM[1];
+        const strFn = this.functions.find(f => f.name === callee && f.result === "string");
+        if (strFn) {
+          const rawArgs = callM[2]?.trim() ?? "";
+          const argList = rawArgs ? this.splitArgs(rawArgs) : [];
+          const watArgs = argList.flatMap((a, i) => {
+            const p = strFn.params[i];
+            if (!p) return [this.emitExpr(a.trim(), locals, "i32")];
+            if (p.type === "string") return [this.emitStringPtrLen(a.trim(), locals)];
+            return [this.emitExpr(a.trim(), locals, p.type)];
+          });
+          const callWat = watArgs.length > 0 ? `(call $${callee} ${watArgs.join(" ")})` : `(call $${callee})`;
+          return [
+            callWat,
+            `(local.set $${varName}_ptr (global.get $__str_ret_ptr))`,
+            `${ind}(local.set $${varName}_len (global.get $__str_ret_len))`,
+          ].join("\n");
+        }
+      }
     }
 
     // String literal
@@ -2813,6 +3038,31 @@ class WasicTranspiler {
       const idxWat = this.emitExpr(charAtMatch[2].trim(), locals, "i32");
       return [
         `(call $__str_char_at (local.get $${charAtMatch[1]}_ptr) (local.get $${charAtMatch[1]}_len) ${idxWat})`,
+        `${ind}(local.set $${varName}_len)`,
+        `${ind}(local.set $${varName}_ptr)`,
+      ].join("\n");
+    }
+
+    // str[idx].toLowerCase() / toUpperCase() — subscript then case-convert (chain multi-value call)
+    const strSubCaseMatch = initExpr.match(/^(\w+)\[([^\]]+)\]\.(toLowerCase|toUpperCase)\s*\(\s*\)$/);
+    if (strSubCaseMatch && locals.get(strSubCaseMatch[1]) === "string") {
+      this.needsStringExtHelpers = true;
+      const idxWat = this.emitExpr(strSubCaseMatch[2].trim(), locals, "i32");
+      const caseHelper = strSubCaseMatch[3] === "toLowerCase" ? "$__str_to_lower" : "$__str_to_upper";
+      return [
+        `(call ${caseHelper} (call $__str_char_at (local.get $${strSubCaseMatch[1]}_ptr) (local.get $${strSubCaseMatch[1]}_len) ${idxWat}))`,
+        `${ind}(local.set $${varName}_len)`,
+        `${ind}(local.set $${varName}_ptr)`,
+      ].join("\n");
+    }
+
+    // str[idx] — single-character substring (same as charAt)
+    const strSubscriptMatch = initExpr.match(/^(\w+)\[([^\]]+)\]$/);
+    if (strSubscriptMatch && locals.get(strSubscriptMatch[1]) === "string") {
+      this.needsStringExtHelpers = true;
+      const idxWat = this.emitExpr(strSubscriptMatch[2].trim(), locals, "i32");
+      return [
+        `(call $__str_char_at (local.get $${strSubscriptMatch[1]}_ptr) (local.get $${strSubscriptMatch[1]}_len) ${idxWat})`,
         `${ind}(local.set $${varName}_len)`,
         `${ind}(local.set $${varName}_ptr)`,
       ].join("\n");
@@ -2898,8 +3148,8 @@ class WasicTranspiler {
     if (stringOfMatch) {
       this.needsNumericHelpers = true;
       const argExpr = stringOfMatch[1].trim();
-      const argType: WatType = /^\w+$/.test(argExpr) ? (locals.get(argExpr) ?? "i32") : "i32";
-      const helperName = argType === "f64" ? "$__f64_to_str" : "$__i32_to_str";
+      const argType: WatType = this.inferExprType(argExpr, locals);
+      const helperName = argType === "f64" ? "$__f64_to_str" : argType === "i64" ? "$__i64_to_str" : "$__i32_to_str";
       const valWat = this.emitExpr(argExpr, locals, argType);
       return [
         `(local.set $${varName}_ptr (call $__malloc (i32.const 32)))`,
@@ -2913,13 +3163,35 @@ class WasicTranspiler {
     if (concatParts && concatParts.length >= 2) {
       this.needsStringOpHelpers = true;
       const stmts: string[] = [];
+      // Helper: get "ptr len" WAT for a concat part. For template literals with a single
+      // numeric expr, uses the local.tee trick on $varName_ptr to avoid a temp local.
+      const concatPartPtrLen = (part: string, accum: string): string => {
+        const simple = this.emitStringPtrLen(part, locals);
+        if (simple !== "(i32.const 0) (i32.const 0)") return simple;
+        // Template literal with a single numeric expression
+        if (part.startsWith("`") && part.endsWith("`")) {
+          const tParts = this.splitTemplateLiteral(part.slice(1, -1));
+          if (tParts.length === 1 && tParts[0].kind === "expr") {
+            const e = tParts[0].value.trim();
+            const eType = this.inferExprType(e, locals);
+            if (eType !== "string") {
+              this.needsNumericHelpers = true;
+              const helper = eType === "f64" ? "$__f64_to_str" : eType === "i64" ? "$__i64_to_str" : "$__i32_to_str";
+              const valWat = this.emitExpr(e, locals, eType);
+              // Use local.tee on accum_ptr to avoid a separate temp local
+              return `(local.tee $${accum}_ptr (call $__malloc (i32.const 32))) (call ${helper} ${valWat} (local.get $${accum}_ptr))`;
+            }
+          }
+        }
+        return simple;
+      };
       const p0 = this.emitStringPtrLen(concatParts[0], locals);
-      const p1 = this.emitStringPtrLen(concatParts[1], locals);
+      const p1 = concatPartPtrLen(concatParts[1], varName);
       stmts.push(`(call $__str_concat ${p0} ${p1})`);
       stmts.push(`(local.set $${varName}_len)`);
       stmts.push(`(local.set $${varName}_ptr)`);
       for (let i = 2; i < concatParts.length; i++) {
-        const pi = this.emitStringPtrLen(concatParts[i], locals);
+        const pi = concatPartPtrLen(concatParts[i], varName);
         stmts.push(`(call $__str_concat (local.get $${varName}_ptr) (local.get $${varName}_len) ${pi})`);
         stmts.push(`(local.set $${varName}_len)`);
         stmts.push(`(local.set $${varName}_ptr)`);
@@ -2944,12 +3216,76 @@ class WasicTranspiler {
     return [...lhsParts, rhs];
   }
 
-  /** Returns true if expr is a string literal or a known string variable. */
+  /** Returns true if expr is a string literal, a known string variable, a template literal,
+   *  or a call to a string-returning function. */
   private isStringExpr(expr: string, locals: Map<string, WatType>): boolean {
     const e = expr.trim();
     if (/^["']/.test(e)) return true;
-    if (/^\w+$/.test(e)) return locals.get(e) === "string";
+    if (e.startsWith("`") && e.endsWith("`")) return true;
+    if (/^\w+$/.test(e)) return locals.get(e) === "string" || this.moduleStringConsts.has(e);
+    // Call to a string-returning function
+    const callM = e.match(/^(\w+)\s*\(/);
+    if (callM && this.functions.find(f => f.name === callM[1] && f.result === "string")) return true;
     return false;
+  }
+
+  /** Splits a template literal inner string (between backticks) into text/expr segments. */
+  private splitTemplateLiteral(inner: string): Array<{ kind: "text" | "expr"; value: string }> {
+    const parts: Array<{ kind: "text" | "expr"; value: string }> = [];
+    let i = 0;
+    while (i < inner.length) {
+      const start = inner.indexOf("${", i);
+      if (start === -1) {
+        if (i < inner.length) parts.push({ kind: "text", value: inner.slice(i) });
+        break;
+      }
+      if (start > i) parts.push({ kind: "text", value: inner.slice(i, start) });
+      // Find matching }
+      let depth = 0, j = start + 2;
+      while (j < inner.length) {
+        if (inner[j] === "{") depth++;
+        else if (inner[j] === "}") { if (depth === 0) break; depth--; }
+        j++;
+      }
+      parts.push({ kind: "expr", value: inner.slice(start + 2, j) });
+      i = j + 1;
+    }
+    return parts;
+  }
+
+  /** Infers the WAT type of an arbitrary expression, including array element access. */
+  private inferExprType(expr: string, locals: Map<string, WatType>): WatType {
+    const e = expr.trim();
+    // Array element access arr[idx] → element type
+    const bracketId = e.match(/^(\w+)\[/)?.[1];
+    if (bracketId && this.arrayVars.has(bracketId)) return this.arrayVars.get(bracketId)!.elemType;
+    // TypedArray element access
+    if (bracketId && this.typedArrayVars.has(bracketId)) return this.typedArrayVars.get(bracketId)!.elemType as WatType;
+    // Struct/class field access: varName.fieldName → return actual field type
+    const dotM = e.match(/^(\w+)\.(\w+)$/);
+    if (dotM) {
+      const sv = this.structVars.get(dotM[1]);
+      if (sv) {
+        const field = sv.def.fields.find(f => f.name === dotM[2]);
+        if (field) return field.type as WatType;
+      }
+      const cv = this.classVars.get(dotM[1]);
+      if (cv) {
+        const cd = this.classDefs.get(cv.className);
+        if (cd) {
+          const field = cd.struct.fields.find(f => f.name === dotM[2]);
+          if (field) return field.type as WatType;
+        }
+      }
+    }
+    // Simple identifier: check module globals and module string consts when not in locals
+    if (/^\w+$/.test(e) && !locals.has(e)) {
+      const globalInfo = this.moduleGlobals.get(e);
+      if (globalInfo) return globalInfo.type;
+      if (this.moduleStringConsts.has(e)) return "string";
+    }
+    // Use module-level inferInitType
+    return inferInitType(e, locals, this.enumValues, this.functions);
   }
 
   /**
@@ -2963,6 +3299,11 @@ class WasicTranspiler {
     if (/^\w+$/.test(expr) && locals.get(expr) === "string") {
       return `(local.get $${expr}_ptr) (local.get $${expr}_len)`;
     }
+    // Module-level string const — pre-allocated in data section
+    if (/^\w+$/.test(expr) && this.moduleStringConsts.has(expr)) {
+      const [offset, len] = this.moduleStringConsts.get(expr)!;
+      return `(i32.const ${offset}) (i32.const ${len})`;
+    }
     // varName.message — Error catch variable; .message is the string itself
     const dotMsgMatch = expr.match(/^(\w+)\.message$/);
     if (dotMsgMatch && locals.get(dotMsgMatch[1]) === "string") {
@@ -2973,6 +3314,24 @@ class WasicTranspiler {
     if (litMatch) {
       const [offset, len] = this.allocString(litMatch[1]);
       return `(i32.const ${offset}) (i32.const ${len})`;
+    }
+    // Call to a string-returning function: emit void call then read globals
+    const callM = expr.match(/^(\w+)\s*\((.*)?\)$/);
+    if (callM) {
+      const callee = callM[1];
+      const strFn = this.functions.find(f => f.name === callee && f.result === "string");
+      if (strFn) {
+        const rawArgs = callM[2]?.trim() ?? "";
+        const argList = rawArgs ? this.splitArgs(rawArgs) : [];
+        const watArgs = argList.flatMap((a, i) => {
+          const p = strFn.params[i];
+          if (!p) return [this.emitExpr(a.trim(), locals, "i32")];
+          if (p.type === "string") return [this.emitStringPtrLen(a.trim(), locals)];
+          return [this.emitExpr(a.trim(), locals, p.type)];
+        });
+        const callExpr = watArgs.length > 0 ? `(call $${callee} ${watArgs.join(" ")})` : `(call $${callee})`;
+        return `${callExpr} (global.get $__str_ret_ptr) (global.get $__str_ret_len)`;
+      }
     }
     return `(i32.const 0) (i32.const 0)`;
   }
@@ -2992,6 +3351,18 @@ class WasicTranspiler {
       return "number";
     }
     return "undefined";
+  }
+
+  /** Emits an array-index expression, ensuring the result is always i32.
+   *  If the index expression is an f64/f32 value, wraps with i32.trunc_f64_s. */
+  private emitArrayIndex(expr: string, locals: Map<string, WatType>): string {
+    const wat = this.emitExpr(expr, locals, "i32");
+    // Use inferExprType to detect f64 expressions (handles both simple ids and compound exprs).
+    // The leading-identifier heuristic in inferInitType correctly propagates the type of
+    // the first variable (e.g. `j + 1` where j: f64 → f64).
+    const t = this.inferExprType(expr.trim(), locals);
+    if (t === "f64" || t === "f32") return `(i32.trunc_f64_s ${wat})`;
+    return wat;
   }
 
   // -------------------------------------------------------------------------
@@ -3085,16 +3456,21 @@ class WasicTranspiler {
     if (lenPropMatch) {
       const arrInfo = this.arrayVars.get(lenPropMatch[1]);
       if (arrInfo) {
-        if (arrInfo.dynamic) return `(i32.load (local.get $${lenPropMatch[1]}))`;
-        return `(i32.const ${arrInfo.length})`;
+        const rawLen = (arrInfo.dynamic || arrInfo.ptr < 0) ? `(i32.load (local.get $${lenPropMatch[1]}))` : `(i32.const ${arrInfo.length})`;
+        const needsF64 = defaultType === "f64" || defaultType === "f32";
+        return needsF64 ? `(f64.convert_i32_s ${rawLen})` : rawLen;
       }
       // String .length property: varName.length
       if (locals.get(lenPropMatch[1]) === "string") {
-        return `(local.get $${lenPropMatch[1]}_len)`;
+        const rawStrLen = `(local.get $${lenPropMatch[1]}_len)`;
+        const needsF64s = defaultType === "f64" || defaultType === "f32";
+        return needsF64s ? `(f64.convert_i32_s ${rawStrLen})` : rawStrLen;
       }
       // Phase 12: i32 local holding a dynamic array pointer — load length from header
       if (locals.get(lenPropMatch[1]) === "i32") {
-        return `(i32.load (local.get $${lenPropMatch[1]}))`;
+        const rawI32Len = `(i32.load (local.get $${lenPropMatch[1]}))`;
+        const needsF64i = defaultType === "f64" || defaultType === "f32";
+        return needsF64i ? `(f64.convert_i32_s ${rawI32Len})` : rawI32Len;
       }
     }
 
@@ -3109,12 +3485,18 @@ class WasicTranspiler {
     }
 
     // String method calls returning i32 (can appear in any expression context)
-    // str.indexOf(sub) → i32 offset or -1
+    // str.indexOf(sub[, start]) → i32 offset or -1
     const strIndexOfMatch = expr.match(/^(\w+)\.indexOf\s*\((.+)\)$/);
     if (strIndexOfMatch && locals.get(strIndexOfMatch[1]) === "string") {
       this.needsStringOpHelpers = true;
-      const subPtrLen = this.emitStringPtrLen(strIndexOfMatch[2].trim(), locals);
-      return `(call $__str_indexof (local.get $${strIndexOfMatch[1]}_ptr) (local.get $${strIndexOfMatch[1]}_len) ${subPtrLen})`;
+      // Split sub from optional start position, preserving quoted strings
+      const rawArgs = strIndexOfMatch[2].trim();
+      const argsArr = this.splitArgs(rawArgs);
+      const subPtrLen = this.emitStringPtrLen(argsArr[0].trim(), locals);
+      const wat = `(call $__str_indexof (local.get $${strIndexOfMatch[1]}_ptr) (local.get $${strIndexOfMatch[1]}_len) ${subPtrLen})`;
+      // When used in f64 context (number variable holding indexOf result), convert
+      if (defaultType === "f64" || defaultType === "f32") return `(f64.convert_i32_s ${wat})`;
+      return wat;
     }
     // str.includes(sub) → i32 bool (1 = found, 0 = not found)
     const strIncludesMatch = expr.match(/^(\w+)\.includes\s*\((.+)\)$/);
@@ -3124,12 +3506,14 @@ class WasicTranspiler {
       return `(i32.ne (call $__str_indexof (local.get $${strIncludesMatch[1]}_ptr) (local.get $${strIncludesMatch[1]}_len) ${subPtrLen}) (i32.const -1))`;
     }
 
-    // Phase 27: str.charCodeAt(i) → i32 char code
+    // Phase 27: str.charCodeAt(i) → i32 char code (promoted to f64 in numeric context)
     const charCodeAtMatch = expr.match(/^(\w+)\.charCodeAt\s*\((.+)\)$/);
     if (charCodeAtMatch && locals.get(charCodeAtMatch[1]) === "string") {
       this.needsStringExtHelpers = true;
       const idxWat = this.emitExpr(charCodeAtMatch[2].trim(), locals, "i32");
-      return `(call $__str_char_code_at (local.get $${charCodeAtMatch[1]}_ptr) (local.get $${charCodeAtMatch[1]}_len) ${idxWat})`;
+      const ccaWat = `(call $__str_char_code_at (local.get $${charCodeAtMatch[1]}_ptr) (local.get $${charCodeAtMatch[1]}_len) ${idxWat})`;
+      if (defaultType === "f64" || defaultType === "f32") return `(f64.convert_i32_s ${ccaWat})`;
+      return ccaWat;
     }
 
     // Phase 27: str.startsWith(sub) → i32 bool
@@ -3242,6 +3626,29 @@ class WasicTranspiler {
       }
     }
 
+    // Struct array element field access: arr[idx].field
+    const arrElemFieldRe = /^(\w+)\[([^\]]+)\]\.(\w+)$/;
+    const aefMatch = expr.match(arrElemFieldRe);
+    if (aefMatch) {
+      const [, arrName, idxExpr, fieldName] = aefMatch;
+      const arrInfo = this.arrayVars.get(arrName);
+      if (arrInfo && arrInfo.elemType !== "f64" && arrInfo.elemType !== "i32" && arrInfo.elemType !== "i64") {
+        const structDef = this.structDefs.get(arrInfo.elemType);
+        if (structDef) {
+          const field = structDef.fields.find(f => f.name === fieldName);
+          if (field) {
+            const idxWat = this.emitArrayIndex(idxExpr, locals);
+            const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
+              ? `(local.get $${arrName})`
+              : `(i32.const ${arrInfo.ptr})`;
+            const ptrWat = `(i32.load (i32.add (i32.add ${baseWat} (i32.const 8)) (i32.shl ${idxWat} (i32.const 2))))`;
+            const loadOp = field.type === "f64" ? "f64.load" : field.type === "i64" ? "i64.load" : "i32.load";
+            return `(${loadOp} (i32.add ${ptrWat} (i32.const ${field.offset})))`;
+          }
+        }
+      }
+    }
+
     // Array element read: arr[idx]
     const bracketMatch = expr.match(/^(\w+)\[([^\]]*)\]$/);
     if (bracketMatch) {
@@ -3258,23 +3665,24 @@ class WasicTranspiler {
       }
       const arrInfo = this.arrayVars.get(bracketMatch[1]);
       if (arrInfo) {
-        const loadOp = arrInfo.elemType === "f64" ? "f64.load"
+        // 2D array single-index: loads i32 pointer to the inner row array (always 4-byte i32.load).
+        const loadOp = arrInfo.is2D ? "i32.load"
+                     : arrInfo.elemType === "f64" ? "f64.load"
                      : arrInfo.elemType === "i64" ? "i64.load" : "i32.load";
-        const shift   = (arrInfo.elemType === "f64" || arrInfo.elemType === "i64") ? 3 : 2;
-        const idxWat  = this.emitExpr(bracketMatch[2], locals, "i32");
-        // ptr=-1/ptr=-2: runtime local; ptr>=0: static data address. Dynamic arrays add 8-byte header offset.
+        const shift   = arrInfo.is2D ? 2
+                     : (arrInfo.elemType === "f64" || arrInfo.elemType === "i64") ? 3 : 2;
+        const idxWat  = this.emitArrayIndex(bracketMatch[2], locals);
+        // All arrays (static, dynamic, params) use an 8-byte [length, capacity] header.
         const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
           ? `(local.get $${bracketMatch[1]})`
           : `(i32.const ${arrInfo.ptr})`;
-        const dataBase = arrInfo.dynamic
-          ? `(i32.add ${baseWat} (i32.const 8))`
-          : baseWat;
+        const dataBase = `(i32.add ${baseWat} (i32.const 8))`;
         return `(${loadOp} (i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift}))))`;
       }
       // Phase 31: TypedArray element read
       const taInfoBr = this.typedArrayVars.get(bracketMatch[1]);
       if (taInfoBr) {
-        const idxWat = this.emitExpr(bracketMatch[2], locals, "i32");
+        const idxWat = this.emitArrayIndex(bracketMatch[2], locals);
         const addrWat = taInfoBr.shift === 0
           ? `(i32.add (i32.add (local.get $${bracketMatch[1]}) (i32.const 8)) ${idxWat})`
           : `(i32.add (i32.add (local.get $${bracketMatch[1]}) (i32.const 8)) (i32.shl ${idxWat} (i32.const ${taInfoBr.shift})))`;
@@ -3283,7 +3691,7 @@ class WasicTranspiler {
       // Phase 12: fallback — i32 local holding a dynamic i32[] array pointer (captured or assigned)
       // Phase 23: skip if variable is a struct/tuple pointer (not a dynamic array)
       if (locals.get(bracketMatch[1]) === "i32" && !this.structVars.has(bracketMatch[1])) {
-        const idxWat = this.emitExpr(bracketMatch[2], locals, "i32");
+        const idxWat = this.emitArrayIndex(bracketMatch[2], locals);
         return `(i32.load (i32.add (i32.add (local.get $${bracketMatch[1]}) (i32.const 8)) (i32.shl ${idxWat} (i32.const 2))))`;
       }
     }
@@ -3668,6 +4076,14 @@ class WasicTranspiler {
     // a type mismatch (e.g. f64.eq with an i32 rhs).
     if (expr === "NaN")       return "(f64.const nan)";
     if (expr === "Infinity")  return "(f64.const inf)";
+
+    // isNaN(x) → f64.ne x x (NaN is the only value not equal to itself)
+    { const isNaNM = expr.match(/^isNaN\s*\((.+)\)$/);
+      if (isNaNM) {
+        const argWat = this.emitExpr(isNaNM[1].trim(), locals, "f64");
+        return `(f64.ne ${argWat} ${argWat})`;
+      }
+    }
     {
       const numType = (defaultType === "f64" || defaultType === "f32") ? defaultType : "i32";
       if (expr === "true")      return `(${numType}.const 1)`;
@@ -3678,6 +4094,15 @@ class WasicTranspiler {
 
     // Identifier (local variable or parameter)
     if (/^\w+$/.test(expr)) {
+      // Mutable closure capture — load through $__closure_ptr (checked before locals, since mutable
+      // captures are NOT in locals — they're accessed via the closure pointer).
+      { const ccl = this.currentClosureCaptureLayout.get(expr); if (ccl) {
+        const loadOp = ccl.type === "f64" ? "f64.load" : ccl.type === "i64" ? "i64.load" : "i32.load";
+        const rawLoad = `(${loadOp} offset=${ccl.offset} (local.get $__closure_ptr))`;
+        if (ccl.type === "f64" && (defaultType === "i32" || defaultType === "bool")) return `(i32.trunc_f64_s ${rawLoad})`;
+        if ((ccl.type === "i32" || ccl.type === "bool") && (defaultType === "f64" || defaultType === "f32")) return `(f64.convert_i32_s ${rawLoad})`;
+        return rawLoad;
+      }}
       // Use per-function locals map for accurate type — stringVars is instance-level and
       // could contain names from other functions compiled earlier in the same pass.
       const localType = locals.get(expr);
@@ -3690,7 +4115,16 @@ class WasicTranspiler {
       if (localType) {
         // Phase 5h: boxed capture — load through heap pointer
         if (this.currentBoxedCaptures.has(expr)) return `(i32.load (local.get $${expr}))`;
-        return `(local.get $${expr})`;
+        const rawGet = `(local.get $${expr})`;
+        // Type coercion for context mismatch (e.g. f64 variable used in i32 context or vice versa)
+        if (localType === "f64" && (defaultType === "i32" || defaultType === "bool")) return `(i32.trunc_f64_s ${rawGet})`;
+        if ((localType === "i32" || localType === "bool") && (defaultType === "f64" || defaultType === "f32")) return `(f64.convert_i32_s ${rawGet})`;
+        return rawGet;
+      }
+      // Module-level string const — returns ptr in i32 context
+      if (this.moduleStringConsts.has(expr)) {
+        const [offset] = this.moduleStringConsts.get(expr)!;
+        return `(i32.const ${offset})`;
       }
       // Module global — emit global.get
       const globalInfo = this.moduleGlobals.get(expr);
@@ -3899,6 +4333,18 @@ class WasicTranspiler {
       const callee = callMatch[1];
       const rawArgs = callMatch[2]?.trim() ?? "";
       const args = rawArgs ? this.splitArgs(rawArgs) : [];
+
+      // Built-in predicates
+      if (callee === "isNaN") {
+        const arg = args[0] ?? "0";
+        const xWat = this.emitExpr(arg, locals, "f64");
+        return `(f64.ne ${xWat} ${xWat})`;
+      }
+      if (callee === "isFinite") {
+        const arg = args[0] ?? "0";
+        const xWat = this.emitExpr(arg, locals, "f64");
+        return `(f64.eq (f64.sub ${xWat} ${xWat}) (f64.const 0))`;
+      }
 
       // Built-in type casts
       if (callee === "BigInt") {
@@ -4137,12 +4583,47 @@ class WasicTranspiler {
         }
 
         // For logical/bitwise ops always use i32; for others infer from the LHS local type.
+        // Also peek at the leading identifier for simple compound expressions like "n % 2"
+        // (but NOT for dot-access expressions like "r.width" — the leading "r" would give wrong type).
+        const _lhsLeadId = !lhs.includes(".") ? lhs.match(/^(\w+)/)?.[1] : undefined;
+        const _lhsFnResult = _lhsLeadId && lhs.includes("(")
+          ? this.functions.find(f => f.name === _lhsLeadId)?.result ?? null
+          : null;
         const lhsType: WatType = alwaysI32
           ? "i32"
-          : (/^\w+$/.test(lhs) && locals.has(lhs) ? locals.get(lhs)! : defaultType);
+          : (/^\w+$/.test(lhs) && locals.has(lhs) ? locals.get(lhs)!
+            : /^\w+$/.test(lhs) && this.moduleGlobals.has(lhs) ? this.moduleGlobals.get(lhs)!.type
+            // Array element access arr[idx]: use element type, not pointer type
+            : _lhsLeadId && lhs.includes("[") && this.arrayVars.has(_lhsLeadId) ? this.arrayVars.get(_lhsLeadId)!.elemType
+            : _lhsLeadId && locals.has(_lhsLeadId) ? locals.get(_lhsLeadId)!
+            : _lhsLeadId && this.moduleGlobals.has(_lhsLeadId) ? this.moduleGlobals.get(_lhsLeadId)!.type
+            : _lhsFnResult ?? defaultType);
 
         // String comparison: route through $__str_cmp instead of string.eq / string.lt, etc.
         if (lhsType === "string" && STRING_CMP_OPS.has(op)) {
+          // Special case: str[idx] === "c" (single-char literal) → charCodeAt comparison
+          const lhsSubM = lhs.match(/^(\w+)\[([^\]]+)\]$/);
+          const rhsLit1 = rhs.match(/^["'](.*)["']$/);
+          const lhsLit1 = lhs.match(/^["'](.*)["']$/);
+          const rhsSubM = rhs.match(/^(\w+)\[([^\]]+)\]$/);
+          if (lhsSubM && locals.get(lhsSubM[1]) === "string" && rhsLit1 && rhsLit1[1].length === 1) {
+            this.needsStringExtHelpers = true;
+            const charCode = rhsLit1[1].charCodeAt(0);
+            const idxWat = this.emitExpr(lhsSubM[2].trim(), locals, "i32");
+            const codeWat = `(call $__str_char_code_at (local.get $${lhsSubM[1]}_ptr) (local.get $${lhsSubM[1]}_len) ${idxWat})`;
+            const eqOp = (op === "===" || op === "==") ? "eq" : "ne";
+            if (op === "===" || op === "==" || op === "!==" || op === "!=")
+              return `(i32.${eqOp} ${codeWat} (i32.const ${charCode}))`;
+          }
+          if (rhsSubM && locals.get(rhsSubM[1]) === "string" && lhsLit1 && lhsLit1[1].length === 1) {
+            this.needsStringExtHelpers = true;
+            const charCode = lhsLit1[1].charCodeAt(0);
+            const idxWat = this.emitExpr(rhsSubM[2].trim(), locals, "i32");
+            const codeWat = `(call $__str_char_code_at (local.get $${rhsSubM[1]}_ptr) (local.get $${rhsSubM[1]}_len) ${idxWat})`;
+            const eqOp = (op === "===" || op === "==") ? "eq" : "ne";
+            if (op === "===" || op === "==" || op === "!==" || op === "!=")
+              return `(i32.${eqOp} ${codeWat} (i32.const ${charCode}))`;
+          }
           this.needsStringHelpers = true;
           const aWat = this.emitStringPtrLen(lhs, locals);
           const bWat = this.emitStringPtrLen(rhs, locals);
@@ -4163,6 +4644,18 @@ class WasicTranspiler {
         const baseType = watBaseType(lhsType);
         const isFloat  = baseType === "f64" || baseType === "f32";
         const suffix   = isFloat ? f64suf : i32suf;
+        // f64.rem does not exist in WebAssembly; use x - trunc(x/y)*y formula instead.
+        if (op === "%" && isFloat) {
+          const lWat = this.emitExpr(lhs, locals, lhsType);
+          const rWat = this.emitExpr(rhs, locals, lhsType);
+          const innerWat = `(${baseType}.sub ${lWat} (${baseType}.mul (${baseType}.trunc (${baseType}.div ${lWat} ${rWat})) ${rWat}))`;
+          if (!alwaysI32 && baseType === "i32") {
+            const ctxBase = watBaseType(defaultType as WatType);
+            if (ctxBase === "f64") return `(f64.convert_i32_s ${innerWat})`;
+            if (ctxBase === "i64") return `(i64.extend_i32_s ${innerWat})`;
+          }
+          return innerWat;
+        }
         const watOp    = `${baseType}.${suffix}`;
         const innerWat = `(${watOp} ${this.emitExpr(lhs, locals, lhsType)} ${this.emitExpr(rhs, locals, lhsType)})`;
         // Mixed-type promotion: if context needs f64/i64 but arithmetic ran in i32, convert.
@@ -4407,6 +4900,16 @@ class WasicTranspiler {
         stmts.push(`(return (local.get $__arr_ret))`);
         return stmts.join("\n      ");
       }
+      // String-return side-channel: store ptr/len into scratch locals, then set globals and return void.
+      if (funcResult === "string") {
+        const assignWat = this.emitStringAssign("__ret_str", expr, locals);
+        return [
+          assignWat,
+          `(global.set $__str_ret_ptr (local.get $__ret_str_ptr))`,
+          `(global.set $__str_ret_len (local.get $__ret_str_len))`,
+          `(return)`,
+        ].join("\n      ");
+      }
       return `(return ${this.emitExpr(expr, locals, funcResult)})`;
     }
 
@@ -4449,12 +4952,27 @@ class WasicTranspiler {
 
     // Function-type variable: const f: (a: i32) => i32 = someFunc  OR  let f: (a: i32) => i32;
     // Local was declared as i32 in pre-scan; here we emit the initialiser if present.
-    const funcTypeDecl = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*\([^)]*\)\s*=>\s*\w+(?:\s*=\s*(\w+))?/);
+    const funcTypeDecl = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*\([^)]*\)\s*=>\s*\w+(?:\s*=\s*(.+?))?\s*;?$/);
     if (funcTypeDecl) {
-      const initName = funcTypeDecl[2];
-      if (initName && this.functions.find(f => f.name === initName)) {
-        const idx = this.getFuncTableIdx(initName);
-        return `(local.set $${funcTypeDecl[1]} (i32.const ${idx}))`;
+      const fullInitExpr = funcTypeDecl[2]?.trim();
+      if (fullInitExpr) {
+        // Check if it's a closure factory call like mulberry32(42)
+        const factoryCallM = fullInitExpr.match(/^(\w+)\s*\(/);
+        if (factoryCallM) {
+          const factoryFn = this.functions.find(f => f.name === factoryCallM[1] && f.isClosureFactory && f.returnedArrow);
+          if (factoryFn) {
+            const innerFn = factoryFn.returnedArrow!;
+            const caps = innerFn.closureCaptures ?? [];
+            const extParams = innerFn.params.filter(p => !caps.includes(p.name) && p.name !== "__closure_ptr").map(p => p.type);
+            this.closureTypedVars.set(funcTypeDecl[1], { params: extParams, result: innerFn.result });
+            return `(local.set $${funcTypeDecl[1]} ${this.emitExpr(fullInitExpr, locals, "i32")})`;
+          }
+        }
+        // Plain function reference: store table index
+        const simpleNameM = fullInitExpr.match(/^(\w+)$/);
+        if (simpleNameM && this.functions.find(f => f.name === simpleNameM[1])) {
+          return `(local.set $${funcTypeDecl[1]} (i32.const ${this.getFuncTableIdx(simpleNameM[1])}))`;
+        }
       }
       return "";
     }
@@ -4924,6 +5442,11 @@ class WasicTranspiler {
       const varName = compoundMatch[1];
       const isGlobal = !locals.has(varName) && this.moduleGlobals.has(varName);
       const varType = isGlobal ? this.moduleGlobals.get(varName)!.type : locals.get(varName)!;
+      // String += must route through emitStringAssign, not numeric arithmetic
+      if (varType === "string" && compoundMatch[2] === "+=") {
+        const rhs = compoundMatch[3].trim();
+        return this.emitStringAssign(varName, `${varName} + ${rhs}`, locals);
+      }
       const op      = compoundMatch[2];
       const rhs     = compoundMatch[3].trim();
       type CE = [fOp: string, iOp: string, alwaysI32: boolean];
@@ -4944,14 +5467,36 @@ class WasicTranspiler {
       const opType  = alwaysI32 ? "i32" : watBaseType(varType);
       const isFloat = opType === "f64" || opType === "f32";
       const suffix  = isFloat ? fOp : iOp;
+      const getWatVar = isGlobal ? `(global.get $${varName})` : `(local.get $${varName})`;
+      const rhsWat = this.emitExpr(rhs, locals, opType);
+      // f64.rem does not exist in WebAssembly; emit formula for %=
+      const arithWat = (op === "%=" && isFloat)
+        ? `(${opType}.sub ${getWatVar} (${opType}.mul (${opType}.trunc (${opType}.div ${getWatVar} ${rhsWat})) ${rhsWat}))`
+        : `(${opType}.${suffix} ${getWatVar} ${rhsWat})`;
       if (isGlobal) {
-        return `(global.set $${varName} (${opType}.${suffix} (global.get $${varName}) ${this.emitExpr(rhs, locals, opType)}))`;
+        return `(global.set $${varName} ${arithWat})`;
       }
       // Phase 5h: boxed capture — update through heap pointer
       if (this.currentBoxedCaptures.has(varName)) {
-        return `(i32.store (local.get $${varName}) (${opType}.${suffix} (i32.load (local.get $${varName})) ${this.emitExpr(rhs, locals, opType)}))`;
+        const boxedGet = `(i32.load (local.get $${varName}))`;
+        const boxedRhs = this.emitExpr(rhs, locals, opType);
+        const boxedArith = (op === "%=" && isFloat)
+          ? `(${opType}.sub ${boxedGet} (${opType}.mul (${opType}.trunc (${opType}.div ${boxedGet} ${boxedRhs})) ${boxedRhs}))`
+          : `(${opType}.${suffix} ${boxedGet} ${boxedRhs})`;
+        return `(i32.store (local.get $${varName}) ${boxedArith})`;
       }
-      return `(local.set $${varName} (${opType}.${suffix} (local.get $${varName}) ${this.emitExpr(rhs, locals, opType)}))`;
+      // Mutable closure capture — update through $__closure_ptr
+      { const ccl = this.currentClosureCaptureLayout.get(varName); if (ccl) {
+        const cLoadOp = ccl.type === "f64" ? "f64.load" : ccl.type === "i64" ? "i64.load" : "i32.load";
+        const cStoreOp = ccl.type === "f64" ? "f64.store" : ccl.type === "i64" ? "i64.store" : "i32.store";
+        const cGet = `(${cLoadOp} offset=${ccl.offset} (local.get $__closure_ptr))`;
+        const cRhs = this.emitExpr(rhs, locals, ccl.type);
+        const cArith = (op === "%=" && (ccl.type === "f64" || ccl.type === "f32"))
+          ? `(${ccl.type}.sub ${cGet} (${ccl.type}.mul (${ccl.type}.trunc (${ccl.type}.div ${cGet} ${cRhs})) ${cRhs}))`
+          : `(${ccl.type}.${suffix} ${cGet} ${cRhs})`;
+        return `(${cStoreOp} offset=${ccl.offset} (local.get $__closure_ptr) ${cArith})`;
+      }}
+      return `(local.set $${varName} ${arithWat})`;
     }
 
     // this.field = val — write to instance field inside a class method
@@ -5231,23 +5776,32 @@ class WasicTranspiler {
       }
       const arrInfo = this.arrayVars.get(arrWriteMatch[1]);
       if (arrInfo) {
+        // Phase 6d: 2D array write — twoD[row][col] = val (index captured as "row][col" by regex)
+        if (arrInfo.is2D && arrWriteMatch[2].includes("][")) {
+          const [rowRaw, colRaw] = arrWriteMatch[2].split("][");
+          const rowIdxWat = this.emitArrayIndex(rowRaw, locals);
+          const colIdxWat = this.emitArrayIndex(colRaw, locals);
+          const storeOp2D = arrInfo.elemType === "f64" ? "f64.store" : arrInfo.elemType === "i64" ? "i64.store" : "i32.store";
+          const shift2D   = (arrInfo.elemType === "f64" || arrInfo.elemType === "i64") ? 3 : 2;
+          const rowPtrWat = `(i32.load (i32.add (i32.add (local.get $${arrWriteMatch[1]}) (i32.const 8)) (i32.shl ${rowIdxWat} (i32.const 2))))`;
+          const valWat2D  = this.emitExpr(arrWriteMatch[3], locals, arrInfo.elemType);
+          return `(${storeOp2D} (i32.add (i32.add ${rowPtrWat} (i32.const 8)) (i32.shl ${colIdxWat} (i32.const ${shift2D}))) ${valWat2D})`;
+        }
         const storeOp = arrInfo.elemType === "f64" ? "f64.store"
                       : arrInfo.elemType === "i64" ? "i64.store" : "i32.store";
         const shift   = (arrInfo.elemType === "f64" || arrInfo.elemType === "i64") ? 3 : 2;
-        const idxWat  = this.emitExpr(arrWriteMatch[2], locals, "i32");
+        const idxWat  = this.emitArrayIndex(arrWriteMatch[2], locals);
         const valWat  = this.emitExpr(arrWriteMatch[3], locals, arrInfo.elemType);
         const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
           ? `(local.get $${arrWriteMatch[1]})`
           : `(i32.const ${arrInfo.ptr})`;
-        const dataBase = arrInfo.dynamic
-          ? `(i32.add ${baseWat} (i32.const 8))`
-          : baseWat;
+        const dataBase = `(i32.add ${baseWat} (i32.const 8))`;
         return `(${storeOp} (i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift}))) ${valWat})`;
       }
       // Phase 31: TypedArray element write: arr[idx] = val
       const taInfoW = this.typedArrayVars.get(arrWriteMatch[1]);
       if (taInfoW) {
-        const idxWat = this.emitExpr(arrWriteMatch[2], locals, "i32");
+        const idxWat = this.emitArrayIndex(arrWriteMatch[2], locals);
         const valWat = this.emitExpr(arrWriteMatch[3], locals, taInfoW.elemType);
         const addrWat = taInfoW.shift === 0
           ? `(i32.add (i32.add (local.get $${arrWriteMatch[1]}) (i32.const 8)) ${idxWat})`
@@ -5283,6 +5837,11 @@ class WasicTranspiler {
       if (this.currentBoxedCaptures.has(varName)) {
         return `(i32.store (local.get $${varName}) ${this.emitExpr(assignMatch[2].trim(), locals, "i32")})`;
       }
+      // Mutable closure capture — store through $__closure_ptr
+      { const ccl = this.currentClosureCaptureLayout.get(varName); if (ccl) {
+        const storeOp = ccl.type === "f64" ? "f64.store" : ccl.type === "i64" ? "i64.store" : "i32.store";
+        return `(${storeOp} offset=${ccl.offset} (local.get $__closure_ptr) ${this.emitExpr(assignMatch[2].trim(), locals, ccl.type)})`;
+      }}
       return `(local.set $${varName} ${this.emitExpr(assignMatch[2].trim(), locals, varType)})`;
     }
     // Simple assignment to module global
@@ -5290,6 +5849,18 @@ class WasicTranspiler {
       const varName = assignMatch[1];
       const gInfo = this.moduleGlobals.get(varName)!;
       return `(global.set $${varName} ${this.emitExpr(assignMatch[2].trim(), locals, gInfo.type)})`;
+    }
+
+    // console.log() with no arguments — emit a bare newline
+    if (/^console\.log\s*\(\s*\)\s*;?$/.test(line)) {
+      this.hasConsoleLog = true;
+      const sb = this.scratchBase;
+      return [
+        `    (i32.store8 (i32.const ${sb}) (i32.const 10))`,
+        `    (i32.store (i32.const ${this.iovBase}) (i32.const ${sb}))`,
+        `    (i32.store (i32.const ${this.iovBase + 4}) (i32.const 1))`,
+        `    (drop (call $fd_write (i32.const 1) (i32.const ${this.iovBase}) (i32.const 1) (i32.const ${this.iovBase + 128})))`,
+      ].join("\n");
     }
 
     // console.log(...) — delegate to console_log.ts for full argument support
@@ -5565,7 +6136,18 @@ class WasicTranspiler {
         return { type: "i32", wat: result };
       };
       const globalsMap = new Map([...this.moduleGlobals.entries()].map(([k, v]) => [k, watBaseType(v.type)]));
-      const segments = parseConsoleLogArgs(logMatch[1], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFn, globalsMap, enumStringLookupFn);
+      // Add module string consts encoded as "string:offset:len" so parseSingleArg can look them up
+      for (const [k, [offset, len]] of this.moduleStringConsts) {
+        globalsMap.set(k, `string:${offset}:${len}`);
+      }
+      const closureVarLookupFn: ClosureVarLookup = (name) => {
+        const sig = this.closureTypedVars.get(name);
+        if (!sig) return undefined;
+        const trampolineParams: WatType[] = ["i32" as WatType, ...sig.params as WatType[]];
+        const funcType = this.getOrCreateFuncType(trampolineParams, sig.result);
+        return { params: sig.params as string[], result: sig.result, funcType };
+      };
+      const segments = parseConsoleLogArgs(logMatch[1], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFn, globalsMap, enumStringLookupFn, closureVarLookupFn);
       const { statements, needsHelpers, needsStrGather, needsArrPrintHelper, needsJoinHelper } = emitConsoleLog(segments, allocator, "    ", 1, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
       if (needsStrGather) this.needsStrGatherHelper = true;
@@ -5698,7 +6280,17 @@ class WasicTranspiler {
         return { type: "i32", wat: result };
       };
       const globalsMapErr = new Map([...this.moduleGlobals.entries()].map(([k, v]) => [k, watBaseType(v.type)]));
-      const segments = parseConsoleLogArgs(errMatch[2], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFnErr, globalsMapErr, enumStringLookupFnErr);
+      for (const [k, [offset, len]] of this.moduleStringConsts) {
+        globalsMapErr.set(k, `string:${offset}:${len}`);
+      }
+      const closureVarLookupFnErr: ClosureVarLookup = (name) => {
+        const sig = this.closureTypedVars.get(name);
+        if (!sig) return undefined;
+        const trampolineParams: WatType[] = ["i32" as WatType, ...sig.params as WatType[]];
+        const funcType = this.getOrCreateFuncType(trampolineParams, sig.result);
+        return { params: sig.params as string[], result: sig.result, funcType };
+      };
+      const segments = parseConsoleLogArgs(errMatch[2], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFnErr, globalsMapErr, enumStringLookupFnErr, closureVarLookupFnErr);
       const { statements, needsHelpers, needsStrGather, needsArrPrintHelper: errAph, needsJoinHelper: errJh } = emitConsoleLog(segments, allocator, "    ", 2, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
       if (needsStrGather) this.needsStrGatherHelper = true;
@@ -5732,6 +6324,18 @@ class WasicTranspiler {
       if (this.currentBoxedCaptures.has(v)) {
         return `(i32.store (local.get $${v}) (i32.add (i32.load (local.get $${v})) (i32.const 1)))`;
       }
+      // Mutable closure capture — update through $__closure_ptr
+      { const ccl = this.currentClosureCaptureLayout.get(v); if (ccl) {
+        const loadOp = ccl.type === "f64" ? "f64.load" : ccl.type === "i64" ? "i64.load" : "i32.load";
+        const storeOp = ccl.type === "f64" ? "f64.store" : ccl.type === "i64" ? "i64.store" : "i32.store";
+        const addOp = ccl.type === "f64" ? "f64.add" : ccl.type === "i64" ? "i64.add" : "i32.add";
+        const one = ccl.type === "f64" ? "f64.const 1" : ccl.type === "i64" ? "i64.const 1" : "i32.const 1";
+        return `(${storeOp} offset=${ccl.offset} (local.get $__closure_ptr) (${addOp} (${loadOp} offset=${ccl.offset} (local.get $__closure_ptr)) (${one})))`;
+      }}
+      if (this.moduleGlobals.has(v)) {
+        const vt = watBaseType(this.moduleGlobals.get(v)!.type);
+        return `(global.set $${v} (${vt}.add (global.get $${v}) (${vt}.const 1)))`;
+      }
       const vt = watBaseType(locals.get(v) ?? "i32");
       return `(local.set $${v} (${vt}.add (local.get $${v}) (${vt}.const 1)))`;
     }
@@ -5740,6 +6344,18 @@ class WasicTranspiler {
       // Phase 5h: boxed capture — update through heap pointer
       if (this.currentBoxedCaptures.has(v)) {
         return `(i32.store (local.get $${v}) (i32.sub (i32.load (local.get $${v})) (i32.const 1)))`;
+      }
+      // Mutable closure capture — update through $__closure_ptr
+      { const ccl = this.currentClosureCaptureLayout.get(v); if (ccl) {
+        const loadOp = ccl.type === "f64" ? "f64.load" : ccl.type === "i64" ? "i64.load" : "i32.load";
+        const storeOp = ccl.type === "f64" ? "f64.store" : ccl.type === "i64" ? "i64.store" : "i32.store";
+        const subOp = ccl.type === "f64" ? "f64.sub" : ccl.type === "i64" ? "i64.sub" : "i32.sub";
+        const one = ccl.type === "f64" ? "f64.const 1" : ccl.type === "i64" ? "i64.const 1" : "i32.const 1";
+        return `(${storeOp} offset=${ccl.offset} (local.get $__closure_ptr) (${subOp} (${loadOp} offset=${ccl.offset} (local.get $__closure_ptr)) (${one})))`;
+      }}
+      if (this.moduleGlobals.has(v)) {
+        const vt = watBaseType(this.moduleGlobals.get(v)!.type);
+        return `(global.set $${v} (${vt}.sub (global.get $${v}) (${vt}.const 1)))`;
       }
       const vt = watBaseType(locals.get(v) ?? "i32");
       return `(local.set $${v} (${vt}.sub (local.get $${v}) (${vt}.const 1)))`;
@@ -6087,6 +6703,20 @@ class WasicTranspiler {
           const [eb, ec] = this.extractBlock(lines, i + 1);
           elseBody = eb;
           i += ec + 1;
+        } else if (i < lines.length && /^else\s*(\{.*)?$/.test(lines[i])) {
+          // Standalone "else { ... }" line following a single-line if block
+          const elseLine = lines[i];
+          const elseInline = elseLine.match(/^else\s*\{(.*)\}\s*$/);
+          const elseOpen = elseLine.match(/^else\s*\{?\s*$/);
+          if (elseInline) {
+            const inner = elseInline[1].trim();
+            elseBody = inner ? WasicTranspiler.splitStmts(inner) : [];
+            i++;
+          } else if (elseOpen) {
+            const [eb, ec] = this.extractBlock(lines, i + 1);
+            elseBody = eb;
+            i += ec + 1;
+          }
         } else if (/^}\s*else\s*if\s*\(/.test(terminator)) {
           // Phase 32: else-if chain — build a synthetic else body ["if (cond) {", body…, "} else if {", ...]
           // i is already at first body line of the else-if block (same as "} else {" case)
@@ -8308,9 +8938,11 @@ class WasicTranspiler {
         : [`(param $${p.name} ${watBaseType(p.type)})`]
       )
       .join(" ");
-    // String/bool return types — string not yet supported (void), bool → i32
-    // never: no WAT result clause (function declared as non-returning)
-    const watResult = fn.result === null || fn.result === "string" || fn.result === "never"
+    // String return: use side-channel globals $__str_ret_ptr / $__str_ret_len (void function).
+    // bool → i32; never: no WAT result clause.
+    const isStringReturn = fn.result === "string";
+    if (isStringReturn) this.needsStringRetGlobals = true;
+    const watResult = fn.result === null || isStringReturn || fn.result === "never"
       ? null : watBaseType(fn.result);
     const result    = watResult ? `(result ${watResult})` : "";
     // _start is always exported (IIFE pattern parses it with exported=false, but WASI requires it)
@@ -8682,7 +9314,7 @@ class WasicTranspiler {
       }
       // for-loop init variable: for (let i = 0; ...)
       const forM = line.match(/^(?:\w+\s*:\s*)?for\s*\(\s*(?:let|const|var)\s+(\w+)\s*(?::\s*(\w+))?\s*=\s*(.+?)\s*;/);
-      if (forM) {
+      if (forM && !locals.has(forM[1])) {
         const typeStr2 = forM[2] ?? "";
         const initExpr2 = forM[3].trim();
         const t2 = typeStr2 ? mapType(typeStr2) : inferInitType(initExpr2, locals, this.enumValues, this.functions);
@@ -8761,6 +9393,18 @@ class WasicTranspiler {
       declaredLocals.push(["__arr_tmp2", "i32"]);
       locals.set("__arr_tmp2", "i32");
     }
+    // String-return side-channel: add ptr/len scratch locals for functions that return string.
+    if (isStringReturn && !locals.has("__ret_str_ptr")) {
+      declaredLocals.push(["__ret_str_ptr", "i32"], ["__ret_str_len", "i32"]);
+      locals.set("__ret_str_ptr", "i32");
+      locals.set("__ret_str_len", "i32");
+    }
+    // Template literal numeric temp: pre-declare shared pair when any body line uses ${} interpolation.
+    if (!locals.has("__tmpl_num_ptr") && fn.bodyLines.some(l => /`[^`]*\$\{/.test(l))) {
+      declaredLocals.push(["__tmpl_num_ptr", "i32"], ["__tmpl_num_len", "i32"]);
+      locals.set("__tmpl_num_ptr", "i32");
+      locals.set("__tmpl_num_len", "i32");
+    }
     const localDecls = declaredLocals
       .map(([n, t]) => `    (local $${n} ${watBaseType(t)})`)
       .join("\n");
@@ -8771,9 +9415,11 @@ class WasicTranspiler {
     // Phase 5h: set boxed/shared capture context for this function
     this.currentBoxedCaptures = fn.boxedCaptures ?? new Set();
     this.currentSharedMutableCaptures = fn.sharedMutableCaptures ?? new Set();
+    this.currentClosureCaptureLayout = fn.closureCaptureLayout ?? new Map();
     const body = this.emitBlock(fn.bodyLines, locals, blockResult);
     this.currentBoxedCaptures = new Set();
     this.currentSharedMutableCaptures = new Set();
+    this.currentClosureCaptureLayout = new Map();
     // Phase 21: append (unreachable) for never-typed functions — signals to the WASM validator
     // that control never reaches the end of this function.
     const neverSuffix = fn.result === "never" ? "\n    (unreachable)" : "";
@@ -8798,22 +9444,30 @@ class WasicTranspiler {
    *   2. A trampoline `$name__trampoline(closure_ptr, ...call_params)` that loads
    *      the captured values from the struct and dispatches via call_indirect.
    */
-  /** Pre-scan all function body lines for closure factory assignments and populate closureTypedVars.
-   *  This ensures inner functions (emitted before their factory parents) can resolve closure calls. */
+  /** Pre-scan all function body lines + startBodyLines for closure factory assignments.
+   *  Populates closureTypedVars so inner functions emitted before their factory parents can
+   *  resolve closure pointer call sites, and so module-level closure calls dispatch correctly. */
   private prePopulateClosureTypedVars(): void {
-    for (const fn of this.functions) {
-      for (const line of fn.bodyLines) {
-        const m = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*\w+)?\s*=\s*(.+?);?$/);
-        if (!m) continue;
-        const varName = m[1];
-        const initExpr = m[2].trim();
+    const allLineSets: string[][] = [
+      ...this.functions.map(fn => fn.bodyLines),
+      this.startBodyLines,
+    ];
+    for (const lines of allLineSets) {
+      for (const line of lines) {
+        // Use ' = ' split to handle complex type annotations like (): () => number
+        const declM = line.match(/^(?:var|let|const)\s+(\w+)/);
+        if (!declM) continue;
+        const eqPos = line.indexOf(' = ', declM[0].length);
+        if (eqPos === -1) continue;
+        const varName = declM[1];
+        const initExpr = line.slice(eqPos + 3).replace(/;$/, '').trim();
         const fcm = initExpr.match(/^(\w+)\s*\(/);
         if (!fcm) continue;
         const factoryFn = this.functions.find(f => f.name === fcm[1] && f.isClosureFactory && f.returnedArrow);
         if (!factoryFn) continue;
         const innerFn = factoryFn.returnedArrow!;
         const caps = innerFn.closureCaptures ?? [];
-        const extParams = innerFn.params.filter(p => !caps.includes(p.name)).map(p => p.type);
+        const extParams = innerFn.params.filter(p => !caps.includes(p.name) && p.name !== "__closure_ptr").map(p => p.type);
         this.closureTypedVars.set(varName, { params: extParams, result: innerFn.result });
       }
     }
@@ -8824,14 +9478,19 @@ class WasicTranspiler {
     const captures = inner.closureCaptures ?? [];
 
     // Build per-capture layout: {name, type, byte-offset-in-struct}
+    // For mutable captures (rewired by detectMutableClosureCaptures), use closureCaptureLayout
+    // which has the original type since inner.params no longer contains those captures.
     let structSize = 4; // first 4 bytes = i32 table index
     const captureLayout: { name: string; type: WatType; offset: number }[] = [];
     for (const cap of captures) {
-      const capParam = inner.params.find(p => p.name === cap);
-      const capType: WatType = capParam?.type ?? "i32";
+      const mutableInfo = inner.closureCaptureLayout?.get(cap);
+      const capType: WatType = mutableInfo?.type ?? (inner.params.find(p => p.name === cap)?.type ?? "i32");
       captureLayout.push({ name: cap, type: capType, offset: structSize });
       structSize += (capType === "f64" || capType === "i64") ? 8 : 4;
     }
+
+    // Mutable capture detection and inner-function rewiring is done by detectMutableClosureCaptures()
+    // which runs before emitFunction calls, so inner.closureCaptureLayout is already set here if needed.
 
     // The TRAMPOLINE goes in the funcref table (not the inner function).
     // This enables uniform closure-pointer dispatch: all closures of the same external signature
@@ -8850,7 +9509,7 @@ class WasicTranspiler {
     const locallyComputedCaptures = captureLayout.filter(c => !factoryParamNames.has(c.name));
 
     // Build locals map and emit body lines that compute intermediate closure values.
-    // Skip the `return (params) => expr` line — that is the inner function (already handled).
+    // Skip the `return (params) => expr` line — that is the inner function (already handled.
     const locals = new Map<string, WatType>();
     for (const p of fn.params) locals.set(p.name, p.type);
     const bodyStmts: string[] = [];
@@ -8878,7 +9537,8 @@ class WasicTranspiler {
 
     // ── Trampoline function ───────────────────────────────────────────────────
     // Params: closure_ptr + the inner function's NON-captured params (the "real" call args)
-    const innerCallParams = inner.params.filter(p => !captures.includes(p.name));
+    const updatedCaptures = inner.closureCaptures ?? [];  // may have been reduced by mutable cap rewiring
+    const innerCallParams = inner.params.filter(p => !updatedCaptures.includes(p.name) && p.name !== "__closure_ptr");
     const trampolineParamStr = [
       `(param $__closure_ptr i32)`,
       ...innerCallParams.map(p => `(param $${p.name} ${watBaseType(p.type)})`),
@@ -8889,19 +9549,38 @@ class WasicTranspiler {
 
     const trampolineLines: string[] = [];
     trampolineLines.push(`  (func $${fn.name}__trampoline ${trampolineParamStr} ${resultClause}`.trimEnd());
-    for (const { name, type } of captureLayout) {
-      trampolineLines.push(`    (local $__cap_${name} ${watBaseType(type)})`);
+
+    if (inner.closureCaptureLayout && inner.closureCaptureLayout.size > 0) {
+      // Mutable capture path: load only non-mutable captures; pass $__closure_ptr directly.
+      const immutableLayout = captureLayout.filter(c => !inner.closureCaptureLayout!.has(c.name));
+      for (const { name, type } of immutableLayout) {
+        trampolineLines.push(`    (local $__cap_${name} ${watBaseType(type)})`);
+      }
+      for (const { name, type, offset } of immutableLayout) {
+        const loadOp = type === "f64" ? "f64.load" : type === "i64" ? "i64.load" : "i32.load";
+        trampolineLines.push(`    (local.set $__cap_${name} (${loadOp} offset=${offset} (local.get $__closure_ptr)))`);
+      }
+      const directCallArgs = [
+        `(local.get $__closure_ptr)`,
+        ...innerCallParams.map(p => `(local.get $${p.name})`),
+        ...immutableLayout.map(c => `(local.get $__cap_${c.name})`),
+      ].join(" ");
+      trampolineLines.push(`    (call $${inner.name} ${directCallArgs})`);
+    } else {
+      // Read-only capture path: load all captures and pass by value (original behavior).
+      for (const { name, type } of captureLayout) {
+        trampolineLines.push(`    (local $__cap_${name} ${watBaseType(type)})`);
+      }
+      for (const { name, type, offset } of captureLayout) {
+        const loadOp = type === "f64" ? "f64.load" : type === "i64" ? "i64.load" : "i32.load";
+        trampolineLines.push(`    (local.set $__cap_${name} (${loadOp} offset=${offset} (local.get $__closure_ptr)))`);
+      }
+      const directCallArgs = [
+        ...innerCallParams.map(p => `(local.get $${p.name})`),
+        ...captureLayout.map(c => `(local.get $__cap_${c.name})`),
+      ].join(" ");
+      trampolineLines.push(`    (call $${inner.name}${directCallArgs ? " " + directCallArgs : ""})`);
     }
-    for (const { name, type, offset } of captureLayout) {
-      const loadOp = type === "f64" ? "f64.load" : type === "i64" ? "i64.load" : "i32.load";
-      trampolineLines.push(`    (local.set $__cap_${name} (${loadOp} offset=${offset} (local.get $__closure_ptr)))`);
-    }
-    // Direct call to the inner function (no call_indirect — trampoline knows the exact callee).
-    const directCallArgs = [
-      ...innerCallParams.map(p => `(local.get $${p.name})`),
-      ...captureLayout.map(c => `(local.get $__cap_${c.name})`),
-    ].join(" ");
-    trampolineLines.push(`    (call $${inner.name}${directCallArgs ? " " + directCallArgs : ""})`);
     trampolineLines.push(`  )`);
 
     return [...factoryLines, "", ...trampolineLines].join("\n");
@@ -8920,6 +9599,56 @@ class WasicTranspiler {
    *   → $scale gets an extra (param $multiplier i32)
    *   → call sites: (call $scale (i32.const 10) (local.get $multiplier))
    */
+  /** Pre-pass: detect mutable closure captures in returned inner functions and rewire their
+   *  params so they receive $__closure_ptr (i32) instead of the captured values by copy.
+   *  Must run AFTER injectClosureCaptures() (so closureCaptures is fully populated) and
+   *  BEFORE any emitFunction() calls (inner functions are emitted before their factories). */
+  private detectMutableClosureCaptures(): void {
+    for (const fn of this.functions) {
+      if (!fn.isClosureFactory || !fn.returnedArrow) continue;
+      const inner = fn.returnedArrow;
+      const captures = inner.closureCaptures ?? [];
+      if (captures.length === 0) continue;
+
+      // Build capture layout to know offsets (mirrors emitClosureFactory layout logic)
+      let structOffset = 4;
+      const captureLayout: { name: string; type: WatType; offset: number }[] = [];
+      for (const cap of captures) {
+        const capParam = inner.params.find(p => p.name === cap);
+        const capType: WatType = capParam?.type ?? "i32";
+        captureLayout.push({ name: cap, type: capType, offset: structOffset });
+        structOffset += (capType === "f64" || capType === "i64") ? 8 : 4;
+      }
+
+      // Detect which captures are mutated in the inner function body
+      const mutableCapSet = new Set<string>();
+      for (const cap of captures) {
+        for (const line of inner.bodyLines) {
+          if (new RegExp(`\\b${cap}\\s*(?:\\+\\+|--|[+\\-*/&|^]?=(?!=))`).test(line) ||
+              new RegExp(`(?:\\+\\+|--)\\s*${cap}\\b`).test(line)) {
+            mutableCapSet.add(cap);
+            break;
+          }
+        }
+      }
+      if (mutableCapSet.size === 0) continue;
+
+      // Set closureCaptureLayout so emitFunction can emit load/store through $__closure_ptr
+      inner.closureCaptureLayout = new Map();
+      for (const { name, type, offset } of captureLayout) {
+        if (mutableCapSet.has(name)) inner.closureCaptureLayout.set(name, { type, offset });
+      }
+
+      // Rewire inner function params: replace mutable capture params with $__closure_ptr.
+      // NOTE: inner.closureCaptures is left unchanged so emitClosureFactory can still build
+      // the full struct layout (factory must store ALL captured values including mutable ones).
+      inner.params = [
+        { name: "__closure_ptr", type: "i32" as WatType },
+        ...inner.params.filter(p => !mutableCapSet.has(p.name)),
+      ];
+    }
+  }
+
   private injectClosureCaptures(): void {
     const KEYWORDS = new Set([
       "return","if","else","while","for","do","switch","case","default",
@@ -9111,6 +9840,9 @@ class WasicTranspiler {
     // Also strip `type Alias = keyof T` declarations (they become the `string` type inline).
     this.src = this.src.replace(/:\s*keyof\s+\w+/g, ": string");
     this.src = this.src.replace(/(?:export\s+)?type\s+\w+\s*=\s*keyof\s+\w+\s*;?/gm, "");
+    // Rewrite `const/let/var name = function(params): type { ... }` to `function name(params): type { ... }`
+    // so parseFunctions() can recognize the pattern as a named function.
+    this.src = this.src.replace(/(?:^|(?<=\n))(?:const|let|var)\s+(\w+)\s*=\s*function(\s*\()/gm, "function $1$2");
     // Phase 40: extract external interface declarations before any other parse pass.
     this.parseExternalDeclarations();
     this.parseEnums();
@@ -9122,6 +9854,7 @@ class WasicTranspiler {
     this.parseFunctions();
     this.parseArrowFunctions();
     this.injectClosureCaptures();
+    this.detectMutableClosureCaptures();
     this.liftInlineArrows();
     this.parseTopLevel();
     this.parseModuleGlobals();
@@ -9381,15 +10114,48 @@ class WasicTranspiler {
             continue;
           }
         }
+        // Phase 5g: pre-check for closure factory with complex type annotation (e.g., const r1: () => number = factory())
+        // The main regex below only handles simple type annotations; this handles function-type annotations.
+        if (/^(?:var|let|const)\s+\w+\s*:[^;=]*=>/.test(line)) {
+          const complexNameM = line.match(/^(?:var|let|const)\s+(\w+)/);
+          const complexEqPos = line.indexOf(' = ');
+          if (complexNameM && complexEqPos !== -1) {
+            const complexInit = line.slice(complexEqPos + 3).replace(/;$/, '').trim();
+            const complexFcm = complexInit.match(/^(\w+)\s*\(/);
+            if (complexFcm) {
+              const cFactFn = this.functions.find(f => f.name === complexFcm[1] && f.isClosureFactory && f.returnedArrow);
+              if (cFactFn) {
+                const cInner = cFactFn.returnedArrow!;
+                const cCaps = cInner.closureCaptures ?? [];
+                const cExtParams = cInner.params.filter(p => !cCaps.includes(p.name) && p.name !== "__closure_ptr").map(p => p.type);
+                this.closureTypedVars.set(complexNameM[1], { params: cExtParams, result: cInner.result });
+                startLocals.set(complexNameM[1], "i32");
+                startDeclaredLocals.push([complexNameM[1], "i32"]);
+                continue;
+              }
+            }
+          }
+        }
         const m = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+))?\s*(?:=\s*(.+?))?;?$/);
         if (m) {
           const typeStr = m[2] ?? "";
           const initExpr = (m[3] ?? "").trim();
           // Skip arrow function declarations — lifted to module level, not WAT locals
           if (/^\s*\([^)]*\)\s*(?::\s*\w+)?\s*=>/.test(initExpr)) continue;
-          // Phase 12/23/5h: struct/interface/tuple-returning function call
+          // Phase 12/23/5g/5h: function-call-returning variable detection
           const fcmS = initExpr.match(/^(\w+)\s*\(/);
           if (fcmS) {
+            // Phase 5g: closure factory result at module level
+            const factoryFnS = this.functions.find(f => f.name === fcmS[1] && f.isClosureFactory && f.returnedArrow);
+            if (factoryFnS) {
+              const innerFnS = factoryFnS.returnedArrow!;
+              const capsS = innerFnS.closureCaptures ?? [];
+              const extParamsS = innerFnS.params.filter(p => !capsS.includes(p.name) && p.name !== "__closure_ptr").map(p => p.type);
+              this.closureTypedVars.set(m[1], { params: extParamsS, result: innerFnS.result });
+              startLocals.set(m[1], "i32");
+              startDeclaredLocals.push([m[1], "i32"]);
+              continue;
+            }
             const calledFnS = this.functions.find(f => f.name === fcmS[1]);
             if (calledFnS?.resultTsName && this.structDefs.has(calledFnS.resultTsName)) {
               const retDefS = this.structDefs.get(calledFnS.resultTsName)!;
@@ -9480,6 +10246,12 @@ class WasicTranspiler {
         startDeclaredLocals.push(["__struct_tmp", "i32"]);
         startLocals.set("__struct_tmp", "i32");
       }
+      // Template literal numeric temp: pre-declare when any start body line uses ${} interpolation.
+      if (!startLocals.has("__tmpl_num_ptr") && this.startBodyLines.some(l => /`[^`]*\$\{/.test(l))) {
+        startDeclaredLocals.push(["__tmpl_num_ptr", "i32"], ["__tmpl_num_len", "i32"]);
+        startLocals.set("__tmpl_num_ptr", "i32");
+        startLocals.set("__tmpl_num_len", "i32");
+      }
       const localDecls = [...startLocals.entries()]
         .filter(([, t]) => t !== "string") // "string" is a tracker only
         .map(([n, t]) => `    (local $${n} ${watBaseType(t as WatType)})`)
@@ -9522,6 +10294,8 @@ class WasicTranspiler {
       `  (memory (export "memory") ${memoryPages})`,
       `  (global $__heap_ptr (mut i32) (i32.const ${heapStart}))`,
       this.needsNullableResultFlag ? `  (global $__nullable_ret_flag (mut i32) (i32.const 0))` : "",
+      this.needsStringRetGlobals ? `  (global $__str_ret_ptr (mut i32) (i32.const 0))` : "",
+      this.needsStringRetGlobals ? `  (global $__str_ret_len (mut i32) (i32.const 0))` : "",
       ...moduleGlobalDecls,
       this.needsExceptionTag ? `  (tag $__exn_tag (export "__exn_tag") (param i32 i32))` : "",
       funcTypesWat,

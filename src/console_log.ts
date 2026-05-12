@@ -96,6 +96,16 @@ export type StructFieldLookup = (varName: string, fieldName: string) => { type: 
  */
 export type DotCallLookup = (token: string) => { type: string; wat: string } | undefined;
 
+/**
+ * Callback to resolve a closure-typed variable call like `varName(args)`.
+ * Returns the trampoline funcType string, params, and result, or undefined if not a closure var.
+ */
+export type ClosureVarLookup = (name: string) => {
+  params: string[];
+  result: string | null;
+  funcType: string; // e.g. "$ftype_i32_r_f64"
+} | undefined;
+
 /** A parsed fragment of a console.log argument list. */
 export type LogSegment =
   | { kind: "literal"; text: string }                        // static string (embedded in data section)
@@ -109,7 +119,8 @@ export type LogSegment =
   | { kind: "boolvar"; name: string }                        // bool-typed local (i32, 0=false 1=true)
   | { kind: "boolexpr"; wat: string }                        // arbitrary WAT expression yielding bool i32
   | { kind: "arrptr"; wat: string; elemType: string }        // WAT expression yielding a dynamic array ptr
-  | { kind: "joinarr"; arrWat: string; sepPtr: number; sepLen: number; elemType: string }; // arr.join(sep)
+  | { kind: "joinarr"; arrWat: string; sepPtr: number; sepLen: number; elemType: string } // arr.join(sep)
+  | { kind: "strcall"; callWat: string };                   // void WAT call that sets $__str_ret_ptr/$__str_ret_len
 
 // ---------------------------------------------------------------------------
 // Argument parser
@@ -175,13 +186,14 @@ function parseSingleArg(
   structLookup?: StructFieldLookup,
   dotCallLookup?: DotCallLookup,
   globals?: Map<string, string>,
-  enumStringLookup?: (key: string) => string | undefined
+  enumStringLookup?: (key: string) => string | undefined,
+  closureVarLookup?: ClosureVarLookup
 ): LogSegment[] {
   token = token.trim();
 
   // ── Template literal: `text ${expr} text ...`
   if (token.startsWith("`") && token.endsWith("`")) {
-    return parseTemplateLiteral(token.slice(1, -1), locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup);
+    return parseTemplateLiteral(token.slice(1, -1), locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup, closureVarLookup);
   }
 
   // ── Double-quoted string literal
@@ -214,8 +226,8 @@ function parseSingleArg(
     const rhsIsStr = /^["'`]/.test(rhs) || locals.get(rhs) === "string";
     if (lhsIsStr || rhsIsStr) {
       return [
-        ...parseSingleArg(lhs, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup),
-        ...parseSingleArg(rhs, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup),
+        ...parseSingleArg(lhs, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup, closureVarLookup),
+        ...parseSingleArg(rhs, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup, closureVarLookup),
       ];
     }
     // Arithmetic + — fall through to the expression handler below
@@ -236,6 +248,13 @@ function parseSingleArg(
     // Module-level globals: emit global.get instead of local.get
     if (globals?.has(token)) {
       const gType = globals.get(token)!;
+      // Module-level string constant encoded as "string:offset:len"
+      if (gType.startsWith("string:")) {
+        const parts = gType.split(":");
+        const offset = Number(parts[1]);
+        const len = Number(parts[2]);
+        return [{ kind: "strvar" as const, ptrLocal: `__strconst_ptr_${offset}`, lenLocal: `__strconst_len_${len}` }];
+      }
       const wat = `(global.get $${token})`;
       if (gType === "i64") return [{ kind: "i64expr", wat }];
       if (gType === "f64" || gType === "f32") return [{ kind: "f64expr", wat }];
@@ -379,6 +398,21 @@ function parseSingleArg(
     const callee = callMatch[1];
     const rawArgs = callMatch[2]?.trim() ?? "";
     const argList = rawArgs ? splitTopLevelArgs(rawArgs) : [];
+    // Phase 5g: closure-typed variable dispatch via trampoline (call_indirect)
+    const closureSig = closureVarLookup?.(callee);
+    if (closureSig) {
+      const watArgsList = argList.map((a, idx) =>
+        exprToWat(a.trim(), locals, (closureSig.params[idx] ?? "i32") as string, funcLookup, allocString, arrayLookup, structLookup, globals)
+      );
+      const argsPart = watArgsList.length > 0 ? ` ${watArgsList.join(" ")}` : "";
+      const wat = `(call_indirect (type ${closureSig.funcType}) (local.get $${callee})${argsPart} (i32.load (local.get $${callee})))`;
+      const result = closureSig.result;
+      if (result === "f64" || result === "f32") return [{ kind: "f64expr", wat }];
+      if (result === "i64")                     return [{ kind: "i64expr",  wat }];
+      if (result === "bool")                    return [{ kind: "boolexpr", wat }];
+      if (result === "string")                  return [{ kind: "strcall" as const, callWat: wat }];
+      return [{ kind: "i32expr", wat }];
+    }
     const sig = funcLookup?.(callee);
     // String params expand to two stack values (ptr + len); use allocString if available.
     const watArgsList = argList.flatMap((a, i) => {
@@ -407,9 +441,10 @@ function parseSingleArg(
       return [{ kind: "arrptr" as const, wat, elemType }];
     }
     const retType = (sig as { result?: string } | undefined)?.result;
-    if (retType === "bool")                    return [{ kind: "boolexpr", wat }];
-    if (retType === "i64")                     return [{ kind: "i64expr",  wat }];
+    if (retType === "bool")                     return [{ kind: "boolexpr", wat }];
+    if (retType === "i64")                      return [{ kind: "i64expr",  wat }];
     if (retType === "f64" || retType === "f32") return [{ kind: "f64expr",  wat }];
+    if (retType === "string")                   return [{ kind: "strcall" as const, callWat: wat }];
     return [{ kind: "i32expr", wat }];
   }
 
@@ -433,10 +468,14 @@ function parseSingleArg(
                     : arrInfo.elemType === "i64" ? "i64.load" : "i32.load");
       const shift   = arrInfo.shift !== undefined ? arrInfo.shift
                     : (arrInfo.elemType === "f64" || arrInfo.elemType === "i64") ? 3 : 2;
-      const idxWat  = exprToWat(bracketMatch[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
-      // Dynamic arrays (ptr=-2) have a [length, capacity] header at the pointer; data starts at +8.
+      let idxWat = exprToWat(bracketMatch[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+      if (/^\w+$/.test(bracketMatch[2].trim())) {
+        const idxT = locals.get(bracketMatch[2].trim()) ?? globals?.get(bracketMatch[2].trim());
+        if (idxT === "f64" || idxT === "f32") idxWat = `(i32.trunc_f64_s ${idxWat})`;
+      }
+      // All arrays use an 8-byte [length, capacity] header; data starts at +8.
       const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic) ? `(local.get $${bracketMatch[1]})` : `(i32.const ${arrInfo.ptr})`;
-      const dataBase = arrInfo.dynamic ? `(i32.add ${baseWat} (i32.const 8))` : baseWat;
+      const dataBase = `(i32.add ${baseWat} (i32.const 8))`;
       const addrWat = shift === 0
         ? `(i32.add ${dataBase} ${idxWat})`
         : `(i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift})))`;
@@ -448,7 +487,11 @@ function parseSingleArg(
   }
   // Phase 12/5h: fallback — i32 local holding a dynamic i32[] array pointer (captured or method-returned)
   if (bracketMatch && locals.get(bracketMatch[1]) === "i32") {
-    const idxWat = exprToWat(bracketMatch[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+    let idxWat = exprToWat(bracketMatch[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+    if (/^\w+$/.test(bracketMatch[2].trim())) {
+      const idxT = locals.get(bracketMatch[2].trim()) ?? globals?.get(bracketMatch[2].trim());
+      if (idxT === "f64" || idxT === "f32") idxWat = `(i32.trunc_f64_s ${idxWat})`;
+    }
     return [{ kind: "i32expr" as const, wat: `(i32.load (i32.add (i32.add (local.get $${bracketMatch[1]}) (i32.const 8)) (i32.shl ${idxWat} (i32.const 2))))` }];
   }
 
@@ -479,6 +522,15 @@ function parseSingleArg(
     return [{ kind: "f64expr", wat: exprToWat(token, locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals) }];
   }
 
+  // ── Boolean expression: &&, ||, !, comparisons → boolexpr (prints "true"/"false")
+  // Check before the arithmetic fallback to avoid routing boolean ops through f64.
+  if (token.startsWith("!")
+      || findTopLevelOp(token, "&&") !== -1
+      || findTopLevelOp(token, "||") !== -1
+      || /===|!==/.test(token)) {
+    return [{ kind: "boolexpr", wat: exprToWat(token, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals) }];
+  }
+
   // ── Arithmetic / numeric expression
   // Infer i64 / i32 / f64 from the leading identifier's declared type
   const leadId = token.match(/^(\w+)/)?.[1];
@@ -502,7 +554,8 @@ function parseTemplateLiteral(
   structLookup?: StructFieldLookup,
   dotCallLookup?: DotCallLookup,
   globals?: Map<string, string>,
-  enumStringLookup?: (key: string) => string | undefined
+  enumStringLookup?: (key: string) => string | undefined,
+  closureVarLookup?: ClosureVarLookup
 ): LogSegment[] {
   const segments: LogSegment[] = [];
   let i = 0;
@@ -521,7 +574,7 @@ function parseTemplateLiteral(
         j++;
       }
       const expr = body.slice(i + 2, j - 1).trim();
-      segments.push(...parseSingleArg(expr, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup));
+      segments.push(...parseSingleArg(expr, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup, closureVarLookup));
       i = j;
       textStart = j;
     } else {
@@ -616,10 +669,15 @@ function exprToWat(
                     ?? (ai.elemType === "f64" ? "f64.load" : ai.elemType === "i64" ? "i64.load" : "i32.load");
       const shift   = ai.shift !== undefined ? ai.shift
                     : (ai.elemType === "f64" || ai.elemType === "i64") ? 3 : 2;
-      const idxWat  = exprToWat(bracketM[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
-      // Dynamic arrays have a [length, capacity] header; data starts at ptr+8.
+      let idxWat = exprToWat(bracketM[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+      // If index is an f64 local/global, wrap with trunc to get i32
+      if (/^\w+$/.test(bracketM[2].trim())) {
+        const idxT = locals.get(bracketM[2].trim()) ?? globals?.get(bracketM[2].trim());
+        if (idxT === "f64" || idxT === "f32") idxWat = `(i32.trunc_f64_s ${idxWat})`;
+      }
+      // All arrays use an 8-byte [length, capacity] header; data starts at ptr+8.
       const baseWat = (ai.ptr === -1 || ai.dynamic) ? `(local.get $${bracketM[1]})` : `(i32.const ${ai.ptr})`;
-      const dataBase = ai.dynamic ? `(i32.add ${baseWat} (i32.const 8))` : baseWat;
+      const dataBase = `(i32.add ${baseWat} (i32.const 8))`;
       const addrWat = shift === 0
         ? `(i32.add ${dataBase} ${idxWat})`
         : `(i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift})))`;
@@ -819,7 +877,9 @@ function exprToWat(
     const lhs    = expr.slice(0, idx).trim();
     const rhs    = expr.slice(idx + op.length).trim();
     // Infer i64 from LHS local type so i64 expressions don't get cast to f64
-    const lhsLocalType = /^\w+$/.test(lhs) ? locals.get(lhs) : undefined;
+    const lhsLocalType = /^\w+$/.test(lhs) ? locals.get(lhs)
+                       : /^\w+\.length$/.test(lhs) ? "i32" as const
+                       : undefined;
     const opType = alwaysI32 ? "i32"
                  : lhsLocalType === "i64" ? "i64"
                  : lhsLocalType === "i32" || lhsLocalType === "bool" ? "i32"
@@ -885,14 +945,15 @@ export function parseConsoleLogArgs(
   structLookup?: StructFieldLookup,
   dotCallLookup?: DotCallLookup,
   globals?: Map<string, string>,
-  enumStringLookup?: (key: string) => string | undefined
+  enumStringLookup?: (key: string) => string | undefined,
+  closureVarLookup?: ClosureVarLookup
 ): LogSegment[] {
   const args = splitTopLevelArgs(argsStr);
   const segments: LogSegment[] = [];
 
   for (let i = 0; i < args.length; i++) {
     if (i > 0) segments.push({ kind: "literal", text: " " }); // space between args
-    segments.push(...parseSingleArg(args[i], locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup));
+    segments.push(...parseSingleArg(args[i], locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup, closureVarLookup));
   }
 
   // Always terminate with a newline (console.log behaviour)
@@ -943,7 +1004,7 @@ export function emitConsoleLog(
 
   // Step 2: detect a standalone trailing "\n" so we can absorb it inline.
   const numericKinds = new Set(["i32var","i64var","f64var","i32expr","i64expr","f64expr"]);
-  const strBoolKinds = new Set(["strvar","boolvar"]);
+  const strBoolKinds = new Set(["strvar","boolvar","strcall"]);
   const trailingLitNL =
     merged.length >= 2 &&
     merged[merged.length - 1].kind === "literal" &&
@@ -960,11 +1021,11 @@ export function emitConsoleLog(
   // strvar uses memory.copy into scratch; boolvar uses conditional memory.copy.
   // boolexpr (arbitrary WAT) stays in per-iov mode (evaluated multiple times would be unsafe).
   const gatherable = (s: LogSegment) =>
-    s.kind === "literal" || numericKinds.has(s.kind) || s.kind === "strvar" || s.kind === "boolvar" || s.kind === "arrptr" || s.kind === "joinarr";
+    s.kind === "literal" || numericKinds.has(s.kind) || s.kind === "strvar" || s.kind === "boolvar" || s.kind === "arrptr" || s.kind === "joinarr" || s.kind === "strcall";
   const arrptrKinds = new Set(["arrptr", "joinarr"]);
-  // Single strvar/boolvar/arrptr/joinarr segments also use gather so the newline can be inlined.
+  // Single strvar/boolvar/arrptr/joinarr/strcall segments also use gather so the newline can be inlined.
   const useGather = activeSegs.every(gatherable) &&
-    (activeSegs.length > 1 || strBoolKinds.has(activeSegs[0]?.kind ?? "") || arrptrKinds.has(activeSegs[0]?.kind ?? ""));
+    (activeSegs.length > 1 || strBoolKinds.has(activeSegs[0]?.kind ?? "") || arrptrKinds.has(activeSegs[0]?.kind ?? "") || activeSegs[0]?.kind === "strcall");
 
   const statements: string[] = [];
   let needsHelpers = false;
@@ -1013,20 +1074,25 @@ export function emitConsoleLog(
         // String variable — copy bytes into scratch via $__str_gather, advance cursor
         // $__str_gather(src_ptr, src_len, dst_ptr) — a byte-copy loop helper, no bulk-memory needed
         needsStrGather = true;
+        // Support module string consts encoded as __strconst_ptr_NNN / __strconst_len_NNN
+        const ptrMsc = seg.ptrLocal.match(/^__strconst_ptr_(\d+)$/);
+        const lenMsc = seg.lenLocal.match(/^__strconst_len_(\d+)$/);
+        const ptrWat = ptrMsc ? `(i32.const ${ptrMsc[1]})` : `(local.get $${seg.ptrLocal})`;
+        const lenWat = lenMsc ? `(i32.const ${lenMsc[1]})` : `(local.get $${seg.lenLocal})`;
         const destExpr = runtimeCursor
           ? `(i32.add (i32.const ${scratchBase}) (i32.load (i32.const ${cursorAddr})))`
           : `(i32.const ${scratchBase + compileCursor})`;
         statements.push(
-          `${indent}(call $__str_gather (local.get $${seg.ptrLocal}) (local.get $${seg.lenLocal}) ${destExpr})`,
+          `${indent}(call $__str_gather ${ptrWat} ${lenWat} ${destExpr})`,
         );
         if (!runtimeCursor) {
           statements.push(
-            `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.const ${compileCursor}) (local.get $${seg.lenLocal})))`,
+            `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.const ${compileCursor}) ${lenWat}))`,
           );
           runtimeCursor = true;
         } else {
           statements.push(
-            `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.load (i32.const ${cursorAddr})) (local.get $${seg.lenLocal})))`,
+            `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.load (i32.const ${cursorAddr})) ${lenWat}))`,
           );
         }
       } else if (seg.kind === "boolvar") {
@@ -1086,6 +1152,26 @@ export function emitConsoleLog(
         statements.push(
           `${indent}(call ${joinHelper} ${seg.arrWat} (i32.const ${seg.sepPtr}) (i32.const ${seg.sepLen}) (i32.const ${scratchBase}) (i32.const ${cursorAddr}))`,
         );
+      } else if (seg.kind === "strcall") {
+        // String-returning function: call (void, sets globals), then gather from globals
+        needsStrGather = true;
+        statements.push(`${indent}${seg.callWat}`);
+        const ptrWat = `(global.get $__str_ret_ptr)`;
+        const lenWat = `(global.get $__str_ret_len)`;
+        const destExpr = runtimeCursor
+          ? `(i32.add (i32.const ${scratchBase}) (i32.load (i32.const ${cursorAddr})))`
+          : `(i32.const ${scratchBase + compileCursor})`;
+        statements.push(`${indent}(call $__str_gather ${ptrWat} ${lenWat} ${destExpr})`);
+        if (!runtimeCursor) {
+          statements.push(
+            `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.const ${compileCursor}) ${lenWat}))`,
+          );
+          runtimeCursor = true;
+        } else {
+          statements.push(
+            `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.load (i32.const ${cursorAddr})) ${lenWat}))`,
+          );
+        }
       } else {
         // Numeric segment — convert directly into scratch at current cursor position
         needsHelpers = true;
@@ -1159,9 +1245,13 @@ export function emitConsoleLog(
         lastNumericScratch = -1;
         lastNumericIovLen  = -1;
       } else if (seg.kind === "strvar") {
+        const _ptrMsc = seg.ptrLocal.match(/^__strconst_ptr_(\d+)$/);
+        const _lenMsc = seg.lenLocal.match(/^__strconst_len_(\d+)$/);
+        const _ptrW = _ptrMsc ? `(i32.const ${_ptrMsc[1]})` : `(local.get $${seg.ptrLocal})`;
+        const _lenW = _lenMsc ? `(i32.const ${_lenMsc[1]})` : `(local.get $${seg.lenLocal})`;
         statements.push(
-          `${indent}(i32.store (i32.const ${iovPtr}) (local.get $${seg.ptrLocal}))`,
-          `${indent}(i32.store (i32.const ${iovLen}) (local.get $${seg.lenLocal}))`,
+          `${indent}(i32.store (i32.const ${iovPtr}) ${_ptrW})`,
+          `${indent}(i32.store (i32.const ${iovLen}) ${_lenW})`,
         );
         lastNumericScratch = -1;
         lastNumericIovLen  = -1;
@@ -1196,6 +1286,15 @@ export function emitConsoleLog(
           `${indent}(i32.store (i32.const ${iovPtr}) (i32.const ${scratchBase}))`,
           `${indent}(i32.store (i32.const ${iovLen}) (i32.const 0))`,
           `${indent}(call ${joinHelper} ${seg.arrWat} (i32.const ${seg.sepPtr}) (i32.const ${seg.sepLen}) (i32.const ${scratchBase}) (i32.const ${iovLen}))`,
+        );
+        lastNumericScratch = -1;
+        lastNumericIovLen  = -1;
+      } else if (seg.kind === "strcall") {
+        // String-returning function: call (void, sets globals), store globals in iov
+        statements.push(
+          `${indent}${seg.callWat}`,
+          `${indent}(i32.store (i32.const ${iovPtr}) (global.get $__str_ret_ptr))`,
+          `${indent}(i32.store (i32.const ${iovLen}) (global.get $__str_ret_len))`,
         );
         lastNumericScratch = -1;
         lastNumericIovLen  = -1;
@@ -1361,7 +1460,7 @@ export function getHelperWat(): string {
   ;; Values outside [-2147483648, 2147483647] for the integer part are clamped.
   (func $__f64_to_str (param $val f64) (param $buf i32) (result i32)
     (local $len i32)
-    (local $ipart i32)
+    (local $ipart i64)
     (local $fpart i64)
     (local $flen i32)
     (local $fdigits i64)
@@ -1379,16 +1478,17 @@ export function getHelperWat(): string {
         (local.set $val (f64.neg (local.get $val)))
       )
     )
-    ;; Integer part
-    (local.set $ipart (i32.trunc_f64_s (local.get $val)))
-    (local.set $len (call $__i32_to_str (local.get $ipart) (local.get $ptr)))
+    ;; Integer part — use i64 to support values beyond i32 range (up to ~9.2e18)
+    ;; Subtract 1 from i64_to_str result to exclude the 'n' bigint suffix it appends.
+    (local.set $ipart (i64.trunc_f64_s (local.get $val)))
+    (local.set $len (i32.sub (call $__i64_to_str (local.get $ipart) (local.get $ptr)) (i32.const 1)))
     (local.set $ptr (i32.add (local.get $ptr) (local.get $len)))
     ;; Step 1: ×1e15, round to nearest integer → up to 15 fractional digits.
     (local.set $fpart
       (i64.trunc_f64_s
         (f64.nearest
           (f64.mul
-            (f64.sub (local.get $val) (f64.convert_i32_s (local.get $ipart)))
+            (f64.sub (local.get $val) (f64.convert_i64_s (local.get $ipart)))
             (f64.const 1000000000000000)
           )
         )
@@ -1406,7 +1506,7 @@ export function getHelperWat(): string {
         (local.set $trial (i64.div_u (local.get $cur_fpart) (i64.const 10)))
         (local.set $recon
           (f64.add
-            (f64.convert_i32_s (local.get $ipart))
+            (f64.convert_i64_s (local.get $ipart))
             (f64.div
               (f64.convert_i64_s (local.get $trial))
               (call $__pow10_f64 (i32.sub (local.get $cur_len) (i32.const 1)))

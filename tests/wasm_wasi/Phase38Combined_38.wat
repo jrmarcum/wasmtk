@@ -2,7 +2,7 @@
   (import "wasi_snapshot_preview1" "proc_exit" (func $proc_exit (param i32)))
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
   (memory (export "memory") 2)
-  (global $__heap_ptr (mut i32) (i32.const 260))
+  (global $__heap_ptr (mut i32) (i32.const 270))
   (global $x f64 (f64.const 2.5))
   (global $hx f64 (f64.const 1.3))
   (global $v f64 (f64.const 0.6))
@@ -103,7 +103,7 @@
   ;; Values outside [-2147483648, 2147483647] for the integer part are clamped.
   (func $__f64_to_str (param $val f64) (param $buf i32) (result i32)
     (local $len i32)
-    (local $ipart i32)
+    (local $ipart i64)
     (local $fpart i64)
     (local $flen i32)
     (local $fdigits i64)
@@ -121,16 +121,17 @@
         (local.set $val (f64.neg (local.get $val)))
       )
     )
-    ;; Integer part
-    (local.set $ipart (i32.trunc_f64_s (local.get $val)))
-    (local.set $len (call $__i32_to_str (local.get $ipart) (local.get $ptr)))
+    ;; Integer part — use i64 to support values beyond i32 range (up to ~9.2e18)
+    ;; Subtract 1 from i64_to_str result to exclude the 'n' bigint suffix it appends.
+    (local.set $ipart (i64.trunc_f64_s (local.get $val)))
+    (local.set $len (i32.sub (call $__i64_to_str (local.get $ipart) (local.get $ptr)) (i32.const 1)))
     (local.set $ptr (i32.add (local.get $ptr) (local.get $len)))
     ;; Step 1: ×1e15, round to nearest integer → up to 15 fractional digits.
     (local.set $fpart
       (i64.trunc_f64_s
         (f64.nearest
           (f64.mul
-            (f64.sub (local.get $val) (f64.convert_i32_s (local.get $ipart)))
+            (f64.sub (local.get $val) (f64.convert_i64_s (local.get $ipart)))
             (f64.const 1000000000000000)
           )
         )
@@ -148,7 +149,7 @@
         (local.set $trial (i64.div_u (local.get $cur_fpart) (i64.const 10)))
         (local.set $recon
           (f64.add
-            (f64.convert_i32_s (local.get $ipart))
+            (f64.convert_i64_s (local.get $ipart))
             (f64.div
               (f64.convert_i64_s (local.get $trial))
               (call $__pow10_f64 (i32.sub (local.get $cur_len) (i32.const 1)))
@@ -398,14 +399,14 @@
             (i32.const 1)
             (i32.const 128)))
     (local.set $t (call $mathlib_tanh (f64.const 3.0)))
-        (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__f64_to_str (if (result f64) (i32.and (f64.gt (local.get $t) (f64.const 0)) (f64.lt (local.get $t) (f64.const 1))) (then (f64.const 1)) (else (f64.const 0))) (i32.const 132)))
-          (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
-          (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
+        (i32.store (i32.const 0) (if (result i32) (if (result i32) (i32.and (f64.gt (local.get $t) (f64.const 0)) (f64.lt (local.get $t) (f64.const 1))) (then (i32.const 1)) (else (i32.const 0))) (then (i32.const 260)) (else (i32.const 264))))
+          (i32.store (i32.const 4) (if (result i32) (if (result i32) (i32.and (f64.gt (local.get $t) (f64.const 0)) (f64.lt (local.get $t) (f64.const 1))) (then (i32.const 1)) (else (i32.const 0))) (then (i32.const 4)) (else (i32.const 5))))
+          (i32.store (i32.const 8) (i32.const 269))
+          (i32.store (i32.const 12) (i32.const 1))
           (drop (call $fd_write
             (i32.const 1)
             (i32.const 0)
-            (i32.const 1)
+            (i32.const 2)
             (i32.const 128)))
     (local.set $comp (f64.add (call $mathlib_asin (global.get $v)) (call $mathlib_acos (global.get $v))))
         (i32.store (i32.const 0) (i32.const 132))
@@ -454,17 +455,20 @@
             (i32.const 1)
             (i32.const 128)))
     (local.set $r (call $mathlib_random))
-        (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__f64_to_str (if (result f64) (i32.and (f64.ge (local.get $r) (f64.const 0)) (f64.lt (local.get $r) (f64.const 1))) (then (f64.const 1)) (else (f64.const 0))) (i32.const 132)))
-          (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
-          (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
+        (i32.store (i32.const 0) (if (result i32) (if (result i32) (i32.and (f64.ge (local.get $r) (f64.const 0)) (f64.lt (local.get $r) (f64.const 1))) (then (i32.const 1)) (else (i32.const 0))) (then (i32.const 260)) (else (i32.const 264))))
+          (i32.store (i32.const 4) (if (result i32) (if (result i32) (i32.and (f64.ge (local.get $r) (f64.const 0)) (f64.lt (local.get $r) (f64.const 1))) (then (i32.const 1)) (else (i32.const 0))) (then (i32.const 4)) (else (i32.const 5))))
+          (i32.store (i32.const 8) (i32.const 269))
+          (i32.store (i32.const 12) (i32.const 1))
           (drop (call $fd_write
             (i32.const 1)
             (i32.const 0)
-            (i32.const 1)
+            (i32.const 2)
             (i32.const 128)))
     (call $proc_exit (i32.const 0))
   )
+  (data (i32.const 260) "\74\72\75\65")
+  (data (i32.const 264) "\66\61\6c\73\65")
+  (data (i32.const 269) "\0a")
 
   ;; globals from mathlib
   (global $mathlib_global0 (mut i64) (i64.const 7809847782465536322))
