@@ -271,9 +271,10 @@
   )
   (func $newArgError (param $arg f64) (param $msg_ptr i32) (param $msg_len i32) (result i32)
     (local $__obj_ret i32)
-    (local.set $__obj_ret (call $__malloc (i32.const 12)))
+    (local.set $__obj_ret (call $__malloc (i32.const 16)))
       (f64.store offset=0 (local.get $__obj_ret) (local.get $arg))
       (i32.store offset=8 (local.get $__obj_ret) (local.get $msg_ptr))
+      (i32.store offset=12 (local.get $__obj_ret) (local.get $msg_len))
       (return (local.get $__obj_ret))
   )
 

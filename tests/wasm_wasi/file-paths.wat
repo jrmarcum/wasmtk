@@ -676,7 +676,7 @@
     (local $__ret_str_ptr i32)
     (local $__ret_str_len i32)
     (local.set $last (call $findLastChar (local.get $p_ptr) (local.get $p_len) (f64.const 47)))
-    (call $__str_slice (local.get $p_ptr) (local.get $p_len) (f64.add (local.get $last) (f64.const 1)) (local.get $p_len))
+    (call $__str_slice (local.get $p_ptr) (local.get $p_len) (i32.trunc_f64_s (f64.add (local.get $last) (f64.const 1))) (local.get $p_len))
       (local.set $__ret_str_len)
       (local.set $__ret_str_ptr)
       (global.set $__str_ret_ptr (local.get $__ret_str_ptr))

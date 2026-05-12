@@ -81,13 +81,15 @@ export type ArrayLookup = (name: string) => {
   shift?: number;
   /** Phase 31: override load instruction for sub-word TypedArrays */
   customLoadOp?: string;
+  /** True when the array is a module-level global (use global.get instead of local.get). */
+  isGlobal?: boolean;
 } | undefined;
 
 /**
  * Callback to resolve a struct field access `varName.fieldName`.
  * Returns the field's WAT type string and the WAT load expression, or undefined if not a struct field.
  */
-export type StructFieldLookup = (varName: string, fieldName: string) => { type: string; watLoad: string } | undefined;
+export type StructFieldLookup = (varName: string, fieldName: string) => { type: string; watLoad: string; watLoadLen?: string } | undefined;
 
 /**
  * Callback to resolve a dot-call expression like `receiver.method(args)`.
@@ -120,7 +122,8 @@ export type LogSegment =
   | { kind: "boolexpr"; wat: string }                        // arbitrary WAT expression yielding bool i32
   | { kind: "arrptr"; wat: string; elemType: string }        // WAT expression yielding a dynamic array ptr
   | { kind: "joinarr"; arrWat: string; sepPtr: number; sepLen: number; elemType: string } // arr.join(sep)
-  | { kind: "strcall"; callWat: string };                   // void WAT call that sets $__str_ret_ptr/$__str_ret_len
+  | { kind: "strcall"; callWat: string }                    // void WAT call that sets $__str_ret_ptr/$__str_ret_len
+  | { kind: "strexpr"; ptrWat: string; lenWat: string };   // arbitrary WAT expressions yielding string ptr+len
 
 // ---------------------------------------------------------------------------
 // Argument parser
@@ -296,6 +299,9 @@ function parseSingleArg(
   if (sfDotMatch && structLookup) {
     const fi = structLookup(sfDotMatch[1], sfDotMatch[2]);
     if (fi) {
+      if (fi.type === "string" && fi.watLoadLen) {
+        return [{ kind: "strexpr" as const, ptrWat: fi.watLoad, lenWat: fi.watLoadLen }];
+      }
       const kind = fi.type === "f64" || fi.type === "f32" ? "f64expr" as const
                  : fi.type === "i64" ? "i64expr" as const : "i32expr" as const;
       return [{ kind, wat: fi.watLoad }];
@@ -462,6 +468,18 @@ function parseSingleArg(
   if (bracketMatch && arrayLookup) {
     const arrInfo = arrayLookup(bracketMatch[1]);
     if (arrInfo) {
+      // String array element access: arr[idx] — load ptr+len pair (8-byte elements)
+      if ((arrInfo as { isStringArr?: boolean }).isStringArr || arrInfo.elemType === "string") {
+        let idxWat = exprToWat(bracketMatch[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+        if (/^\w+$/.test(bracketMatch[2].trim())) {
+          const idxT = locals.get(bracketMatch[2].trim()) ?? globals?.get(bracketMatch[2].trim());
+          if (idxT === "f64" || idxT === "f32") idxWat = `(i32.trunc_f64_s ${idxWat})`;
+        }
+        const getOp = arrInfo.isGlobal ? `(global.get $${bracketMatch[1]})` : `(local.get $${bracketMatch[1]})`;
+        const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic) ? getOp : `(i32.const ${arrInfo.ptr})`;
+        const elemAddrWat = `(i32.add (i32.add ${baseWat} (i32.const 8)) (i32.shl ${idxWat} (i32.const 3)))`;
+        return [{ kind: "strexpr" as const, ptrWat: `(i32.load ${elemAddrWat})`, lenWat: `(i32.load offset=4 ${elemAddrWat})` }];
+      }
       // Phase 31: respect custom shift/loadOp for sub-word TypedArrays (Uint8Array, Int16Array, etc.)
       const loadOp  = arrInfo.customLoadOp
                     ?? (arrInfo.elemType === "f64" ? "f64.load"
@@ -474,7 +492,8 @@ function parseSingleArg(
         if (idxT === "f64" || idxT === "f32") idxWat = `(i32.trunc_f64_s ${idxWat})`;
       }
       // All arrays use an 8-byte [length, capacity] header; data starts at +8.
-      const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic) ? `(local.get $${bracketMatch[1]})` : `(i32.const ${arrInfo.ptr})`;
+      const getOp2 = arrInfo.isGlobal ? `(global.get $${bracketMatch[1]})` : `(local.get $${bracketMatch[1]})`;
+      const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic) ? getOp2 : `(i32.const ${arrInfo.ptr})`;
       const dataBase = `(i32.add ${baseWat} (i32.const 8))`;
       const addrWat = shift === 0
         ? `(i32.add ${dataBase} ${idxWat})`
@@ -500,8 +519,9 @@ function parseSingleArg(
   if (dotLenMatch) {
     const arrInfo = arrayLookup?.(dotLenMatch[1]);
     if (arrInfo) {
+      const getOp = arrInfo.isGlobal ? `(global.get $${dotLenMatch[1]})` : `(local.get $${dotLenMatch[1]})`;
       const wat = arrInfo.dynamic
-        ? `(i32.load (local.get $${dotLenMatch[1]}))`
+        ? `(i32.load ${getOp})`
         : `(i32.const ${arrInfo.length})`;
       return [{ kind: "i32expr", wat }];
     }
@@ -649,7 +669,10 @@ function exprToWat(
   const dotLenM = expr.match(/^(\w+)\.length$/);
   if (dotLenM) {
     const ai = arrayLookup?.(dotLenM[1]);
-    if (ai) return ai.dynamic ? `(i32.load (local.get $${dotLenM[1]}))` : `(i32.const ${ai.length})`;
+    if (ai) {
+      const getOp2 = ai.isGlobal ? `(global.get $${dotLenM[1]})` : `(local.get $${dotLenM[1]})`;
+      return ai.dynamic ? `(i32.load ${getOp2})` : `(i32.const ${ai.length})`;
+    }
     // Phase 12: i32 local holding a dynamic array pointer
     if (locals.get(dotLenM[1]) === "i32") return `(i32.load (local.get $${dotLenM[1]}))`;
   }
@@ -1004,7 +1027,7 @@ export function emitConsoleLog(
 
   // Step 2: detect a standalone trailing "\n" so we can absorb it inline.
   const numericKinds = new Set(["i32var","i64var","f64var","i32expr","i64expr","f64expr"]);
-  const strBoolKinds = new Set(["strvar","boolvar","strcall"]);
+  const strBoolKinds = new Set(["strvar","boolvar","strcall","strexpr"]);
   const trailingLitNL =
     merged.length >= 2 &&
     merged[merged.length - 1].kind === "literal" &&
@@ -1021,11 +1044,11 @@ export function emitConsoleLog(
   // strvar uses memory.copy into scratch; boolvar uses conditional memory.copy.
   // boolexpr (arbitrary WAT) stays in per-iov mode (evaluated multiple times would be unsafe).
   const gatherable = (s: LogSegment) =>
-    s.kind === "literal" || numericKinds.has(s.kind) || s.kind === "strvar" || s.kind === "boolvar" || s.kind === "arrptr" || s.kind === "joinarr" || s.kind === "strcall";
+    s.kind === "literal" || numericKinds.has(s.kind) || s.kind === "strvar" || s.kind === "boolvar" || s.kind === "arrptr" || s.kind === "joinarr" || s.kind === "strcall" || s.kind === "strexpr";
   const arrptrKinds = new Set(["arrptr", "joinarr"]);
-  // Single strvar/boolvar/arrptr/joinarr/strcall segments also use gather so the newline can be inlined.
+  // Single strvar/boolvar/arrptr/joinarr/strcall/strexpr segments also use gather so the newline can be inlined.
   const useGather = activeSegs.every(gatherable) &&
-    (activeSegs.length > 1 || strBoolKinds.has(activeSegs[0]?.kind ?? "") || arrptrKinds.has(activeSegs[0]?.kind ?? "") || activeSegs[0]?.kind === "strcall");
+    (activeSegs.length > 1 || strBoolKinds.has(activeSegs[0]?.kind ?? "") || arrptrKinds.has(activeSegs[0]?.kind ?? "") || activeSegs[0]?.kind === "strcall" || activeSegs[0]?.kind === "strexpr");
 
   const statements: string[] = [];
   let needsHelpers = false;
@@ -1172,6 +1195,23 @@ export function emitConsoleLog(
             `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.load (i32.const ${cursorAddr})) ${lenWat}))`,
           );
         }
+      } else if (seg.kind === "strexpr") {
+        // Arbitrary WAT ptr+len expressions — gather directly from the computed ptr/len
+        needsStrGather = true;
+        const destExpr = runtimeCursor
+          ? `(i32.add (i32.const ${scratchBase}) (i32.load (i32.const ${cursorAddr})))`
+          : `(i32.const ${scratchBase + compileCursor})`;
+        statements.push(`${indent}(call $__str_gather ${seg.ptrWat} ${seg.lenWat} ${destExpr})`);
+        if (!runtimeCursor) {
+          statements.push(
+            `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.const ${compileCursor}) ${seg.lenWat}))`,
+          );
+          runtimeCursor = true;
+        } else {
+          statements.push(
+            `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.load (i32.const ${cursorAddr})) ${seg.lenWat}))`,
+          );
+        }
       } else {
         // Numeric segment — convert directly into scratch at current cursor position
         needsHelpers = true;
@@ -1295,6 +1335,14 @@ export function emitConsoleLog(
           `${indent}${seg.callWat}`,
           `${indent}(i32.store (i32.const ${iovPtr}) (global.get $__str_ret_ptr))`,
           `${indent}(i32.store (i32.const ${iovLen}) (global.get $__str_ret_len))`,
+        );
+        lastNumericScratch = -1;
+        lastNumericIovLen  = -1;
+      } else if (seg.kind === "strexpr") {
+        // Arbitrary WAT ptr+len expressions — store computed values directly into iov
+        statements.push(
+          `${indent}(i32.store (i32.const ${iovPtr}) ${seg.ptrWat})`,
+          `${indent}(i32.store (i32.const ${iovLen}) ${seg.lenWat})`,
         );
         lastNumericScratch = -1;
         lastNumericIovLen  = -1;

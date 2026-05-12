@@ -994,6 +994,8 @@
     (local $c2_ptr i32)
     (local $c2_len i32)
     (local $__iface_tmp i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $s_ptr (i32.const 297))
       (local.set $s_len (i32.const 5))
     (call $__str_char_at (local.get $s_ptr) (local.get $s_len) (i32.const 1))

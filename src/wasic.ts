@@ -267,6 +267,7 @@ interface FuncParam {
   type: WatType;
   defaultValue?: string;   // default expression, e.g. "0" or "42"
   arrayElemType?: WatType; // set when param is an array pointer (T[])
+  arrayStructElemType?: string; // struct type name when T[] is a struct array, e.g. "Person" for Person[]
   structType?: string;     // set when param is a struct pointer (stores struct name, e.g. "Point")
   funcTypeInfo?: { params: WatType[]; result: WatType | null }; // set when param is a function type
   isRest?: boolean;        // set when param is a rest parameter (...name: T[])
@@ -426,10 +427,47 @@ function parse2DArrayLiteral(str: string): string[][] {
   return rows;
 }
 
+/** Splits a comma-separated string respecting curly-brace and bracket nesting.
+ *  Use instead of `.split(",")` when elements may be struct/object literals. */
+function splitBraceAwareCommas(s: string): string[] {
+  const result: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "{" || ch === "[" || ch === "(") depth++;
+    else if (ch === "}" || ch === "]" || ch === ")") depth--;
+    else if (ch === "," && depth === 0) {
+      const part = s.slice(start, i).trim();
+      if (part.length > 0) result.push(part);
+      start = i + 1;
+    }
+  }
+  const last = s.slice(start).trim();
+  if (last.length > 0) result.push(last);
+  return result;
+}
+
 /** Returns the WAT zero-literal for a given type. */
 function zeroOf(t: WatType): string {
   if (t === "string" || t === "bool") return "(i32.const 0)";
   return t === "f64" ? "(f64.const 0)" : t === "f32" ? "(f32.const 0)" : `(${t}.const 0)`;
+}
+
+/** Splits a string of two consecutive top-level WAT S-expressions into [first, second].
+ *  E.g. "(local.get $a_ptr) (local.get $a_len)" → ["(local.get $a_ptr)", "(local.get $a_len)"]
+ */
+function splitTwoWatExprs(s: string): [string, string] {
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "(") depth++;
+    else if (ch === ")") {
+      depth--;
+      if (depth === 0) return [s.slice(0, i + 1).trim(), s.slice(i + 1).trim()];
+    }
+  }
+  return [s, ""];
 }
 
 /**
@@ -562,12 +600,23 @@ class WasicTranspiler {
   private rawDataSegments: Array<{ ptr: number; bytes: string }> = [];
   // Per-function array variable tracking: varName → { elemType, ptr, length, dynamic?, capacity?, initElements? }
   // ptr=-1: runtime param pointer. ptr=-2: dynamic heap array (ptr in local). ptr>=0: static data address.
-  // Reset at the start of each emitFunction call.
+  // Reset at the start of each emitFunction call; module-level entries are re-seeded from moduleArrayVars.
   private arrayVars: Map<string, {
     elemType: WatType; ptr: number; length: number;
     dynamic?: boolean; capacity?: number; initElements?: string[];
     is2D?: boolean; rows?: string[][];   // Phase 6d: i32[][] multi-dimensional array
     isStringArr?: boolean;               // Phase 27: string[] from split() — 8-byte (ptr,len) elements
+    structTypeName?: string;             // struct element type name for arr[i].field access
+  }> = new Map();
+
+  // Module-level array registrations — populated during startBodyLines pre-scan and never reset.
+  // Copied into arrayVars at the start of each emitFunction so functions can access global arrays.
+  private moduleArrayVars: Map<string, {
+    elemType: WatType; ptr: number; length: number;
+    dynamic?: boolean; capacity?: number; initElements?: string[];
+    is2D?: boolean; rows?: string[][];
+    isStringArr?: boolean;
+    structTypeName?: string;
   }> = new Map();
 
   // Phase 31: typed array variable tracking: varName → {taType, elemType, loadOp, storeOp, shift, bytesPerElem, length}
@@ -1193,6 +1242,9 @@ class WasicTranspiler {
       const arrElemMatch = typeAnnotation.match(/^(\w+)\[\]$/);
       const arrayElemType: WatType | undefined = arrElemMatch
         ? mapType(arrElemMatch[1]) as WatType : undefined;
+      // For struct array params (e.g. Person[]), preserve the struct type name for arr[i].field access
+      const arrayStructElemType: string | undefined = (arrElemMatch && /^[A-Z]/.test(arrElemMatch[1]) && this.structDefs.has(arrElemMatch[1]))
+        ? arrElemMatch[1] : undefined;
       // Detect struct param: capitalized type name that isn't a known primitive
       // structType is stored so emitFunction can register it in structVars.
       const structType: string | undefined =
@@ -1201,12 +1253,12 @@ class WasicTranspiler {
       // Split "type = defaultExpr" if an explicit default value is present
       const eqIdx = afterColon.indexOf("=");
       if (eqIdx !== -1) {
-        return { name, type: resolvedType, defaultValue: afterColon.slice(eqIdx + 1).trim(), arrayElemType, structType };
+        return { name, type: resolvedType, defaultValue: afterColon.slice(eqIdx + 1).trim(), arrayElemType, arrayStructElemType, structType };
       }
       if (isOptional) {
-        return { name, type: resolvedType, defaultValue: "0", arrayElemType, structType };
+        return { name, type: resolvedType, defaultValue: "0", arrayElemType, arrayStructElemType, structType };
       }
-      return { name, type: resolvedType, arrayElemType, structType };
+      return { name, type: resolvedType, arrayElemType, arrayStructElemType, structType };
     });
   }
 
@@ -1740,6 +1792,55 @@ class WasicTranspiler {
     }
   }
 
+  /** Joins multi-line array literal declarations in startBodyLines into single lines.
+   *  e.g. `const x: T[] = [` followed by element lines followed by `]` → one joined line.
+   *  This allows the array pre-scan regexes (which need `[...]` on one line) to match. */
+  private joinMultilineArrayLiterals(): void {
+    // Count net [ ] depth while skipping characters inside string literals.
+    const netBrackets = (s: string): number => {
+      let d = 0, inSQ = false, inDQ = false, inTmpl = false;
+      for (let ci = 0; ci < s.length; ci++) {
+        const c = s[ci];
+        if (c === "\\" && (inSQ || inDQ || inTmpl)) { ci++; continue; }
+        if (!inDQ && !inTmpl && c === "'") { inSQ = !inSQ; continue; }
+        if (!inSQ && !inTmpl && c === '"') { inDQ = !inDQ; continue; }
+        if (!inSQ && !inDQ && c === "`") { inTmpl = !inTmpl; continue; }
+        if (inSQ || inDQ || inTmpl) continue;
+        if (c === "[") d++;
+        else if (c === "]") d--;
+      }
+      return d;
+    };
+
+    const result: string[] = [];
+    let i = 0;
+    while (i < this.startBodyLines.length) {
+      const line = this.startBodyLines[i];
+      // Check if this is an array declaration that opens an unclosed bracket
+      const isArrDecl = /^(?:var|let|const)\s+\w+/.test(line);
+      if (isArrDecl) {
+        let depth = netBrackets(line);
+        if (depth > 0) {
+          // Collect subsequent lines until brackets balance
+          let joined = line;
+          i++;
+          while (i < this.startBodyLines.length && depth > 0) {
+            const next = this.startBodyLines[i];
+            joined += " " + next;
+            depth += netBrackets(next);
+            i++;
+          }
+          result.push(joined.replace(/\s+/g, " ").trim());
+          continue;
+        }
+      }
+      result.push(line);
+      i++;
+    }
+    this.startBodyLines = result;
+  }
+
+
   // -------------------------------------------------------------------------
   // Pass 2b – extract module-level scalar globals from startBodyLines
   // -------------------------------------------------------------------------
@@ -1798,6 +1899,78 @@ class WasicTranspiler {
       remaining.push(line);
     }
     this.startBodyLines = remaining;
+  }
+
+  /**
+   * Detects module-level dynamic arrays that are accessed from within function bodies,
+   * and registers them as mutable i32 WASM globals so functions can read/write them.
+   * Must run after parseModuleGlobals() and before emitFunction() calls.
+   */
+  private detectModuleArrayGlobals(): void {
+    // Collect all array names used as method receivers in any function body,
+    // and whether they need dynamic (heap) layout (push/pop used in functions).
+    const usedInFunctions = new Set<string>();
+    const needsDynamic    = new Set<string>();
+    for (const fn of this.functions) {
+      for (const line of fn.bodyLines) {
+        const m = line.match(/\b(\w+)\.(push|pop|shift|unshift|indexOf|includes|slice|forEach|map|filter|find|reduce|every|some|findIndex|at|reverse|fill|join|sort|flat|flatMap|splice|length)\s*[.(]?/);
+        if (m) {
+          usedInFunctions.add(m[1]);
+          if (["push","pop","shift","unshift","splice"].includes(m[2])) needsDynamic.add(m[1]);
+        }
+        // Plain length access: arr.length (no parens)
+        const lm = line.match(/\b(\w+)\.length\b/);
+        if (lm) usedInFunctions.add(lm[1]);
+        // Array element read/write: arr[idx] or arr[idx] = ...
+        const em = line.match(/\b(\w+)\[/);
+        if (em) usedInFunctions.add(em[1]);
+      }
+    }
+    // Also mark arrays as dynamic if startBodyLines uses push/pop on them.
+    for (const name of this.findDynamicArrays(this.startBodyLines)) needsDynamic.add(name);
+
+    // Scan startBodyLines for array declarations whose names appear in function bodies.
+    for (const line of this.startBodyLines) {
+      const m = line.match(/^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*(?::\s*([\w]+)(\[\])+)?\s*=\s*\[/);
+      if (!m) continue;
+      const varName = m[1];
+      if (!usedInFunctions.has(varName)) continue;
+      if (this.moduleGlobals.has(varName)) continue; // already registered
+      // Determine element type
+      const typeHint = m[2] ?? "";
+      let elemType: WatType = "i32";
+      if (typeHint === "string") {
+        elemType = "i32"; // string arrays store pair-of-i32 entries via special helpers
+      } else if (typeHint === "number") {
+        elemType = "f64";
+      } else if (typeHint && this.structDefs.has(typeHint)) {
+        elemType = "i32"; // struct pointer arrays
+      } else if (typeHint) {
+        elemType = (mapType(typeHint) as WatType) ?? "i32";
+      }
+      const isDynamic = needsDynamic.has(varName);
+      const isStringArr = typeHint === "string";
+      const structTypeName = (typeHint && this.structDefs.has(typeHint)) ? typeHint : undefined;
+      // Register as mutable i32 global (holds the heap ptr; 0 = not yet allocated).
+      this.moduleGlobals.set(varName, { type: "i32", mutable: true, initExpr: "0" });
+      // Store metadata for dynArrStmt/dynArrMethod to use global.get/set.
+      this.moduleArrayVars.set(varName, { elemType, ptr: -2, length: 0, dynamic: isDynamic, isStringArr, structTypeName });
+    }
+  }
+
+  /** Returns whether an array is a true module-level WASM global (registered in both moduleArrayVars AND moduleGlobals). */
+  private isModuleGlobalArr(arrName: string): boolean {
+    return this.moduleArrayVars.has(arrName) && this.moduleGlobals.has(arrName);
+  }
+
+  /** Returns the WAT expression to read the array pointer: global.get for module globals, local.get otherwise. */
+  private arrGetWat(arrName: string): string {
+    return this.isModuleGlobalArr(arrName) ? `(global.get $${arrName})` : `(local.get $${arrName})`;
+  }
+
+  /** Returns the WAT statement to write a new array pointer: global.set for module globals, local.set otherwise. */
+  private arrSetWat(arrName: string, valExpr: string): string {
+    return this.isModuleGlobalArr(arrName) ? `(global.set $${arrName} ${valExpr})` : `(local.set $${arrName} ${valExpr})`;
   }
 
   // -------------------------------------------------------------------------
@@ -2174,7 +2347,8 @@ class WasicTranspiler {
           // Skip fields already inherited from extends
           if (fields.some(f => f.name === fieldName)) continue;
           const type = mapType(fm[3]);
-          const size = (type === "f64" || type === "i64") ? 8 : 4;
+          // string fields store ptr+len pair (8 bytes); f64/i64 need 8 bytes; all else 4.
+          const size = (type === "f64" || type === "i64" || type === "string") ? 8 : 4;
           // Natural alignment: round offset up to a multiple of size
           if (offset % size !== 0) offset = Math.ceil(offset / size) * size;
           fields.push({ name: fieldName, type, offset, size, ...(isReadonly ? { readonly: true } : {}) });
@@ -2526,21 +2700,29 @@ class WasicTranspiler {
   /** Allocates `totalSize` zero-filled bytes in the data section. Returns base pointer. */
   private allocStructData(def: StructDef, initFields: Record<string, string>): number {
     const ptr = this.dataOffset;
+    this.dataOffset += def.totalSize; // reserve struct bytes FIRST so string allocs land after
     // Build a byte array of totalSize, filling each field
     const bytes = new Uint8Array(def.totalSize);
     const view  = new DataView(bytes.buffer);
     for (const field of def.fields) {
       const raw = initFields[field.name];
       if (raw === undefined) continue;
-      const val = parseFloat(raw) || 0;
-      if (field.type === "f64") view.setFloat64(field.offset, val, true);
-      else if (field.type === "f32") view.setFloat32(field.offset, val, true);
-      else if (field.type === "i64") view.setBigInt64(field.offset, BigInt(Math.trunc(val)), true);
-      else view.setInt32(field.offset, Math.trunc(val), true);
+      if (field.type === "string") {
+        // String field: 8-byte pair [ptr i32][len i32]. Allocate string after the struct.
+        const strVal = raw.replace(/^["']|["']$/g, ""); // strip surrounding quotes
+        const [strPtr, strLen] = this.allocStringNoLog(strVal);
+        view.setInt32(field.offset, strPtr, true);
+        view.setInt32(field.offset + 4, strLen, true);
+      } else {
+        const val = parseFloat(raw) || 0;
+        if (field.type === "f64") view.setFloat64(field.offset, val, true);
+        else if (field.type === "f32") view.setFloat32(field.offset, val, true);
+        else if (field.type === "i64") view.setBigInt64(field.offset, BigInt(Math.trunc(val)), true);
+        else view.setInt32(field.offset, Math.trunc(val), true);
+      }
     }
     const encoded = Array.from(bytes).map(b => `\\${b.toString(16).padStart(2, "0")}`).join("");
     if (encoded) this.rawDataSegments.push({ ptr, bytes: encoded });
-    this.dataOffset += def.totalSize;
     return ptr;
   }
 
@@ -2574,6 +2756,26 @@ class WasicTranspiler {
    *  Returns pointer to the header (same format as dynamic arrays). */
   private allocArrayData(elements: string[], elemType: WatType): number {
     const ptr = this.dataOffset;
+    // String arrays: 8 bytes per element (ptr i32 + len i32); allocate each string separately.
+    // Strings must be allocated FIRST (advancing dataOffset past all string data),
+    // then the array header + ptr/len pairs are placed at the new dataOffset to avoid overlap.
+    if (elemType === "string") {
+      const elemSize = 8;
+      const strPtrs: Array<[number, number]> = [];
+      for (const elem of elements) {
+        const e = elem.trim().replace(/^["']|["']$/g, "");
+        strPtrs.push(this.allocString(e));
+      }
+      const arrPtr = this.dataOffset;
+      const header = encodeI32LE(elements.length) + encodeI32LE(elements.length);
+      let encoded = header;
+      for (const [strPtr, strLen] of strPtrs) {
+        encoded += encodeI32LE(strPtr) + encodeI32LE(strLen);
+      }
+      if (encoded) this.rawDataSegments.push({ ptr: arrPtr, bytes: encoded });
+      this.dataOffset += 8 + elements.length * elemSize;
+      return arrPtr;
+    }
     const elemSize = (elemType === "f64" || elemType === "i64") ? 8 : 4;
     // 8-byte header: length (i32) + capacity (i32, same as length for static)
     const header = encodeI32LE(elements.length) + encodeI32LE(elements.length);
@@ -2605,7 +2807,7 @@ class WasicTranspiler {
     const dynamic = new Set<string>();
     for (const line of lines) {
       // Method calls that require heap layout
-      const m = line.match(/\b(\w+)\.(push|pop|shift|unshift|indexOf|includes|slice|forEach|map|filter|find|reduce|every|some|findIndex|at|reverse|fill|join|sort|flat|flatMap)\s*\(/);
+      const m = line.match(/\b(\w+)\.(push|pop|shift|unshift|indexOf|includes|slice|forEach|map|filter|find|reduce|every|some|findIndex|at|reverse|fill|join|sort|flat|flatMap|splice)\s*\(/);
       if (m) dynamic.add(m[1]);
       // Phase 6d: subscript method call: matrix[i].push(...) — outer array must be dynamic
       const subM = line.match(/\b(\w+)\[.+?\]\.(push|pop|shift|unshift)\s*\(/);
@@ -2623,15 +2825,16 @@ class WasicTranspiler {
     elemType: WatType; length: number; capacity?: number; initElements?: string[];
   }): string {
     const capacity = info.capacity ?? Math.max(info.length * 2, 8);
-    const elemSize = (info.elemType === "f64" || info.elemType === "i64") ? 8 : 4;
+    const elemSize = (info.elemType === "f64" || info.elemType === "i64" || info.elemType === "string") ? 8 : 4;
     const byteSize = capacity * elemSize + 8; // 8-byte header: [length i32][capacity i32]
     const storeOp  = info.elemType === "f64" ? "f64.store"
                    : info.elemType === "i64" ? "i64.store" : "i32.store";
 
+    const getWat = this.arrGetWat(varName);
     const stmts: string[] = [];
-    stmts.push(`(local.set $${varName} (call $__malloc (i32.const ${byteSize})))`);
-    stmts.push(`(i32.store (local.get $${varName}) (i32.const ${info.length}))`);
-    stmts.push(`(i32.store offset=4 (local.get $${varName}) (i32.const ${capacity}))`);
+    stmts.push(this.arrSetWat(varName, `(call $__malloc (i32.const ${byteSize}))`));
+    stmts.push(`(i32.store ${getWat} (i32.const ${info.length}))`);
+    stmts.push(`(i32.store offset=4 ${getWat} (i32.const ${capacity}))`);
 
     for (let i = 0; i < (info.initElements?.length ?? 0); i++) {
       const raw = info.initElements![i].trim();
@@ -2644,7 +2847,7 @@ class WasicTranspiler {
       } else {
         valExpr = `(i32.const ${parseInt(raw, 10) || 0})`;
       }
-      stmts.push(`(${storeOp} offset=${byteOffset} (local.get $${varName}) ${valExpr})`);
+      stmts.push(`(${storeOp} offset=${byteOffset} ${getWat} ${valExpr})`);
     }
     return stmts.join("\n      ");
   }
@@ -2878,6 +3081,18 @@ class WasicTranspiler {
             } else if (/^\w+$/.test(e) && locals.get(e) === "string") {
               emitTmplConcat(`(local.get $${e}_ptr)`, `(local.get $${e}_len)`);
             } else {
+              // String array element: arr[idx] where arr is string[]
+              const strArrSegM = e.match(/^(\w+)\[([^\]]+)\]$/);
+              if (strArrSegM) {
+                const segArrInfo = this.arrayVars.get(strArrSegM[1]);
+                if (segArrInfo && (segArrInfo.isStringArr || segArrInfo.elemType === "string")) {
+                  const segIdxWat = this.emitArrayIndex(strArrSegM[2].trim(), locals);
+                  const segBase = (segArrInfo.ptr === -1 || segArrInfo.dynamic) ? this.arrGetWat(strArrSegM[1]) : `(i32.const ${segArrInfo.ptr})`;
+                  const segAddr = `(i32.add (i32.add ${segBase} (i32.const 8)) (i32.shl ${segIdxWat} (i32.const 3)))`;
+                  emitTmplConcat(`(i32.load ${segAddr})`, `(i32.load offset=4 ${segAddr})`);
+                  continue;
+                }
+              }
               // String-returning function call in template
               const strFnM2 = e.match(/^(\w+)\s*\(/);
               const strFn2 = strFnM2 ? this.functions.find(f => f.name === strFnM2[1] && f.result === "string") : undefined;
@@ -2892,6 +3107,13 @@ class WasicTranspiler {
                 });
                 tmplStmts.push(watArgs2.length > 0 ? `(call $${strFn2.name} ${watArgs2.join(" ")})` : `(call $${strFn2.name})`);
                 emitTmplConcat(`(global.get $__str_ret_ptr)`, `(global.get $__str_ret_len)`);
+                continue;
+              }
+              // General fallback: struct field access, struct array field access, etc.
+              const ptrLenTmplFallback = this.emitStringPtrLen(e, locals);
+              if (ptrLenTmplFallback !== "(i32.const 0) (i32.const 0)") {
+                const [pWtf, lWtf] = splitTwoWatExprs(ptrLenTmplFallback);
+                emitTmplConcat(pWtf, lWtf);
               }
             }
           } else {
@@ -3003,17 +3225,24 @@ class WasicTranspiler {
       ].join("\n");
     }
 
-    // str.slice(start, end) → call $__str_slice (multi-value → ptr, len)
-    const sliceMatch = initExpr.match(/^(\w+)\.slice\s*\((.+?),\s*(.+?)\)$/);
-    if (sliceMatch && locals.get(sliceMatch[1]) === "string") {
-      this.needsStringOpHelpers = true;
-      const startWat = this.emitExpr(sliceMatch[2].trim(), locals, "i32");
-      const endWat   = this.emitExpr(sliceMatch[3].trim(), locals, "i32");
-      return [
-        `(call $__str_slice (local.get $${sliceMatch[1]}_ptr) (local.get $${sliceMatch[1]}_len) ${startWat} ${endWat})`,
-        `${ind}(local.set $${varName}_len)`,
-        `${ind}(local.set $${varName}_ptr)`,
-      ].join("\n");
+    // str.slice(start[, end]) → call $__str_slice (multi-value → ptr, len)
+    // Supports both str.slice(start, end) and str.slice(start) (end defaults to str length)
+    const sliceAnyM = initExpr.match(/^(\w+)\.slice\s*\((.+)\)$/);
+    if (sliceAnyM && locals.get(sliceAnyM[1]) === "string") {
+      const sliceArgs = this.splitArgs(sliceAnyM[2]);
+      if (sliceArgs.length === 1 || sliceArgs.length === 2) {
+        this.needsStringOpHelpers = true;
+        const recv = sliceAnyM[1];
+        const startWat = this.emitArrayIndex(sliceArgs[0].trim(), locals);
+        const endWat   = sliceArgs.length === 2
+          ? this.emitArrayIndex(sliceArgs[1].trim(), locals)
+          : `(local.get $${recv}_len)`;
+        return [
+          `(call $__str_slice (local.get $${recv}_ptr) (local.get $${recv}_len) ${startWat} ${endWat})`,
+          `${ind}(local.set $${varName}_len)`,
+          `${ind}(local.set $${varName}_ptr)`,
+        ].join("\n");
+      }
     }
 
     // Phase 27: str.trim() / str.trimStart() / str.trimEnd()
@@ -3066,6 +3295,22 @@ class WasicTranspiler {
         `${ind}(local.set $${varName}_len)`,
         `${ind}(local.set $${varName}_ptr)`,
       ].join("\n");
+    }
+
+    // String array element: arr[idx] where arr is string[] — load ptr and len pair.
+    const strArrElemMatch = initExpr.match(/^(\w+)\[([^\]]+)\]$/);
+    if (strArrElemMatch) {
+      const [, sarrN, sarrIdx] = strArrElemMatch;
+      const sarrInfo = this.arrayVars.get(sarrN);
+      if (sarrInfo && (sarrInfo.isStringArr || sarrInfo.elemType === "string")) {
+        const idxWat = this.emitArrayIndex(sarrIdx.trim(), locals);
+        const baseWat = (sarrInfo.ptr === -1 || sarrInfo.dynamic) ? this.arrGetWat(sarrN) : `(i32.const ${sarrInfo.ptr})`;
+        const addrWat = `(i32.add (i32.add ${baseWat} (i32.const 8)) (i32.shl ${idxWat} (i32.const 3)))`;
+        return [
+          `(local.set $${varName}_ptr (i32.load ${addrWat}))`,
+          `${ind}(local.set $${varName}_len (i32.load offset=4 ${addrWat}))`,
+        ].join("\n");
+      }
     }
 
     // Phase 27: str.toUpperCase() / str.toLowerCase()
@@ -3157,44 +3402,108 @@ class WasicTranspiler {
       ].join("\n");
     }
 
+    // String.fromCharCode(n) — allocate 1-byte heap string from char code
+    const fccDirect = initExpr.match(/^String\.fromCharCode\s*\((.+)\)$/);
+    if (fccDirect) {
+      const argWat = this.emitExpr(fccDirect[1].trim(), locals, "i32");
+      return [
+        `(local.set $${varName}_ptr (call $__malloc (i32.const 1)))`,
+        `${ind}(i32.store8 (local.get $${varName}_ptr) ${argWat})`,
+        `${ind}(local.set $${varName}_len (i32.const 1))`,
+      ].join("\n");
+    }
+
     // String concatenation: flatten the binary + tree and reduce left-to-right
     // e.g. a + " " + b  →  result = concat(a, " "); result = concat(result, b)
     const concatParts = this.flattenStringConcat(initExpr, locals);
     if (concatParts && concatParts.length >= 2) {
       this.needsStringOpHelpers = true;
       const stmts: string[] = [];
-      // Helper: get "ptr len" WAT for a concat part. For template literals with a single
-      // numeric expr, uses the local.tee trick on $varName_ptr to avoid a temp local.
-      const concatPartPtrLen = (part: string, accum: string): string => {
-        const simple = this.emitStringPtrLen(part, locals);
-        if (simple !== "(i32.const 0) (i32.const 0)") return simple;
-        // Template literal with a single numeric expression
+      // Append ptr+len to the accumulator (varName_ptr/len). First part initializes; rest concat.
+      let concatAccumHasValue = false;
+      const concatAppend = (ptrWat: string, lenWat: string) => {
+        if (!concatAccumHasValue) {
+          stmts.push(`(local.set $${varName}_ptr ${ptrWat})`);
+          stmts.push(`(local.set $${varName}_len ${lenWat})`);
+          concatAccumHasValue = true;
+        } else {
+          stmts.push(`(call $__str_concat (local.get $${varName}_ptr) (local.get $${varName}_len) ${ptrWat} ${lenWat})`);
+          stmts.push(`(local.set $${varName}_len)`);
+          stmts.push(`(local.set $${varName}_ptr)`);
+        }
+      };
+      // Append one concat part (may be a template literal, string var, literal, etc.)
+      const appendConcatPart = (part: string) => {
+        // Template literal: expand each segment as a concat operation
         if (part.startsWith("`") && part.endsWith("`")) {
-          const tParts = this.splitTemplateLiteral(part.slice(1, -1));
-          if (tParts.length === 1 && tParts[0].kind === "expr") {
-            const e = tParts[0].value.trim();
-            const eType = this.inferExprType(e, locals);
-            if (eType !== "string") {
-              this.needsNumericHelpers = true;
-              const helper = eType === "f64" ? "$__f64_to_str" : eType === "i64" ? "$__i64_to_str" : "$__i32_to_str";
-              const valWat = this.emitExpr(e, locals, eType);
-              // Use local.tee on accum_ptr to avoid a separate temp local
-              return `(local.tee $${accum}_ptr (call $__malloc (i32.const 32))) (call ${helper} ${valWat} (local.get $${accum}_ptr))`;
+          const tParts2 = this.splitTemplateLiteral(part.slice(1, -1));
+          for (const seg of tParts2) {
+            if (seg.kind === "text") {
+              if (!seg.value) continue;
+              const [off, ln] = this.allocString(seg.value);
+              concatAppend(`(i32.const ${off})`, `(i32.const ${ln})`);
+            } else {
+              const eCC = seg.value.trim();
+              const eTypeCC = this.inferExprType(eCC, locals);
+              if (eTypeCC === "string") {
+                const ptrLenCC = this.emitStringPtrLen(eCC, locals);
+                if (ptrLenCC !== "(i32.const 0) (i32.const 0)") {
+                  const [pW, lW] = splitTwoWatExprs(ptrLenCC);
+                  concatAppend(pW, lW);
+                }
+              } else {
+                this.needsNumericHelpers = true;
+                const helperCC = eTypeCC === "f64" ? "$__f64_to_str" : eTypeCC === "i64" ? "$__i64_to_str" : "$__i32_to_str";
+                const valWatCC = this.emitExpr(eCC, locals, eTypeCC);
+                stmts.push(`(local.set $__tmpl_num_ptr (call $__malloc (i32.const 32)))`);
+                stmts.push(`(local.set $__tmpl_num_len (call ${helperCC} ${valWatCC} (local.get $__tmpl_num_ptr)))`);
+                concatAppend(`(local.get $__tmpl_num_ptr)`, `(local.get $__tmpl_num_len)`);
+              }
             }
           }
+          return;
         }
-        return simple;
+        // String.fromCharCode(n) in concat — 1-byte heap-allocated char
+        const fccCP = part.match(/^String\.fromCharCode\s*\((.+)\)$/);
+        if (fccCP) {
+          const argWat = this.emitExpr(fccCP[1].trim(), locals, "i32");
+          stmts.push(`(local.set $__str_op_ptr (call $__malloc (i32.const 1)))`);
+          stmts.push(`(i32.store8 (local.get $__str_op_ptr) ${argWat})`);
+          concatAppend(`(local.get $__str_op_ptr)`, `(i32.const 1)`);
+          return;
+        }
+        // str.charAt(idx) in concat — single-char substring via $__str_char_at
+        const caCP = part.match(/^(\w+)\.charAt\s*\((.+)\)$/);
+        if (caCP) {
+          const strN = caCP[1], idxRaw = caCP[2];
+          const isLocal = locals.get(strN) === "string";
+          const strConst = this.moduleStringConsts.get(strN);
+          if (isLocal || strConst) {
+            this.needsStringExtHelpers = true;
+            const idxWat = this.emitExpr(idxRaw.trim(), locals, "i32");
+            const ptrW = isLocal ? `(local.get $${strN}_ptr)` : `(i32.const ${strConst![0]})`;
+            const lenW = isLocal ? `(local.get $${strN}_len)` : `(i32.const ${strConst![1]})`;
+            stmts.push(`(call $__str_char_at ${ptrW} ${lenW} ${idxWat})`);
+            stmts.push(`(local.set $__str_op_len)`);
+            stmts.push(`(local.set $__str_op_ptr)`);
+            concatAppend(`(local.get $__str_op_ptr)`, `(local.get $__str_op_len)`);
+            return;
+          }
+        }
+        // Non-template: use emitStringPtrLen (handles vars, literals, struct fields, array elems, fn calls)
+        const simple = this.emitStringPtrLen(part, locals);
+        if (simple !== "(i32.const 0) (i32.const 0)") {
+          const [pW, lW] = splitTwoWatExprs(simple);
+          concatAppend(pW, lW);
+        }
       };
-      const p0 = this.emitStringPtrLen(concatParts[0], locals);
-      const p1 = concatPartPtrLen(concatParts[1], varName);
-      stmts.push(`(call $__str_concat ${p0} ${p1})`);
-      stmts.push(`(local.set $${varName}_len)`);
-      stmts.push(`(local.set $${varName}_ptr)`);
-      for (let i = 2; i < concatParts.length; i++) {
-        const pi = concatPartPtrLen(concatParts[i], varName);
-        stmts.push(`(call $__str_concat (local.get $${varName}_ptr) (local.get $${varName}_len) ${pi})`);
-        stmts.push(`(local.set $${varName}_len)`);
-        stmts.push(`(local.set $${varName}_ptr)`);
+      for (const part of concatParts) {
+        appendConcatPart(part);
+      }
+      if (!concatAccumHasValue) {
+        const [off, ln] = this.allocString("");
+        stmts.push(`(local.set $${varName}_ptr (i32.const ${off}))`);
+        stmts.push(`(local.set $${varName}_len (i32.const ${ln}))`);
       }
       return stmts.join(`\n${ind}`);
     }
@@ -3217,12 +3526,23 @@ class WasicTranspiler {
   }
 
   /** Returns true if expr is a string literal, a known string variable, a template literal,
-   *  or a call to a string-returning function. */
+   *  a string method call on a string variable, or a call to a string-returning function. */
   private isStringExpr(expr: string, locals: Map<string, WatType>): boolean {
     const e = expr.trim();
     if (/^["']/.test(e)) return true;
     if (e.startsWith("`") && e.endsWith("`")) return true;
     if (/^\w+$/.test(e)) return locals.get(e) === "string" || this.moduleStringConsts.has(e);
+    // String array element: arr[idx] where arr is a string array
+    const bracketStrM = e.match(/^(\w+)\[/);
+    if (bracketStrM) {
+      const bArrInfo = this.arrayVars.get(bracketStrM[1]);
+      if (bArrInfo && (bArrInfo.isStringArr || bArrInfo.elemType === "string")) return true;
+    }
+    // String method calls on a string variable (slice, trim, charAt, case, replace, pad, repeat)
+    const strMethodM = e.match(/^(\w+)\.(slice|trim|trimStart|trimEnd|trimLeft|trimRight|charAt|toUpperCase|toLowerCase|replace|replaceAll|padStart|padEnd|repeat)\s*\(/);
+    if (strMethodM && (locals.get(strMethodM[1]) === "string" || this.moduleStringConsts.has(strMethodM[1]))) return true;
+    // String.fromCharCode(n) — always produces a string
+    if (/^String\.fromCharCode\s*\(/.test(e)) return true;
     // Call to a string-returning function
     const callM = e.match(/^(\w+)\s*\(/);
     if (callM && this.functions.find(f => f.name === callM[1] && f.result === "string")) return true;
@@ -3256,9 +3576,24 @@ class WasicTranspiler {
   /** Infers the WAT type of an arbitrary expression, including array element access. */
   private inferExprType(expr: string, locals: Map<string, WatType>): WatType {
     const e = expr.trim();
+    // Struct array element field access: arr[i].field → field type
+    const arrFieldDotM = e.match(/^(\w+)\[([^\]]+)\]\.(\w+)$/);
+    if (arrFieldDotM) {
+      const arrI = this.arrayVars.get(arrFieldDotM[1]);
+      const stn = arrI?.structTypeName ?? (arrI && arrI.elemType !== "f64" && arrI.elemType !== "i32" && arrI.elemType !== "i64" ? arrI.elemType : undefined);
+      if (arrI && stn) {
+        const def = this.structDefs.get(stn);
+        const field = def?.fields.find(f => f.name === arrFieldDotM[3]);
+        if (field) return field.type as WatType;
+      }
+    }
     // Array element access arr[idx] → element type
     const bracketId = e.match(/^(\w+)\[/)?.[1];
-    if (bracketId && this.arrayVars.has(bracketId)) return this.arrayVars.get(bracketId)!.elemType;
+    if (bracketId && this.arrayVars.has(bracketId)) {
+      const arrI = this.arrayVars.get(bracketId)!;
+      if (arrI.isStringArr || arrI.elemType === "string") return "string";
+      return arrI.elemType;
+    }
     // TypedArray element access
     if (bracketId && this.typedArrayVars.has(bracketId)) return this.typedArrayVars.get(bracketId)!.elemType as WatType;
     // Struct/class field access: varName.fieldName → return actual field type
@@ -3315,6 +3650,56 @@ class WasicTranspiler {
       const [offset, len] = this.allocString(litMatch[1]);
       return `(i32.const ${offset}) (i32.const ${len})`;
     }
+    // Struct string field: p.fieldName where p is a struct/class var with a string-typed field
+    const structFieldSPLM = expr.match(/^(\w+)\.(\w+)$/);
+    if (structFieldSPLM) {
+      const sv = this.structVars.get(structFieldSPLM[1]);
+      if (sv) {
+        const field = sv.def.fields.find(f => f.name === structFieldSPLM[2] && f.type === "string");
+        if (field) {
+          const baseWat = sv.ptr === -1 ? `(local.get $${structFieldSPLM[1]})` : `(i32.const ${sv.ptr})`;
+          return `(i32.load offset=${field.offset} ${baseWat}) (i32.load offset=${field.offset + 4} ${baseWat})`;
+        }
+      }
+      const cv = this.classVars.get(structFieldSPLM[1]);
+      if (cv) {
+        const cd = this.classDefs.get(cv.className);
+        const field = cd?.struct.fields.find(f => f.name === structFieldSPLM[2] && f.type === "string");
+        if (field) {
+          const baseWat = cv.ptr === -1 ? `(local.get $${structFieldSPLM[1]})` : `(i32.const ${cv.ptr})`;
+          return `(i32.load offset=${field.offset} ${baseWat}) (i32.load offset=${field.offset + 4} ${baseWat})`;
+        }
+      }
+    }
+    // Struct array element string field: arr[idx].fieldName
+    const structArrFieldSPLM = expr.match(/^(\w+)\[([^\]]+)\]\.(\w+)$/);
+    if (structArrFieldSPLM) {
+      const arrI = this.arrayVars.get(structArrFieldSPLM[1]);
+      const stn = arrI?.structTypeName ?? (arrI && arrI.elemType !== "f64" && arrI.elemType !== "i32" && arrI.elemType !== "i64" ? arrI.elemType : undefined);
+      if (arrI && stn) {
+        const def = this.structDefs.get(stn);
+        const field = def?.fields.find(f => f.name === structArrFieldSPLM[3] && f.type === "string");
+        if (field) {
+          const idxWat = this.emitArrayIndex(structArrFieldSPLM[2].trim(), locals);
+          const baseWat = (arrI.ptr === -1 || arrI.dynamic) ? this.arrGetWat(structArrFieldSPLM[1]) : `(i32.const ${arrI.ptr})`;
+          const elemPtrWat = `(i32.load (i32.add (i32.add ${baseWat} (i32.const 8)) (i32.shl ${idxWat} (i32.const 2))))`;
+          return `(i32.load offset=${field.offset} ${elemPtrWat}) (i32.load offset=${field.offset + 4} ${elemPtrWat})`;
+        }
+      }
+    }
+    // String array element access: arr[idx] where arr is string[] (isStringArr or elemType=string)
+    const strArrBracket = expr.match(/^(\w+)\[([^\]]+)\]$/);
+    if (strArrBracket) {
+      const [, arrN, idxRaw] = strArrBracket;
+      const arrInfoSA = this.arrayVars.get(arrN);
+      if (arrInfoSA && (arrInfoSA.isStringArr || arrInfoSA.elemType === "string")) {
+        const idxWat = this.emitArrayIndex(idxRaw.trim(), locals);
+        const baseWat = (arrInfoSA.ptr === -1 || arrInfoSA.dynamic) ? this.arrGetWat(arrN) : `(i32.const ${arrInfoSA.ptr})`;
+        // String elements: 8 bytes each (ptr i32 at +0, len i32 at +4)
+        const elemAddrWat = `(i32.add (i32.add ${baseWat} (i32.const 8)) (i32.shl ${idxWat} (i32.const 3)))`;
+        return `(i32.load ${elemAddrWat}) (i32.load offset=4 ${elemAddrWat})`;
+      }
+    }
     // Call to a string-returning function: emit void call then read globals
     const callM = expr.match(/^(\w+)\s*\((.*)?\)$/);
     if (callM) {
@@ -3356,13 +3741,13 @@ class WasicTranspiler {
   /** Emits an array-index expression, ensuring the result is always i32.
    *  If the index expression is an f64/f32 value, wraps with i32.trunc_f64_s. */
   private emitArrayIndex(expr: string, locals: Map<string, WatType>): string {
-    const wat = this.emitExpr(expr, locals, "i32");
-    // Use inferExprType to detect f64 expressions (handles both simple ids and compound exprs).
-    // The leading-identifier heuristic in inferInitType correctly propagates the type of
-    // the first variable (e.g. `j + 1` where j: f64 → f64).
+    // Check type first so we can choose the right emitExpr context.
+    // emitExpr(expr, locals, "i32") would pre-truncate simple f64 locals to i32,
+    // and then inferExprType would wrap again → double i32.trunc_f64_s.
+    // Instead: for f64 expressions, emit in f64 context and truncate once.
     const t = this.inferExprType(expr.trim(), locals);
-    if (t === "f64" || t === "f32") return `(i32.trunc_f64_s ${wat})`;
-    return wat;
+    if (t === "f64" || t === "f32") return `(i32.trunc_f64_s ${this.emitExpr(expr, locals, "f64")})`;
+    return this.emitExpr(expr, locals, "i32");
   }
 
   // -------------------------------------------------------------------------
@@ -3440,11 +3825,19 @@ class WasicTranspiler {
 
     // Array .length property: dynamic → runtime load from header; static → compile-time constant
     // Phase 12: arrName[idx].length — load i-th element (a row ptr), then load its length
-    const idxLenMatch = expr.match(/^(\w+)\[(.+?)\]\.length$/);
+    const idxLenMatch = expr.match(/^(\w+)\[([^\]]+)\]\.length$/);
     if (idxLenMatch) {
       const arrName = idxLenMatch[1];
-      const idxWat = this.emitExpr(idxLenMatch[2], locals, "i32");
       const arrInfo = this.arrayVars.get(arrName);
+      const idxWat = this.emitArrayIndex(idxLenMatch[2], locals);
+      // String array element .length: arr[i].length → len field of the 8-byte ptr+len pair
+      if (arrInfo && (arrInfo.isStringArr || arrInfo.elemType === "string")) {
+        const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
+          ? this.arrGetWat(arrName)
+          : `(i32.const ${arrInfo.ptr})`;
+        const elemAddrWat = `(i32.add (i32.add ${baseWat} (i32.const 8)) (i32.shl ${idxWat} (i32.const 3)))`;
+        return `(i32.load offset=4 ${elemAddrWat})`;
+      }
       if (arrInfo || locals.get(arrName) === "i32") {
         const baseWat = `(local.get $${arrName})`;
         const rowPtrWat = `(i32.load (i32.add (i32.add ${baseWat} (i32.const 8)) (i32.shl ${idxWat} (i32.const 2))))`;
@@ -3456,7 +3849,7 @@ class WasicTranspiler {
     if (lenPropMatch) {
       const arrInfo = this.arrayVars.get(lenPropMatch[1]);
       if (arrInfo) {
-        const rawLen = (arrInfo.dynamic || arrInfo.ptr < 0) ? `(i32.load (local.get $${lenPropMatch[1]}))` : `(i32.const ${arrInfo.length})`;
+        const rawLen = (arrInfo.dynamic || arrInfo.ptr < 0) ? `(i32.load ${this.arrGetWat(lenPropMatch[1])})` : `(i32.const ${arrInfo.length})`;
         const needsF64 = defaultType === "f64" || defaultType === "f32";
         return needsF64 ? `(f64.convert_i32_s ${rawLen})` : rawLen;
       }
@@ -3632,14 +4025,16 @@ class WasicTranspiler {
     if (aefMatch) {
       const [, arrName, idxExpr, fieldName] = aefMatch;
       const arrInfo = this.arrayVars.get(arrName);
-      if (arrInfo && arrInfo.elemType !== "f64" && arrInfo.elemType !== "i32" && arrInfo.elemType !== "i64") {
-        const structDef = this.structDefs.get(arrInfo.elemType);
+      // structTypeName: struct element type preserved; also check elemType for non-i32 struct names
+      const structTypeName = arrInfo?.structTypeName ?? (arrInfo && arrInfo.elemType !== "f64" && arrInfo.elemType !== "i32" && arrInfo.elemType !== "i64" ? arrInfo.elemType : undefined);
+      if (arrInfo && structTypeName) {
+        const structDef = this.structDefs.get(structTypeName);
         if (structDef) {
           const field = structDef.fields.find(f => f.name === fieldName);
           if (field) {
             const idxWat = this.emitArrayIndex(idxExpr, locals);
             const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
-              ? `(local.get $${arrName})`
+              ? this.arrGetWat(arrName)
               : `(i32.const ${arrInfo.ptr})`;
             const ptrWat = `(i32.load (i32.add (i32.add ${baseWat} (i32.const 8)) (i32.shl ${idxWat} (i32.const 2))))`;
             const loadOp = field.type === "f64" ? "f64.load" : field.type === "i64" ? "i64.load" : "i32.load";
@@ -3674,7 +4069,7 @@ class WasicTranspiler {
         const idxWat  = this.emitArrayIndex(bracketMatch[2], locals);
         // All arrays (static, dynamic, params) use an 8-byte [length, capacity] header.
         const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
-          ? `(local.get $${bracketMatch[1]})`
+          ? this.arrGetWat(bracketMatch[1])
           : `(i32.const ${arrInfo.ptr})`;
         const dataBase = `(i32.add ${baseWat} (i32.const 8))`;
         return `(${loadOp} (i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift}))))`;
@@ -3709,10 +4104,15 @@ class WasicTranspiler {
         this.dynArrHelpers.add(key);
         if (method === "push" || method === "unshift") {
           const valWat = this.emitExpr(argsStr, locals, arrInfo.elemType);
-          // Push/unshift return new arr ptr (possibly grown); update local and return new length.
-          return `(i32.load (local.tee $${arrName} (call ${helperName} (local.get $${arrName}) ${valWat})))`;
+          const callExpr = `(call ${helperName} ${this.arrGetWat(arrName)} ${valWat})`;
+          if (this.moduleArrayVars.has(arrName)) {
+            // Global array: use block to sequence set then load-length
+            return `(block (result i32) ${this.arrSetWat(arrName, callExpr)} (i32.load ${this.arrGetWat(arrName)}))`;
+          }
+          // Local array: use local.tee to update and read new length in one expression
+          return `(i32.load (local.tee $${arrName} ${callExpr}))`;
         }
-        return `(call ${helperName} (local.get $${arrName}))`;
+        return `(call ${helperName} ${this.arrGetWat(arrName)})`;
       }
     }
 
@@ -3732,21 +4132,22 @@ class WasicTranspiler {
           const key = `indexof_${elemType}`;
           this.dynArrHelpers.add(key);
           const valWat = this.emitExpr(argsStr, locals, elemType);
-          return `(call $__dynarr_${key} (local.get $${arrName}) ${valWat})`;
+          return `(call $__dynarr_${key} ${this.arrGetWat(arrName)} ${valWat})`;
         }
         if (method === "includes") {
           const key = `indexof_${elemType}`;
           this.dynArrHelpers.add(key);
           const valWat = this.emitExpr(argsStr, locals, elemType);
-          return `(i32.ne (call $__dynarr_${key} (local.get $${arrName}) ${valWat}) (i32.const -1))`;
+          return `(i32.ne (call $__dynarr_${key} ${this.arrGetWat(arrName)} ${valWat}) (i32.const -1))`;
         }
         if (method === "slice") {
-          const key = `slice_${elemType}`;
+          const isStrSlice = arrInfo.isStringArr || elemType === "string";
+          const key = isStrSlice ? "slice_string" : `slice_${elemType}`;
           this.dynArrHelpers.add(key);
           const args = this.splitArgs(argsStr);
           const startWat = args[0]?.trim() ? this.emitExpr(args[0].trim(), locals, "i32") : "(i32.const 0)";
-          const endWat   = args[1]?.trim() ? this.emitExpr(args[1].trim(), locals, "i32") : `(i32.load (local.get $${arrName}))`;
-          return `(call $__dynarr_${key} (local.get $${arrName}) ${startWat} ${endWat})`;
+          const endWat   = args[1]?.trim() ? this.emitExpr(args[1].trim(), locals, "i32") : `(i32.load ${this.arrGetWat(arrName)})`;
+          return `(call $__dynarr_${key} ${this.arrGetWat(arrName)} ${startWat} ${endWat})`;
         }
         // Phase 28: every / some — predicate over all elements
         if (method === "every" || method === "some") {
@@ -3755,7 +4156,7 @@ class WasicTranspiler {
           this.getOrCreateFuncType([elemType], "i32");
           const args = this.splitArgs(argsStr);
           const fnIdx = this.getFuncTableIdx(args[0]?.trim() ?? "");
-          return `(call $__dynarr_${key} (local.get $${arrName}) (i32.const ${fnIdx}))`;
+          return `(call $__dynarr_${key} ${this.arrGetWat(arrName)} (i32.const ${fnIdx}))`;
         }
         // Phase 28: findIndex — returns index of first match or -1
         if (method === "findIndex") {
@@ -3764,20 +4165,20 @@ class WasicTranspiler {
           this.getOrCreateFuncType([elemType], "i32");
           const args = this.splitArgs(argsStr);
           const fnIdx = this.getFuncTableIdx(args[0]?.trim() ?? "");
-          return `(call $__dynarr_${key} (local.get $${arrName}) (i32.const ${fnIdx}))`;
+          return `(call $__dynarr_${key} ${this.arrGetWat(arrName)} (i32.const ${fnIdx}))`;
         }
         // Phase 28: at(n) — element at index (supports negative wrap)
         if (method === "at") {
           const key = `at_${elemType}`;
           this.dynArrHelpers.add(key);
           const nWat = this.emitExpr(argsStr, locals, "i32");
-          return `(call $__dynarr_${key} (local.get $${arrName}) ${nWat})`;
+          return `(call $__dynarr_${key} ${this.arrGetWat(arrName)} ${nWat})`;
         }
         // Phase 28: reverse() — in-place reversal, returns arr ptr
         if (method === "reverse") {
           const key = `reverse_${elemType}`;
           this.dynArrHelpers.add(key);
-          return `(call $__dynarr_${key} (local.get $${arrName}))`;
+          return `(call $__dynarr_${key} ${this.arrGetWat(arrName)})`;
         }
         // Phase 28: fill(val, start?, end?) — fills range, returns arr ptr
         if (method === "fill") {
@@ -3786,8 +4187,8 @@ class WasicTranspiler {
           const args = this.splitArgs(argsStr);
           const valWat   = args[0]?.trim() ? this.emitExpr(args[0].trim(), locals, elemType) : zeroOf(elemType);
           const startWat = args[1]?.trim() ? this.emitExpr(args[1].trim(), locals, "i32") : "(i32.const 0)";
-          const endWat   = args[2]?.trim() ? this.emitExpr(args[2].trim(), locals, "i32") : `(i32.load (local.get $${arrName}))`;
-          return `(call $__dynarr_${key} (local.get $${arrName}) ${valWat} ${startWat} ${endWat})`;
+          const endWat   = args[2]?.trim() ? this.emitExpr(args[2].trim(), locals, "i32") : `(i32.load ${this.arrGetWat(arrName)})`;
+          return `(call $__dynarr_${key} ${this.arrGetWat(arrName)} ${valWat} ${startWat} ${endWat})`;
         }
         // Phase 28: sort(fn?) — in-place insertion sort, returns arr ptr
         if (method === "sort") {
@@ -3798,11 +4199,11 @@ class WasicTranspiler {
             this.dynArrHelpers.add(key);
             this.getOrCreateFuncType([elemType, elemType], "i32");
             const fnIdx = this.getFuncTableIdx(fnName);
-            return `(call $__dynarr_${key} (local.get $${arrName}) (i32.const ${fnIdx}))`;
+            return `(call $__dynarr_${key} ${this.arrGetWat(arrName)} (i32.const ${fnIdx}))`;
           } else {
             const key = `sort_${elemType}`;
             this.dynArrHelpers.add(key);
-            return `(call $__dynarr_${key} (local.get $${arrName}))`;
+            return `(call $__dynarr_${key} ${this.arrGetWat(arrName)})`;
           }
         }
         // Phase 37: flat() — one-level flatten of a 2D array
@@ -3810,7 +4211,7 @@ class WasicTranspiler {
           if (!arrInfo.is2D) return `(;? flat() requires 2D array ;)`;
           const key = `flat_${elemType}`;
           this.dynArrHelpers.add(key);
-          return `(call $__dynarr_${key} (local.get $${arrName}))`;
+          return `(call $__dynarr_${key} ${this.arrGetWat(arrName)})`;
         }
         // Phase 37: flatMap(fn) — map each element to an array, then flatten
         if (method === "flatMap") {
@@ -3819,7 +4220,7 @@ class WasicTranspiler {
           this.getOrCreateFuncType([elemType], "i32"); // fn: (elem) → i32 ptr to inner array
           const args = this.splitArgs(argsStr);
           const fnIdx = this.getFuncTableIdx(args[0]?.trim() ?? "");
-          return `(call $__dynarr_${key} (local.get $${arrName}) (i32.const ${fnIdx}))`;
+          return `(call $__dynarr_${key} ${this.arrGetWat(arrName)} (i32.const ${fnIdx}))`;
         }
         // Callback methods: map, filter, find, reduce
         const args = this.splitArgs(argsStr);
@@ -3837,9 +4238,9 @@ class WasicTranspiler {
         }
         if (method === "reduce") {
           const initWat = args[1]?.trim() ? this.emitExpr(args[1].trim(), locals, elemType) : zeroOf(elemType);
-          return `(call $__dynarr_${key} (local.get $${arrName}) (i32.const ${fnIdx}) ${initWat})`;
+          return `(call $__dynarr_${key} ${this.arrGetWat(arrName)} (i32.const ${fnIdx}) ${initWat})`;
         }
-        return `(call $__dynarr_${key} (local.get $${arrName}) (i32.const ${fnIdx}))`;
+        return `(call $__dynarr_${key} ${this.arrGetWat(arrName)} (i32.const ${fnIdx}))`;
       }
     }
 
@@ -4469,10 +4870,17 @@ class WasicTranspiler {
           // $lhsQQ__null is 1 when lhs is null → (then rhs) fires when null
           return `(if (result ${bt}) (local.get $${lhsQQ}__null) (then ${rhsWat}) (else ${lhsWat}))`;
         }
-        // Pointer/string type: check for null pointer (0)
+        // Pointer/string type: check for null pointer (0).
+        // Only applies when lhsQQ is a simple identifier — complex expressions (array
+        // access, method calls) evaluate to numeric types that can't be null in WASM,
+        // so just emit the LHS directly (the ?? can never trigger).
         const ctxBt = watBaseType(defaultType === "never" ? "i32" : defaultType as WatType);
-        const rhsWatP = this.emitExpr(rhsQQ, locals, defaultType);
         const lhsWatP = this.emitExpr(lhsQQ, locals, defaultType);
+        if (!/^\w+$/.test(lhsQQ)) {
+          // Complex LHS expression: not nullable in WASM, ignore RHS
+          return lhsWatP;
+        }
+        const rhsWatP = this.emitExpr(rhsQQ, locals, defaultType);
         const ptrLocal = locals.get(lhsQQ) === "string" ? `${lhsQQ}_ptr` : lhsQQ;
         const nullCkP  = `(i32.eqz (local.get $${ptrLocal}))`;
         return `(if (result ${ctxBt}) ${nullCkP} (then ${rhsWatP}) (else ${lhsWatP}))`;
@@ -4589,15 +4997,45 @@ class WasicTranspiler {
         const _lhsFnResult = _lhsLeadId && lhs.includes("(")
           ? this.functions.find(f => f.name === _lhsLeadId)?.result ?? null
           : null;
+        // Struct/class field access: varName.field or arr[idx].field → look up field type
+        const _dotFieldLhsM = !alwaysI32 && lhs.includes(".")
+          ? lhs.match(/^(\w+)(?:\[([^\]]+)\])?\.(\w+)$/) : null;
+        const _dotFieldType: WatType | null = _dotFieldLhsM
+          ? (() => {
+              if (_dotFieldLhsM[2] !== undefined) {
+                // arr[idx].field: look up struct array field type
+                const arrI = this.arrayVars.get(_dotFieldLhsM[1]);
+                const stn = arrI?.structTypeName ?? (arrI && arrI.elemType !== "f64" && arrI.elemType !== "i32" && arrI.elemType !== "i64" ? arrI.elemType : undefined);
+                const field = stn ? this.structDefs.get(stn)?.fields.find(f => f.name === _dotFieldLhsM[3]) : undefined;
+                return (field?.type as WatType) ?? null;
+              }
+              // varName.field: struct var or class var field
+              const sv = this.structVars.get(_dotFieldLhsM[1]);
+              if (sv) {
+                const field = sv.def.fields.find(f => f.name === _dotFieldLhsM[3]);
+                if (field) return field.type as WatType;
+              }
+              const cv = this.classVars.get(_dotFieldLhsM[1]);
+              if (cv) {
+                const cd = this.classDefs.get(cv.className);
+                const field = cd?.struct.fields.find(f => f.name === _dotFieldLhsM[3]);
+                if (field) return field.type as WatType;
+              }
+              return null;
+            })()
+          : null;
         const lhsType: WatType = alwaysI32
           ? "i32"
-          : (/^\w+$/.test(lhs) && locals.has(lhs) ? locals.get(lhs)!
+          : (_dotFieldType ??
+            (/^\w+$/.test(lhs) && locals.has(lhs) ? locals.get(lhs)!
             : /^\w+$/.test(lhs) && this.moduleGlobals.has(lhs) ? this.moduleGlobals.get(lhs)!.type
             // Array element access arr[idx]: use element type, not pointer type
-            : _lhsLeadId && lhs.includes("[") && this.arrayVars.has(_lhsLeadId) ? this.arrayVars.get(_lhsLeadId)!.elemType
+            : _lhsLeadId && lhs.includes("[") && this.arrayVars.has(_lhsLeadId)
+              ? (this.arrayVars.get(_lhsLeadId)!.isStringArr || this.arrayVars.get(_lhsLeadId)!.elemType === "string"
+                 ? "string" : this.arrayVars.get(_lhsLeadId)!.elemType)
             : _lhsLeadId && locals.has(_lhsLeadId) ? locals.get(_lhsLeadId)!
             : _lhsLeadId && this.moduleGlobals.has(_lhsLeadId) ? this.moduleGlobals.get(_lhsLeadId)!.type
-            : _lhsFnResult ?? defaultType);
+            : _lhsFnResult ?? defaultType));
 
         // String comparison: route through $__str_cmp instead of string.eq / string.lt, etc.
         if (lhsType === "string" && STRING_CMP_OPS.has(op)) {
@@ -4693,7 +5131,7 @@ class WasicTranspiler {
         const after  = expr[i + op.length] ?? "";
         const before = i > 0 ? expr[i - 1] : "";
         // Guard: don't match a short op that is a prefix/suffix of a longer one
-        if (op === "<"  && (after === "=" || after === "<"))              continue;
+        if (op === "<"  && (after === "=" || after === "<" || before === "<"))  continue;
         if (op === ">"  && (after === "=" || after === ">" || before === ">" || before === "=")) continue; // skip >=, >>, =>
         if (op === "="  && after === "=")                                 continue;
         if (op === "!"  && after === "=")                                 continue;
@@ -4850,9 +5288,17 @@ class WasicTranspiler {
               if (!key) continue;
               const field = structDef.fields.find(f => f.name === key);
               if (!field) continue;
-              const storeOp = field.type === "f64" ? "f64.store" : field.type === "i64" ? "i64.store" : "i32.store";
-              const valWat = this.emitExpr(valExpr, locals, field.type);
-              stmts.push(`(${storeOp} offset=${field.offset} (local.get $__obj_ret) ${valWat})`);
+              if (field.type === "string") {
+                // String field: store ptr+len (8-byte slot)
+                const ptrLen = this.emitStringPtrLen(valExpr, locals);
+                const [ptrW, lenW] = splitTwoWatExprs(ptrLen);
+                stmts.push(`(i32.store offset=${field.offset} (local.get $__obj_ret) ${ptrW})`);
+                stmts.push(`(i32.store offset=${field.offset + 4} (local.get $__obj_ret) ${lenW})`);
+              } else {
+                const storeOp = field.type === "f64" ? "f64.store" : field.type === "i64" ? "i64.store" : "i32.store";
+                const valWat = this.emitExpr(valExpr, locals, field.type);
+                stmts.push(`(${storeOp} offset=${field.offset} (local.get $__obj_ret) ${valWat})`);
+              }
             }
             stmts.push(`(return (local.get $__obj_ret))`);
             return stmts.join("\n      ");
@@ -5229,6 +5675,41 @@ class WasicTranspiler {
               const valWat = this.emitExpr(exprStr, locals, field.type);
               stmts.push(`(${storeOp} offset=${field.offset} (i32.const ${sv.ptr}) ${valWat})`);
             }
+          }
+        }
+        return stmts.join("\n      ");
+      }
+      // ptr === -3: heap-allocate on each call (struct has runtime-computed fields)
+      if (sv && sv.ptr === -3) {
+        const structSize = sv.def.totalSize;
+        const stmts = [`(local.set $${structLetMatch[1]} (call $__malloc (i32.const ${structSize})))`];
+        const runtimeInits = this.structVarRuntimeInits.get(structLetMatch[1]);
+        // Emit runtime field stores for dynamic values
+        if (runtimeInits) {
+          for (const [fieldName, exprStr] of Object.entries(runtimeInits)) {
+            const field = sv.def.fields.find(f => f.name === fieldName);
+            if (field) {
+              const storeOp = field.type === "f64" ? "f64.store"
+                           : field.type === "i64" ? "i64.store" : "i32.store";
+              const valWat = this.emitExpr(exprStr, locals, field.type);
+              stmts.push(`(${storeOp} offset=${field.offset} (local.get $${structLetMatch[1]}) ${valWat})`);
+            }
+          }
+        }
+        // Also emit constant-initialized fields that were stored in initFields
+        // We need to re-parse the struct literal here for the constant fields
+        const initRe2 = /(\w+)\s*:\s*([^,}]+)/g;
+        let im2: RegExpExecArray | null;
+        while ((im2 = initRe2.exec(line.slice(line.indexOf("{")))) !== null) {
+          const fieldKey2 = im2[1];
+          if (runtimeInits && runtimeInits[fieldKey2]) continue; // already handled
+          const valStr2 = im2[2].trim();
+          const field2 = sv.def.fields.find(f => f.name === fieldKey2);
+          if (field2) {
+            const storeOp2 = field2.type === "f64" ? "f64.store"
+                           : field2.type === "i64" ? "i64.store" : "i32.store";
+            const valWat2 = this.emitExpr(valStr2, locals, field2.type);
+            stmts.push(`(${storeOp2} offset=${field2.offset} (local.get $${structLetMatch[1]}) ${valWat2})`);
           }
         }
         return stmts.join("\n      ");
@@ -5616,23 +6097,64 @@ class WasicTranspiler {
       }
     }
 
-    // Dynamic array methods: arr.push(val), arr.pop(), arr.shift(), arr.unshift(val) — statement form
-    const dynArrStmt = line.match(/^(\w+)\.(push|pop|shift|unshift)\s*\((.*?)\)\s*;?$/);
+    // Dynamic array methods: arr.push(val), arr.pop(), arr.shift(), arr.unshift(val), arr.splice(i,n) — statement form
+    const dynArrStmt = line.match(/^(\w+)\.(push|pop|shift|unshift|splice)\s*\((.*?)\)\s*;?$/);
     if (dynArrStmt) {
       const arrName  = dynArrStmt[1];
-      const method   = dynArrStmt[2] as "push" | "pop" | "shift" | "unshift";
+      const method   = dynArrStmt[2] as "push" | "pop" | "shift" | "unshift" | "splice";
       const argsStr  = dynArrStmt[3].trim();
       const arrInfo  = this.arrayVars.get(arrName);
-      if (arrInfo?.dynamic) {
-        const key        = `${method}_${arrInfo.elemType}`;
+      // Check if this is a module-level global array (not a function-local).
+      const isGlobalArr = !locals.has(arrName) && this.moduleGlobals.has(arrName) && this.moduleArrayVars.has(arrName);
+      const globalArrInfo = isGlobalArr ? this.moduleArrayVars.get(arrName)! : null;
+      const effectiveInfo = arrInfo ?? globalArrInfo;
+      if (effectiveInfo?.dynamic) {
+        // 2D arrays store i32 row-pointers in the outer array, regardless of element type.
+        const outerElem  = effectiveInfo.is2D ? "i32" : effectiveInfo.elemType;
+        const isStrArr = effectiveInfo.isStringArr || outerElem === "string";
+        const getExpr = isGlobalArr ? `(global.get $${arrName})` : `(local.get $${arrName})`;
+
+        // splice(idx, count) — in-place remove N elements starting at idx
+        if (method === "splice") {
+          const args = this.splitArgs(argsStr);
+          const idxWat   = args[0]?.trim() ? this.emitExpr(args[0].trim(), locals, "i32") : "(i32.const 0)";
+          const countWat = args[1]?.trim() ? this.emitExpr(args[1].trim(), locals, "i32") : "(i32.const 1)";
+          // Use f64 splice (8-byte elements) for string and f64 arrays; i32 splice for 4-byte arrays
+          const spliceKey = (isStrArr || outerElem === "f64" || outerElem === "i64") ? "splice_f64" : "splice_i32";
+          this.dynArrHelpers.add(spliceKey);
+          return `(call $__dynarr_${spliceKey} ${getExpr} ${idxWat} ${countWat})`;
+        }
+
+        // push/unshift on string arrays — need 3-param helper (arr, ptr, len)
+        if ((method === "push" || method === "unshift") && isStrArr) {
+          this.dynArrHelpers.add("push_string");
+          const simpleResult = this.emitStringPtrLen(argsStr, locals);
+          if (simpleResult !== "(i32.const 0) (i32.const 0)") {
+            const [ptrWat, lenWat] = splitTwoWatExprs(simpleResult);
+            const callExpr = `(call $__dynarr_push_string ${getExpr} ${ptrWat} ${lenWat})`;
+            return isGlobalArr
+              ? `(global.set $${arrName} ${callExpr})`
+              : `(local.set $${arrName} ${callExpr})`;
+          }
+          // Complex arg (e.g. template literal) — use temp locals
+          const initStr = this.emitStringAssign("__str_push", argsStr, locals);
+          const callExpr = `(call $__dynarr_push_string ${getExpr} (local.get $__str_push_ptr) (local.get $__str_push_len))`;
+          const setExpr = isGlobalArr ? `(global.set $${arrName} ${callExpr})` : `(local.set $${arrName} ${callExpr})`;
+          return `${initStr}\n      ${setExpr}`;
+        }
+
+        const key        = `${method}_${outerElem}`;
         const helperName = `$__dynarr_${key}`;
         this.dynArrHelpers.add(key);
         if (method === "push" || method === "unshift") {
-          const valWat = this.emitExpr(argsStr, locals, arrInfo.elemType);
+          const valWat = this.emitExpr(argsStr, locals, outerElem);
+          if (isGlobalArr) {
+            return `(global.set $${arrName} (call ${helperName} ${getExpr} ${valWat}))`;
+          }
           // Push/unshift return new arr ptr (possibly grown after realloc); update local via local.set.
           return `(local.set $${arrName} (call ${helperName} (local.get $${arrName}) ${valWat}))`;
         }
-        return `(drop (call ${helperName} (local.get $${arrName})))`;
+        return `(drop (call ${helperName} ${getExpr}))`;
       }
       // Phase 12: fallback — arr is an i32 local (dynamic array pointer captured from outer scope)
       if (method === "push" && locals.get(arrName) === "i32") {
@@ -5704,6 +6226,7 @@ class WasicTranspiler {
           return `(drop (call $__dynarr_${key} (local.get $${arrName}) ${valWat} ${startWat} ${endWat}))`;
         }
         if (method === "sort") {
+          const isStrArr2 = arrInfo.isStringArr || elemType === "string";
           const args = this.splitArgs(argsStr);
           const fnName = args[0]?.trim() ?? "";
           if (fnName) {
@@ -5712,6 +6235,9 @@ class WasicTranspiler {
             this.getOrCreateFuncType([elemType, elemType], "i32");
             const fnIdx = this.getFuncTableIdx(fnName);
             return `(drop (call $__dynarr_${key} (local.get $${arrName}) (i32.const ${fnIdx})))`;
+          } else if (isStrArr2) {
+            this.dynArrHelpers.add("sort_string");
+            return `(drop (call $__dynarr_sort_string (local.get $${arrName})))`;
           } else {
             const key = `sort_${elemType}`;
             this.dynArrHelpers.add(key);
@@ -5760,6 +6286,28 @@ class WasicTranspiler {
     }
 
     // Array element write: arr[idx] = val
+    // Struct field write via array element: arr[idx].field = val
+    const arrFieldWriteMatch = line.match(/^(\w+)\[([^\]]+)\]\.(\w+)\s*=\s*(.+?);?$/);
+    if (arrFieldWriteMatch) {
+      const [, arrName, idxExpr, fieldName, valExpr] = arrFieldWriteMatch;
+      const arrInfo = this.arrayVars.get(arrName);
+      const structTypeName = arrInfo?.structTypeName ?? (arrInfo && arrInfo.elemType !== "f64" && arrInfo.elemType !== "i32" && arrInfo.elemType !== "i64" ? arrInfo.elemType : undefined);
+      if (arrInfo && structTypeName) {
+        const structDef = this.structDefs.get(structTypeName);
+        if (structDef) {
+          const field = structDef.fields.find(f => f.name === fieldName);
+          if (field) {
+            const idxWat = this.emitArrayIndex(idxExpr, locals);
+            const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic) ? this.arrGetWat(arrName) : `(i32.const ${arrInfo.ptr})`;
+            const ptrWat = `(i32.load (i32.add (i32.add ${baseWat} (i32.const 8)) (i32.shl ${idxWat} (i32.const 2))))`;
+            const storeOp = field.type === "f64" ? "f64.store" : field.type === "i64" ? "i64.store" : "i32.store";
+            const valWat = this.emitExpr(valExpr.trim(), locals, field.type as WatType);
+            return `(${storeOp} (i32.add ${ptrWat} (i32.const ${field.offset})) ${valWat})`;
+          }
+        }
+      }
+    }
+
     const arrWriteMatch = line.match(/^(\w+)\s*\[(.+?)\]\s*=\s*(.+?);?$/);
     if (arrWriteMatch) {
       // Phase 23: tuple element write — t[N] = val (N must be a compile-time integer literal)
@@ -5783,9 +6331,20 @@ class WasicTranspiler {
           const colIdxWat = this.emitArrayIndex(colRaw, locals);
           const storeOp2D = arrInfo.elemType === "f64" ? "f64.store" : arrInfo.elemType === "i64" ? "i64.store" : "i32.store";
           const shift2D   = (arrInfo.elemType === "f64" || arrInfo.elemType === "i64") ? 3 : 2;
-          const rowPtrWat = `(i32.load (i32.add (i32.add (local.get $${arrWriteMatch[1]}) (i32.const 8)) (i32.shl ${rowIdxWat} (i32.const 2))))`;
+          const rowPtrWat = `(i32.load (i32.add (i32.add ${this.arrGetWat(arrWriteMatch[1])} (i32.const 8)) (i32.shl ${rowIdxWat} (i32.const 2))))`;
           const valWat2D  = this.emitExpr(arrWriteMatch[3], locals, arrInfo.elemType);
           return `(${storeOp2D} (i32.add (i32.add ${rowPtrWat} (i32.const 8)) (i32.shl ${colIdxWat} (i32.const ${shift2D}))) ${valWat2D})`;
+        }
+        // String array element write: arr[idx] = "str" — store ptr+len at 8-byte slot
+        if (arrInfo.isStringArr || arrInfo.elemType === "string") {
+          const idxWat  = this.emitArrayIndex(arrWriteMatch[2], locals);
+          const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
+            ? this.arrGetWat(arrWriteMatch[1])
+            : `(i32.const ${arrInfo.ptr})`;
+          const elemAddrWat = `(i32.add (i32.add ${baseWat} (i32.const 8)) (i32.shl ${idxWat} (i32.const 3)))`;
+          const ptrLen = this.emitStringPtrLen(arrWriteMatch[3].trim(), locals);
+          const [ptrWat, lenWat] = splitTwoWatExprs(ptrLen);
+          return `(i32.store ${elemAddrWat} ${ptrWat})\n      (i32.store offset=4 ${elemAddrWat} ${lenWat})`;
         }
         const storeOp = arrInfo.elemType === "f64" ? "f64.store"
                       : arrInfo.elemType === "i64" ? "i64.store" : "i32.store";
@@ -5793,7 +6352,7 @@ class WasicTranspiler {
         const idxWat  = this.emitArrayIndex(arrWriteMatch[2], locals);
         const valWat  = this.emitExpr(arrWriteMatch[3], locals, arrInfo.elemType);
         const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
-          ? `(local.get $${arrWriteMatch[1]})`
+          ? this.arrGetWat(arrWriteMatch[1])
           : `(i32.const ${arrInfo.ptr})`;
         const dataBase = `(i32.add ${baseWat} (i32.const 8))`;
         return `(${storeOp} (i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift}))) ${valWat})`;
@@ -6013,7 +6572,7 @@ class WasicTranspiler {
       const enumStringLookupFn = (key: string) => this.enumStringValues.get(key);
       const arrayLookupFn = (name: string) => {
         const av = this.arrayVars.get(name);
-        if (av) return av;
+        if (av) return { ...av, isGlobal: this.moduleGlobals.has(name) && this.moduleArrayVars.has(name) };
         const ta = this.typedArrayVars.get(name);
         if (ta) return { elemType: ta.elemType, ptr: -2 as const, length: ta.length, dynamic: true as const, shift: ta.shift, customLoadOp: ta.loadOp };
         return undefined;
@@ -6033,6 +6592,10 @@ class WasicTranspiler {
           const cd = this.classDefs.get(cv.className);
           const f = cd?.struct.fields.find(fi => fi.name === fn);
           if (f) {
+            if (f.type === "string") {
+              const baseWat = cv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
+              return { type: "string", watLoad: `(i32.load offset=${f.offset} ${baseWat})`, watLoadLen: `(i32.load offset=${f.offset + 4} ${baseWat})` };
+            }
             const loadOp = f.type === "f64" ? "f64.load" : f.type === "i64" ? "i64.load" : "i32.load";
             const baseWat = cv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
             return { type: f.type, watLoad: `(${loadOp} (i32.add ${baseWat} (i32.const ${f.offset})))` };
@@ -6079,6 +6642,10 @@ class WasicTranspiler {
         if (!sv) return undefined;
         const f = sv.def.fields.find(fi => fi.name === fn);
         if (!f) return undefined;
+        if (f.type === "string") {
+          const baseWat = sv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${sv.ptr})`;
+          return { type: "string", watLoad: `(i32.load offset=${f.offset} ${baseWat})`, watLoadLen: `(i32.load offset=${f.offset + 4} ${baseWat})` };
+        }
         const loadOp = f.type === "f64" ? "f64.load" : f.type === "i64" ? "i64.load" : "i32.load";
         const baseWat = sv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${sv.ptr})`;
         return { type: f.type, watLoad: `(${loadOp} (i32.add ${baseWat} (i32.const ${f.offset})))` };
@@ -6166,7 +6733,7 @@ class WasicTranspiler {
       const enumStringLookupFnErr = (key: string) => this.enumStringValues.get(key);
       const arrayLookupFn = (name: string) => {
         const av = this.arrayVars.get(name);
-        if (av) return av;
+        if (av) return { ...av, isGlobal: this.moduleGlobals.has(name) && this.moduleArrayVars.has(name) };
         const ta = this.typedArrayVars.get(name);
         if (ta) return { elemType: ta.elemType, ptr: -2 as const, length: ta.length, dynamic: true as const, shift: ta.shift, customLoadOp: ta.loadOp };
         return undefined;
@@ -6184,6 +6751,10 @@ class WasicTranspiler {
           const cd = this.classDefs.get(cv.className);
           const f = cd?.struct.fields.find(fi => fi.name === fn);
           if (f) {
+            if (f.type === "string") {
+              const baseWat = cv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
+              return { type: "string", watLoad: `(i32.load offset=${f.offset} ${baseWat})`, watLoadLen: `(i32.load offset=${f.offset + 4} ${baseWat})` };
+            }
             const loadOp = f.type === "f64" ? "f64.load" : f.type === "i64" ? "i64.load" : "i32.load";
             const baseWat = cv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
             return { type: f.type, watLoad: `(${loadOp} (i32.add ${baseWat} (i32.const ${f.offset})))` };
@@ -6230,6 +6801,10 @@ class WasicTranspiler {
         if (!sv) return undefined;
         const f = sv.def.fields.find(fi => fi.name === fn);
         if (!f) return undefined;
+        if (f.type === "string") {
+          const baseWat = sv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${sv.ptr})`;
+          return { type: "string", watLoad: `(i32.load offset=${f.offset} ${baseWat})`, watLoadLen: `(i32.load offset=${f.offset + 4} ${baseWat})` };
+        }
         const loadOp = f.type === "f64" ? "f64.load" : f.type === "i64" ? "i64.load" : "i32.load";
         const baseWat = sv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${sv.ptr})`;
         return { type: f.type, watLoad: `(${loadOp} (i32.add ${baseWat} (i32.const ${f.offset})))` };
@@ -6664,7 +7239,19 @@ class WasicTranspiler {
       }
 
       // if (cond) { ... } or if (cond) singleStatement;
-      const ifMatch = line.match(/^if\s*\((.+)\)\s*\{?$/) ?? line.match(/^if\s*\((.+)\)\s+(\S.*)$/);
+      // Use balanced-paren scan to find condition end (avoids greedy regex misparse when body has parens).
+      let ifMatch: string[] | null = null;
+      if (/^if\s*\(/.test(line)) {
+        const openIdx = line.indexOf("(");
+        let depth = 0, condEnd = -1;
+        for (let j = openIdx; j < line.length; j++) {
+          if (line[j] === "(") depth++;
+          else if (line[j] === ")") { if (--depth === 0) { condEnd = j; break; } }
+        }
+        if (condEnd !== -1) {
+          ifMatch = [line, line.slice(openIdx + 1, condEnd), line.slice(condEnd + 1).trim()];
+        }
+      }
       if (ifMatch) {
         const cond = ifMatch[1].trim();
         const rawIfBody = ifMatch[2];
@@ -6969,6 +7556,56 @@ class WasicTranspiler {
           out.push(`${indent})`);
           i++;
           continue;
+        }
+      }
+
+      // Handle single-statement for loop: for (init; cond; update) stmt; (no braces)
+      // Find the balanced closing ) of the for header and treat the rest as the body.
+      if (/^(?:\w+\s*:\s*)?for\s*\(/.test(line)) {
+        const parenStart = line.indexOf('(');
+        let pdepth = 0, headerEnd = -1;
+        for (let ci = parenStart; ci < line.length; ci++) {
+          if (line[ci] === '(') pdepth++;
+          else if (line[ci] === ')') { pdepth--; if (pdepth === 0) { headerEnd = ci; break; } }
+        }
+        if (headerEnd !== -1) {
+          const afterParen = line.slice(headerEnd + 1).trim();
+          if (afterParen.length > 0 && !afterParen.startsWith('{')) {
+            // Single-statement body: process the for loop with a synthetic one-line body
+            const inner = line.slice(parenStart + 1, headerEnd);
+            const parts = inner.split(";").map(s => s.trim());
+            const initPart = parts[0] ?? "";
+            const condPart = parts[1] ?? "";
+            const updPart  = parts[2] ?? "";
+            const forBody  = [afterParen.replace(/;$/, "")];
+
+            const lbl  = this.pendingLabel ?? String(this.loopCounter++); this.pendingLabel = null;
+            const brk  = `$break_${lbl}`;
+            const loop = `$loop_${lbl}`;
+            const cont = `$cont_${lbl}`;
+
+            const initWat  = initPart ? this.emitStatement(initPart.replace(/;$/, "") + ";", locals, funcResult) : "";
+            const condExpr = condPart ? this.emitExpr(condPart, locals, "i32") : "(i32.const 1)";
+            const updWat   = updPart  ? this.emitUpdate(updPart, locals) : "";
+
+            this.controlStack.push({ breakLabel: brk, continueLabel: cont });
+            const bodyWat = this.emitBlock(forBody, locals, funcResult, indent + "      ");
+            this.controlStack.pop();
+
+            if (initWat) out.push(`${indent}${initWat}`);
+            out.push(`${indent}(block ${brk}`);
+            out.push(`${indent}  (loop ${loop}`);
+            out.push(`${indent}    (br_if ${brk} (i32.eqz ${condExpr}))`);
+            out.push(`${indent}    (block ${cont}`);
+            out.push(bodyWat);
+            out.push(`${indent}    )`);
+            if (updWat) out.push(`${indent}    ${updWat}`);
+            out.push(`${indent}    (br ${loop})`);
+            out.push(`${indent}  )`);
+            out.push(`${indent})`);
+            i++;
+            continue;
+          }
         }
       }
 
@@ -7511,13 +8148,15 @@ class WasicTranspiler {
     // Determine which grow helpers are needed (one per elem type used by push or unshift).
     const growNeeded = new Set<string>();
     for (const key of this.dynArrHelpers) {
+      if (key === "push_string") { growNeeded.add("string"); continue; }
       const [method, elemType] = key.split("_");
       if (method === "push" || method === "unshift") growNeeded.add(elemType);
     }
 
     // Emit grow helpers first (push/unshift call them).
     for (const elemType of growNeeded) {
-      const isF64   = elemType === "f64";
+      // String arrays store 8-byte (ptr,len) pairs — use f64.load/store for bit-identical 8-byte copy.
+      const isF64   = elemType === "f64" || elemType === "string";
       const shift   = isF64 ? 3 : 2;
       const loadOp  = isF64 ? "f64.load"  : "i32.load";
       const storeOp = isF64 ? "f64.store" : "i32.store";
@@ -7558,7 +8197,7 @@ class WasicTranspiler {
       const valType = isF64 ? "f64" : "i32";
       const name    = `$__dynarr_${key}`;
 
-      if (method === "push") {
+      if (method === "push" && key !== "push_string") {
         parts.push(`  ;; Dynamic array push_${elemType}: grow if full, store val at end, increment length, return new arr ptr.
   (func ${name} (param $arr i32) (param $val ${valType}) (result i32)
     (local $len i32)
@@ -7670,7 +8309,7 @@ class WasicTranspiler {
     )
     (i32.const -1)
   )`);
-      } else if (method === "slice") {
+      } else if (method === "slice" && key !== "slice_string") {
         parts.push(`  ;; Dynamic array slice_${elemType}: alloc new array from [start,end), clamp to bounds.
   (func ${name} (param $arr i32) (param $start i32) (param $end i32) (result i32)
     (local $len i32)
@@ -7695,6 +8334,38 @@ class WasicTranspiler {
           (${loadOp}
             (i32.add (i32.add (local.get $arr) (i32.const 8))
               (i32.shl (i32.add (local.get $i) (local.get $start)) (i32.const ${shift})))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)
+      )
+    )
+    (local.get $newptr)
+  )`);
+      } else if (key === "slice_string") {
+        // String array slice: copy 8-byte (ptr,len) pairs using f64.load/store for bit-identical copy.
+        parts.push(`  ;; Dynamic string array slice: alloc new array from [start,end), copy (ptr,len) pairs.
+  (func $__dynarr_slice_string (param $arr i32) (param $start i32) (param $end i32) (result i32)
+    (local $len i32)
+    (local $newlen i32)
+    (local $newptr i32)
+    (local $i i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (if (i32.lt_s (local.get $start) (i32.const 0)) (then (local.set $start (i32.const 0))))
+    (if (i32.gt_s (local.get $start) (local.get $len)) (then (local.set $start (local.get $len))))
+    (if (i32.lt_s (local.get $end) (i32.const 0)) (then (local.set $end (i32.const 0))))
+    (if (i32.gt_s (local.get $end) (local.get $len)) (then (local.set $end (local.get $len))))
+    (local.set $newlen (i32.sub (local.get $end) (local.get $start)))
+    (if (i32.lt_s (local.get $newlen) (i32.const 0)) (then (local.set $newlen (i32.const 0))))
+    (local.set $newptr (call $__malloc (i32.add (i32.const 8) (i32.shl (local.get $newlen) (i32.const 3)))))
+    (i32.store (local.get $newptr) (local.get $newlen))
+    (i32.store offset=4 (local.get $newptr) (local.get $newlen))
+    (block $done
+      (loop $lp
+        (br_if $done (i32.ge_u (local.get $i) (local.get $newlen)))
+        (f64.store
+          (i32.add (i32.add (local.get $newptr) (i32.const 8)) (i32.shl (local.get $i) (i32.const 3)))
+          (f64.load
+            (i32.add (i32.add (local.get $arr) (i32.const 8))
+              (i32.shl (i32.add (local.get $i) (local.get $start)) (i32.const 3)))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $lp)
       )
@@ -7990,7 +8661,7 @@ class WasicTranspiler {
     )
     (local.get $arr)
   )`);
-      } else if (method === "sort") {
+      } else if (method === "sort" && key !== "sort_string") {
         const cmpOp = isF64 ? "f64.gt" : "i32.gt_s";
         parts.push(`  ;; Dynamic array sort_${elemType}: in-place insertion sort (ascending), returns arr ptr.
   (func ${name} (param $arr i32) (result i32)
@@ -8211,6 +8882,129 @@ class WasicTranspiler {
       )
     )
     (local.get $result)
+  )`);
+      } else if (key === "push_string") {
+        // String array push: stores ptr+len pair (8 bytes per element), grows if needed.
+        parts.push(`  ;; Dynamic string array push_string: grow if full, store (ptr,len) at end, return new arr ptr.
+  (func $__dynarr_push_string (param $arr i32) (param $ptr i32) (param $len i32) (result i32)
+    (local $elemLen i32)
+    (local $cap i32)
+    (local $base i32)
+    (local.set $elemLen (i32.load (local.get $arr)))
+    (local.set $cap (i32.load offset=4 (local.get $arr)))
+    (if (i32.ge_u (local.get $elemLen) (local.get $cap))
+      (then
+        (local.set $arr (call $__dynarr_grow_string (local.get $arr) (i32.shl (local.get $cap) (i32.const 1))))
+      )
+    )
+    (local.set $base (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $elemLen) (i32.const 3))))
+    (i32.store (local.get $base) (local.get $ptr))
+    (i32.store offset=4 (local.get $base) (local.get $len))
+    (i32.store (local.get $arr) (i32.add (local.get $elemLen) (i32.const 1)))
+    (local.get $arr)
+  )`);
+      } else if (key === "splice_i32") {
+        // Remove count elements in-place starting at idx (4-byte elements).
+        parts.push(`  ;; Dynamic array splice_i32: remove count elements at idx in-place.
+  (func $__dynarr_splice_i32 (param $arr i32) (param $idx i32) (param $count i32)
+    (local $len i32)
+    (local $i i32)
+    (local $end i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (local.set $end (i32.sub (local.get $len) (local.get $count)))
+    (local.set $i (local.get $idx))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.ge_u (local.get $i) (local.get $end)))
+        (i32.store
+          (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const 2)))
+          (i32.load
+            (i32.add (i32.add (local.get $arr) (i32.const 8))
+              (i32.shl (i32.add (local.get $i) (local.get $count)) (i32.const 2)))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)
+      )
+    )
+    (i32.store (local.get $arr) (local.get $end))
+  )`);
+      } else if (key === "splice_f64") {
+        // Remove count elements in-place starting at idx (8-byte elements; also used for string arrays).
+        parts.push(`  ;; Dynamic array splice_f64: remove count elements at idx in-place (8-byte elements).
+  (func $__dynarr_splice_f64 (param $arr i32) (param $idx i32) (param $count i32)
+    (local $len i32)
+    (local $i i32)
+    (local $end i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (local.set $end (i32.sub (local.get $len) (local.get $count)))
+    (local.set $i (local.get $idx))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.ge_u (local.get $i) (local.get $end)))
+        (f64.store
+          (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $i) (i32.const 3)))
+          (f64.load
+            (i32.add (i32.add (local.get $arr) (i32.const 8))
+              (i32.shl (i32.add (local.get $i) (local.get $count)) (i32.const 3)))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)
+      )
+    )
+    (i32.store (local.get $arr) (local.get $end))
+  )`);
+      } else if (key === "sort_string") {
+        // Insertion sort for string arrays: compare pairs (ptr,len) lexicographically via $__str_cmp.
+        this.needsStringHelpers = true;
+        parts.push(`  ;; Dynamic string array sort: in-place insertion sort via lexicographic $__str_cmp.
+  (func $__dynarr_sort_string (param $arr i32) (result i32)
+    (local $i i32)
+    (local $j i32)
+    (local $len i32)
+    (local $base i32)
+    (local $keyPtr i32)
+    (local $keyLen i32)
+    (local $jPtr i32)
+    (local $jLen i32)
+    (local $addr i32)
+    (local.set $len (i32.load (local.get $arr)))
+    (local.set $base (i32.add (local.get $arr) (i32.const 8)))
+    (local.set $i (i32.const 1))
+    (block $outer
+      (loop $olp
+        (br_if $outer (i32.ge_u (local.get $i) (local.get $len)))
+        (local.set $addr (i32.add (local.get $base) (i32.shl (local.get $i) (i32.const 3))))
+        (local.set $keyPtr (i32.load (local.get $addr)))
+        (local.set $keyLen (i32.load offset=4 (local.get $addr)))
+        (local.set $j (i32.sub (local.get $i) (i32.const 1)))
+        (block $inner
+          (loop $ilp
+            (br_if $inner (i32.lt_s (local.get $j) (i32.const 0)))
+            (local.set $addr (i32.add (local.get $base) (i32.shl (local.get $j) (i32.const 3))))
+            (local.set $jPtr (i32.load (local.get $addr)))
+            (local.set $jLen (i32.load offset=4 (local.get $addr)))
+            (if (i32.gt_s
+                  (call $__str_cmp (local.get $jPtr) (local.get $jLen) (local.get $keyPtr) (local.get $keyLen))
+                  (i32.const 0))
+              (then
+                ;; Shift element at j to j+1
+                (local.set $addr (i32.add (local.get $base) (i32.shl (i32.add (local.get $j) (i32.const 1)) (i32.const 3))))
+                (i32.store (local.get $addr) (local.get $jPtr))
+                (i32.store offset=4 (local.get $addr) (local.get $jLen))
+                (local.set $j (i32.sub (local.get $j) (i32.const 1)))
+                (br $ilp)
+              )
+              (else (br $inner))
+            )
+          )
+        )
+        ;; Write key into position j+1
+        (local.set $addr (i32.add (local.get $base) (i32.shl (i32.add (local.get $j) (i32.const 1)) (i32.const 3))))
+        (i32.store (local.get $addr) (local.get $keyPtr))
+        (i32.store offset=4 (local.get $addr) (local.get $keyLen))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $olp)
+      )
+    )
+    (local.get $arr)
   )`);
       }
     }
@@ -8888,8 +9682,9 @@ class WasicTranspiler {
     // Phase 5f: closure factory — emit heap-alloc body + trampoline, skip normal body emit
     if (fn.isClosureFactory && fn.returnedArrow) return this.emitClosureFactory(fn);
 
-    // Reset per-function array, struct, and find-result tracking
-    this.arrayVars              = new Map();
+    // Reset per-function array, struct, and find-result tracking.
+    // Seed arrayVars with module-level arrays so functions can call push/pop on global arrays.
+    this.arrayVars              = new Map(this.moduleArrayVars);
     this.typedArrayVars         = new Map();
     this.structVars             = new Map();
     this.structVarRuntimeInits  = new Map();
@@ -8910,9 +9705,9 @@ class WasicTranspiler {
       if (p.arrayElemType) {
         if (p.isRest) {
           // Rest param: dynamic layout (8-byte header), pointer received from caller
-          this.arrayVars.set(p.name, { elemType: p.arrayElemType, ptr: -1, length: 0, dynamic: true });
+          this.arrayVars.set(p.name, { elemType: p.arrayElemType, ptr: -1, length: 0, dynamic: true, structTypeName: p.arrayStructElemType });
         } else {
-          this.arrayVars.set(p.name, { elemType: p.arrayElemType, ptr: -1, length: 0 });
+          this.arrayVars.set(p.name, { elemType: p.arrayElemType, ptr: -1, length: 0, structTypeName: p.arrayStructElemType });
         }
       }
       // Phase 31: TypedArray param — register in typedArrayVars for correct element access
@@ -9085,8 +9880,20 @@ class WasicTranspiler {
           let im: RegExpExecArray | null;
           const namedTokens = new Set<string>();
           while ((im = initRe.exec(structPre[3])) !== null) {
-            initFields[im[1]] = im[2].trim();
-            namedTokens.add(im[1]);
+            const fieldKey = im[1];
+            const valStr = im[2].trim();
+            namedTokens.add(fieldKey);
+            // If value is a compile-time constant, store in initFields; otherwise mark as runtime.
+            const isConstant = /^-?\d+(\.\d+)?$/.test(valStr)
+              || valStr === "true" || valStr === "false"
+              || valStr === "null" || valStr === "undefined"
+              || /^["'].*["']$/.test(valStr);
+            if (isConstant) {
+              initFields[fieldKey] = valStr;
+            } else {
+              runtimeInits[fieldKey] = valStr;
+              initFields[fieldKey] = "0"; // placeholder so allocStructData reserves space
+            }
           }
           // Detect shorthand tokens (identifiers not followed by `:`)
           const shorthandRe = /\b(\w+)\b(?!\s*:)/g;
@@ -9110,7 +9917,10 @@ class WasicTranspiler {
               if (variant) initFields[duDefPre.discriminant] = String(variant.tagIndex);
             }
           }
-          const ptr = this.allocStructData(def, initFields);
+          // If there are runtime field inits, use heap allocation (ptr=-3 sentinel)
+          // so each call gets a fresh struct instance.
+          const hasRuntimeInits = Object.keys(runtimeInits).length > 0;
+          const ptr = hasRuntimeInits ? -3 : this.allocStructData(def, initFields);
           this.structVars.set(varName, { def, ptr });
           // Declare an i32 local to hold the pointer (mirrors array var pattern)
           declaredLocals.push([varName, "i32"]);
@@ -9175,16 +9985,33 @@ class WasicTranspiler {
         const varName = arrPre[1];
         const typeHint = arrPre[2] ?? "";
         const elemsStr = arrPre[3] ?? "";
-        const elements = elemsStr.split(",").map(e => e.trim()).filter(e => e.length > 0);
-        const elemType: WatType = typeHint ? mapType(typeHint) as WatType
+        const structTypeName = (typeHint && /^[A-Z]/.test(typeHint) && this.structDefs.has(typeHint)) ? typeHint : undefined;
+        const elements = structTypeName
+          ? splitBraceAwareCommas(elemsStr)
+          : elemsStr.split(",").map(e => e.trim()).filter(e => e.length > 0);
+        const elemType: WatType = structTypeName ? "i32"
+          : typeHint ? mapType(typeHint) as WatType
           : elements.some(e => /[.]/.test(e) && !/^-?\d+n?$/.test(e)) ? "f64" : "i32";
         if (dynamicArrayNames.has(varName)) {
           // Dynamic array: runtime malloc with [length, capacity] header. ptr=-2 signals heap layout.
           const capacity = Math.max(elements.length * 2, 8);
-          this.arrayVars.set(varName, { elemType, ptr: -2, length: elements.length, dynamic: true, capacity, initElements: elements });
+          this.arrayVars.set(varName, { elemType, ptr: -2, length: elements.length, dynamic: true, capacity, initElements: elements, structTypeName });
         } else {
-          const ptr = this.allocArrayData(elements, elemType);
-          this.arrayVars.set(varName, { elemType, ptr, length: elements.length });
+          let ptr: number;
+          if (structTypeName) {
+            const def = this.structDefs.get(structTypeName)!;
+            const ptrStrs = elements.map(elem => {
+              const initFields: Record<string, string> = {};
+              const initRe = /(\w+)\s*:\s*([^,}]+)/g;
+              let im: RegExpExecArray | null;
+              while ((im = initRe.exec(elem)) !== null) initFields[im[1]] = im[2].trim();
+              return String(this.allocStructData(def, initFields));
+            });
+            ptr = this.allocArrayData(ptrStrs, "i32");
+          } else {
+            ptr = this.allocArrayData(elements, elemType);
+          }
+          this.arrayVars.set(varName, { elemType, ptr, length: elements.length, structTypeName });
         }
         declaredLocals.push([varName, "i32"]);
         locals.set(varName, "i32");
@@ -9201,6 +10028,16 @@ class WasicTranspiler {
         declaredLocals.push([varName, "i32"]);
         locals.set(varName, "i32");
         continue;
+      }
+      // String array push with complex arg (template literal): needs temp locals for ptr+len.
+      const strArrPushPre = line.match(/^(\w+)\.(push|unshift)\s*\(/);
+      if (strArrPushPre && !locals.has("__str_push_ptr")) {
+        const pArrInfo = this.arrayVars.get(strArrPushPre[1]);
+        if (pArrInfo && (pArrInfo.isStringArr || pArrInfo.elemType === "string")) {
+          declaredLocals.push(["__str_push_ptr", "i32"], ["__str_push_len", "i32"]);
+          locals.set("__str_push_ptr", "i32");
+          locals.set("__str_push_len", "i32");
+        }
       }
       // return [elem, ...] — array literal return: needs a $__arr_ret helper local
       // Phase 23: skip if this is a tuple-returning function (uses __obj_ret instead)
@@ -9303,13 +10140,15 @@ class WasicTranspiler {
           }
         }
         const t = typeStr ? mapType(typeStr) : inferInitType(initExpr, locals, this.enumValues, this.functions);
-        if (t === "string") {
-          declaredLocals.push([`${m[1]}_ptr`, "i32"], [`${m[1]}_len`, "i32"]);
-          locals.set(m[1], "string");
-          this.stringVars.add(m[1]);
-        } else {
-          declaredLocals.push([m[1], t]);
-          locals.set(m[1], t);
+        if (!locals.has(m[1])) {
+          if (t === "string") {
+            declaredLocals.push([`${m[1]}_ptr`, "i32"], [`${m[1]}_len`, "i32"]);
+            locals.set(m[1], "string");
+            this.stringVars.add(m[1]);
+          } else {
+            declaredLocals.push([m[1], t]);
+            locals.set(m[1], t);
+          }
         }
       }
       // for-loop init variable: for (let i = 0; ...)
@@ -9404,6 +10243,14 @@ class WasicTranspiler {
       declaredLocals.push(["__tmpl_num_ptr", "i32"], ["__tmpl_num_len", "i32"]);
       locals.set("__tmpl_num_ptr", "i32");
       locals.set("__tmpl_num_len", "i32");
+    }
+    // String.fromCharCode / str.charAt in concat: pre-declare $__str_op_ptr/$__str_op_len temp pair.
+    if (!locals.has("__str_op_ptr") && fn.bodyLines.some(l =>
+      l.includes("String.fromCharCode(") || l.includes(".charAt(")
+    )) {
+      declaredLocals.push(["__str_op_ptr", "i32"], ["__str_op_len", "i32"]);
+      locals.set("__str_op_ptr", "i32");
+      locals.set("__str_op_len", "i32");
     }
     const localDecls = declaredLocals
       .map(([n, t]) => `    (local $${n} ${watBaseType(t)})`)
@@ -9857,11 +10704,16 @@ class WasicTranspiler {
     this.detectMutableClosureCaptures();
     this.liftInlineArrows();
     this.parseTopLevel();
+    this.joinMultilineArrayLiterals();
     this.parseModuleGlobals();
 
     // Phase 5g: pre-populate closureTypedVars for all functions so inner functions emitted
     // before their factory parents can still resolve closure pointer call sites.
     this.prePopulateClosureTypedVars();
+
+    // Detect module-level arrays used inside functions and register them as WASM globals.
+    // Must run before emitFunction so arrayVars seeding in emitFunction picks them up.
+    this.detectModuleArrayGlobals();
 
     // Emit all user functions first — this populates hasConsoleLog/needsNumericHelpers
     const funcWat = this.functions.map(f => this.emitFunction(f)).join("\n\n");
@@ -10075,18 +10927,39 @@ class WasicTranspiler {
           const varName2  = arrPre2[1];
           const typeHint2 = arrPre2[2] ?? "";
           const elemsStr2 = arrPre2[3] ?? "";
-          const elements2 = elemsStr2.split(",").map(e => e.trim()).filter(e => e.length > 0);
-          const elemType2: WatType = typeHint2 ? mapType(typeHint2) as WatType
+          const structTypeName2 = (typeHint2 && /^[A-Z]/.test(typeHint2) && this.structDefs.has(typeHint2)) ? typeHint2 : undefined;
+          const elements2 = structTypeName2
+            ? splitBraceAwareCommas(elemsStr2)
+            : elemsStr2.split(",").map(e => e.trim()).filter(e => e.length > 0);
+          const elemType2: WatType = structTypeName2 ? "i32"
+            : typeHint2 ? mapType(typeHint2) as WatType
             : elements2.some(e => /[.]/.test(e) && !/^-?\d+n?$/.test(e)) ? "f64" : "i32";
-          if (startDynArrayNames.has(varName2)) {
+          // Module-level arrays used in functions become WASM globals — don't declare as _start locals.
+          const isGlobalArr2 = this.moduleArrayVars.has(varName2) && this.moduleGlobals.has(varName2);
+          if (startDynArrayNames.has(varName2) || isGlobalArr2) {
             const capacity2 = Math.max(elements2.length * 2, 8);
-            this.arrayVars.set(varName2, { elemType: elemType2, ptr: -2, length: elements2.length, dynamic: true, capacity: capacity2, initElements: elements2 });
+            this.arrayVars.set(varName2, { elemType: elemType2, ptr: -2, length: elements2.length, dynamic: true, capacity: capacity2, initElements: elements2, structTypeName: structTypeName2 });
           } else {
-            const ptr2 = this.allocArrayData(elements2, elemType2);
-            this.arrayVars.set(varName2, { elemType: elemType2, ptr: ptr2, length: elements2.length });
+            let ptr2: number;
+            if (structTypeName2) {
+              const def2 = this.structDefs.get(structTypeName2)!;
+              const ptrStrs2 = elements2.map(elem => {
+                const initFields2: Record<string, string> = {};
+                const initRe2 = /(\w+)\s*:\s*([^,}]+)/g;
+                let im2: RegExpExecArray | null;
+                while ((im2 = initRe2.exec(elem)) !== null) initFields2[im2[1]] = im2[2].trim();
+                return String(this.allocStructData(def2, initFields2));
+              });
+              ptr2 = this.allocArrayData(ptrStrs2, "i32");
+            } else {
+              ptr2 = this.allocArrayData(elements2, elemType2);
+            }
+            this.arrayVars.set(varName2, { elemType: elemType2, ptr: ptr2, length: elements2.length, structTypeName: structTypeName2 });
           }
-          startLocals.set(varName2, "i32");
-          startDeclaredLocals.push([varName2, "i32"]);
+          if (!isGlobalArr2) {
+            startLocals.set(varName2, "i32");
+            startDeclaredLocals.push([varName2, "i32"]);
+          }
           continue;
         }
         // Array variable from method-call RHS: const arr: T[] = someArr.slice(...) etc.
@@ -10099,6 +10972,16 @@ class WasicTranspiler {
           startLocals.set(varName2c, "i32");
           startDeclaredLocals.push([varName2c, "i32"]);
           continue;
+        }
+        // String array push with complex arg: needs temp locals for ptr+len.
+        const strArrPushPre2 = line.match(/^(\w+)\.(push|unshift)\s*\(/);
+        if (strArrPushPre2 && !startLocals.has("__str_push_ptr")) {
+          const pArrInfo2 = this.arrayVars.get(strArrPushPre2[1]);
+          if (pArrInfo2 && (pArrInfo2.isStringArr || pArrInfo2.elemType === "string")) {
+            startDeclaredLocals.push(["__str_push_ptr", "i32"], ["__str_push_len", "i32"]);
+            startLocals.set("__str_push_ptr", "i32");
+            startLocals.set("__str_push_len", "i32");
+          }
         }
         // Phase 24: nullable variable: const x: i32 | null = ...
         const nlPreS = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([\w\[\]]+(?:\s*\|\s*(?:null|undefined))+)\s*=/);
@@ -10252,6 +11135,16 @@ class WasicTranspiler {
         startLocals.set("__tmpl_num_ptr", "i32");
         startLocals.set("__tmpl_num_len", "i32");
       }
+      // String.fromCharCode / str.charAt in concat: pre-declare $__str_op_ptr/$__str_op_len temp pair.
+      if (!startLocals.has("__str_op_ptr") && this.startBodyLines.some(l =>
+        l.includes("String.fromCharCode(") || l.includes(".charAt(")
+      )) {
+        startDeclaredLocals.push(["__str_op_ptr", "i32"], ["__str_op_len", "i32"]);
+        startLocals.set("__str_op_ptr", "i32");
+        startLocals.set("__str_op_len", "i32");
+      }
+      // Save module-level array registrations so functions can access them via emitFunction seed.
+      this.moduleArrayVars = new Map(this.arrayVars);
       const localDecls = [...startLocals.entries()]
         .filter(([, t]) => t !== "string") // "string" is a tracker only
         .map(([n, t]) => `    (local $${n} ${watBaseType(t as WatType)})`)

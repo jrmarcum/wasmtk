@@ -410,7 +410,7 @@
       (local.set $s_ptr)
             )
           )
-          (call $__str_concat (local.get $s_ptr) (local.get $s_len) (local.tee $s_ptr (call $__malloc (i32.const 32))) (call $__f64_to_str (f64.load (i32.add (i32.add (local.get $nums) (i32.const 8)) (i32.shl (i32.trunc_f64_s (i32.trunc_f64_s (local.get $i))) (i32.const 3)))) (local.get $s_ptr)))
+          (call $__str_concat (local.get $s_ptr) (local.get $s_len) (local.tee $s_ptr (call $__malloc (i32.const 32))) (call $__f64_to_str (f64.load (i32.add (i32.add (local.get $nums) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 3)))) (local.get $s_ptr)))
       (local.set $s_len)
       (local.set $s_ptr)
         )
@@ -427,7 +427,7 @@
       (loop $loop_1
         (br_if $break_1 (i32.eqz (f64.lt (local.get $i) (f64.convert_i32_s (i32.load (local.get $nums))))))
         (block $cont_1
-          (local.set $total (f64.add (local.get $total) (f64.load (i32.add (i32.add (local.get $nums) (i32.const 8)) (i32.shl (i32.trunc_f64_s (i32.trunc_f64_s (local.get $i))) (i32.const 3))))))
+          (local.set $total (f64.add (local.get $total) (f64.load (i32.add (i32.add (local.get $nums) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 3))))))
         )
         (local.set $i (f64.add (local.get $i) (f64.const 1)))
         (br $loop_1)

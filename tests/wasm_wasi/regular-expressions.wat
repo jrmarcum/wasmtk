@@ -691,7 +691,7 @@
         (block $cont_1
           (if (i32.and (i32.and (i32.eq (call $__str_char_code_at (local.get $s_ptr) (local.get $s_len) (i32.trunc_f64_s (local.get $i))) (i32.const 112)) (i32.eq (call $__str_char_code_at (local.get $s_ptr) (local.get $s_len) (f64.add (local.get $i) (f64.const 2))) (i32.const 99))) (i32.eq (call $__str_char_code_at (local.get $s_ptr) (local.get $s_len) (f64.add (local.get $i) (f64.const 3))) (i32.const 104)))
             (then
-            (call $__str_slice (local.get $s_ptr) (local.get $s_len) (i32.trunc_f64_s (local.get $i)) (f64.add (local.get $i) (f64.const 5)))
+            (call $__str_slice (local.get $s_ptr) (local.get $s_len) (i32.trunc_f64_s (local.get $i)) (i32.trunc_f64_s (f64.add (local.get $i) (f64.const 5))))
       (local.set $__ret_str_len)
       (local.set $__ret_str_ptr)
       (global.set $__str_ret_ptr (local.get $__ret_str_ptr))
