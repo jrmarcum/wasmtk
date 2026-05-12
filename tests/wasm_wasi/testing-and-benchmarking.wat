@@ -271,7 +271,7 @@
       (loop $loop_1
         (br_if $break_1 (i32.eqz (f64.lt (local.get $i) (f64.convert_i32_s (i32.const 5)))))
         (block $cont_1
-          (if (i32.ne (call $intMin (f64.load (i32.add (i32.load (i32.add (i32.add (i32.const 475) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 2)))) (i32.const 0))) (f64.load (i32.add (i32.load (i32.add (i32.add (i32.const 475) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 2)))) (i32.const 8)))) (f64.load (i32.add (i32.load (i32.add (i32.add (i32.const 475) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 2)))) (i32.const 16))))
+          (if (f64.ne (call $intMin (f64.load (i32.add (i32.load (i32.add (i32.add (i32.const 475) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 2)))) (i32.const 0))) (f64.load (i32.add (i32.load (i32.add (i32.add (i32.const 475) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 2)))) (i32.const 8)))) (f64.load (i32.add (i32.load (i32.add (i32.add (i32.const 475) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 2)))) (i32.const 16))))
             (then
             (call $proc_exit (i32.const 0))
       (unreachable)

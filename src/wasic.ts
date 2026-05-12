@@ -5057,8 +5057,11 @@ class WasicTranspiler {
         const _lhsSliceRecv = lhs.match(/^(\w+)\.slice\s*\(/)?.[1];
         const _lhsIsStrSlice = _lhsSliceRecv !== undefined && locals.get(_lhsSliceRecv) === "string";
         const _lhsLeadId = !lhs.includes(".") ? lhs.match(/^(\w+)/)?.[1] : undefined;
-        const _lhsFnResult = _lhsLeadId && lhs.includes("(")
-          ? this.functions.find(f => f.name === _lhsLeadId)?.result ?? null
+        // For function calls, extract the leading function name even when args contain dots.
+        // E.g. "intMin(tests[i].a, tests[i].b)" → _lhsFnName = "intMin" → result type f64
+        const _lhsFnName = lhs.match(/^(\w+)\s*\(/)?.[1];
+        const _lhsFnResult = _lhsFnName
+          ? this.functions.find(f => f.name === _lhsFnName)?.result ?? null
           : null;
         // Struct/class field access: varName.field or arr[idx].field → look up field type
         const _dotFieldLhsM = !alwaysI32 && lhs.includes(".")
