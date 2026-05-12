@@ -440,7 +440,7 @@
     (local.set $i (f64.const 0))
     (block $break_0
       (loop $loop_0
-        (br_if $break_0 (i32.eqz (f64.lt (local.get $i) (f64.convert_i32_s (i32.load (global.get $nums))))))
+        (br_if $break_0 (i32.eqz (f64.lt (local.get $i) (f64.convert_i32_s (i32.load (local.get $nums))))))
         (block $cont_0
           (if (f64.gt (local.get $i) (f64.const 0))
             (then
@@ -454,7 +454,7 @@
           (local.set $s_ptr (local.get $s_ptr))
       (local.set $s_len (local.get $s_len))
       (local.set $__tmpl_num_ptr (call $__malloc (i32.const 32)))
-      (local.set $__tmpl_num_len (call $__f64_to_str (f64.load (i32.add (i32.add (global.get $nums) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 3)))) (local.get $__tmpl_num_ptr)))
+      (local.set $__tmpl_num_len (call $__f64_to_str (f64.load (i32.add (i32.add (local.get $nums) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 3)))) (local.get $__tmpl_num_ptr)))
       (call $__str_concat (local.get $s_ptr) (local.get $s_len) (local.get $__tmpl_num_ptr) (local.get $__tmpl_num_len))
       (local.set $s_len)
       (local.set $s_ptr)
@@ -472,9 +472,9 @@
     (local.set $i (f64.const 0))
     (block $break_1
       (loop $loop_1
-        (br_if $break_1 (i32.eqz (f64.lt (local.get $i) (f64.convert_i32_s (i32.load (global.get $nums))))))
+        (br_if $break_1 (i32.eqz (f64.lt (local.get $i) (f64.convert_i32_s (i32.load (local.get $nums))))))
         (block $cont_1
-          (local.set $total (f64.add (local.get $total) (f64.load (i32.add (i32.add (global.get $nums) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 3))))))
+          (local.set $total (f64.add (local.get $total) (f64.load (i32.add (i32.add (local.get $nums) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 3))))))
         )
         (local.set $i (f64.add (local.get $i) (f64.const 1)))
         (br $loop_1)
@@ -517,7 +517,7 @@
       (f64.store offset=16 (global.get $nums) (f64.const 2))
       (f64.store offset=24 (global.get $nums) (f64.const 3))
       (f64.store offset=32 (global.get $nums) (f64.const 4))
-    (call $sum (local.get $nums))
+    (call $sum (global.get $nums))
     (call $proc_exit (i32.const 0))
   )
   (data (i32.const 260) "\5b")

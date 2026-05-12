@@ -1969,9 +1969,9 @@ class WasicTranspiler {
     }
   }
 
-  /** Returns whether an array is a true module-level WASM global (registered in both moduleArrayVars AND moduleGlobals). */
+  /** Returns whether an array is a true module-level WASM global (registered in moduleGlobals AND not shadowed by a local/parameter in the current function scope). */
   private isModuleGlobalArr(arrName: string): boolean {
-    return this.moduleArrayVars.has(arrName) && this.moduleGlobals.has(arrName);
+    return this.moduleGlobals.has(arrName) && this.arrayVars.get(arrName)?.ptr === -2;
   }
 
   /** Returns the WAT expression to read the array pointer: global.get for module globals, local.get otherwise. */
@@ -4720,7 +4720,8 @@ class WasicTranspiler {
         const normalEmitted = fn.params.slice(0, normalCount).map((p: FuncParam) =>
           p.defaultValue !== undefined ? this.emitExpr(p.defaultValue, locals, p.type) : `(i32.const 0)`
         );
-        return `(call $${fnName} ${[...normalEmitted, `(local.get $${arrName})`].join(" ")})`.trim();
+        const arrGet4 = this.moduleGlobals.has(arrName) ? `(global.get $${arrName})` : `(local.get $${arrName})`;
+        return `(call $${fnName} ${[...normalEmitted, arrGet4].join(" ")})`.trim();
       }
     }
 
@@ -5621,7 +5622,8 @@ class WasicTranspiler {
         if (restRaw.length === 1 && restRaw[0].startsWith("...")) {
           const arrName = restRaw[0].slice(3).trim();
           const normalEmitted = rawArgs.slice(0, restIdx).map((a, i) => this.emitExpr(a, locals, fnDef!.params[i].type));
-          const callWat = `(call $${fnName} ${[...normalEmitted, `(local.get $${arrName})`].join(" ")})`.trim();
+          const arrGet5 = this.moduleGlobals.has(arrName) ? `(global.get $${arrName})` : `(local.get $${arrName})`;
+          const callWat = `(call $${fnName} ${[...normalEmitted, arrGet5].join(" ")})`.trim();
           return `${callWat}\n      (local.set $${varName})`;
         }
         const retType = fnDef.result ?? "i32";
@@ -5644,7 +5646,8 @@ class WasicTranspiler {
         if (restRaw.length === 1 && restRaw[0].startsWith("...")) {
           const arrName = restRaw[0].slice(3).trim();
           const normalEmitted = rawArgs.slice(0, restIdx).map((a, i) => this.emitExpr(a, locals, fnDef!.params[i].type));
-          return `(call $${fnName} ${[...normalEmitted, `(local.get $${arrName})`].join(" ")})`.trim();
+          const arrGet6 = this.moduleGlobals.has(arrName) ? `(global.get $${arrName})` : `(local.get $${arrName})`;
+          return `(call $${fnName} ${[...normalEmitted, arrGet6].join(" ")})`.trim();
         }
         return this.emitRestParamCall(fnName, rawArgs, locals, null);
       }
