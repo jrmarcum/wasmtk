@@ -132,6 +132,44 @@
     (i32.const -1)
   )
 
+  ;; ── str_indexof_from: first occurrence of sub in str starting at 'from', or -1 ─
+  (func $__str_indexof_from
+    (param $ptr i32) (param $len i32) (param $subptr i32) (param $sublen i32) (param $from i32)
+    (result i32)
+    (local $i i32) (local $j i32) (local $max i32) (local $ok i32)
+    (if (i32.eqz (local.get $sublen)) (then (return (local.get $from))))
+    (local.set $max (i32.sub (local.get $len) (local.get $sublen)))
+    (if (i32.lt_s (local.get $max) (i32.const 0)) (then (return (i32.const -1))))
+    (local.set $i (select (i32.const 0) (local.get $from) (i32.lt_s (local.get $from) (i32.const 0))))
+    (block $found_none
+      (loop $outer
+        (br_if $found_none (i32.gt_s (local.get $i) (local.get $max)))
+        (local.set $j (i32.const 0))
+        (local.set $ok (i32.const 1))
+        (block $inner_done
+          (loop $inner
+            (br_if $inner_done (i32.ge_u (local.get $j) (local.get $sublen)))
+            (if (i32.ne
+              (i32.load8_u (i32.add (local.get $ptr) (i32.add (local.get $i) (local.get $j))))
+              (i32.load8_u (i32.add (local.get $subptr) (local.get $j)))
+            )
+              (then
+                (local.set $ok (i32.const 0))
+                (br $inner_done)
+              )
+            )
+            (local.set $j (i32.add (local.get $j) (i32.const 1)))
+            (br $inner)
+          )
+        )
+        (if (local.get $ok) (then (return (local.get $i))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $outer)
+      )
+    )
+    (i32.const -1)
+  )
+
   ;; ── str_trim: remove leading and trailing ASCII whitespace ─────────────────
   ;; Whitespace = 0x09 (tab), 0x0a (LF), 0x0d (CR), 0x20 (space).
   ;; Returns (new_ptr, new_len) which is a sub-range of the original buffer.
@@ -652,6 +690,8 @@
     (local $__iface_tmp i32)
     (local $__ret_str_ptr i32)
     (local $__ret_str_len i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $last (call $findLastChar (local.get $p_ptr) (local.get $p_len) (f64.const 47)))
     (if (f64.lt (local.get $last) (f64.const 0))
       (then
@@ -675,6 +715,8 @@
     (local $__iface_tmp i32)
     (local $__ret_str_ptr i32)
     (local $__ret_str_len i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $last (call $findLastChar (local.get $p_ptr) (local.get $p_len) (f64.const 47)))
     (call $__str_slice (local.get $p_ptr) (local.get $p_len) (i32.trunc_f64_s (f64.add (local.get $last) (f64.const 1))) (local.get $p_len))
       (local.set $__ret_str_len)
@@ -694,6 +736,8 @@
     (local $__iface_tmp i32)
     (local $__ret_str_ptr i32)
     (local $__ret_str_len i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $last (call $findLastChar (local.get $filename_ptr) (local.get $filename_len) (f64.const 46)))
     (if (f64.lt (local.get $last) (f64.const 0))
       (then
@@ -716,6 +760,8 @@
     (local $__iface_tmp i32)
     (local $__ret_str_ptr i32)
     (local $__ret_str_len i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (if (call $__str_ends_with (local.get $s_ptr) (local.get $s_len) (local.get $suffix_ptr) (local.get $suffix_len))
       (then
       (call $__str_slice (local.get $s_ptr) (local.get $s_len) (i32.const 0) (i32.sub (local.get $s_len) (local.get $suffix_len)))

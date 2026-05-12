@@ -132,6 +132,44 @@
     (i32.const -1)
   )
 
+  ;; ── str_indexof_from: first occurrence of sub in str starting at 'from', or -1 ─
+  (func $__str_indexof_from
+    (param $ptr i32) (param $len i32) (param $subptr i32) (param $sublen i32) (param $from i32)
+    (result i32)
+    (local $i i32) (local $j i32) (local $max i32) (local $ok i32)
+    (if (i32.eqz (local.get $sublen)) (then (return (local.get $from))))
+    (local.set $max (i32.sub (local.get $len) (local.get $sublen)))
+    (if (i32.lt_s (local.get $max) (i32.const 0)) (then (return (i32.const -1))))
+    (local.set $i (select (i32.const 0) (local.get $from) (i32.lt_s (local.get $from) (i32.const 0))))
+    (block $found_none
+      (loop $outer
+        (br_if $found_none (i32.gt_s (local.get $i) (local.get $max)))
+        (local.set $j (i32.const 0))
+        (local.set $ok (i32.const 1))
+        (block $inner_done
+          (loop $inner
+            (br_if $inner_done (i32.ge_u (local.get $j) (local.get $sublen)))
+            (if (i32.ne
+              (i32.load8_u (i32.add (local.get $ptr) (i32.add (local.get $i) (local.get $j))))
+              (i32.load8_u (i32.add (local.get $subptr) (local.get $j)))
+            )
+              (then
+                (local.set $ok (i32.const 0))
+                (br $inner_done)
+              )
+            )
+            (local.set $j (i32.add (local.get $j) (i32.const 1)))
+            (br $inner)
+          )
+        )
+        (if (local.get $ok) (then (return (local.get $i))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $outer)
+      )
+    )
+    (i32.const -1)
+  )
+
   ;; ── i32 → decimal string ──────────────────────────────────────────────────
   ;; Writes the decimal representation of $val at $buf, returns byte count.
   (func $__i32_to_str (param $val i32) (param $buf i32) (result i32)
@@ -409,9 +447,10 @@
 
   (func $newContainer (param $num f64) (param $str_ptr i32) (param $str_len i32) (result i32)
     (local $__obj_ret i32)
-    (local.set $__obj_ret (call $__malloc (i32.const 8)))
+    (local.set $__obj_ret (call $__malloc (i32.const 16)))
       (i32.store offset=0 (local.get $__obj_ret) (;? { num } ;) (i32.const 0))
-      (i32.store offset=4 (local.get $__obj_ret) (local.get $str_ptr))
+      (i32.store offset=8 (local.get $__obj_ret) (local.get $str_ptr))
+      (i32.store offset=12 (local.get $__obj_ret) (local.get $str_len))
       (return (local.get $__obj_ret))
   )
 
@@ -451,7 +490,8 @@
           (i32.store8 (i32.add (i32.const 132) (i32.add (i32.load (i32.const 4)) (i32.const 5))) (i32.const 58))
           (i32.store8 (i32.add (i32.const 132) (i32.add (i32.load (i32.const 4)) (i32.const 6))) (i32.const 32))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 7)))
-          (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (call $__i32_to_str (i32.load (i32.add (local.get $co) (i32.const 4))) (i32.add (i32.const 132) (i32.load (i32.const 4))))))
+          (call $__str_gather (i32.load offset=8 (local.get $co)) (i32.load offset=12 (local.get $co)) (i32.add (i32.const 132) (i32.load (i32.const 4))))
+          (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.load offset=12 (local.get $co))))
           (i32.store8 (i32.add (i32.const 132) (i32.add (i32.load (i32.const 4)) (i32.const 0))) (i32.const 125))
           (i32.store8 (i32.add (i32.const 132) (i32.add (i32.load (i32.const 4)) (i32.const 1))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 2)))

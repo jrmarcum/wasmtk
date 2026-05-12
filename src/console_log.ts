@@ -72,6 +72,15 @@ export type FuncLookup = (name: string) => {
  */
 export type DataAllocator = (text: string) => [offset: number, byteLen: number];
 
+/**
+ * Module-level string-array allocator: set by wasic.ts before calling parseConsoleLogArgs,
+ * cleared afterward. Compilation is synchronous so no concurrency risk.
+ */
+let _strArrAlloc: ((elements: string[]) => number) | undefined = undefined;
+export function setStringArrayAllocator(fn: ((elements: string[]) => number) | undefined): void {
+  _strArrAlloc = fn;
+}
+
 /** Callback to resolve an array variable by name: returns its element type, base ptr, and length.
  *  ptr=-1 means runtime local (param). ptr=-2 means dynamic heap array (local with 8-byte header).
  *  dynamic=true means the array has a [length, capacity] header at its pointer. */
@@ -364,6 +373,14 @@ function parseSingleArg(
   if (instanceofTernaryMatch && locals.get(instanceofTernaryMatch[1]) === "string") {
     const v = instanceofTernaryMatch[1];
     return [{ kind: "strvar", ptrLocal: `${v}_ptr`, lenLocal: `${v}_len` }];
+  }
+
+  // ── String literal method: "TEXT".toLowerCase() / "TEXT".toUpperCase() → pre-computed literal
+  const strLitMethodMatch = token.match(/^(["'])(.*?)\1\.(toLowerCase|toUpperCase)\s*\(\s*\)$/);
+  if (strLitMethodMatch) {
+    const str = strLitMethodMatch[2];
+    const text = strLitMethodMatch[3] === "toLowerCase" ? str.toLowerCase() : str.toUpperCase();
+    return [{ kind: "literal", text }];
   }
 
   // ── Phase 28: arr.join(sep) — write joined string to gather scratch
@@ -664,6 +681,19 @@ function exprToWat(
 
   // Bigint literal: 5n → (i64.const 5)  (must come before identifier check: /^\w+$/ matches "5n")
   if (/^-?\d+n$/.test(expr)) return `(i64.const ${expr.slice(0, -1)})`;
+
+  // Inline string array literal: ["a", "b"] → allocate in data section, return i32 pointer
+  if (expr.startsWith("[") && expr.endsWith("]") && _strArrAlloc) {
+    const inner = expr.slice(1, -1).trim();
+    const elems = inner ? splitTopLevelArgs(inner) : [];
+    const allStrLits = elems.length > 0 && elems.every(e => {
+      const t = e.trim();
+      return (t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"));
+    });
+    if (allStrLits) {
+      return `(i32.const ${_strArrAlloc(elems)})`;
+    }
+  }
 
   // Array .length: dynamic → runtime i32 load from header; static → compile-time constant
   const dotLenM = expr.match(/^(\w+)\.length$/);

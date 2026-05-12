@@ -127,6 +127,7 @@ import {
   IOV_BASE,
   SCRATCH_BASE,
   parseConsoleLogArgs,
+  setStringArrayAllocator,
   emitConsoleLog,
   getHelperWat,
   getArrPrintHelperWat,
@@ -452,6 +453,16 @@ function splitBraceAwareCommas(s: string): string[] {
 function zeroOf(t: WatType): string {
   if (t === "string" || t === "bool") return "(i32.const 0)";
   return t === "f64" ? "(f64.const 0)" : t === "f32" ? "(f32.const 0)" : `(${t}.const 0)`;
+}
+
+/** Returns true if no prefix of s has more ')'/']' than '('/'[' — guards greedy regex matches. */
+function parenDepthNeverNegative(s: string): boolean {
+  let d = 0;
+  for (const ch of s) {
+    if (ch === "(" || ch === "[") d++;
+    else if (ch === ")" || ch === "]") { if (--d < 0) return false; }
+  }
+  return true;
 }
 
 /** Splits a string of two consecutive top-level WAT S-expressions into [first, second].
@@ -3228,7 +3239,7 @@ class WasicTranspiler {
     // str.slice(start[, end]) → call $__str_slice (multi-value → ptr, len)
     // Supports both str.slice(start, end) and str.slice(start) (end defaults to str length)
     const sliceAnyM = initExpr.match(/^(\w+)\.slice\s*\((.+)\)$/);
-    if (sliceAnyM && locals.get(sliceAnyM[1]) === "string") {
+    if (sliceAnyM && locals.get(sliceAnyM[1]) === "string" && parenDepthNeverNegative(sliceAnyM[2])) {
       const sliceArgs = this.splitArgs(sliceAnyM[2]);
       if (sliceArgs.length === 1 || sliceArgs.length === 2) {
         this.needsStringOpHelpers = true;
@@ -3490,6 +3501,28 @@ class WasicTranspiler {
             return;
           }
         }
+        // str.slice(start[, end]) in concat — capture multi-value return into temp pair
+        const sliceCP = part.match(/^(\w+)\.slice\s*\((.+)\)$/);
+        if (sliceCP && parenDepthNeverNegative(sliceCP[2])) {
+          const strN = sliceCP[1];
+          const isLocal = locals.get(strN) === "string";
+          const strConst = this.moduleStringConsts.get(strN);
+          if (isLocal || strConst) {
+            this.needsStringOpHelpers = true;
+            const sliceArgs2 = this.splitArgs(sliceCP[2].trim());
+            const startWat2 = this.emitArrayIndex(sliceArgs2[0].trim(), locals);
+            const ptrW2 = isLocal ? `(local.get $${strN}_ptr)` : `(i32.const ${strConst![0]})`;
+            const lenW2 = isLocal ? `(local.get $${strN}_len)` : `(i32.const ${strConst![1]})`;
+            const endWat2 = sliceArgs2.length >= 2
+              ? this.emitArrayIndex(sliceArgs2[1].trim(), locals)
+              : lenW2;
+            stmts.push(`(call $__str_slice ${ptrW2} ${lenW2} ${startWat2} ${endWat2})`);
+            stmts.push(`(local.set $__str_op_len)`);
+            stmts.push(`(local.set $__str_op_ptr)`);
+            concatAppend(`(local.get $__str_op_ptr)`, `(local.get $__str_op_len)`);
+            return;
+          }
+        }
         // Non-template: use emitStringPtrLen (handles vars, literals, struct fields, array elems, fn calls)
         const simple = this.emitStringPtrLen(part, locals);
         if (simple !== "(i32.const 0) (i32.const 0)") {
@@ -3700,6 +3733,17 @@ class WasicTranspiler {
         return `(i32.load ${elemAddrWat}) (i32.load offset=4 ${elemAddrWat})`;
       }
     }
+    // str.slice(start[, end]) — returns inline multi-value call (ptr, len) for use in $__str_cmp args
+    const sliceSPLM = expr.match(/^(\w+)\.slice\s*\((.+)\)$/);
+    if (sliceSPLM && locals.get(sliceSPLM[1]) === "string" && parenDepthNeverNegative(sliceSPLM[2])) {
+      this.needsStringOpHelpers = true;
+      const sliceArgs = this.splitArgs(sliceSPLM[2].trim());
+      const startWat = this.emitArrayIndex(sliceArgs[0].trim(), locals);
+      const endWat = sliceArgs.length >= 2
+        ? this.emitArrayIndex(sliceArgs[1].trim(), locals)
+        : `(local.get $${sliceSPLM[1]}_len)`;
+      return `(call $__str_slice (local.get $${sliceSPLM[1]}_ptr) (local.get $${sliceSPLM[1]}_len) ${startWat} ${endWat})`;
+    }
     // Call to a string-returning function: emit void call then read globals
     const callM = expr.match(/^(\w+)\s*\((.*)?\)$/);
     if (callM) {
@@ -3886,7 +3930,13 @@ class WasicTranspiler {
       const rawArgs = strIndexOfMatch[2].trim();
       const argsArr = this.splitArgs(rawArgs);
       const subPtrLen = this.emitStringPtrLen(argsArr[0].trim(), locals);
-      const wat = `(call $__str_indexof (local.get $${strIndexOfMatch[1]}_ptr) (local.get $${strIndexOfMatch[1]}_len) ${subPtrLen})`;
+      let wat: string;
+      if (argsArr.length >= 2) {
+        const fromWat = this.emitExpr(argsArr[1].trim(), locals, "i32");
+        wat = `(call $__str_indexof_from (local.get $${strIndexOfMatch[1]}_ptr) (local.get $${strIndexOfMatch[1]}_len) ${subPtrLen} ${fromWat})`;
+      } else {
+        wat = `(call $__str_indexof (local.get $${strIndexOfMatch[1]}_ptr) (local.get $${strIndexOfMatch[1]}_len) ${subPtrLen})`;
+      }
       // When used in f64 context (number variable holding indexOf result), convert
       if (defaultType === "f64" || defaultType === "f32") return `(f64.convert_i32_s ${wat})`;
       return wat;
@@ -3984,6 +4034,15 @@ class WasicTranspiler {
         }
         parts.push(`(local.get $__arr_tmp)`);
         return `(block (result i32) ${parts.join(" ")})`;
+      }
+      // 1D inline string array literal: all elements are quoted strings → allocate in data section
+      const allStrLits = elements.length > 0 && elements.every(e => {
+        const t = e.trim();
+        return (t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"));
+      });
+      if (allStrLits) {
+        const arrPtr = this.allocArrayData(elements, "string");
+        return `(i32.const ${arrPtr})`;
       }
       // 1D inline array literal
       const elemType: WatType = (defaultType === "f64" || defaultType === "i64") ? defaultType : "i32";
@@ -4993,6 +5052,9 @@ class WasicTranspiler {
         // For logical/bitwise ops always use i32; for others infer from the LHS local type.
         // Also peek at the leading identifier for simple compound expressions like "n % 2"
         // (but NOT for dot-access expressions like "r.width" — the leading "r" would give wrong type).
+        // str.slice(...) on a string local → string type (used in string comparisons)
+        const _lhsSliceRecv = lhs.match(/^(\w+)\.slice\s*\(/)?.[1];
+        const _lhsIsStrSlice = _lhsSliceRecv !== undefined && locals.get(_lhsSliceRecv) === "string";
         const _lhsLeadId = !lhs.includes(".") ? lhs.match(/^(\w+)/)?.[1] : undefined;
         const _lhsFnResult = _lhsLeadId && lhs.includes("(")
           ? this.functions.find(f => f.name === _lhsLeadId)?.result ?? null
@@ -5026,7 +5088,8 @@ class WasicTranspiler {
           : null;
         const lhsType: WatType = alwaysI32
           ? "i32"
-          : (_dotFieldType ??
+          : (_lhsIsStrSlice ? "string" :
+            (_dotFieldType ??
             (/^\w+$/.test(lhs) && locals.has(lhs) ? locals.get(lhs)!
             : /^\w+$/.test(lhs) && this.moduleGlobals.has(lhs) ? this.moduleGlobals.get(lhs)!.type
             // Array element access arr[idx]: use element type, not pointer type
@@ -5035,7 +5098,7 @@ class WasicTranspiler {
                  ? "string" : this.arrayVars.get(_lhsLeadId)!.elemType)
             : _lhsLeadId && locals.has(_lhsLeadId) ? locals.get(_lhsLeadId)!
             : _lhsLeadId && this.moduleGlobals.has(_lhsLeadId) ? this.moduleGlobals.get(_lhsLeadId)!.type
-            : _lhsFnResult ?? defaultType));
+            : _lhsFnResult ?? defaultType)));
 
         // String comparison: route through $__str_cmp instead of string.eq / string.lt, etc.
         if (lhsType === "string" && STRING_CMP_OPS.has(op)) {
@@ -6714,7 +6777,9 @@ class WasicTranspiler {
         const funcType = this.getOrCreateFuncType(trampolineParams, sig.result);
         return { params: sig.params as string[], result: sig.result, funcType };
       };
+      setStringArrayAllocator((elems) => this.allocArrayData(elems, "string"));
       const segments = parseConsoleLogArgs(logMatch[1], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFn, globalsMap, enumStringLookupFn, closureVarLookupFn);
+      setStringArrayAllocator(undefined);
       const { statements, needsHelpers, needsStrGather, needsArrPrintHelper, needsJoinHelper } = emitConsoleLog(segments, allocator, "    ", 1, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
       if (needsStrGather) this.needsStrGatherHelper = true;
@@ -6865,7 +6930,9 @@ class WasicTranspiler {
         const funcType = this.getOrCreateFuncType(trampolineParams, sig.result);
         return { params: sig.params as string[], result: sig.result, funcType };
       };
+      setStringArrayAllocator((elems) => this.allocArrayData(elems, "string"));
       const segments = parseConsoleLogArgs(errMatch[2], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFnErr, globalsMapErr, enumStringLookupFnErr, closureVarLookupFnErr);
+      setStringArrayAllocator(undefined);
       const { statements, needsHelpers, needsStrGather, needsArrPrintHelper: errAph, needsJoinHelper: errJh } = emitConsoleLog(segments, allocator, "    ", 2, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
       if (needsStrGather) this.needsStrGatherHelper = true;
@@ -9163,6 +9230,44 @@ class WasicTranspiler {
       )
     )
     (i32.const -1)
+  )
+
+  ;; ── str_indexof_from: first occurrence of sub in str starting at 'from', or -1 ─
+  (func $__str_indexof_from
+    (param $ptr i32) (param $len i32) (param $subptr i32) (param $sublen i32) (param $from i32)
+    (result i32)
+    (local $i i32) (local $j i32) (local $max i32) (local $ok i32)
+    (if (i32.eqz (local.get $sublen)) (then (return (local.get $from))))
+    (local.set $max (i32.sub (local.get $len) (local.get $sublen)))
+    (if (i32.lt_s (local.get $max) (i32.const 0)) (then (return (i32.const -1))))
+    (local.set $i (select (i32.const 0) (local.get $from) (i32.lt_s (local.get $from) (i32.const 0))))
+    (block $found_none
+      (loop $outer
+        (br_if $found_none (i32.gt_s (local.get $i) (local.get $max)))
+        (local.set $j (i32.const 0))
+        (local.set $ok (i32.const 1))
+        (block $inner_done
+          (loop $inner
+            (br_if $inner_done (i32.ge_u (local.get $j) (local.get $sublen)))
+            (if (i32.ne
+              (i32.load8_u (i32.add (local.get $ptr) (i32.add (local.get $i) (local.get $j))))
+              (i32.load8_u (i32.add (local.get $subptr) (local.get $j)))
+            )
+              (then
+                (local.set $ok (i32.const 0))
+                (br $inner_done)
+              )
+            )
+            (local.set $j (i32.add (local.get $j) (i32.const 1)))
+            (br $inner)
+          )
+        )
+        (if (local.get $ok) (then (return (local.get $i))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $outer)
+      )
+    )
+    (i32.const -1)
   )`.trimEnd();
   }
 
@@ -10244,9 +10349,9 @@ class WasicTranspiler {
       locals.set("__tmpl_num_ptr", "i32");
       locals.set("__tmpl_num_len", "i32");
     }
-    // String.fromCharCode / str.charAt in concat: pre-declare $__str_op_ptr/$__str_op_len temp pair.
+    // String.fromCharCode / str.charAt / str.slice in concat: pre-declare $__str_op_ptr/$__str_op_len temp pair.
     if (!locals.has("__str_op_ptr") && fn.bodyLines.some(l =>
-      l.includes("String.fromCharCode(") || l.includes(".charAt(")
+      l.includes("String.fromCharCode(") || l.includes(".charAt(") || l.includes(".slice(")
     )) {
       declaredLocals.push(["__str_op_ptr", "i32"], ["__str_op_len", "i32"]);
       locals.set("__str_op_ptr", "i32");

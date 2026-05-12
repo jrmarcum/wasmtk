@@ -3,6 +3,7 @@
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
   (memory (export "memory") 2)
   (global $__heap_ptr (mut i32) (i32.const 263))
+  (global $nums (mut i32) (i32.const 0))
   ;; Bump allocator — advances __heap_ptr and returns the old value
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
@@ -101,6 +102,44 @@
     ;; if sub is longer than str, impossible
     (local.set $max (i32.sub (local.get $len) (local.get $sublen)))
     (if (i32.lt_s (local.get $max) (i32.const 0)) (then (return (i32.const -1))))
+    (block $found_none
+      (loop $outer
+        (br_if $found_none (i32.gt_s (local.get $i) (local.get $max)))
+        (local.set $j (i32.const 0))
+        (local.set $ok (i32.const 1))
+        (block $inner_done
+          (loop $inner
+            (br_if $inner_done (i32.ge_u (local.get $j) (local.get $sublen)))
+            (if (i32.ne
+              (i32.load8_u (i32.add (local.get $ptr) (i32.add (local.get $i) (local.get $j))))
+              (i32.load8_u (i32.add (local.get $subptr) (local.get $j)))
+            )
+              (then
+                (local.set $ok (i32.const 0))
+                (br $inner_done)
+              )
+            )
+            (local.set $j (i32.add (local.get $j) (i32.const 1)))
+            (br $inner)
+          )
+        )
+        (if (local.get $ok) (then (return (local.get $i))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $outer)
+      )
+    )
+    (i32.const -1)
+  )
+
+  ;; ── str_indexof_from: first occurrence of sub in str starting at 'from', or -1 ─
+  (func $__str_indexof_from
+    (param $ptr i32) (param $len i32) (param $subptr i32) (param $sublen i32) (param $from i32)
+    (result i32)
+    (local $i i32) (local $j i32) (local $max i32) (local $ok i32)
+    (if (i32.eqz (local.get $sublen)) (then (return (local.get $from))))
+    (local.set $max (i32.sub (local.get $len) (local.get $sublen)))
+    (if (i32.lt_s (local.get $max) (i32.const 0)) (then (return (i32.const -1))))
+    (local.set $i (select (i32.const 0) (local.get $from) (i32.lt_s (local.get $from) (i32.const 0))))
     (block $found_none
       (loop $outer
         (br_if $found_none (i32.gt_s (local.get $i) (local.get $max)))
@@ -401,16 +440,22 @@
     (local.set $i (f64.const 0))
     (block $break_0
       (loop $loop_0
-        (br_if $break_0 (i32.eqz (f64.lt (local.get $i) (f64.convert_i32_s (i32.load (local.get $nums))))))
+        (br_if $break_0 (i32.eqz (f64.lt (local.get $i) (f64.convert_i32_s (i32.load (global.get $nums))))))
         (block $cont_0
           (if (f64.gt (local.get $i) (f64.const 0))
             (then
-            (call $__str_concat (local.get $s_ptr) (local.get $s_len) (i32.const 261) (i32.const 1))
+            (local.set $s_ptr (local.get $s_ptr))
+      (local.set $s_len (local.get $s_len))
+      (call $__str_concat (local.get $s_ptr) (local.get $s_len) (i32.const 261) (i32.const 1))
       (local.set $s_len)
       (local.set $s_ptr)
             )
           )
-          (call $__str_concat (local.get $s_ptr) (local.get $s_len) (local.tee $s_ptr (call $__malloc (i32.const 32))) (call $__f64_to_str (f64.load (i32.add (i32.add (local.get $nums) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 3)))) (local.get $s_ptr)))
+          (local.set $s_ptr (local.get $s_ptr))
+      (local.set $s_len (local.get $s_len))
+      (local.set $__tmpl_num_ptr (call $__malloc (i32.const 32)))
+      (local.set $__tmpl_num_len (call $__f64_to_str (f64.load (i32.add (i32.add (global.get $nums) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 3)))) (local.get $__tmpl_num_ptr)))
+      (call $__str_concat (local.get $s_ptr) (local.get $s_len) (local.get $__tmpl_num_ptr) (local.get $__tmpl_num_len))
       (local.set $s_len)
       (local.set $s_ptr)
         )
@@ -418,16 +463,18 @@
         (br $loop_0)
       )
     )
-    (call $__str_concat (local.get $s_ptr) (local.get $s_len) (i32.const 262) (i32.const 1))
+    (local.set $s_ptr (local.get $s_ptr))
+      (local.set $s_len (local.get $s_len))
+      (call $__str_concat (local.get $s_ptr) (local.get $s_len) (i32.const 262) (i32.const 1))
       (local.set $s_len)
       (local.set $s_ptr)
     (local.set $total (f64.const 0))
     (local.set $i (f64.const 0))
     (block $break_1
       (loop $loop_1
-        (br_if $break_1 (i32.eqz (f64.lt (local.get $i) (f64.convert_i32_s (i32.load (local.get $nums))))))
+        (br_if $break_1 (i32.eqz (f64.lt (local.get $i) (f64.convert_i32_s (i32.load (global.get $nums))))))
         (block $cont_1
-          (local.set $total (f64.add (local.get $total) (f64.load (i32.add (i32.add (local.get $nums) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 3))))))
+          (local.set $total (f64.add (local.get $total) (f64.load (i32.add (i32.add (global.get $nums) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 3))))))
         )
         (local.set $i (f64.add (local.get $i) (f64.const 1)))
         (br $loop_1)
@@ -449,7 +496,6 @@
             (i32.const 128)))
   )
   (func $_start (export "_start")
-    (local $nums i32)
     (local $__rest_ptr i32)
     (local.set $__rest_ptr (call $__malloc (i32.const 72)))
       (i32.store (local.get $__rest_ptr) (i32.const 2))
@@ -464,13 +510,13 @@
       (f64.store offset=16 (local.get $__rest_ptr) (f64.const 2))
       (f64.store offset=24 (local.get $__rest_ptr) (f64.const 3))
       (call $sum (local.get $__rest_ptr))
-    (local.set $nums (call $__malloc (i32.const 72)))
-      (i32.store (local.get $nums) (i32.const 4))
-      (i32.store offset=4 (local.get $nums) (i32.const 8))
-      (f64.store offset=8 (local.get $nums) (f64.const 1))
-      (f64.store offset=16 (local.get $nums) (f64.const 2))
-      (f64.store offset=24 (local.get $nums) (f64.const 3))
-      (f64.store offset=32 (local.get $nums) (f64.const 4))
+    (global.set $nums (call $__malloc (i32.const 72)))
+      (i32.store (global.get $nums) (i32.const 4))
+      (i32.store offset=4 (global.get $nums) (i32.const 8))
+      (f64.store offset=8 (global.get $nums) (f64.const 1))
+      (f64.store offset=16 (global.get $nums) (f64.const 2))
+      (f64.store offset=24 (global.get $nums) (f64.const 3))
+      (f64.store offset=32 (global.get $nums) (f64.const 4))
     (call $sum (local.get $nums))
     (call $proc_exit (i32.const 0))
   )
