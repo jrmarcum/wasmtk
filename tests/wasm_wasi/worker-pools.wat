@@ -351,7 +351,7 @@
         (br_if $break_0 (i32.eqz (f64.lt (local.get $i) (f64.convert_i32_s (i32.const 5)))))
         (block $cont_0
           (local.set $workerId (f64.add (f64.sub (local.get $i) (f64.mul (f64.trunc (f64.div (local.get $i) (f64.const 3))) (f64.const 3))) (f64.const 1)))
-          (call $worker (local.get $workerId) (f64.load (i32.add (i32.add (i32.const 260) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 3)))))
+          (call $worker (local.get $workerId) (f64.load (i32.add (i32.add (i32.const 260) (i32.const 8)) (i32.shl (i32.trunc_f64_s (i32.trunc_f64_s (local.get $i))) (i32.const 3)))))
         )
         (local.set $i (f64.add (local.get $i) (f64.const 1)))
         (br $loop_0)

@@ -1006,7 +1006,7 @@
       (loop $loop_1
         (br_if $break_1 (i32.eqz (f64.lt (local.get $i) (f64.convert_i32_s (local.get $s_len)))))
         (block $cont_1
-          (call $__str_concat (local.get $r_ptr) (local.get $r_len) (call $toHex (call $__str_char_code_at (local.get $s_ptr) (local.get $s_len) (i32.trunc_f64_s (local.get $i)))) (global.get $__str_ret_ptr) (global.get $__str_ret_len))
+          (call $__str_concat (local.get $r_ptr) (local.get $r_len) (call $toHex (f64.convert_i32_s (call $__str_char_code_at (local.get $s_ptr) (local.get $s_len) (i32.trunc_f64_s (local.get $i))))) (global.get $__str_ret_ptr) (global.get $__str_ret_len))
       (local.set $r_len)
       (local.set $r_ptr)
         )
