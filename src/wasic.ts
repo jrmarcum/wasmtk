@@ -4672,7 +4672,7 @@ class WasicTranspiler {
       { const ccl = this.currentClosureCaptureLayout.get(expr); if (ccl) {
         const loadOp = ccl.type === "f64" ? "f64.load" : ccl.type === "i64" ? "i64.load" : "i32.load";
         const rawLoad = `(${loadOp} offset=${ccl.offset} (local.get $__closure_ptr))`;
-        if (ccl.type === "f64" && (defaultType === "i32" || defaultType === "bool")) return `(i32.trunc_f64_s ${rawLoad})`;
+        if (ccl.type === "f64" && defaultType === "i32") return `(i32.trunc_f64_s ${rawLoad})`;
         if ((ccl.type === "i32" || ccl.type === "bool") && (defaultType === "f64" || defaultType === "f32")) return `(f64.convert_i32_s ${rawLoad})`;
         return rawLoad;
       }}
@@ -4690,7 +4690,7 @@ class WasicTranspiler {
         if (this.currentBoxedCaptures.has(expr)) return `(i32.load (local.get $${expr}))`;
         const rawGet = `(local.get $${expr})`;
         // Type coercion for context mismatch (e.g. f64 variable used in i32 context or vice versa)
-        if (localType === "f64" && (defaultType === "i32" || defaultType === "bool")) return `(i32.trunc_f64_s ${rawGet})`;
+        if (localType === "f64" && defaultType === "i32") return `(i32.trunc_f64_s ${rawGet})`;
         if ((localType === "i32" || localType === "bool") && (defaultType === "f64" || defaultType === "f32")) return `(f64.convert_i32_s ${rawGet})`;
         return rawGet;
       }
@@ -5285,11 +5285,6 @@ class WasicTranspiler {
           const lWat = this.emitExpr(lhs, locals, lhsType);
           const rWat = this.emitExpr(rhs, locals, lhsType);
           const innerWat = `(${baseType}.sub ${lWat} (${baseType}.mul (${baseType}.trunc (${baseType}.div ${lWat} ${rWat})) ${rWat}))`;
-          if (!alwaysI32 && baseType === "i32") {
-            const ctxBase = watBaseType(defaultType as WatType);
-            if (ctxBase === "f64") return `(f64.convert_i32_s ${innerWat})`;
-            if (ctxBase === "i64") return `(i64.extend_i32_s ${innerWat})`;
-          }
           return innerWat;
         }
         const watOp    = `${baseType}.${suffix}`;
@@ -6924,7 +6919,7 @@ class WasicTranspiler {
         // Phase 5h: emitExpr succeeded (e.g. chained factoryFn().method()) — return as i32
         return { type: "i32", wat: result };
       };
-      const globalsMap = new Map([...this.moduleGlobals.entries()].map(([k, v]) => [k, watBaseType(v.type)]));
+      const globalsMap: Map<string, string> = new Map([...this.moduleGlobals.entries()].map(([k, v]) => [k, watBaseType(v.type)]));
       // Add module string consts encoded as "string:offset:len" so parseSingleArg can look them up
       for (const [k, [offset, len]] of this.moduleStringConsts) {
         globalsMap.set(k, `string:${offset}:${len}`);
@@ -7102,7 +7097,7 @@ class WasicTranspiler {
         }
         return { type: "i32", wat: result };
       };
-      const globalsMapErr = new Map([...this.moduleGlobals.entries()].map(([k, v]) => [k, watBaseType(v.type)]));
+      const globalsMapErr: Map<string, string> = new Map([...this.moduleGlobals.entries()].map(([k, v]) => [k, watBaseType(v.type)]));
       for (const [k, [offset, len]] of this.moduleStringConsts) {
         globalsMapErr.set(k, `string:${offset}:${len}`);
       }
