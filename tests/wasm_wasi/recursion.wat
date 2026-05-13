@@ -284,7 +284,7 @@
       (return (local.get $n))
       )
     )
-    (return (call $fib (f64.sub (f64.sub (local.get $n) (;? 1) + fib(n ;) (f64.const 0)) (f64.const 2))))
+    (return (f64.add (call $fib (f64.sub (local.get $n) (f64.const 1))) (call $fib (f64.sub (local.get $n) (f64.const 2)))))
   )
   (func $_start (export "_start")
     (local $__iface_tmp i32)

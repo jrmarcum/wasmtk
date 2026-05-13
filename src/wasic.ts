@@ -128,6 +128,7 @@ import {
   SCRATCH_BASE,
   parseConsoleLogArgs,
   setStringArrayAllocator,
+  setStructLiteralAllocator,
   emitConsoleLog,
   getHelperWat,
   getArrPrintHelperWat,
@@ -2725,7 +2726,7 @@ class WasicTranspiler {
         view.setInt32(field.offset, strPtr, true);
         view.setInt32(field.offset + 4, strLen, true);
       } else {
-        const val = parseFloat(raw) || 0;
+        const val = (raw === "true") ? 1 : (raw === "false") ? 0 : parseFloat(raw) || 0;
         if (field.type === "f64") view.setFloat64(field.offset, val, true);
         else if (field.type === "f32") view.setFloat32(field.offset, val, true);
         else if (field.type === "i64") view.setBigInt64(field.offset, BigInt(Math.trunc(val)), true);
@@ -4790,7 +4791,7 @@ class WasicTranspiler {
 
     // Function call: name(arg1, arg2, ...)
     const callMatch = expr.match(/^(\w+)\s*\((.*)?\)$/);
-    if (callMatch) {
+    if (callMatch && parenDepthNeverNegative(callMatch[2]?.trim() ?? "")) {
       const callee = callMatch[1];
       const rawArgs = callMatch[2]?.trim() ?? "";
       const args = rawArgs ? this.splitArgs(rawArgs) : [];
@@ -4849,6 +4850,24 @@ class WasicTranspiler {
         const paramType = fn.params[i]?.type ?? defaultType;
         if (paramType === "string") {
           return [this.emitStringPtrLen(a, locals)]; // already "ptr len"
+        }
+        // Inline struct literal argument: { key: val, ... } for a struct param
+        if (paramType === "i32" && a.startsWith("{") && fn.params[i]?.structType) {
+          const structName = fn.params[i].structType!;
+          const structDef = this.structDefs.get(structName);
+          if (structDef) {
+            const braceContent = a.slice(1, a.lastIndexOf("}")).trim();
+            const initFields: Record<string, string> = {};
+            const pairs = splitBraceAwareCommas(braceContent);
+            for (const pair of pairs) {
+              const ci = pair.indexOf(":");
+              const key = ci !== -1 ? pair.slice(0, ci).trim() : pair.trim();
+              const val = ci !== -1 ? pair.slice(ci + 1).trim() : key;
+              if (key) initFields[key] = val;
+            }
+            const ptr = this.allocStructData(structDef, initFields);
+            return [`(i32.const ${ptr})`];
+          }
         }
         return [this.emitExpr(a, locals, paramType)];
       });
@@ -5290,8 +5309,8 @@ class WasicTranspiler {
       if (ch === '"' && !inSingle) { inDouble = !inDouble; continue; }
       if (ch === "'" && !inDouble) { inSingle = !inSingle; continue; }
       if (!inDouble && !inSingle) {
-        if (ch === "(" || ch === "[") depth++;
-        else if (ch === ")" || ch === "]") depth--;
+        if (ch === "(" || ch === "[" || ch === "{") depth++;
+        else if (ch === ")" || ch === "]" || ch === "}") depth--;
         else if (ch === "," && depth === 0) {
           args.push(raw.slice(start, i).trim());
           start = i + 1;
@@ -6784,8 +6803,10 @@ class WasicTranspiler {
         return { params: sig.params as string[], result: sig.result, funcType };
       };
       setStringArrayAllocator((elems) => this.allocArrayData(elems, "string"));
+      setStructLiteralAllocator((sName, fields) => this.allocStructData(this.structDefs.get(sName)!, fields));
       const segments = parseConsoleLogArgs(logMatch[1], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFn, globalsMap, enumStringLookupFn, closureVarLookupFn);
       setStringArrayAllocator(undefined);
+      setStructLiteralAllocator(undefined);
       const { statements, needsHelpers, needsStrGather, needsArrPrintHelper, needsJoinHelper } = emitConsoleLog(segments, allocator, "    ", 1, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
       if (needsStrGather) this.needsStrGatherHelper = true;
@@ -6937,8 +6958,10 @@ class WasicTranspiler {
         return { params: sig.params as string[], result: sig.result, funcType };
       };
       setStringArrayAllocator((elems) => this.allocArrayData(elems, "string"));
+      setStructLiteralAllocator((sName, fields) => this.allocStructData(this.structDefs.get(sName)!, fields));
       const segments = parseConsoleLogArgs(errMatch[2], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFnErr, globalsMapErr, enumStringLookupFnErr, closureVarLookupFnErr);
       setStringArrayAllocator(undefined);
+      setStructLiteralAllocator(undefined);
       const { statements, needsHelpers, needsStrGather, needsArrPrintHelper: errAph, needsJoinHelper: errJh } = emitConsoleLog(segments, allocator, "    ", 2, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
       if (needsStrGather) this.needsStrGatherHelper = true;
@@ -7795,14 +7818,16 @@ class WasicTranspiler {
         // After dispatch block closes, code falls sequentially through remaining case bodies.
         // A case with break emits (br $exit); without break it falls through to the next case body.
         this.controlStack.push({ breakLabel: exitLabel });
-        // Determine whether the switch expression is f64 (e.g. `number` typed var)
-        let switchType: "i32" | "f64" = "i32";
+        // Determine whether the switch expression is f64, string, or i32
+        let switchType: "i32" | "f64" | "string" = "i32";
         if (/^\w+$/.test(switchExpr)) {
           const lt = locals.get(switchExpr);
           if (lt === "f64" || lt === "f32") switchType = "f64";
+          else if (lt === "string") switchType = "string";
           else {
             const gt = this.moduleGlobals.get(switchExpr)?.type;
             if (gt === "f64" || gt === "f32") switchType = "f64";
+            else if (gt === "string") switchType = "string";
           }
         }
         // Phase 32: detect discriminated union discriminant access: varName.discField
@@ -7815,12 +7840,23 @@ class WasicTranspiler {
             if (swDu && swDu.discriminant === swDotM[2]) duSwitchDef = swDu;
           }
         }
-        const switchValWat = duSwitchDef
-          ? (() => {
-              const sv2 = this.structVars.get(swDotM![1])!;
-              return `(i32.load ${sv2.ptr === -1 ? `(local.get $${swDotM![1]})` : `(i32.const ${sv2.ptr})`})`;
-            })()
-          : this.emitExpr(switchExpr, locals, switchType);
+        // For string switch, we need ptr+len separately; switchValWat is used for non-string types
+        let switchValPtrWat = "";
+        let switchValLenWat = "";
+        let switchValWat: string;
+        if (switchType === "string" && /^\w+$/.test(switchExpr)) {
+          switchValPtrWat = `(local.get $${switchExpr}_ptr)`;
+          switchValLenWat = `(local.get $${switchExpr}_len)`;
+          switchValWat = switchValPtrWat;
+          this.needsStringHelpers = true;
+        } else {
+          switchValWat = duSwitchDef
+            ? (() => {
+                const sv2 = this.structVars.get(swDotM![1])!;
+                return `(i32.load ${sv2.ptr === -1 ? `(local.get $${swDotM![1]})` : `(i32.const ${sv2.ptr})`})`;
+              })()
+            : this.emitExpr(switchExpr, locals, switchType === "string" ? "i32" : switchType);
+        }
         const nonDefault = cases.filter(c => !c.isDefault);
         const defaultCase = cases.find(c => c.isDefault);
         // Ordered: non-default cases first, default last
@@ -7851,6 +7887,12 @@ class WasicTranspiler {
               const tagIdx = duSwitchDef.variants.find(vv => vv.tag === tagStr)?.tagIndex ?? -1;
               return `(i32.eq ${switchValWat} (i32.const ${tagIdx}))`;
             }
+            if (switchType === "string") {
+              // Compare string variable against a string literal case value
+              const caseStr = v.replace(/^["']|["']$/g, "");
+              const [casePtr, caseLen] = this.allocStringNoLog(caseStr);
+              return `(i32.eq (call $__str_cmp ${switchValPtrWat} ${switchValLenWat} (i32.const ${casePtr}) (i32.const ${caseLen})) (i32.const 0))`;
+            }
             if (switchType === "f64") {
               return `(f64.eq ${switchValWat} ${this.emitExpr(v, locals, "f64")})`;
             }
@@ -7869,12 +7911,26 @@ class WasicTranspiler {
           switchLines.push(`${indent}${closePad})`);   // close block k
           // Emit body (without break statements — handled via br $exit below)
           const c = orderedCases[k];
-          const bodyLines = c.body.filter(l => l.trim() !== "break;" && l.trim() !== "break");
+          // Pre-process case body: split compound "stmt; break;" lines into two lines
+          const expandedBody: string[] = [];
+          let hasBreak = false;
+          for (const bl of c.body) {
+            const bt = bl.trim();
+            if (bt === "break;" || bt === "break") {
+              hasBreak = true;
+            } else if (bt.endsWith("; break;") || bt.endsWith("; break")) {
+              const stmtPart = bt.replace(/;\s*break;?\s*$/, ";");
+              expandedBody.push(stmtPart);
+              hasBreak = true;
+            } else {
+              expandedBody.push(bl);
+            }
+          }
+          const bodyLines = expandedBody;
           if (bodyLines.length > 0) {
             switchLines.push(this.emitBlock(bodyLines, locals, funcResult, bodyPad));
           }
           // If the original body contained a break, emit br $exit (exits switch)
-          const hasBreak = c.body.some(l => l.trim() === "break;" || l.trim() === "break");
           if (hasBreak) {
             switchLines.push(`${bodyPad}(br ${exitLabel})`);
           }
@@ -10099,7 +10155,7 @@ class WasicTranspiler {
         const structTypeName = (typeHint && /^[A-Z]/.test(typeHint) && this.structDefs.has(typeHint)) ? typeHint : undefined;
         const elements = structTypeName
           ? splitBraceAwareCommas(elemsStr)
-          : elemsStr.split(",").map(e => e.trim()).filter(e => e.length > 0);
+          : this.splitArgs(elemsStr).filter(e => e.length > 0);
         const elemType: WatType = structTypeName ? "i32"
           : typeHint ? mapType(typeHint) as WatType
           : elements.some(e => /[.]/.test(e) && !/^-?\d+n?$/.test(e)) ? "f64" : "i32";
@@ -11041,7 +11097,7 @@ class WasicTranspiler {
           const structTypeName2 = (typeHint2 && /^[A-Z]/.test(typeHint2) && this.structDefs.has(typeHint2)) ? typeHint2 : undefined;
           const elements2 = structTypeName2
             ? splitBraceAwareCommas(elemsStr2)
-            : elemsStr2.split(",").map(e => e.trim()).filter(e => e.length > 0);
+            : this.splitArgs(elemsStr2).filter(e => e.length > 0);
           const elemType2: WatType = structTypeName2 ? "i32"
             : typeHint2 ? mapType(typeHint2) as WatType
             : elements2.some(e => /[.]/.test(e) && !/^-?\d+n?$/.test(e)) ? "f64" : "i32";

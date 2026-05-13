@@ -2,7 +2,7 @@
   (import "wasi_snapshot_preview1" "proc_exit" (func $proc_exit (param i32)))
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
   (memory (export "memory") 2)
-  (global $__heap_ptr (mut i32) (i32.const 351))
+  (global $__heap_ptr (mut i32) (i32.const 362))
   (global $__str_ret_ptr (mut i32) (i32.const 0))
   (global $__str_ret_len (mut i32) (i32.const 0))
   (global $i f64 (f64.const 2))
@@ -14,6 +14,36 @@
     (local.set $ptr (global.get $__heap_ptr))
     (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))
     (local.get $ptr)
+  )
+
+  ;; ── str_cmp: lexicographic byte comparison ─────────────────────────────────
+  ;; Returns negative if a<b, 0 if a==b, positive if a>b.
+  (func $__str_cmp
+    (param $aptr i32) (param $alen i32) (param $bptr i32) (param $blen i32)
+    (result i32)
+    (local $i i32)
+    (local $minlen i32)
+    (local $ca i32)
+    (local $cb i32)
+    (local.set $minlen
+      (if (result i32) (i32.lt_s (local.get $alen) (local.get $blen))
+        (then (local.get $alen))
+        (else (local.get $blen))
+      )
+    )
+    (block $done
+      (loop $loop
+        (br_if $done (i32.ge_u (local.get $i) (local.get $minlen)))
+        (local.set $ca (i32.load8_u (i32.add (local.get $aptr) (local.get $i))))
+        (local.set $cb (i32.load8_u (i32.add (local.get $bptr) (local.get $i))))
+        (if (i32.ne (local.get $ca) (local.get $cb))
+          (then (return (i32.sub (local.get $ca) (local.get $cb))))
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop)
+      )
+    )
+    (i32.sub (local.get $alen) (local.get $blen))
   )
 
   ;; ── str_gather: copy len bytes from src to dst (byte-copy loop, no bulk-memory) ──
@@ -440,8 +470,8 @@
       (block $case_default_0
         (block $case_0_1
           (block $case_0_0
-            (br_if $case_0_0 (i32.eq (i32.gt_s (local.get $tag_len) (i32.const 0)) (;? "bool" ;) (i32.const 0)))
-            (br_if $case_0_1 (i32.eq (i32.gt_s (local.get $tag_len) (i32.const 0)) (;? "int" ;) (i32.const 0)))
+            (br_if $case_0_0 (i32.eq (call $__str_cmp (local.get $tag_ptr) (local.get $tag_len) (i32.const 260) (i32.const 4)) (i32.const 0)))
+            (br_if $case_0_1 (i32.eq (call $__str_cmp (local.get $tag_ptr) (local.get $tag_len) (i32.const 264) (i32.const 3)) (i32.const 0)))
             (br $case_default_0)
           )
             (local.set $__ret_str_ptr (i32.const 260))
@@ -481,11 +511,17 @@
             (br_if $case_1_2 (f64.eq (global.get $i) (f64.const 3)))
             (br $switch_exit_1)
           )
-            (;; string assignment from complex expression not yet supported: writeResult = "one"; break;)
+            (local.set $writeResult_ptr (i32.const 280))
+      (local.set $writeResult_len (i32.const 3))
+            (br $switch_exit_1)
         )
-          (;; string assignment from complex expression not yet supported: writeResult = "two"; break;)
+          (local.set $writeResult_ptr (i32.const 283))
+      (local.set $writeResult_len (i32.const 3))
+          (br $switch_exit_1)
       )
-        (;; string assignment from complex expression not yet supported: writeResult = "three"; break;)
+        (local.set $writeResult_ptr (i32.const 286))
+      (local.set $writeResult_len (i32.const 5))
+        (br $switch_exit_1)
     )
         (i32.store (i32.const 0) (i32.const 132))
           (i32.store (i32.const 4) (i32.const 0))
@@ -519,7 +555,7 @@
             (br $case_default_2)
           )
         )
-              (i32.store (i32.const 0) (i32.const 280))
+              (i32.store (i32.const 0) (i32.const 291))
           (i32.store (i32.const 4) (i32.const 17))
           (drop (call $fd_write
             (i32.const 1)
@@ -528,7 +564,7 @@
             (i32.const 128)))
           (br $switch_exit_2)
       )
-            (i32.store (i32.const 0) (i32.const 297))
+            (i32.store (i32.const 0) (i32.const 308))
           (i32.store (i32.const 4) (i32.const 15))
           (drop (call $fd_write
             (i32.const 1)
@@ -538,7 +574,7 @@
     )
     (if (f64.lt (global.get $hour) (f64.const 12))
       (then
-          (i32.store (i32.const 0) (i32.const 312))
+          (i32.store (i32.const 0) (i32.const 323))
           (i32.store (i32.const 4) (i32.const 17))
           (drop (call $fd_write
             (i32.const 1)
@@ -547,7 +583,7 @@
             (i32.const 128)))
       )
       (else
-          (i32.store (i32.const 0) (i32.const 329))
+          (i32.store (i32.const 0) (i32.const 340))
           (i32.store (i32.const 4) (i32.const 16))
           (drop (call $fd_write
             (i32.const 1)
@@ -582,7 +618,7 @@
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 132))
           (i32.store (i32.const 4) (i32.const 0))
-          (call $whatAmI (i32.const 345) (i32.const 6))
+          (call $whatAmI (i32.const 356) (i32.const 6))
           (call $__str_gather (global.get $__str_ret_ptr) (global.get $__str_ret_len) (i32.const 132))
           (i32.store (i32.const 4) (i32.add (i32.const 0) (global.get $__str_ret_len)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
@@ -598,9 +634,12 @@
   (data (i32.const 260) "\62\6f\6f\6c")
   (data (i32.const 264) "\69\6e\74")
   (data (i32.const 267) "\75\6e\6b\6e\6f\77\6e\20\74\79\70\65\20")
-  (data (i32.const 280) "\49\74\27\73\20\74\68\65\20\77\65\65\6b\65\6e\64\0a")
-  (data (i32.const 297) "\49\74\27\73\20\61\20\77\65\65\6b\64\61\79\0a")
-  (data (i32.const 312) "\49\74\27\73\20\62\65\66\6f\72\65\20\6e\6f\6f\6e\0a")
-  (data (i32.const 329) "\49\74\27\73\20\61\66\74\65\72\20\6e\6f\6f\6e\0a")
-  (data (i32.const 345) "\73\74\72\69\6e\67")
+  (data (i32.const 280) "\6f\6e\65")
+  (data (i32.const 283) "\74\77\6f")
+  (data (i32.const 286) "\74\68\72\65\65")
+  (data (i32.const 291) "\49\74\27\73\20\74\68\65\20\77\65\65\6b\65\6e\64\0a")
+  (data (i32.const 308) "\49\74\27\73\20\61\20\77\65\65\6b\64\61\79\0a")
+  (data (i32.const 323) "\49\74\27\73\20\62\65\66\6f\72\65\20\6e\6f\6f\6e\0a")
+  (data (i32.const 340) "\49\74\27\73\20\61\66\74\65\72\20\6e\6f\6f\6e\0a")
+  (data (i32.const 356) "\73\74\72\69\6e\67")
 )

@@ -81,6 +81,11 @@ export function setStringArrayAllocator(fn: ((elements: string[]) => number) | u
   _strArrAlloc = fn;
 }
 
+let _structLiteralAlloc: ((structName: string, initFields: Record<string, string>) => number) | undefined = undefined;
+export function setStructLiteralAllocator(fn: ((structName: string, initFields: Record<string, string>) => number) | undefined): void {
+  _structLiteralAlloc = fn;
+}
+
 /** Callback to resolve an array variable by name: returns its element type, base ptr, and length.
  *  ptr=-1 means runtime local (param). ptr=-2 means dynamic heap array (local with 8-byte header).
  *  dynamic=true means the array has a [length, capacity] header at its pointer. */
@@ -185,6 +190,23 @@ function extractChainedCallParts(expr: string): { outerRaw: string; innerRaw: st
     j++;
   }
   return { outerRaw, innerRaw: rest.slice(1, j) };
+}
+
+/** Returns true if expr looks like a string-typed expression (literal, string local, or string array element). */
+function looksLikeString(
+  expr: string,
+  locals: Map<string, string>,
+  arrayLookup?: ArrayLookup
+): boolean {
+  const t = expr.trim();
+  if (/^["']/.test(t)) return true;                        // string literal
+  if (/^\w+$/.test(t) && locals.get(t) === "string") return true;  // string variable
+  const bm = t.match(/^(\w+)\[/);
+  if (bm && arrayLookup) {
+    const ai = arrayLookup(bm[1]);
+    if (ai?.elemType === "string") return true;            // string array element
+  }
+  return false;
 }
 
 /** Parses a single argument token into LogSegments. */
@@ -312,7 +334,9 @@ function parseSingleArg(
         return [{ kind: "strexpr" as const, ptrWat: fi.watLoad, lenWat: fi.watLoadLen }];
       }
       const kind = fi.type === "f64" || fi.type === "f32" ? "f64expr" as const
-                 : fi.type === "i64" ? "i64expr" as const : "i32expr" as const;
+                 : fi.type === "i64" ? "i64expr" as const
+                 : fi.type === "bool" ? "boolexpr" as const
+                 : "i32expr" as const;
       return [{ kind, wat: fi.watLoad }];
     }
   }
@@ -443,6 +467,21 @@ function parseSingleArg(
       if (ptype === "string") {
         return [exprToWat(a.trim(), locals, "string", funcLookup, allocString, arrayLookup, structLookup, globals)];
       }
+      // Inline struct literal arg: { key: val } for a struct param
+      const aTrimmed = a.trim();
+      if (ptype === "i32" && aTrimmed.startsWith("{") && _structLiteralAlloc && sig?.params[i]?.structType) {
+        const structName = sig.params[i].structType!;
+        const braceContent = aTrimmed.slice(1, aTrimmed.lastIndexOf("}")).trim();
+        const initFields: Record<string, string> = {};
+        const pairs = splitTopLevelArgs(braceContent);
+        for (const pair of pairs) {
+          const ci = pair.indexOf(":");
+          const key = ci !== -1 ? pair.slice(0, ci).trim() : pair.trim();
+          const val = ci !== -1 ? pair.slice(ci + 1).trim() : key;
+          if (key) initFields[key] = val;
+        }
+        return [`(i32.const ${_structLiteralAlloc(structName, initFields)})`];
+      }
       return [exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup, globals)];
     });
     // Fill in default values for omitted trailing params
@@ -561,11 +600,47 @@ function parseSingleArg(
 
   // ── Boolean expression: &&, ||, !, comparisons → boolexpr (prints "true"/"false")
   // Check before the arithmetic fallback to avoid routing boolean ops through f64.
-  if (token.startsWith("!")
+  // BUT: if there's a top-level ternary ? the whole expr is a ternary, not a bool.
+  const _hasTernary = findTopLevelOp(token, "?") !== -1;
+  if (!_hasTernary && (token.startsWith("!")
       || findTopLevelOp(token, "&&") !== -1
       || findTopLevelOp(token, "||") !== -1
-      || /===|!==/.test(token)) {
+      || /===|!==/.test(token))) {
     return [{ kind: "boolexpr", wat: exprToWat(token, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals) }];
+  }
+
+  // ── String ternary: cond ? strExpr : strExpr → strexpr using select for ptr and len
+  if (_hasTernary) {
+    const ternQIdx = findTopLevelOp(token, "?");
+    if (ternQIdx !== -1) {
+      const afterQ = token.slice(ternQIdx + 1);
+      const ternCIdx = findTopLevelOp(afterQ, ":");
+      if (ternCIdx !== -1) {
+        const thenPart = afterQ.slice(0, ternCIdx).trim();
+        const elsePart = afterQ.slice(ternCIdx + 1).trim();
+        if (looksLikeString(thenPart, locals, arrayLookup) || looksLikeString(elsePart, locals, arrayLookup)) {
+          const condWat = exprToWat(token.slice(0, ternQIdx).trim(), locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+          // Recursively parse branches to get strvar/strexpr segments for ptr+len
+          const getStrPtrLen = (part: string): [string, string] => {
+            const segs = parseSingleArg(part, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup, closureVarLookup);
+            const s = segs[0];
+            if (!s) return ["(i32.const 0)", "(i32.const 0)"];
+            if (s.kind === "strvar") return [`(local.get $${s.ptrLocal})`, `(local.get $${s.lenLocal})`];
+            if (s.kind === "strexpr") return [s.ptrWat, s.lenWat];
+            if (s.kind === "literal" && allocString) {
+              const [p, l] = allocString(s.text);
+              return [`(i32.const ${p})`, `(i32.const ${l})`];
+            }
+            return ["(i32.const 0)", "(i32.const 0)"];
+          };
+          const [thenPtr, thenLen] = getStrPtrLen(thenPart);
+          const [elsePtr, elseLen] = getStrPtrLen(elsePart);
+          return [{ kind: "strexpr" as const,
+            ptrWat: `(select ${thenPtr} ${elsePtr} ${condWat})`,
+            lenWat: `(select ${thenLen} ${elseLen} ${condWat})` }];
+        }
+      }
+    }
   }
 
   // ── Arithmetic / numeric expression
@@ -843,6 +918,20 @@ function exprToWat(
     // String params expand to two stack values
     const watArgsList = argList.flatMap((a, i) => {
       const ptype = sig?.params[i]?.type ?? "i32";
+      const aTrimmed2 = a.trim();
+      if (ptype === "i32" && aTrimmed2.startsWith("{") && _structLiteralAlloc && sig?.params[i]?.structType) {
+        const structName2 = sig.params[i].structType!;
+        const braceContent2 = aTrimmed2.slice(1, aTrimmed2.lastIndexOf("}")).trim();
+        const initFields2: Record<string, string> = {};
+        const pairs2 = splitTopLevelArgs(braceContent2);
+        for (const pair of pairs2) {
+          const ci = pair.indexOf(":");
+          const key = ci !== -1 ? pair.slice(0, ci).trim() : pair.trim();
+          const val = ci !== -1 ? pair.slice(ci + 1).trim() : key;
+          if (key) initFields2[key] = val;
+        }
+        return [`(i32.const ${_structLiteralAlloc(structName2, initFields2)})`];
+      }
       return [exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup, globals)];
     });
     // Fill in default values for omitted trailing params
