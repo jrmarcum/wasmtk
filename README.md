@@ -723,6 +723,28 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | 40 (2026-07-14) | External interface mapping via `declare const` / `declare interface` | **`declare const host: { log(ptr: i32): void; getTime(): i32 }`** — inline object type; each method compiles to `(import "env" "host_log" ...)` + `(import "env" "host_getTime" ...)`. **`declare interface Logger { ... }` + `declare const logger: Logger`** — named form; interface defined once, bound by name. **`parseExternalDeclarations()`** three-pass preprocessor strips declarations before other parsers; `externalInterfaceTypes` + `externalBindings` maps drive call-site emission; `usedExternalMethods` tracks actually-called methods and drives `emitWasiImports()` to emit `(import "env" ...)` declarations. **Runner stub proxy:** `env` import object in test runner is a JavaScript `Proxy` — any unrecognised key returns a no-op `() => 0` stub, allowing Phase 40 WASM modules to instantiate without a real host. **Error message improvement:** undeclared dot-call receivers now suggest the Phase 40 `declare const` syntax. `ExternalMapping_11b.ts` upgraded from `@expect-fail: compile` to a fully-passing test. Six test files: `BasicExternalDecl_40`, `ExternalInterfaceType_40`, `MultiMethodExternal_40`, `ExternalReturnValue_40`, `Phase40Combined_40`, `ExternalMapping_11b` (upgraded) — 142/142 suite |
 | 41 (2026-07-14) | WIT file generation | After every successful `wasic` or `modc` compilation, a `.wit` file is written alongside the `.wasm` output. **`watTypeToWit()`** maps WAT types to WIT types (`i32→s32`, `i64→s64`, `f32→f32`, `f64→f64`, `bool→bool`). **`toKebabCase()`** converts camelCase/snake_case function names to WIT-compliant kebab-case. **`generateWit(moduleName)`** public method on `WasicTranspiler` produces `package local:name; world name { import ...; export ...; }` — imports from `usedExternalMethods` (Phase 40 externals); exports from `this.functions` filtered by `exported && !isClosureFactory && !INTERNAL`. **`_start`/`_initialize` excluded from exports; `__self` params skipped.** Compile log prints `WIT: <path>` alongside the existing `WAT: <path>` line. Four test files: `BasicWitGen_41`, `WitReturnTypes_41`, `WitWithExternalImports_41`, `Phase41Combined_41` — 146/146 suite |
 
+### Planned Phases
+
+All planned phases are implementable under WASI Preview 1. Together they close the 5 remaining Go-by-Example test gaps (214/219 PASS as of 2026-05-12).
+
+| Phase | Feature | Target tests | Key changes |
+| --- | --- | --- | --- |
+| 42 | **String-returning user functions** | `struct-embedding.ts`, `collection-functions.ts` | Complete string-return side-channel: string-returning functions emit as `void` WAT, set `$__str_ret_ptr`/`$__str_ret_len` module globals on return; call sites read globals after `(call $fn ...)`; wire into `emitStringAssign`, `parseSingleArg` (`console_log.ts`), and `emitStringPtrLen`. Also: passing a nested struct field (`co.base`) as a function argument — load the nested struct pointer from the parent struct's field offset. |
+| 43 | **String arrays as function parameters** | `collection-functions.ts` | `function f(arr: string[], v: string)` — register string array params in `arrayVars` (elemType `"string"`); interleaved layout (ptr at `i*8`, len at `i*8+4`); `arr[i]` inside the function body returns a string ptr+len pair; `v[0]` char access on string params emits `(call $__str_char_at ...)`; string method calls (`v.toUpperCase()`) on string parameters; `string[]` return type from functions. |
+| 44 | **Function pointer arrays (`Array<FunctionType>`)** | `defer.ts`, `exit.ts` | `Array<() => void>` (and similar) detected in `findDynamicArrays` pre-pass; stored as a standard dynamic `i32` array of WASM table indices; `arr.push(fn)` resolves `fn` via `getFuncTableIdx`; `arr[i]()` loads the index then `call_indirect` with the matching functype; `arr.length = 0` zeroes the dynamic array length header. |
+| 45 | **`Math.imul` + unsigned right shift (`>>>`)** | `random-numbers.ts` | `Math.imul(a, b)` emits `(i32.mul (i32.trunc_f64_s a) (i32.trunc_f64_s b))` wrapped to `f64` for `number` context; `a >>> n` emits `(f64.convert_i32_u (i32.shr_u (i32.trunc_f64_s a) (i32.const n)))`; `>>> 0` idiom (convert to unsigned i32 view) emits `(f64.convert_i32_u (i32.trunc_f64_s x))`; add `>>>` to `findBinaryOp` guards; fix Binaryen `Type::isSubType` assertion by ensuring consistent i32/f64 wrapping in all bitwise-op contexts. |
+
+### WASM Compatibility Limitations
+
+The following TypeScript/Go patterns cannot be compiled by `wasic` under WASI Preview 1 without additional WASM proposals. The Go-by-Example tests for these topics have been adapted to single-threaded equivalents and currently pass — this section documents the general feature class and what proposal would unblock native support.
+
+| Feature | Blocked by | Status |
+| --- | --- | --- |
+| **Goroutines / cooperative multitasking** | [WASM Stack-Switching proposal](https://github.com/WebAssembly/stack-switching) | Planned for WASI Preview 3. Asyncify (Binaryen CPS transform) can simulate suspension but requires a JS host — not suitable for standalone WASI modules. |
+| **Shared memory + atomics** | [WASM Threads proposal](https://github.com/WebAssembly/threads) | `SharedArrayBuffer`-backed memory and `i32.atomic.*` instructions are available in browsers; the `wasi_threads` snapshot is not yet standardized across WASI p1 runners. |
+| **Channel / select communication** | Stack-Switching + Threads (both above) | Go channels are rendezvous synchronization between goroutines — requires suspending one side and resuming it when a peer is ready. No WASI p1 primitive supports this. |
+| **`os.Exit` with non-zero status** | Test runner behavior | `proc_exit(n)` works correctly in wasmtime/wasmer. The Deno WASI shim used in the test runner treats all exits as success for output comparison. Full exit-code propagation is a test runner enhancement, not a compiler change. |
+
 ---
 
 #### Phase 18 — WASM Import Bundling
@@ -930,9 +952,9 @@ The TypeScript-to-JS bundler command is renamed from `bundle` to `tsbundle` to c
 
 ---
 
-### Planned Phases
+### Future Directions
 
-All planned phases through 41 are complete. No additional phases are currently scheduled. Future phases may extend the WIT pipeline (multi-component linking), add string ABI improvements, or expand the `jstyper` integration. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
+Phases 42–45 are actively planned (see [Planned Phases](#planned-phases) above). Beyond those, future work may extend the WIT pipeline (multi-component linking), add string ABI improvements, or expand the `jstyper` integration. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
 
 ---
 
