@@ -57,7 +57,7 @@ export const DATA_BASE = SCRATCH_BASE + SCRATCH_SLOTS * 32; // 260
  * Return `undefined` if the function is unknown; parameter types default to "i32".
  */
 export type FuncLookup = (name: string) => {
-  params: Array<{ type: string; defaultValue?: string }>;
+  params: Array<{ type: string; defaultValue?: string; structType?: string }>;
   result?: string | null;
   closureCaptures?: string[];
   /** Phase 5f: true if this function returns a heap-allocated closure (closure factory). */
