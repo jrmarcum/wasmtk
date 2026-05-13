@@ -284,6 +284,8 @@ interface StructField {
   readonly?: boolean;
   /** Phase 12: for method-type fields in interfaces — stores the function signature. */
   funcType?: { params: WatType[]; result: WatType | null };
+  /** Phase 42: when this i32 field is a pointer to a named struct, stores the struct name. */
+  structType?: string;
 }
 
 interface StructDef {
@@ -427,6 +429,49 @@ function parse2DArrayLiteral(str: string): string[][] {
     }
   }
   return rows;
+}
+
+/**
+ * Phase 42: Extracts the body of a balanced `{ ... }` object literal.
+ * `startIdx` must point at the opening `{`. Returns the inner content (between braces),
+ * or null if the braces are unbalanced.
+ */
+function extractOuterObjectBody(line: string, startIdx: number): string | null {
+  let depth = 0;
+  for (let i = startIdx; i < line.length; i++) {
+    if (line[i] === "{") depth++;
+    else if (line[i] === "}") {
+      depth--;
+      if (depth === 0) return line.slice(startIdx + 1, i);
+    }
+  }
+  return null;
+}
+
+/**
+ * Phase 42: Splits an object literal body string into a key→value map using
+ * depth-0 comma separation. Handles nested `{ ... }` and `[ ... ]` in values.
+ */
+function parseDepth0Fields(body: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i <= body.length; i++) {
+    const ch = i < body.length ? body[i] : ",";
+    if (ch === "{" || ch === "[" || ch === "(") depth++;
+    else if (ch === "}" || ch === "]" || ch === ")") depth--;
+    else if (ch === "," && depth === 0) {
+      const pair = body.slice(start, i).trim();
+      const ci = pair.indexOf(":");
+      if (ci !== -1) {
+        const key = pair.slice(0, ci).trim();
+        const val = pair.slice(ci + 1).trim();
+        if (key && /^\w+$/.test(key)) result[key] = val;
+      }
+      start = i + 1;
+    }
+  }
+  return result;
 }
 
 /** Splits a comma-separated string respecting curly-brace and bracket nesting.
@@ -2358,12 +2403,21 @@ class WasicTranspiler {
           if (methodFieldNames.has(fieldName)) continue; // already handled as method field
           // Skip fields already inherited from extends
           if (fields.some(f => f.name === fieldName)) continue;
-          const type = mapType(fm[3]);
+          const originalTypeName = fm[3].trim();
+          const type = mapType(originalTypeName);
           // string fields store ptr+len pair (8 bytes); f64/i64 need 8 bytes; all else 4.
           const size = (type === "f64" || type === "i64" || type === "string") ? 8 : 4;
           // Natural alignment: round offset up to a multiple of size
           if (offset % size !== 0) offset = Math.ceil(offset / size) * size;
-          fields.push({ name: fieldName, type, offset, size, ...(isReadonly ? { readonly: true } : {}) });
+          const fieldEntry: StructField = { name: fieldName, type, offset, size, ...(isReadonly ? { readonly: true } : {}) };
+          // Phase 42: track struct pointer fields (PascalCase → i32 pointer to another struct)
+          if (type === "i32" && /^[A-Z]/.test(originalTypeName)
+              && !originalTypeName.endsWith("[]")
+              && !originalTypeName.startsWith("[")
+              && !["Number", "Boolean", "String", "BigInt"].includes(originalTypeName)) {
+            fieldEntry.structType = originalTypeName;
+          }
+          fields.push(fieldEntry);
           offset += size;
         }
         if (fields.length > 0) {
@@ -2725,6 +2779,18 @@ class WasicTranspiler {
         const [strPtr, strLen] = this.allocStringNoLog(strVal);
         view.setInt32(field.offset, strPtr, true);
         view.setInt32(field.offset + 4, strLen, true);
+      } else if (field.structType && raw.startsWith("{")) {
+        // Phase 42: nested struct literal — recursively allocate the inner struct
+        const nestedDef = this.structDefs.get(field.structType);
+        if (nestedDef) {
+          const nestedOpenIdx = raw.indexOf("{");
+          const nestedBodyStr = nestedOpenIdx !== -1 ? extractOuterObjectBody(raw, nestedOpenIdx) : null;
+          if (nestedBodyStr !== null) {
+            const nestedFields = parseDepth0Fields(nestedBodyStr);
+            const nestedPtr = this.allocStructData(nestedDef, nestedFields);
+            view.setInt32(field.offset, nestedPtr, true);
+          }
+        }
       } else {
         const val = (raw === "true") ? 1 : (raw === "false") ? 0 : parseFloat(raw) || 0;
         if (field.type === "f64") view.setFloat64(field.offset, val, true);
@@ -3647,6 +3713,29 @@ class WasicTranspiler {
         }
       }
     }
+    // Phase 42: expression starting with a struct field access (e.g. "a.x + b.x"):
+    // if the leading sub-expression is a struct field, infer type from that field.
+    const leadDotM = e.match(/^(\w+)\.(\w+)\b/);
+    if (leadDotM) {
+      const sv = this.structVars.get(leadDotM[1]);
+      if (sv) {
+        const field = sv.def.fields.find(f => f.name === leadDotM[2]);
+        if (field && field.type !== "i32") return field.type as WatType;
+      }
+    }
+    // Phase 42: Chained struct field access: a.b.c → inner field type
+    const chainedDotM = e.match(/^(\w+)\.(\w+)\.(\w+)$/);
+    if (chainedDotM) {
+      const sv = this.structVars.get(chainedDotM[1]);
+      if (sv) {
+        const outerField = sv.def.fields.find(f => f.name === chainedDotM[2]);
+        if (outerField?.structType) {
+          const innerDef = this.structDefs.get(outerField.structType);
+          const innerField = innerDef?.fields.find(f => f.name === chainedDotM[3]);
+          if (innerField) return innerField.type as WatType;
+        }
+      }
+    }
     // Simple identifier: check module globals and module string consts when not in locals
     if (/^\w+$/.test(e) && !locals.has(e)) {
       const globalInfo = this.moduleGlobals.get(e);
@@ -4394,6 +4483,29 @@ class WasicTranspiler {
             ? `(local.get $${structFieldMatch[1]})`
             : `(i32.const ${sv.ptr})`;
           return `(${loadOp} (i32.add ${baseWat} (i32.const ${field.offset})))`;
+        }
+      }
+    }
+
+    // Phase 42: Chained struct field access: a.b.c (outer struct var → nested struct field)
+    const chainedFieldMatch = expr.match(/^(\w+)\.(\w+)\.(\w+)$/);
+    if (chainedFieldMatch) {
+      const sv = this.structVars.get(chainedFieldMatch[1]);
+      if (sv) {
+        const outerField = sv.def.fields.find(f => f.name === chainedFieldMatch[2]);
+        if (outerField?.structType) {
+          const innerDef = this.structDefs.get(outerField.structType);
+          const innerField = innerDef?.fields.find(f => f.name === chainedFieldMatch[3]);
+          if (innerField) {
+            const outerLoadOp = "i32.load";
+            const innerLoadOp = innerField.type === "f64" ? "f64.load"
+                              : innerField.type === "i64" ? "i64.load" : "i32.load";
+            const baseWat = sv.ptr === -1
+              ? `(local.get $${chainedFieldMatch[1]})`
+              : `(i32.const ${sv.ptr})`;
+            const outerPtrWat = `(${outerLoadOp} (i32.add ${baseWat} (i32.const ${outerField.offset})))`;
+            return `(${innerLoadOp} (i32.add ${outerPtrWat} (i32.const ${innerField.offset})))`;
+          }
         }
       }
     }
@@ -6674,6 +6786,28 @@ class WasicTranspiler {
         }
       }
       const structLookupFn: StructFieldLookup = (vn, fn) => {
+        // Phase 42: dotted vn = "a.b" — look up field fn on the struct pointed to by a.b
+        if (vn.includes(".")) {
+          const dotIdx = vn.indexOf(".");
+          const outerVarName = vn.slice(0, dotIdx);
+          const outerFieldName = vn.slice(dotIdx + 1);
+          const outerSv = this.structVars.get(outerVarName);
+          if (outerSv) {
+            const outerField = outerSv.def.fields.find(f => f.name === outerFieldName);
+            if (outerField?.structType) {
+              const innerDef = this.structDefs.get(outerField.structType);
+              const innerField = innerDef?.fields.find(fi => fi.name === fn);
+              if (innerField) {
+                const outerBaseWat = outerSv.ptr === -1 ? `(local.get $${outerVarName})` : `(i32.const ${outerSv.ptr})`;
+                const outerPtrWat = `(i32.load (i32.add ${outerBaseWat} (i32.const ${outerField.offset})))`;
+                const innerLoadOp = innerField.type === "f64" ? "f64.load"
+                                  : innerField.type === "i64" ? "i64.load" : "i32.load";
+                return { type: innerField.type, watLoad: `(${innerLoadOp} (i32.add ${outerPtrWat} (i32.const ${innerField.offset})))` };
+              }
+            }
+          }
+          return undefined;
+        }
         // Check class instance vars first
         const cv = this.classVars.get(vn);
         if (cv) {
@@ -6837,6 +6971,28 @@ class WasicTranspiler {
         }
       }
       const structLookupFn: StructFieldLookup = (vn, fn) => {
+        // Phase 42: dotted vn = "a.b" — look up field fn on the struct pointed to by a.b
+        if (vn.includes(".")) {
+          const dotIdx = vn.indexOf(".");
+          const outerVarName = vn.slice(0, dotIdx);
+          const outerFieldName = vn.slice(dotIdx + 1);
+          const outerSv = this.structVars.get(outerVarName);
+          if (outerSv) {
+            const outerField = outerSv.def.fields.find(f => f.name === outerFieldName);
+            if (outerField?.structType) {
+              const innerDef = this.structDefs.get(outerField.structType);
+              const innerField = innerDef?.fields.find(fi => fi.name === fn);
+              if (innerField) {
+                const outerBaseWat = outerSv.ptr === -1 ? `(local.get $${outerVarName})` : `(i32.const ${outerSv.ptr})`;
+                const outerPtrWat = `(i32.load (i32.add ${outerBaseWat} (i32.const ${outerField.offset})))`;
+                const innerLoadOp = innerField.type === "f64" ? "f64.load"
+                                  : innerField.type === "i64" ? "i64.load" : "i32.load";
+                return { type: innerField.type, watLoad: `(${innerLoadOp} (i32.add ${outerPtrWat} (i32.const ${innerField.offset})))` };
+              }
+            }
+          }
+          return undefined;
+        }
         // Check class instance vars first
         const cv = this.classVars.get(vn);
         if (cv) {
@@ -10034,41 +10190,48 @@ class WasicTranspiler {
       }
       // Struct object literal: const p: Point = { x: 1.5, y: 2.5 }
       // Phase 30: also handles shorthand properties { x, y } (treated as { x: x, y: y })
-      const structPre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\{([^}]*)\}/);
+      // Phase 42: also handles nested struct literals { start: { x: 1, y: 2 }, end: { x: 3, y: 4 } }
+      const structPre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\{/);
       if (structPre) {
         const varName  = structPre[1];
         const typeName = structPre[2];
         const def = this.structDefs.get(typeName);
         if (def) {
-          // Parse field initializers from "{ x: 1.5, y: 2.5 }" and shorthand "{ x, y }"
+          // Phase 42: use depth-aware body extraction so nested { ... } is handled correctly
+          const openIdx = line.indexOf("{", line.indexOf("="));
+          const bodyStr = openIdx !== -1 ? extractOuterObjectBody(line, openIdx) : null;
+          // Parse field initializers using depth-0 field splitter (handles nested struct literals)
           const initFields: Record<string, string> = {};
           const runtimeInits: Record<string, string> = {};
-          const initRe = /(\w+)\s*:\s*([^,}]+)/g;
-          let im: RegExpExecArray | null;
           const namedTokens = new Set<string>();
-          while ((im = initRe.exec(structPre[3])) !== null) {
-            const fieldKey = im[1];
-            const valStr = im[2].trim();
-            namedTokens.add(fieldKey);
-            // If value is a compile-time constant, store in initFields; otherwise mark as runtime.
-            const isConstant = /^-?\d+(\.\d+)?$/.test(valStr)
-              || valStr === "true" || valStr === "false"
-              || valStr === "null" || valStr === "undefined"
-              || /^["'].*["']$/.test(valStr);
-            if (isConstant) {
-              initFields[fieldKey] = valStr;
-            } else {
-              runtimeInits[fieldKey] = valStr;
-              initFields[fieldKey] = "0"; // placeholder so allocStructData reserves space
+          if (bodyStr !== null) {
+            const rawFields = parseDepth0Fields(bodyStr);
+            for (const [fieldKey, valStr] of Object.entries(rawFields)) {
+              namedTokens.add(fieldKey);
+              // Nested struct literals (starting with {) are treated as compile-time constants
+              // and handled recursively in allocStructData when field.structType is set.
+              const isConstant = /^-?\d+(\.\d+)?$/.test(valStr)
+                || valStr === "true" || valStr === "false"
+                || valStr === "null" || valStr === "undefined"
+                || /^["'].*["']$/.test(valStr)
+                || valStr.startsWith("{");
+              if (isConstant) {
+                initFields[fieldKey] = valStr;
+              } else {
+                runtimeInits[fieldKey] = valStr;
+                initFields[fieldKey] = "0"; // placeholder so allocStructData reserves space
+              }
             }
           }
           // Detect shorthand tokens (identifiers not followed by `:`)
-          const shorthandRe = /\b(\w+)\b(?!\s*:)/g;
-          let sh: RegExpExecArray | null;
-          while ((sh = shorthandRe.exec(structPre[3])) !== null) {
-            const tok = sh[1];
-            if (!namedTokens.has(tok) && def.fields.some(f => f.name === tok)) {
-              runtimeInits[tok] = tok;
+          if (bodyStr !== null) {
+            const shorthandRe = /\b(\w+)\b(?!\s*:)/g;
+            let sh: RegExpExecArray | null;
+            while ((sh = shorthandRe.exec(bodyStr)) !== null) {
+              const tok = sh[1];
+              if (!namedTokens.has(tok) && def.fields.some(f => f.name === tok)) {
+                runtimeInits[tok] = tok;
+              }
             }
           }
           if (Object.keys(runtimeInits).length > 0) {
@@ -10957,7 +11120,8 @@ class WasicTranspiler {
           }
         }
         // Phase 30: struct object literal (mirrors emitFunction pre-scan)
-        const structPre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\{([^}]*)\}/);
+        // Phase 42: also handles nested struct literals { start: { x: 1, y: 2 }, ... }
+        const structPre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\{/);
         if (structPre2) {
           const varName2 = structPre2[1];
           const typeName2 = structPre2[2];
@@ -10965,19 +11129,23 @@ class WasicTranspiler {
           if (def2) {
             const initFields2: Record<string, string> = {};
             const runtimeInits2: Record<string, string> = {};
-            const initRe2 = /(\w+)\s*:\s*([^,}]+)/g;
-            let im2: RegExpExecArray | null;
             const namedTokens2 = new Set<string>();
-            while ((im2 = initRe2.exec(structPre2[3])) !== null) {
-              initFields2[im2[1]] = im2[2].trim();
-              namedTokens2.add(im2[1]);
-            }
-            const shorthandRe2 = /\b(\w+)\b(?!\s*:)/g;
-            let sh2: RegExpExecArray | null;
-            while ((sh2 = shorthandRe2.exec(structPre2[3])) !== null) {
-              const tok2 = sh2[1];
-              if (!namedTokens2.has(tok2) && def2.fields.some(f => f.name === tok2)) {
-                runtimeInits2[tok2] = tok2;
+            // Phase 42: use depth-aware body extraction
+            const openIdx2 = line.indexOf("{", line.indexOf("="));
+            const bodyStr2 = openIdx2 !== -1 ? extractOuterObjectBody(line, openIdx2) : null;
+            if (bodyStr2 !== null) {
+              const rawFields2 = parseDepth0Fields(bodyStr2);
+              for (const [fieldKey2, valStr2] of Object.entries(rawFields2)) {
+                initFields2[fieldKey2] = valStr2;
+                namedTokens2.add(fieldKey2);
+              }
+              const shorthandRe2 = /\b(\w+)\b(?!\s*:)/g;
+              let sh2: RegExpExecArray | null;
+              while ((sh2 = shorthandRe2.exec(bodyStr2)) !== null) {
+                const tok2 = sh2[1];
+                if (!namedTokens2.has(tok2) && def2.fields.some(f => f.name === tok2)) {
+                  runtimeInits2[tok2] = tok2;
+                }
               }
             }
             if (Object.keys(runtimeInits2).length > 0) {
@@ -10993,7 +11161,8 @@ class WasicTranspiler {
                 if (variant2) initFields2[duDefPre2.discriminant] = String(variant2.tagIndex);
               }
             }
-            const ptr2 = this.allocStructData(def2, initFields2);
+            const hasRuntimeInits2 = Object.keys(runtimeInits2).length > 0;
+            const ptr2 = hasRuntimeInits2 ? -3 : this.allocStructData(def2, initFields2);
             this.structVars.set(varName2, { def: def2, ptr: ptr2 });
             startLocals.set(varName2, "i32");
             startDeclaredLocals.push([varName2, "i32"]);

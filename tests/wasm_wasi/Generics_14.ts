@@ -1,79 +1,57 @@
-// Phase 14 — Generics (Monomorphization)
-// Tests: explicit type args, literal inference, generic structs, generic func with struct param
-
-type i32 = number;
-type f64 = number;
-type bool = boolean;
-
-// ── Generic identity ──────────────────────────────────────────────────────────
-
-function identity<T>(x: T): T {
-  return x;
+function slicesIndexStr(s: string[], v: string): number {
+    for (let i: number = 0; i < s.length; i++) {
+        if (s[i] === v) return i;
+    }
+    return -1;
 }
 
-// ── Generic min/max (two params, same type) ───────────────────────────────────
-
-function minVal<T>(a: T, b: T): T {
-  return a < b ? a : b;
+interface NumNode {
+    val: number;
+    hasNext: boolean;
+    nextIdx: number;
 }
 
-function maxVal<T>(a: T, b: T): T {
-  return a > b ? a : b;
+const listNodes: NumNode[] = [];
+let listHead: number = -1;
+let listTail: number = -1;
+
+function listPush(v: number): void {
+    const node: NumNode = { val: v, hasNext: false, nextIdx: -1 };
+    listNodes.push(node);
+    const idx: number = listNodes.length - 1;
+    if (listTail === -1) {
+        listHead = idx;
+        listTail = idx;
+    } else {
+        listNodes[listTail].hasNext = true;
+        listNodes[listTail].nextIdx = idx;
+        listTail = idx;
+    }
 }
 
-// ── Generic struct ────────────────────────────────────────────────────────────
-
-interface Box<T> {
-  value: T;
-  count: i32;
+function listAllElements(): number[] {
+    const result: number[] = [];
+    let cur: number = listHead;
+    while (cur !== -1) {
+        result.push(listNodes[cur].val);
+        cur = listNodes[cur].hasNext ? listNodes[cur].nextIdx : -1;
+    }
+    return result;
 }
 
-// ── Generic function consuming a generic struct param ─────────────────────────
-
-function getBoxValue<T>(b: Box<T>): T {
-  return b.value;
+function numArrStr(arr: number[]): string {
+    let s: string = "[";
+    for (let i: number = 0; i < arr.length; i++) {
+        if (i > 0) s += " ";
+        s += `${arr[i]}`;
+    }
+    return s + "]";
 }
 
-// ── All tests inside main() so structs use emitFunction's pre-scan ────────────
+const sl: string[] = ["foo", "bar", "zoo"];
+console.log("index of zoo:", slicesIndexStr(sl, "zoo"));
 
-function main() {
-  // Explicit type args
-  const a1: i32 = identity<i32>(42);
-  console.log(a1);           // 42
-  const a2: f64 = identity<f64>(3.14);
-  console.log(a2);           // 3.14
-  const a3: bool = identity<bool>(true);
-  console.log(a3);           // true
-
-  // Inferred type from literal (single type param)
-  const b1 = identity(99);
-  console.log(b1);           // 99
-  const b2 = identity(2.718);
-  console.log(b2);           // 2.718
-
-  // Multi-param generics
-  const mn1: i32 = minVal<i32>(10, 20);
-  console.log(mn1);          // 10
-  const mn2: f64 = minVal<f64>(1.5, 2.5);
-  console.log(mn2);          // 1.5
-  const mx1: i32 = maxVal<i32>(10, 20);
-  console.log(mx1);          // 20
-  const mx2: f64 = maxVal<f64>(1.5, 2.5);
-  console.log(mx2);          // 2.5
-
-  // Generic struct: Box<i32>
-  const box1: Box<i32> = { value: 99, count: 3 };
-  console.log(box1.value);   // 99
-  console.log(box1.count);   // 3
-
-  // Generic struct: Box<f64>
-  const box2: Box<f64> = { value: 1.618, count: 1 };
-  console.log(box2.value);   // 1.618
-  console.log(box2.count);   // 1
-
-  // Generic function with generic struct param
-  const bv: i32 = getBoxValue<i32>(box1);
-  console.log(bv);           // 99
-}
-
-main();
+listPush(10);
+listPush(13);
+listPush(23);
+console.log("list:", numArrStr(listAllElements()));

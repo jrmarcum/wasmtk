@@ -341,6 +341,23 @@ function parseSingleArg(
     }
   }
 
+  // Phase 42: three-part chained struct field access: a.b.c
+  // Pass "a.b" as virtual varName to structLookup so it resolves nested struct pointer
+  const sfChainedDotMatch = token.match(/^(\w+)\.(\w+)\.(\w+)$/);
+  if (sfChainedDotMatch && structLookup) {
+    const fi = structLookup(`${sfChainedDotMatch[1]}.${sfChainedDotMatch[2]}`, sfChainedDotMatch[3]);
+    if (fi) {
+      if (fi.type === "string" && fi.watLoadLen) {
+        return [{ kind: "strexpr" as const, ptrWat: fi.watLoad, lenWat: fi.watLoadLen }];
+      }
+      const kind = fi.type === "f64" || fi.type === "f32" ? "f64expr" as const
+                 : fi.type === "i64" ? "i64expr" as const
+                 : fi.type === "bool" ? "boolexpr" as const
+                 : "i32expr" as const;
+      return [{ kind, wat: fi.watLoad }];
+    }
+  }
+
   // ── Dot-call expression: receiver.method(args) or this.method(args) — class/static calls
   // Skip Math.* tokens — they have their own dedicated handler below.
   if (dotCallLookup && !token.startsWith("Math.") && /^(?:this|\w+)\.(\w+)\s*\(/.test(token)) {
@@ -644,6 +661,20 @@ function parseSingleArg(
   }
 
   // ── Arithmetic / numeric expression
+  // Phase 42: if expression starts with a struct field access, infer type from the field.
+  // This handles cases like `a.x + b.x` where `a` is an i32 pointer but `a.x` is f64.
+  const leadDotM = token.match(/^(\w+)\.(\w+)\b/);
+  if (leadDotM && structLookup) {
+    const leadFi = structLookup(leadDotM[1], leadDotM[2]);
+    if (leadFi) {
+      if (leadFi.type === "f64" || leadFi.type === "f32") {
+        return [{ kind: "f64expr", wat: exprToWat(token, locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals) }];
+      }
+      if (leadFi.type === "i64") {
+        return [{ kind: "i64expr", wat: exprToWat(token, locals, "i64", funcLookup, allocString, arrayLookup, structLookup, globals) }];
+      }
+    }
+  }
   // Infer i64 / i32 / f64 from the leading identifier's declared type
   const leadId = token.match(/^(\w+)/)?.[1];
   if (leadId && locals.get(leadId) === "i64") {
@@ -817,6 +848,13 @@ function exprToWat(
   const sfDotM = expr.match(/^(\w+)\.(\w+)$/);
   if (sfDotM && structLookup) {
     const fi = structLookup(sfDotM[1], sfDotM[2]);
+    if (fi) return fi.watLoad;
+  }
+
+  // Phase 42: three-part chained struct field access: a.b.c
+  const sfChainedDotM = expr.match(/^(\w+)\.(\w+)\.(\w+)$/);
+  if (sfChainedDotM && structLookup) {
+    const fi = structLookup(`${sfChainedDotM[1]}.${sfChainedDotM[2]}`, sfChainedDotM[3]);
     if (fi) return fi.watLoad;
   }
 
