@@ -129,6 +129,8 @@ import {
   parseConsoleLogArgs,
   setStringArrayAllocator,
   setStructLiteralAllocator,
+  setStrCmpNeededCallback,
+  setFuncTableLookup,
   emitConsoleLog,
   getHelperWat,
   getArrPrintHelperWat,
@@ -832,8 +834,11 @@ class WasicTranspiler {
 
   /** Returns the WAT type name for a unique function signature, creating it if needed. */
   private getOrCreateFuncType(params: WatType[], result: WatType | null): string {
-    // Normalize pseudo-types (bool, string, never) to concrete WAT types
-    const normParams = params.map(p => (p === "bool" || p === "string" || p === "never") ? "i32" : p);
+    // Normalize pseudo-types; string params expand to two i32 values (ptr + len)
+    const normParams = params.flatMap(p =>
+      p === "string" ? ["i32", "i32"] as WatType[] :
+      (p === "bool" || p === "never") ? ["i32" as WatType] : [p]
+    );
     const normResult = result === "bool" || result === "string" ? "i32" : result === "never" ? null : result;
     const key = (normParams.length ? normParams.join(",") : "void") + "->" + (normResult ?? "void");
     if (!this.funcTypes.has(key)) {
@@ -4209,11 +4214,14 @@ class WasicTranspiler {
       }
       const arrInfo = this.arrayVars.get(bracketMatch[1]);
       if (arrInfo) {
+        // String array element: 8-byte (ptr,len) elements — return the ptr word only in expr context.
+        const isStrElem = arrInfo.isStringArr || arrInfo.elemType === "string";
         // 2D array single-index: loads i32 pointer to the inner row array (always 4-byte i32.load).
         const loadOp = arrInfo.is2D ? "i32.load"
                      : arrInfo.elemType === "f64" ? "f64.load"
                      : arrInfo.elemType === "i64" ? "i64.load" : "i32.load";
         const shift   = arrInfo.is2D ? 2
+                     : isStrElem ? 3
                      : (arrInfo.elemType === "f64" || arrInfo.elemType === "i64") ? 3 : 2;
         const idxWat  = this.emitArrayIndex(bracketMatch[2], locals);
         // All arrays (static, dynamic, params) use an 8-byte [length, capacity] header.
@@ -4949,9 +4957,11 @@ class WasicTranspiler {
         if (this.funcTypeVars.has(callee)) {
           const sig = this.funcTypeVars.get(callee)!;
           const typeName = this.getOrCreateFuncType(sig.params, sig.result);
-          const emittedArgs = args.map((a, idx) =>
-            this.emitExpr(a, locals, sig.params[idx] ?? defaultType)
-          );
+          const emittedArgs = args.flatMap((a, idx) => {
+            const pt = sig.params[idx] ?? defaultType;
+            if (pt === "string") return [this.emitStringPtrLen(a, locals)];
+            return [this.emitExpr(a, locals, pt)];
+          });
           return `(call_indirect (type ${typeName}) ${emittedArgs.join(" ")} (local.get $${callee}))`.trim();
         }
         this.diagnostics.push(`Unknown function '${callee}' — not declared in this module`);
@@ -6933,9 +6943,13 @@ class WasicTranspiler {
       };
       setStringArrayAllocator((elems) => this.allocArrayData(elems, "string"));
       setStructLiteralAllocator((sName, fields) => this.allocStructData(this.structDefs.get(sName)!, fields));
+      setStrCmpNeededCallback(() => { this.needsStringHelpers = true; });
+      setFuncTableLookup((name) => this.functions.find(f => f.name === name) ? this.getFuncTableIdx(name) : undefined);
       const segments = parseConsoleLogArgs(logMatch[1], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFn, globalsMap, enumStringLookupFn, closureVarLookupFn);
       setStringArrayAllocator(undefined);
       setStructLiteralAllocator(undefined);
+      setStrCmpNeededCallback(undefined);
+      setFuncTableLookup(undefined);
       const { statements, needsHelpers, needsStrGather, needsArrPrintHelper, needsJoinHelper } = emitConsoleLog(segments, allocator, "    ", 1, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
       if (needsStrGather) this.needsStrGatherHelper = true;
@@ -7110,9 +7124,13 @@ class WasicTranspiler {
       };
       setStringArrayAllocator((elems) => this.allocArrayData(elems, "string"));
       setStructLiteralAllocator((sName, fields) => this.allocStructData(this.structDefs.get(sName)!, fields));
+      setStrCmpNeededCallback(() => { this.needsStringHelpers = true; });
+      setFuncTableLookup((name) => this.functions.find(f => f.name === name) ? this.getFuncTableIdx(name) : undefined);
       const segments = parseConsoleLogArgs(errMatch[2], locals as Map<string, string>, lookup, allocator, enumLookup, arrayLookupFn, structLookupFn, dotCallLookupFnErr, globalsMapErr, enumStringLookupFnErr, closureVarLookupFnErr);
       setStringArrayAllocator(undefined);
       setStructLiteralAllocator(undefined);
+      setStrCmpNeededCallback(undefined);
+      setFuncTableLookup(undefined);
       const { statements, needsHelpers, needsStrGather, needsArrPrintHelper: errAph, needsJoinHelper: errJh } = emitConsoleLog(segments, allocator, "    ", 2, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
       if (needsStrGather) this.needsStrGatherHelper = true;
@@ -7357,9 +7375,11 @@ class WasicTranspiler {
           if (this.funcTypeVars.has(callee)) {
             const sig = this.funcTypeVars.get(callee)!;
             const typeName = this.getOrCreateFuncType(sig.params, sig.result);
-            const emittedArgs = args.map((a, idx) =>
-              this.emitExpr(a, locals, sig.params[idx] ?? "i32" as WatType)
-            );
+            const emittedArgs = args.flatMap((a, idx) => {
+              const pt = sig.params[idx] ?? "i32" as WatType;
+              if (pt === "string") return [this.emitStringPtrLen(a, locals)];
+              return [this.emitExpr(a, locals, pt)];
+            });
             const callWat = `(call_indirect (type ${typeName}) ${emittedArgs.join(" ")} (local.get $${callee}))`.trim();
             const hasIndResult = sig.result !== null && sig.result !== "never" && sig.result !== "string";
             return hasIndResult ? `(drop ${callWat})` : callWat;
@@ -8246,7 +8266,9 @@ class WasicTranspiler {
     (local.get $ptr)
   )`);
     if (this.needsStringHelpers)   parts.push(this.getStringHelperWat());
-    if (this.needsStringOpHelpers || this.needsStrGatherHelper) parts.push(this.getStringOpHelperWat());
+    // getStringExtHelperWat() includes $__str_replace/$__str_split which depend on
+    // $__str_indexof/$__str_gather from getStringOpHelperWat(), so emit op helpers together.
+    if (this.needsStringOpHelpers || this.needsStrGatherHelper || this.needsStringExtHelpers) parts.push(this.getStringOpHelperWat());
     if (this.needsStringExtHelpers) parts.push(this.getStringExtHelperWat());
     if (this.needsNumericHelpers)  parts.push(getHelperWat());
     if (this.needsArrPrintHelper)  parts.push(getArrPrintHelperWat());
@@ -10021,11 +10043,13 @@ class WasicTranspiler {
       if (p.type === "string") this.stringVars.add(p.name);
       // Array param: register in arrayVars so arr[i] works inside the function body
       if (p.arrayElemType) {
+        const isStrArr = p.arrayElemType === "string";
         if (p.isRest) {
           // Rest param: dynamic layout (8-byte header), pointer received from caller
-          this.arrayVars.set(p.name, { elemType: p.arrayElemType, ptr: -1, length: 0, dynamic: true, structTypeName: p.arrayStructElemType });
+          this.arrayVars.set(p.name, { elemType: p.arrayElemType, ptr: -1, length: 0, dynamic: true, isStringArr: isStrArr, structTypeName: p.arrayStructElemType });
         } else {
-          this.arrayVars.set(p.name, { elemType: p.arrayElemType, ptr: -1, length: 0, structTypeName: p.arrayStructElemType });
+          // string[] params use dynamic layout (8-byte header + 8-byte ptr+len elements)
+          this.arrayVars.set(p.name, { elemType: p.arrayElemType, ptr: -1, length: 0, dynamic: isStrArr, isStringArr: isStrArr, structTypeName: p.arrayStructElemType });
         }
       }
       // Phase 31: TypedArray param — register in typedArrayVars for correct element access

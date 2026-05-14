@@ -86,6 +86,18 @@ export function setStructLiteralAllocator(fn: ((structName: string, initFields: 
   _structLiteralAlloc = fn;
 }
 
+/** Called when exprToWat emits a $__str_cmp call so wasic can enable the helper. */
+let _strCmpNeeded: (() => void) | undefined = undefined;
+export function setStrCmpNeededCallback(fn: (() => void) | undefined): void {
+  _strCmpNeeded = fn;
+}
+
+/** Callback to get the function table index for a named function. Set by wasic.ts around parseConsoleLogArgs. */
+let _funcTableLookup: ((name: string) => number | undefined) | undefined = undefined;
+export function setFuncTableLookup(fn: ((name: string) => number | undefined) | undefined): void {
+  _funcTableLookup = fn;
+}
+
 /** Callback to resolve an array variable by name: returns its element type, base ptr, and length.
  *  ptr=-1 means runtime local (param). ptr=-2 means dynamic heap array (local with 8-byte header).
  *  dynamic=true means the array has a [length, capacity] header at its pointer. */
@@ -97,6 +109,8 @@ export type ArrayLookup = (name: string) => {
   customLoadOp?: string;
   /** True when the array is a module-level global (use global.get instead of local.get). */
   isGlobal?: boolean;
+  /** True when this is a string array (8-byte elements: [ptr i32, len i32]). */
+  isStringArr?: boolean;
 } | undefined;
 
 /**
@@ -823,6 +837,13 @@ function exprToWat(
   if (bracketM && arrayLookup) {
     const ai = arrayLookup(bracketM[1]);
     if (ai) {
+      // String arrays: each element is 8 bytes [ptr i32, len i32]; load the ptr here.
+      if (ai.isStringArr || ai.elemType === "string") {
+        const base = (ai.ptr === -1 || ai.dynamic) ? `(local.get $${bracketM[1]})` : `(i32.const ${ai.ptr})`;
+        const idxW = exprToWat(bracketM[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+        const addr = `(i32.add (i32.add ${base} (i32.const 8)) (i32.shl ${idxW} (i32.const 3)))`;
+        return `(i32.load ${addr})`;
+      }
       // Phase 31: respect custom shift/loadOp for sub-word TypedArrays
       const loadOp  = ai.customLoadOp
                     ?? (ai.elemType === "f64" ? "f64.load" : ai.elemType === "i64" ? "i64.load" : "i32.load");
@@ -913,10 +934,13 @@ function exprToWat(
     }
   }
 
-  // Simple identifier — check locals first, then module globals
+  // Simple identifier — check locals first, then module globals, then function table
   if (/^\w+$/.test(expr)) {
     if (locals.has(expr)) return `(local.get $${expr})`;
     if (globals?.has(expr)) return `(global.get $${expr})`;
+    // Function reference passed as a callback argument
+    const funcIdx = _funcTableLookup?.(expr);
+    if (funcIdx !== undefined) return `(i32.const ${funcIdx})`;
   }
 
   // Phase 5f: chained call — factoryFn(outerArgs)(innerArgs) closure factory
@@ -1023,6 +1047,39 @@ function exprToWat(
       const resType  = isFloat ? expectedType : "i32";
       return `(if (result ${resType}) ${exprToWat(cond, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)} (then ${exprToWat(thenPart, locals, resType, funcLookup, allocString, arrayLookup, structLookup, globals)}) (else ${exprToWat(elsePart, locals, resType, funcLookup, allocString, arrayLookup, structLookup, globals)}))`;
     }
+  }
+
+  // String comparison: arr[i] === "str", str === arr[i], arr[i] === arr[j]
+  // Must be checked before the generic binOps loop to avoid f64.eq on i32 string pointers.
+  const STR_EQ_OPS = new Set(["===", "!==", "==", "!="]);
+  for (const strOp of STR_EQ_OPS) {
+    const strOpIdx = findTopLevelOp(expr, strOp);
+    if (strOpIdx === -1) continue;
+    const strLhs = expr.slice(0, strOpIdx).trim();
+    const strRhs = expr.slice(strOpIdx + strOp.length).trim();
+    if (!looksLikeString(strLhs, locals, arrayLookup) && !looksLikeString(strRhs, locals, arrayLookup)) break;
+    // Helper: get ptr+len WAT for a string expression
+    const getStrPL = (e: string): [string, string] => {
+      if (/^\w+$/.test(e) && locals.get(e) === "string") return [`(local.get $${e}_ptr)`, `(local.get $${e}_len)`];
+      const litM = e.match(/^["'](.*)["']$/);
+      if (litM && allocString) { const [p, l] = allocString(litM[1]); return [`(i32.const ${p})`, `(i32.const ${l})`]; }
+      const bM = e.match(/^(\w+)\[([^\]]+)\]$/);
+      if (bM && arrayLookup) {
+        const ai = arrayLookup(bM[1]);
+        if (ai && (ai.isStringArr || ai.elemType === "string")) {
+          const base = (ai.ptr === -1 || ai.dynamic) ? `(local.get $${bM[1]})` : `(i32.const ${ai.ptr})`;
+          const idxW = exprToWat(bM[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+          const addr = `(i32.add (i32.add ${base} (i32.const 8)) (i32.shl ${idxW} (i32.const 3)))`;
+          return [`(i32.load ${addr})`, `(i32.load offset=4 ${addr})`];
+        }
+      }
+      return [`(i32.const 0)`, `(i32.const 0)`];
+    };
+    const [lPtr, lLen] = getStrPL(strLhs);
+    const [rPtr, rLen] = getStrPL(strRhs);
+    _strCmpNeeded?.();
+    const cmpCall = `(call $__str_cmp ${lPtr} ${lLen} ${rPtr} ${rLen})`;
+    return (strOp === "===" || strOp === "==") ? `(i32.eqz ${cmpCall})` : `(i32.ne (i32.eqz ${cmpCall}) (i32.const 0))`;
   }
 
   // Binary operators — ascending precedence order (lowest first = outermost grouping).
