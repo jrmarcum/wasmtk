@@ -56,7 +56,9 @@
       "Bash(Select-Object -Last 5)",
       "Bash(grep -n \"local \\\\$\\\\|emitStatement.*let\\\\|let.*emitState\\\\|letMatch\\\\|constMatch\\\\|declaredLocal\" src/wasic.ts)",
       "Bash(echo \"EXIT:$?\")",
-      "PowerShell(cd \"d:\\\\Programs\\\\_ProgramExamples\\\\Example_Programs\\\\wasmExamples\\\\wasmtk\"; $proc = Start-Process -FilePath \"wasmtk\" -ArgumentList \"wasic\", \"tests\\\\wasm_wasi\\\\BasicStringArrParam_43.ts\" -Wait -PassThru -NoNewWindow -RedirectStandardOutput \"C:\\\\Users\\\\Jmarcum\\\\TEMP\\\\out43_stdout.txt\" -RedirectStandardError \"C:\\\\Users\\\\Jmarcum\\\\TEMP\\\\out43_stderr.txt\"; Write-Host \"Exit: $\\($proc.ExitCode\\)\"; Get-Content \"C:\\\\Users\\\\Jmarcum\\\\TEMP\\\\out43_stdout.txt\"; Write-Host \"STDERR:\"; Get-Content \"C:\\\\Users\\\\Jmarcum\\\\TEMP\\\\out43_stderr.txt\")"
+      "PowerShell(cd \"d:\\\\Programs\\\\_ProgramExamples\\\\Example_Programs\\\\wasmExamples\\\\wasmtk\"; $proc = Start-Process -FilePath \"wasmtk\" -ArgumentList \"wasic\", \"tests\\\\wasm_wasi\\\\BasicStringArrParam_43.ts\" -Wait -PassThru -NoNewWindow -RedirectStandardOutput \"C:\\\\Users\\\\Jmarcum\\\\TEMP\\\\out43_stdout.txt\" -RedirectStandardError \"C:\\\\Users\\\\Jmarcum\\\\TEMP\\\\out43_stderr.txt\"; Write-Host \"Exit: $\\($proc.ExitCode\\)\"; Get-Content \"C:\\\\Users\\\\Jmarcum\\\\TEMP\\\\out43_stdout.txt\"; Write-Host \"STDERR:\"; Get-Content \"C:\\\\Users\\\\Jmarcum\\\\TEMP\\\\out43_stderr.txt\")",
+      "Bash(git merge *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
