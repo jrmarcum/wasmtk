@@ -508,6 +508,20 @@ function parseSingleArg(
     return [{ kind: "strvar", ptrLocal: `${v}_ptr`, lenLocal: `${v}_len` }];
   }
 
+  // ── Phase 49: str.at(n) — character at index, supporting negative indices
+  const strAtConsoleM = token.match(/^(\w+)\.at\s*\((.+)\)$/);
+  if (strAtConsoleM && locals.get(strAtConsoleM[1]) === "string") {
+    const strName = strAtConsoleM[1];
+    const rawN = strAtConsoleM[2].trim();
+    const nNum = /^-?\d+$/.test(rawN) ? parseInt(rawN, 10) : null;
+    const nWat = nNum !== null ? "(i32.const " + nNum + ")" : exprToWat(rawN, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+    const ptrW = "(local.get $" + strName + "_ptr)";
+    const lenW = "(local.get $" + strName + "_len)";
+    const normIdx = "(select " + nWat + " (i32.add " + lenW + " " + nWat + ") (i32.ge_s " + nWat + " (i32.const 0)))";
+    const ptrWat = "(i32.add " + ptrW + " " + normIdx + ")";
+    return [{ kind: "strexpr" as const, ptrWat, lenWat: "(i32.const 1)" }];
+  }
+
   // ── String literal method: "TEXT".toLowerCase() / "TEXT".toUpperCase() → pre-computed literal
   const strLitMethodMatch = token.match(/^(["'])(.*?)\1\.(toLowerCase|toUpperCase)\s*\(\s*\)$/);
   if (strLitMethodMatch) {

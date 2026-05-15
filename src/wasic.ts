@@ -2017,7 +2017,7 @@ class WasicTranspiler {
     const needsDynamic    = new Set<string>();
     for (const fn of this.functions) {
       for (const line of fn.bodyLines) {
-        const m = line.match(/\b(\w+)\.(push|pop|shift|unshift|indexOf|includes|slice|forEach|map|filter|find|reduce|every|some|findIndex|at|reverse|fill|join|sort|flat|flatMap|splice|length)\s*[.(]?/);
+        const m = line.match(/\b(\w+)\.(push|pop|shift|unshift|indexOf|includes|slice|forEach|map|filter|find|reduce|every|some|findIndex|at|reverse|fill|join|sort|flat|flatMap|splice|concat|length)\s*[.(]?/);
         if (m) {
           usedInFunctions.add(m[1]);
           if (["push","pop","shift","unshift","splice"].includes(m[2])) needsDynamic.add(m[1]);
@@ -2979,12 +2979,46 @@ class WasicTranspiler {
   // Dynamic array helpers (Phase 10b)
   // -------------------------------------------------------------------------
 
+  /** Phase 49: Splits an expression into outermost method call parts (receiver, method, args). */
+  private splitLastMethodCall(expr: string): { receiver: string; method: string; args: string } | null {
+    if (!expr.endsWith(")")) return null;
+    let depth = 0, openIdx = -1;
+    for (let i = expr.length - 1; i >= 0; i--) {
+      const ch = expr[i];
+      if (ch === ")") depth++;
+      else if (ch === "(") { if (--depth === 0) { openIdx = i; break; } }
+    }
+    if (openIdx <= 0) return null;
+    const args = expr.slice(openIdx + 1, expr.length - 1);
+    const beforeParen = expr.slice(0, openIdx);
+    const lastDot = beforeParen.lastIndexOf(".");
+    if (lastDot < 0) return null;
+    const receiver = beforeParen.slice(0, lastDot);
+    const method = beforeParen.slice(lastDot + 1);
+    if (!receiver || !/^\w+$/.test(method)) return null;
+    return { receiver, method, args };
+  }
+
+  /** Phase 49: Infer the element type of a (possibly chained) array expression. */
+  private inferChainElemType(expr: string, locals: Map<string, string>): string | null {
+    const ai = this.arrayVars.get(expr);
+    if (ai?.dynamic) return ai.elemType as string;
+    const parsed = this.splitLastMethodCall(expr);
+    if (!parsed) return null;
+    const baseType = this.inferChainElemType(parsed.receiver, locals);
+    if (!baseType) return null;
+    // These methods preserve or return the same element type
+    const preserving = ["filter", "map", "slice", "reverse", "fill", "sort", "flat", "flatMap", "concat"];
+    if (preserving.includes(parsed.method)) return baseType;
+    return null;
+  }
+
   /** Scans function body lines for array method calls to determine which arrays need heap layout. */
   private findDynamicArrays(lines: string[]): Set<string> {
     const dynamic = new Set<string>();
     for (const line of lines) {
       // Method calls that require heap layout
-      const m = line.match(/\b(\w+)\.(push|pop|shift|unshift|indexOf|includes|slice|forEach|map|filter|find|reduce|every|some|findIndex|at|reverse|fill|join|sort|flat|flatMap|splice)\s*\(/);
+      const m = line.match(/\b(\w+)\.(push|pop|shift|unshift|indexOf|includes|slice|forEach|map|filter|find|reduce|every|some|findIndex|at|reverse|fill|join|sort|flat|flatMap|splice|concat)\s*\(/);
       if (m) dynamic.add(m[1]);
       // Phase 6d: subscript method call: matrix[i].push(...) — outer array must be dynamic
       const subM = line.match(/\b(\w+)\[.+?\]\.(push|pop|shift|unshift)\s*\(/);
@@ -3437,6 +3471,20 @@ class WasicTranspiler {
       ].join("\n");
     }
 
+    // Phase 49: str.at(n) → (ptr + normIdx, 1) — supports negative indices
+    const strAtAssignM = initExpr.match(/^(\w+)\.at\s*\((.+)\)$/);
+    if (strAtAssignM && locals.get(strAtAssignM[1]) === "string") {
+      const strName = strAtAssignM[1];
+      const nWat = this.emitExpr(strAtAssignM[2].trim(), locals, "i32");
+      const ptrW = "(local.get $" + strName + "_ptr)";
+      const lenW = "(local.get $" + strName + "_len)";
+      const normIdx = "(select " + nWat + " (i32.add " + lenW + " " + nWat + ") (i32.ge_s " + nWat + " (i32.const 0)))";
+      return [
+        "(local.set $" + varName + "_ptr (i32.add " + ptrW + " " + normIdx + "))",
+        ind + "(local.set $" + varName + "_len (i32.const 1))",
+      ].join("\n");
+    }
+
     // Phase 27: str.charAt(i) → (ptr+i, 1) string
     const charAtMatch = initExpr.match(/^(\w+)\.charAt\s*\((.+)\)$/);
     if (charAtMatch && locals.get(charAtMatch[1]) === "string") {
@@ -3647,6 +3695,17 @@ class WasicTranspiler {
           stmts.push(`(local.set $__str_op_ptr (call $__malloc (i32.const 1)))`);
           stmts.push(`(i32.store8 (local.get $__str_op_ptr) ${argWat})`);
           concatAppend(`(local.get $__str_op_ptr)`, `(i32.const 1)`);
+          return;
+        }
+        // Phase 49: str.at(n) in concat — supports negative indices
+        const strAtCP = part.match(/^(\w+)\.at\s*\((.+)\)$/);
+        if (strAtCP && locals.get(strAtCP[1]) === "string") {
+          const strName = strAtCP[1];
+          const nWat = this.emitExpr(strAtCP[2].trim(), locals, "i32");
+          const ptrW = "(local.get $" + strName + "_ptr)";
+          const lenW = "(local.get $" + strName + "_len)";
+          const normIdx = "(select " + nWat + " (i32.add " + lenW + " " + nWat + ") (i32.ge_s " + nWat + " (i32.const 0)))";
+          concatAppend("(i32.add " + ptrW + " " + normIdx + ")", "(i32.const 1)");
           return;
         }
         // str.charAt(idx) in concat — single-char substring via $__str_char_at
@@ -3922,6 +3981,17 @@ class WasicTranspiler {
         return `(i32.load ${elemAddrWat}) (i32.load offset=4 ${elemAddrWat})`;
       }
     }
+    // Phase 49: str.at(n) — returns (ptr+normIdx, 1) inline for use in str comparisons
+    const strAtSPLM = expr.match(/^(\w+)\.at\s*\((.+)\)$/);
+    if (strAtSPLM && locals.get(strAtSPLM[1]) === "string") {
+      const strName = strAtSPLM[1];
+      const nWat = this.emitExpr(strAtSPLM[2].trim(), locals, "i32");
+      const ptrW = "(local.get $" + strName + "_ptr)";
+      const lenW = "(local.get $" + strName + "_len)";
+      const normIdx = "(select " + nWat + " (i32.add " + lenW + " " + nWat + ") (i32.ge_s " + nWat + " (i32.const 0)))";
+      return "(i32.add " + ptrW + " " + normIdx + ") (i32.const 1)";
+    }
+
     // str.slice(start[, end]) — returns inline multi-value call (ptr, len) for use in $__str_cmp args
     const sliceSPLM = expr.match(/^(\w+)\.slice\s*\((.+)\)$/);
     if (sliceSPLM && locals.get(sliceSPLM[1]) === "string" && parenDepthNeverNegative(sliceSPLM[2])) {
@@ -4379,10 +4449,10 @@ class WasicTranspiler {
     // Dynamic array callback methods (expression form): arr.map(fn), arr.filter(fn), arr.find(fn), arr.reduce(fn,init)
     // Phase 28: arr.every(fn), arr.some(fn), arr.findIndex(fn), arr.at(n), arr.reverse(), arr.fill(val,...), arr.sort(fn?)
     // Phase 37: arr.flat(), arr.flatMap(fn)
-    const dynArrMethod = expr.match(/^(\w+)\.(indexOf|includes|slice|map|filter|find|reduce|every|some|findIndex|at|reverse|fill|sort|flat|flatMap)\s*\(([\s\S]*)\)$/);
-    if (dynArrMethod) {
+    const dynArrMethod = expr.match(/^(\w+)\.(indexOf|includes|slice|map|filter|find|reduce|every|some|findIndex|at|reverse|fill|sort|flat|flatMap|concat)\s*\(([\s\S]*)\)$/);
+    if (dynArrMethod && parenDepthNeverNegative(dynArrMethod[3].trim())) {
       const arrName  = dynArrMethod[1];
-      const method   = dynArrMethod[2] as "indexOf"|"includes"|"slice"|"map"|"filter"|"find"|"reduce"|"every"|"some"|"findIndex"|"at"|"reverse"|"fill"|"sort"|"flat"|"flatMap";
+      const method   = dynArrMethod[2] as "indexOf"|"includes"|"slice"|"map"|"filter"|"find"|"reduce"|"every"|"some"|"findIndex"|"at"|"reverse"|"fill"|"sort"|"flat"|"flatMap"|"concat";
       const argsStr  = dynArrMethod[3].trim();
       const arrInfo  = this.arrayVars.get(arrName);
       if (arrInfo?.dynamic) {
@@ -4481,6 +4551,13 @@ class WasicTranspiler {
           const fnIdx = this.getFuncTableIdx(args[0]?.trim() ?? "");
           return `(call $__dynarr_${key} ${this.arrGetWat(arrName)} (i32.const ${fnIdx}))`;
         }
+        // Phase 49: concat(other) — concatenate two arrays, return new array
+        if (method === "concat") {
+          const key = `concat_${elemType}`;
+          this.dynArrHelpers.add(key);
+          const otherWat = this.emitExpr(argsStr, locals, "i32");
+          return `(call $__dynarr_${key} ${this.arrGetWat(arrName)} ${otherWat})`;
+        }
         // Callback methods: map, filter, find, reduce
         const args = this.splitArgs(argsStr);
         const fnName = args[0]?.trim() ?? "";
@@ -4500,6 +4577,52 @@ class WasicTranspiler {
           return `(call $__dynarr_${key} ${this.arrGetWat(arrName)} (i32.const ${fnIdx}) ${initWat})`;
         }
         return `(call $__dynarr_${key} ${this.arrGetWat(arrName)} (i32.const ${fnIdx}))`;
+      }
+    }
+
+    // Phase 49: chained array method calls — e.g. arr.filter(f).map(g)
+    // The dynArrMethod regex only matches simple-name receivers; when the receiver is itself
+    // a method call, use splitLastMethodCall + inferChainElemType to emit the chain inline.
+    {
+      const chainParsed = this.splitLastMethodCall(expr);
+      if (chainParsed) {
+        const CHAIN_METHODS: Record<string, boolean> = {
+          "map": true, "filter": true, "slice": true, "concat": true,
+          "sort": true, "reverse": true, "fill": true, "flat": true, "flatMap": true,
+        };
+        if (CHAIN_METHODS[chainParsed.method]) {
+          const elemType = this.inferChainElemType(chainParsed.receiver, locals);
+          if (elemType) {
+            const method = chainParsed.method;
+            const chainArgs = chainParsed.args.trim();
+            const innerWat = this.emitExpr(chainParsed.receiver, locals, "i32");
+            const et = elemType as WatType;
+            if (method === "map") {
+              const key = "map_" + et;
+              this.dynArrHelpers.add(key);
+              this.getOrCreateFuncType([et], et);
+              const fnIdx = this.getFuncTableIdx(chainArgs);
+              return "(call $__dynarr_" + key + " " + innerWat + " (i32.const " + fnIdx + "))";
+            }
+            if (method === "filter") {
+              const key = "filter_" + et;
+              this.dynArrHelpers.add(key);
+              this.getOrCreateFuncType([et], "i32");
+              const fnIdx = this.getFuncTableIdx(chainArgs);
+              return "(call $__dynarr_" + key + " " + innerWat + " (i32.const " + fnIdx + "))";
+            }
+            if (method === "concat") {
+              const key = "concat_" + et;
+              this.dynArrHelpers.add(key);
+              const otherWat = this.emitExpr(chainArgs, locals, "i32");
+              return "(call $__dynarr_" + key + " " + innerWat + " " + otherWat + ")";
+            }
+            // Preserve-type methods: reverse, fill, sort, slice, flat, flatMap
+            const simpleKey = method + "_" + et;
+            this.dynArrHelpers.add(simpleKey);
+            return "(call $__dynarr_" + simpleKey + " " + innerWat + ")";
+          }
+        }
       }
     }
 
@@ -10960,7 +11083,7 @@ class WasicTranspiler {
     }
     // String.fromCharCode / str.charAt / str.slice in concat: pre-declare $__str_op_ptr/$__str_op_len temp pair.
     if (!locals.has("__str_op_ptr") && fn.bodyLines.some(l =>
-      l.includes("String.fromCharCode(") || l.includes(".charAt(") || l.includes(".slice(")
+      l.includes("String.fromCharCode(") || l.includes(".charAt(") || l.includes(".slice(") || l.includes(".at(")
     )) {
       declaredLocals.push(["__str_op_ptr", "i32"], ["__str_op_len", "i32"]);
       locals.set("__str_op_ptr", "i32");
@@ -11401,6 +11524,8 @@ class WasicTranspiler {
   }
 
   transpile(_moduleName: string): string {
+    // Phase 49: optional chaining — strip ?. to . (safe for non-nullable types)
+    this.src = this.src.replace(/[?][.]/g, ".");
     // Pre-pass: expand generic templates by monomorphization before any other parsing
     this.src = this.expandGenerics(this.src);
     // Phase 30: expand namespace blocks into prefixed top-level declarations
@@ -11887,7 +12012,7 @@ class WasicTranspiler {
       }
       // String.fromCharCode / str.charAt in concat: pre-declare $__str_op_ptr/$__str_op_len temp pair.
       if (!startLocals.has("__str_op_ptr") && this.startBodyLines.some(l =>
-        l.includes("String.fromCharCode(") || l.includes(".charAt(")
+        l.includes("String.fromCharCode(") || l.includes(".charAt(") || l.includes(".slice(") || l.includes(".at(")
       )) {
         startDeclaredLocals.push(["__str_op_ptr", "i32"], ["__str_op_len", "i32"]);
         startLocals.set("__str_op_ptr", "i32");

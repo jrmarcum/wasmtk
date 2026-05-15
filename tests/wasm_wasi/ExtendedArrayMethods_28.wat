@@ -598,6 +598,8 @@
     (local $unsorted i32)
     (local $desc i32)
     (local $__iface_tmp i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $nums (call $__malloc (i32.const 48)))
       (i32.store (local.get $nums) (i32.const 5))
       (i32.store offset=4 (local.get $nums) (i32.const 10))

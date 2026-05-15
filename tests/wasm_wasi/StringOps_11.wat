@@ -462,6 +462,8 @@
     (local $cat_len i32)
     (local $hasFoo i32)
     (local $__iface_tmp i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $greeting_ptr (i32.const 260))
       (local.set $greeting_len (i32.const 13))
     (local.set $idx (call $__str_indexof (local.get $greeting_ptr) (local.get $greeting_len) (i32.const 291) (i32.const 5)))

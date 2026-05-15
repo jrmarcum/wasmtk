@@ -699,6 +699,8 @@
     (local $twoDStr_ptr i32)
     (local $twoDStr_len i32)
     (local $__iface_tmp i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $sl (call $__malloc (i32.const 72)))
       (i32.store (local.get $sl) (i32.const 3))
       (i32.store offset=4 (local.get $sl) (i32.const 8))
