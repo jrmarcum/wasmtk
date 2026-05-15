@@ -58,7 +58,17 @@
       "Bash(echo \"EXIT:$?\")",
       "PowerShell(cd \"d:\\\\Programs\\\\_ProgramExamples\\\\Example_Programs\\\\wasmExamples\\\\wasmtk\"; $proc = Start-Process -FilePath \"wasmtk\" -ArgumentList \"wasic\", \"tests\\\\wasm_wasi\\\\BasicStringArrParam_43.ts\" -Wait -PassThru -NoNewWindow -RedirectStandardOutput \"C:\\\\Users\\\\Jmarcum\\\\TEMP\\\\out43_stdout.txt\" -RedirectStandardError \"C:\\\\Users\\\\Jmarcum\\\\TEMP\\\\out43_stderr.txt\"; Write-Host \"Exit: $\\($proc.ExitCode\\)\"; Get-Content \"C:\\\\Users\\\\Jmarcum\\\\TEMP\\\\out43_stdout.txt\"; Write-Host \"STDERR:\"; Get-Content \"C:\\\\Users\\\\Jmarcum\\\\TEMP\\\\out43_stderr.txt\")",
       "Bash(git merge *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(grep -n \"destructur\\\\|destructParamMatch\\\\|structDestruc\\\\|\\\\\\\\.\\\\\\\\.\" src/wasic.ts)",
+      "Bash(awk 'NR>=11486 && NR<=11570' src/wasic.ts)",
+      "Bash(awk 'NR>=11560 && NR<=11640' src/wasic.ts)",
+      "Bash(grep -v \"//.*console\\\\.log\\\\|@expect\")",
+      "Bash(grep -rn \"\\\\*\\\\*\" \"d:\\\\Programs\\\\_ProgramExamples\\\\Example_Programs\\\\wasmExamples\\\\wasmtk\\\\tests\\\\wasm_wasi\\\\\" | grep -v \"//\\\\|@expect\" | head -20)",
+      "Read(//d/Programs/_ProgramExamples/Example_Programs/wasmExamples/wasmtk/tests/wasm_wasi\" | grep -v /**)",
+      "Bash(grep -v \"^Binary\\\\|//.*\\\\*\\\\*\\\\|@expect\")",
+      "Bash(grep -n \"func \\\\$\" \"d:\\\\Programs\\\\_ProgramExamples\\\\Example_Programs\\\\wasmExamples\\\\wasmtk\\\\tests\\\\wasm_wasi\\\\Phase48Combined_48.wat\")",
+      "Bash(grep -n \"f64.const\\\\|numeric literal\\\\|/\\\\\\\\^-\\\\\\\\?\\\\\\\\\\\\\\\\d\\\\|isNaN\\\\|parseFloat\" \"d:\\\\Programs\\\\_ProgramExamples\\\\Example_Programs\\\\wasmExamples\\\\wasmtk\\\\src\\\\wasic.ts\")",
+      "Bash(grep \"Number\\\\|num.*lit\\\\|/\\\\\\\\^-\")"
     ]
   }
 }

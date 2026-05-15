@@ -940,10 +940,14 @@
     (select (local.get $a) (local.get $b) (i32.gt_s (local.get $a) (local.get $b)))
   )
 
-  ;; Math.pow — iterative (accurate for non-negative integer exponents)
+  ;; Math.pow — iterative for integer exponents; sqrt special case for exp=0.5
   (func $__math_pow (param $base f64) (param $exp f64) (result f64)
     (local $result f64)
     (local $n i32)
+    (if (f64.eq (local.get $exp) (f64.const 0.5))
+      (then (return (f64.sqrt (local.get $base)))))
+    (if (f64.eq (local.get $exp) (f64.const -0.5))
+      (then (return (f64.div (f64.const 1) (f64.sqrt (local.get $base))))))
     (local.set $result (f64.const 1))
     (local.set $n (i32.trunc_f64_s (local.get $exp)))
     (block $done

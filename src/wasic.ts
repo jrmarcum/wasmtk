@@ -4051,8 +4051,8 @@ class WasicTranspiler {
       return `(i64.const ${expr.slice(0, -1)})`;
     }
 
-    // Numeric literal
-    if (/^-?\d+(\.\d+)?$/.test(expr)) {
+    // Numeric literal (decimal, float, or scientific notation e.g. 1e16, 3.5e-4)
+    if (/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(expr)) {
       return `(${defaultType}.const ${expr})`;
     }
 
@@ -4618,6 +4618,42 @@ class WasicTranspiler {
             return `(${innerLoadOp} (i32.add ${outerPtrWat} (i32.const ${innerField.offset})))`;
           }
         }
+      }
+    }
+
+    // Phase 48: Number.* constants and predicates
+    if (expr.startsWith("Number.")) {
+      const NUMBER_CONSTS: Record<string, string> = {
+        NaN:               "nan",
+        POSITIVE_INFINITY: "inf",
+        NEGATIVE_INFINITY: "-inf",
+        EPSILON:           "2.220446049250313e-16",
+        MAX_SAFE_INTEGER:  "9007199254740991",
+        MIN_SAFE_INTEGER:  "-9007199254740991",
+        MAX_VALUE:         "1.7976931348623157e+308",
+        MIN_VALUE:         "5e-324",
+      };
+      const numConstM = expr.match(/^Number\.(\w+)$/);
+      if (numConstM && NUMBER_CONSTS[numConstM[1]] !== undefined) {
+        return `(f64.const ${NUMBER_CONSTS[numConstM[1]]})`;
+      }
+      // Predicates: Number.isNaN(x), Number.isFinite(x), Number.isInteger(x)
+      const numPredM = expr.match(/^Number\.(isNaN|isFinite|isInteger)\(([\s\S]*)\)$/);
+      let _numPredOk = false;
+      if (numPredM) {
+        let _d = 0; _numPredOk = true;
+        for (const _c of numPredM[2]) {
+          if (_c === '(') _d++;
+          else if (_c === ')') { if (_d === 0) { _numPredOk = false; break; } _d--; }
+        }
+      }
+      if (numPredM && _numPredOk) {
+        const predFn  = numPredM[1];
+        const argExpr = numPredM[2].trim();
+        const argWat  = this.emitExpr(argExpr, locals, "f64");
+        if (predFn === "isNaN")     return `(f64.ne ${argWat} ${argWat})`;
+        if (predFn === "isFinite")  return `(i32.and (f64.lt ${argWat} (f64.const inf)) (f64.gt ${argWat} (f64.const -inf)))`;
+        if (predFn === "isInteger") return `(f64.eq (f64.floor ${argWat}) ${argWat})`;
       }
     }
 
@@ -6089,6 +6125,7 @@ class WasicTranspiler {
     }
 
     // Object destructuring: const { x, y } = structVar  or  const { x: localX } = structVar
+    // Phase 48: supports "= default" fallback when field value is zero (wasic zero-sentinel semantics)
     const destructMatch = line.match(/^(?:var|let|const)\s*\{([^}]+)\}\s*=\s*(\w+)\s*;?$/);
     if (destructMatch) {
       const sv = this.structVars.get(destructMatch[2]);
@@ -6098,9 +6135,32 @@ class WasicTranspiler {
       }
       const stmts: string[] = [];
       for (const binding of destructMatch[1].split(",").map(b => b.trim()).filter(Boolean)) {
+        // Parse binding: "field", "field = default", "field: local", "field: local = default"
+        let fieldName: string;
+        let localName: string;
+        let defaultExpr: string | null = null;
         const colonIdx = binding.indexOf(":");
-        const fieldName = colonIdx !== -1 ? binding.slice(0, colonIdx).trim() : binding;
-        const localName = colonIdx !== -1 ? binding.slice(colonIdx + 1).trim() : binding;
+        if (colonIdx !== -1) {
+          fieldName = binding.slice(0, colonIdx).trim();
+          const restPart = binding.slice(colonIdx + 1).trim();
+          const eqIdx = restPart.indexOf("=");
+          if (eqIdx !== -1) {
+            localName   = restPart.slice(0, eqIdx).trim();
+            defaultExpr = restPart.slice(eqIdx + 1).trim();
+          } else {
+            localName = restPart;
+          }
+        } else {
+          const eqIdx = binding.indexOf("=");
+          if (eqIdx !== -1) {
+            fieldName   = binding.slice(0, eqIdx).trim();
+            localName   = fieldName;
+            defaultExpr = binding.slice(eqIdx + 1).trim();
+          } else {
+            fieldName = binding;
+            localName = binding;
+          }
+        }
         const field = sv.def.fields.find(f => f.name === fieldName);
         if (!field) {
           this.diagnostics.push(`Destructuring: field '${fieldName}' not found in struct '${sv.def.name}'`);
@@ -6111,7 +6171,16 @@ class WasicTranspiler {
         const baseWat = sv.ptr === -1
           ? `(local.get $${destructMatch[2]})`
           : `(i32.const ${sv.ptr})`;
-        stmts.push(`(local.set $${localName} (${loadOp} (i32.add ${baseWat} (i32.const ${field.offset}))))`);
+        const loadWat = `(${loadOp} (i32.add ${baseWat} (i32.const ${field.offset})))`;
+        if (defaultExpr !== null) {
+          const defWat = this.emitExpr(defaultExpr, locals, field.type);
+          const eqzWat = field.type === "f64"
+            ? `(f64.eq ${loadWat} (f64.const 0.0))`
+            : `(i32.eqz ${loadWat})`;
+          stmts.push(`(local.set $${localName} (if (result ${field.type}) ${eqzWat} (then ${defWat}) (else ${loadWat})))`);
+        } else {
+          stmts.push(`(local.set $${localName} ${loadWat})`);
+        }
       }
       return stmts.join("\n      ");
     }
@@ -6288,6 +6357,18 @@ class WasicTranspiler {
       if (laOp === "&&=") {
         return `(if ${getWat} (then ${setVal}))`;
       }
+    }
+
+    // Phase 48: **= exponent compound assignment — expanded to x = Math.pow(x, rhs)
+    const expAssignMatch = line.match(/^(\w+)\s*\*\*=\s*(.+?);?$/);
+    if (expAssignMatch && (locals.has(expAssignMatch[1]) || this.moduleGlobals.has(expAssignMatch[1]))) {
+      const eaVar = expAssignMatch[1];
+      const eaRhs = expAssignMatch[2].trim();
+      const isGlobal = !locals.has(eaVar) && this.moduleGlobals.has(eaVar);
+      const getWat = isGlobal ? `(global.get $${eaVar})` : `(local.get $${eaVar})`;
+      this.mathHelpers.add("math_pow");
+      const powWat = `(call $__math_pow ${getWat} ${this.emitExpr(eaRhs, locals, "f64")})`;
+      return isGlobal ? `(global.set $${eaVar} ${powWat})` : `(local.set $${eaVar} ${powWat})`;
     }
 
     const compoundMatch = line.match(/^(\w+)\s*(>>>=|>>=|<<=|\+=|-=|\*=|\/=|%=|&=|\|=|\^=)\s*(.+?);?$/);
@@ -8551,10 +8632,14 @@ class WasicTranspiler {
   (func $__i32_max (param $a i32) (param $b i32) (result i32)
     (select (local.get $a) (local.get $b) (i32.gt_s (local.get $a) (local.get $b)))
   )`,
-      `  ;; Math.pow — iterative (accurate for non-negative integer exponents)
+      `  ;; Math.pow — iterative for integer exponents; sqrt special case for exp=0.5
   (func $__math_pow (param $base f64) (param $exp f64) (result f64)
     (local $result f64)
     (local $n i32)
+    (if (f64.eq (local.get $exp) (f64.const 0.5))
+      (then (return (f64.sqrt (local.get $base)))))
+    (if (f64.eq (local.get $exp) (f64.const -0.5))
+      (then (return (f64.div (f64.const 1) (f64.sqrt (local.get $base))))))
     (local.set $result (f64.const 1))
     (local.set $n (i32.trunc_f64_s (local.get $exp)))
     (block $done
@@ -10662,14 +10747,25 @@ class WasicTranspiler {
         locals.set("__arr_ret", "i32");
       }
       // Object destructuring: const { x, y } = structVar  or  const { x: localX } = structVar
+      // Phase 48: also handles "= default" suffix on each binding
       const destructPre = line.match(/^(?:var|let|const)\s*\{([^}]+)\}\s*=\s*(\w+)\s*;?$/);
       if (destructPre) {
         const sv = this.structVars.get(destructPre[2]);
         if (sv) {
           for (const binding of destructPre[1].split(",").map(b => b.trim()).filter(Boolean)) {
+            let fieldName: string;
+            let localName: string;
             const colonIdx = binding.indexOf(":");
-            const fieldName = colonIdx !== -1 ? binding.slice(0, colonIdx).trim() : binding;
-            const localName = colonIdx !== -1 ? binding.slice(colonIdx + 1).trim() : binding;
+            if (colonIdx !== -1) {
+              fieldName = binding.slice(0, colonIdx).trim();
+              const restPart = binding.slice(colonIdx + 1).trim();
+              const eqIdx = restPart.indexOf("=");
+              localName = eqIdx !== -1 ? restPart.slice(0, eqIdx).trim() : restPart;
+            } else {
+              const eqIdx = binding.indexOf("=");
+              fieldName = eqIdx !== -1 ? binding.slice(0, eqIdx).trim() : binding;
+              localName = fieldName;
+            }
             const field = sv.def.fields.find(f => f.name === fieldName);
             if (field) {
               declaredLocals.push([localName, field.type]);

@@ -333,8 +333,8 @@ function parseSingleArg(
   }
 
   // ── Numeric literal (compile-time constant → embed as string)
-  if (/^-?\d+(\.\d+)?$/.test(token)) {
-    return [{ kind: "literal", text: token }];
+  if (/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(token)) {
+    return [{ kind: "literal", text: String(Number(token)) }];
   }
 
   // ── Phase 24: null / undefined literals
@@ -451,8 +451,8 @@ function parseSingleArg(
   }
 
   // ── Dot-call expression: receiver.method(args) or this.method(args) — class/static calls
-  // Skip Math.* tokens — they have their own dedicated handler below.
-  if (dotCallLookup && !token.startsWith("Math.") && /^(?:this|\w+)\.(\w+)\s*\(/.test(token)) {
+  // Skip Math.* and Number.* tokens — they have their own dedicated handlers below.
+  if (dotCallLookup && !token.startsWith("Math.") && !token.startsWith("Number.") && /^(?:this|\w+)\.(\w+)\s*\(/.test(token)) {
     const result = dotCallLookup(token);
     if (result) {
       const kind = result.type === "f64" || result.type === "f32" ? "f64expr" as const
@@ -545,6 +545,14 @@ function parseSingleArg(
       typeStr = arrInfo ? "object" : "number";
     } else typeStr = "undefined";
     return [{ kind: "literal", text: typeStr }];
+  }
+
+  // ── Global isNaN(x) — must precede callMatch to avoid (call $isNaN ...)
+  { const gIsNaNM = token.match(/^isNaN\s*\((.+)\)$/);
+    if (gIsNaNM) {
+      const aW = exprToWat(gIsNaNM[1].trim(), locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals);
+      return [{ kind: "boolexpr", wat: `(f64.ne ${aW} ${aW})` }];
+    }
   }
 
   // ── Function call: name(arg, arg, ...)
@@ -696,6 +704,32 @@ function parseSingleArg(
     }
   }
 
+  // ── Boolean expression: &&, ||, !, comparisons → boolexpr (prints "true"/"false")
+  // Must run BEFORE Number.*/Math.* so that "Number.MAX_SAFE_INTEGER > 1e16" is caught here,
+  // not misidentified as an f64 constant by the Number.* handler.
+  // BUT: if there's a top-level ternary ? the whole expr is a ternary, not a bool.
+  const _hasTernary = findTopLevelOp(token, "?") !== -1;
+  if (!_hasTernary && (token.startsWith("!")
+      || findTopLevelOp(token, "&&") !== -1
+      || findTopLevelOp(token, "||") !== -1
+      || /===|!==/.test(token)
+      || findTopLevelOp(token, ">=") !== -1
+      || findTopLevelOp(token, "<=") !== -1
+      || findTopLevelOp(token, ">") !== -1
+      || findTopLevelOp(token, "<") !== -1)) {
+    return [{ kind: "boolexpr", wat: exprToWat(token, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals) }];
+  }
+
+  // ── Phase 48: Number.* — constants produce f64, predicates produce boolexpr
+  if (token.startsWith("Number.")) {
+    const numPredCallM = token.match(/^Number\.(isNaN|isFinite|isInteger)\(/);
+    if (numPredCallM) {
+      return [{ kind: "boolexpr", wat: exprToWat(token, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals) }];
+    }
+    // Constants (Number.NaN, Number.POSITIVE_INFINITY, etc.) → f64
+    return [{ kind: "f64expr", wat: exprToWat(token, locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals) }];
+  }
+
   // ── Math.* — route to correct kind based on return type
   if (token.startsWith("Math.")) {
     const mathCallM = token.match(/^Math\.(\w+)\(/);
@@ -705,17 +739,6 @@ function parseSingleArg(
     }
     // All other Math functions produce f64
     return [{ kind: "f64expr", wat: exprToWat(token, locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals) }];
-  }
-
-  // ── Boolean expression: &&, ||, !, comparisons → boolexpr (prints "true"/"false")
-  // Check before the arithmetic fallback to avoid routing boolean ops through f64.
-  // BUT: if there's a top-level ternary ? the whole expr is a ternary, not a bool.
-  const _hasTernary = findTopLevelOp(token, "?") !== -1;
-  if (!_hasTernary && (token.startsWith("!")
-      || findTopLevelOp(token, "&&") !== -1
-      || findTopLevelOp(token, "||") !== -1
-      || /===|!==/.test(token))) {
-    return [{ kind: "boolexpr", wat: exprToWat(token, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals) }];
   }
 
   // ── String ternary: cond ? strExpr : strExpr → strexpr using select for ptr and len
@@ -866,6 +889,11 @@ function exprToWat(
     return `(${t}.const ${expr})`;
   }
 
+  // Scientific notation literal (e.g. 1e16, 3.5e-4, -1e10) — always f64
+  if (/^-?\d+(\.\d+)?[eE][+-]?\d+$/.test(expr)) {
+    return `(f64.const ${expr})`;
+  }
+
   // Special constants — must be checked before the identifier fallback
   const CONSTANTS: Record<string, string> = {
     NaN:       "(f64.const nan)",
@@ -955,6 +983,49 @@ function exprToWat(
   if (sfChainedDotM && structLookup) {
     const fi = structLookup(`${sfChainedDotM[1]}.${sfChainedDotM[2]}`, sfChainedDotM[3]);
     if (fi) return fi.watLoad;
+  }
+
+  // Global isNaN(x) → f64.ne x x
+  { const globalIsNaNEWat = expr.match(/^isNaN\s*\((.+)\)$/);
+    if (globalIsNaNEWat) {
+      const argWat = exprToWat(globalIsNaNEWat[1].trim(), locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals);
+      return `(f64.ne ${argWat} ${argWat})`;
+    }
+  }
+
+  // Phase 48: Number.* constants and predicates
+  if (expr.startsWith("Number.")) {
+    const NUMBER_CONSTS: Record<string, string> = {
+      NaN:               "nan",
+      POSITIVE_INFINITY: "inf",
+      NEGATIVE_INFINITY: "-inf",
+      EPSILON:           "2.220446049250313e-16",
+      MAX_SAFE_INTEGER:  "9007199254740991",
+      MIN_SAFE_INTEGER:  "-9007199254740991",
+      MAX_VALUE:         "1.7976931348623157e+308",
+      MIN_VALUE:         "5e-324",
+    };
+    const numConstM = expr.match(/^Number\.(\w+)$/);
+    if (numConstM && NUMBER_CONSTS[numConstM[1]] !== undefined) {
+      return `(f64.const ${NUMBER_CONSTS[numConstM[1]]})`;
+    }
+    const numPredM = expr.match(/^Number\.(isNaN|isFinite|isInteger)\(([\s\S]*)\)$/);
+    let _numPredCLOk = false;
+    if (numPredM) {
+      let _d = 0; _numPredCLOk = true;
+      for (const _c of numPredM[2]) {
+        if (_c === '(') _d++;
+        else if (_c === ')') { if (_d === 0) { _numPredCLOk = false; break; } _d--; }
+      }
+    }
+    if (numPredM && _numPredCLOk) {
+      const predFn  = numPredM[1];
+      const argExpr = numPredM[2].trim();
+      const argWat  = exprToWat(argExpr, locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals);
+      if (predFn === "isNaN")     return `(f64.ne ${argWat} ${argWat})`;
+      if (predFn === "isFinite")  return `(i32.and (f64.lt ${argWat} (f64.const inf)) (f64.gt ${argWat} (f64.const -inf)))`;
+      if (predFn === "isInteger") return `(f64.eq (f64.floor ${argWat}) ${argWat})`;
+    }
   }
 
   // Math.* constants and functions

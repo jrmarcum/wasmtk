@@ -291,10 +291,14 @@
     (select (local.get $a) (local.get $b) (i32.gt_s (local.get $a) (local.get $b)))
   )
 
-  ;; Math.pow — iterative (accurate for non-negative integer exponents)
+  ;; Math.pow — iterative for integer exponents; sqrt special case for exp=0.5
   (func $__math_pow (param $base f64) (param $exp f64) (result f64)
     (local $result f64)
     (local $n i32)
+    (if (f64.eq (local.get $exp) (f64.const 0.5))
+      (then (return (f64.sqrt (local.get $base)))))
+    (if (f64.eq (local.get $exp) (f64.const -0.5))
+      (then (return (f64.div (f64.const 1) (f64.sqrt (local.get $base))))))
     (local.set $result (f64.const 1))
     (local.set $n (i32.trunc_f64_s (local.get $exp)))
     (block $done
@@ -334,7 +338,7 @@
     (local.set $tanDirect (call $mathlib_tan (local.get $a)))
     (local.set $tanRatio (f64.div (call $mathlib_sin (local.get $a)) (call $mathlib_cos (local.get $a))))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__f64_to_str (f64.floor (f64.add (f64.mul (f64.sub (local.get $tanDirect) (local.get $tanRatio)) (;? 1e12 ;) (f64.const 0)) (f64.const 0.5))) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (f64.floor (f64.add (f64.mul (f64.sub (local.get $tanDirect) (local.get $tanRatio)) (f64.const 1e12)) (f64.const 0.5))) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
