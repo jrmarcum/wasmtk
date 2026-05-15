@@ -271,6 +271,7 @@
   )
   (func $tryDivide (export "tryDivide") (param $a i32) (param $b i32) (result i32)
     (local $__obj_ret i32)
+    (local $__nested_ptr i32)
     (if (i32.eq (local.get $b) (i32.const 0))
       (then
       (local.set $__obj_ret (call $__malloc (i32.const 8)))

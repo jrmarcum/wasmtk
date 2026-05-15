@@ -430,6 +430,7 @@
   )
   (func $newPerson (param $name_ptr i32) (param $name_len i32) (param $age f64) (result i32)
     (local $__obj_ret i32)
+    (local $__nested_ptr i32)
     (local.set $__obj_ret (call $__malloc (i32.const 16)))
       (i32.store offset=0 (local.get $__obj_ret) (local.get $name_ptr))
       (i32.store offset=4 (local.get $__obj_ret) (local.get $name_len))
@@ -439,6 +440,7 @@
 
   (func $newPersonWithAge (param $name_ptr i32) (param $name_len i32) (result i32)
     (local $__obj_ret i32)
+    (local $__nested_ptr i32)
     (local.set $__obj_ret (call $__malloc (i32.const 16)))
       (i32.store offset=0 (local.get $__obj_ret) (local.get $name_ptr))
       (i32.store offset=4 (local.get $__obj_ret) (local.get $name_len))

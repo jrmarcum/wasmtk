@@ -271,6 +271,7 @@
   )
   (func $minMax (param $a i32) (param $b i32) (result i32)
     (local $__obj_ret i32)
+    (local $__nested_ptr i32)
     (if (i32.lt_s (local.get $a) (local.get $b))
       (then
       (local.set $__obj_ret (call $__malloc (i32.const 8)))
@@ -293,6 +294,7 @@
     (local $q i32)
     (local $r i32)
     (local $__obj_ret i32)
+    (local $__nested_ptr i32)
     (local.set $q (i32.or (i32.div_s (local.get $a) (local.get $b)) (i32.const 0)))
     (local.set $r (i32.rem_s (local.get $a) (local.get $b)))
     (local.set $__obj_ret (call $__malloc (i32.const 8)))

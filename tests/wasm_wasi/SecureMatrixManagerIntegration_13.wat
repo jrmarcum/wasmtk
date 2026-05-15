@@ -321,6 +321,7 @@
     (local $data i32)
     (local $__2d_tmp i32)
     (local $__obj_ret i32)
+    (local $__nested_ptr i32)
     (local $__arr_tmp i32)
     (local $__arr_tmp2 i32)
     (local.set $data (call $__malloc (i32.const 40)))

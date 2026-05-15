@@ -319,6 +319,7 @@
   (func $createManager (export "createManager") (param $initialRows i32) (result i32)
     (local $data i32)
     (local $__obj_ret i32)
+    (local $__nested_ptr i32)
     (local.set $data (local.get $initialRows))
     (local.set $__obj_ret (call $__malloc (i32.const 12)))
       (i32.store offset=0 (local.get $__obj_ret) (call $__anon_0__factory (local.get $data)))

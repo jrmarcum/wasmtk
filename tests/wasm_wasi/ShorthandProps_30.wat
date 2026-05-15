@@ -271,6 +271,7 @@
   )
   (func $makeVec (param $x f64) (param $y f64) (result i32)
     (local $__obj_ret i32)
+    (local $__nested_ptr i32)
     (local.set $__obj_ret (call $__malloc (i32.const 16)))
       (f64.store offset=0 (local.get $__obj_ret) (local.get $x))
       (f64.store offset=8 (local.get $__obj_ret) (local.get $y))
@@ -279,6 +280,7 @@
 
   (func $makeRect (param $width i32) (param $height i32) (result i32)
     (local $__obj_ret i32)
+    (local $__nested_ptr i32)
     (local.set $__obj_ret (call $__malloc (i32.const 8)))
       (i32.store offset=0 (local.get $__obj_ret) (local.get $width))
       (i32.store offset=4 (local.get $__obj_ret) (local.get $height))
@@ -289,6 +291,7 @@
     (local $x f64)
     (local $y f64)
     (local $__obj_ret i32)
+    (local $__nested_ptr i32)
     (local.set $x (f64.mul (f64.load (i32.add (local.get $v) (i32.const 0))) (local.get $factor)))
     (local.set $y (f64.mul (f64.load (i32.add (local.get $v) (i32.const 8))) (local.get $factor)))
     (local.set $__obj_ret (call $__malloc (i32.const 16)))

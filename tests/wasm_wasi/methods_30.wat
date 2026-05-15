@@ -271,6 +271,7 @@
   )
   (func $newRect (param $width f64) (param $height f64) (result i32)
     (local $__obj_ret i32)
+    (local $__nested_ptr i32)
     (local.set $__obj_ret (call $__malloc (i32.const 16)))
       (f64.store offset=0 (local.get $__obj_ret) (local.get $width))
       (f64.store offset=8 (local.get $__obj_ret) (local.get $height))

@@ -273,6 +273,7 @@
   (func $createCounter  (result i32)
     (local $count i32)
     (local $__obj_ret i32)
+    (local $__nested_ptr i32)
     (local.set $count (call $__malloc (i32.const 4)))
       (i32.store (local.get $count) (i32.const 0))
     (local.set $__obj_ret (call $__malloc (i32.const 8)))

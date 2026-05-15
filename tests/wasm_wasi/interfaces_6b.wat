@@ -461,6 +461,7 @@
   )
   (func $newRect (param $w f64) (param $h f64) (result i32)
     (local $__obj_ret i32)
+    (local $__nested_ptr i32)
     (local.set $__obj_ret (call $__malloc (i32.const 24)))
       (i32.store offset=0 (local.get $__obj_ret) (i32.const 260))
       (i32.store offset=4 (local.get $__obj_ret) (i32.const 4))
@@ -471,6 +472,7 @@
 
   (func $newCircle (param $r f64) (result i32)
     (local $__obj_ret i32)
+    (local $__nested_ptr i32)
     (local.set $__obj_ret (call $__malloc (i32.const 24)))
       (i32.store offset=0 (local.get $__obj_ret) (i32.const 264))
       (i32.store offset=4 (local.get $__obj_ret) (i32.const 6))
