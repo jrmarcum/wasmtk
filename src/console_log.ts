@@ -49,6 +49,84 @@ export const SCRATCH_SLOTS = 4;
 export const DATA_BASE = SCRATCH_BASE + SCRATCH_SLOTS * 32; // 260
 
 // ---------------------------------------------------------------------------
+// Escape-sequence processing
+// ---------------------------------------------------------------------------
+
+/**
+ * Converts TypeScript/JavaScript escape sequences in a raw source string
+ * (the content between the surrounding quote characters) to their actual
+ * character values. The surrounding quotes must NOT be included.
+ *
+ * Supported sequences:
+ *   \n \r \t \b \f \v \0  \\ \' \" \`
+ *   \xHH          (hex byte, exactly 2 hex digits)
+ *   \uHHHH        (Unicode code point, exactly 4 hex digits, UTF-8 encoded)
+ *   \u{H…}        (Unicode code point, variable hex digits, UTF-8 encoded)
+ *
+ * Malformed sequences (e.g. \x with fewer than 2 hex digits) are passed
+ * through unchanged so the compiler never silently loses source content.
+ */
+export function unescapeString(raw: string): string {
+  if (!raw.includes("\\")) return raw; // fast path: no escapes present
+  let result = "";
+  let i = 0;
+  while (i < raw.length) {
+    if (raw[i] !== "\\") { result += raw[i++]; continue; }
+    i++; // skip the backslash
+    if (i >= raw.length) { result += "\\"; break; }
+    const ch = raw[i];
+    switch (ch) {
+      case "n":  result += "\n"; i++; break;
+      case "r":  result += "\r"; i++; break;
+      case "t":  result += "\t"; i++; break;
+      case "b":  result += "\b"; i++; break;
+      case "f":  result += "\f"; i++; break;
+      case "v":  result += "\v"; i++; break;
+      case "0":  result += "\0"; i++; break;
+      case "\\":  result += "\\"; i++; break;
+      case "'":  result += "'";  i++; break;
+      case '"':  result += '"';  i++; break;
+      case "`":  result += "`";  i++; break;
+      case "x": {
+        const hex = raw.slice(i + 1, i + 3);
+        if (/^[0-9a-fA-F]{2}$/.test(hex)) {
+          result += String.fromCharCode(parseInt(hex, 16));
+          i += 3; // skip 'x' + 2 hex digits
+        } else {
+          result += "\\x"; i++; // malformed — pass through
+        }
+        break;
+      }
+      case "u": {
+        if (raw[i + 1] === "{") {
+          // \u{H…} variable-length code point
+          const end = raw.indexOf("}", i + 2);
+          if (end !== -1 && end > i + 2) {
+            const hex = raw.slice(i + 2, end);
+            if (/^[0-9a-fA-F]+$/.test(hex)) {
+              result += String.fromCodePoint(parseInt(hex, 16));
+              i = end + 1;
+            } else { result += "\\u{"; i++; }
+          } else { result += "\\u{"; i++; }
+        } else {
+          // \uHHHH exactly 4 hex digits
+          const hex = raw.slice(i + 1, i + 5);
+          if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+            result += String.fromCodePoint(parseInt(hex, 16));
+            i += 5; // skip 'u' + 4 hex digits
+          } else { result += "\\u"; i++; }
+        }
+        break;
+      }
+      default:
+        result += ch; i++; // unknown escape → pass the character through
+        break;
+    }
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Segment types
 // ---------------------------------------------------------------------------
 
@@ -246,12 +324,12 @@ function parseSingleArg(
 
   // ── Double-quoted string literal
   if (token.startsWith('"') && token.endsWith('"')) {
-    return [{ kind: "literal", text: token.slice(1, -1) }];
+    return [{ kind: "literal", text: unescapeString(token.slice(1, -1)) }];
   }
 
   // ── Single-quoted string literal
   if (token.startsWith("'") && token.endsWith("'")) {
-    return [{ kind: "literal", text: token.slice(1, -1) }];
+    return [{ kind: "literal", text: unescapeString(token.slice(1, -1)) }];
   }
 
   // ── Numeric literal (compile-time constant → embed as string)
@@ -720,8 +798,8 @@ function parseTemplateLiteral(
 
   while (i < body.length) {
     if (body[i] === "$" && body[i + 1] === "{") {
-      // Flush preceding text
-      if (i > textStart) segments.push({ kind: "literal", text: body.slice(textStart, i) });
+      // Flush preceding text (unescape escape sequences in the static text)
+      if (i > textStart) segments.push({ kind: "literal", text: unescapeString(body.slice(textStart, i)) });
       // Find closing }
       let depth = 1;
       let j = i + 2;
@@ -738,7 +816,7 @@ function parseTemplateLiteral(
       i++;
     }
   }
-  if (textStart < body.length) segments.push({ kind: "literal", text: body.slice(textStart) });
+  if (textStart < body.length) segments.push({ kind: "literal", text: unescapeString(body.slice(textStart)) });
   return segments;
 }
 

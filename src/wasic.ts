@@ -135,6 +135,7 @@ import {
   getHelperWat,
   getArrPrintHelperWat,
   getJoinHelperWat,
+  unescapeString,
   type DataAllocator,
   type FuncLookup,
   type LogSegment,
@@ -2859,7 +2860,8 @@ class WasicTranspiler {
   // -------------------------------------------------------------------------
   // String data allocation
   // -------------------------------------------------------------------------
-  private allocString(msg: string): [number, number] {
+  private allocString(raw: string): [number, number] {
+    const msg = unescapeString(raw); // process escape sequences from source code
     const existing = this.dataMap.get(msg);
     if (existing) return existing;
     const bytes = new TextEncoder().encode(msg);
@@ -2871,7 +2873,8 @@ class WasicTranspiler {
   }
 
   /** Allocates a string in the data section without setting hasConsoleLog (for throw messages). */
-  private allocStringNoLog(msg: string): [number, number] {
+  private allocStringNoLog(raw: string): [number, number] {
+    const msg = unescapeString(raw); // process escape sequences from source code
     const existing = this.dataMap.get(msg);
     if (existing) return existing;
     const bytes = new TextEncoder().encode(msg);

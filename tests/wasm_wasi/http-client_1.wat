@@ -2,7 +2,7 @@
   (import "wasi_snapshot_preview1" "proc_exit" (func $proc_exit (param i32)))
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
   (memory (export "memory") 2)
-  (global $__heap_ptr (mut i32) (i32.const 378))
+  (global $__heap_ptr (mut i32) (i32.const 376))
   ;; Bump allocator — advances __heap_ptr and returns the old value
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
@@ -41,13 +41,13 @@
             (i32.const 1)
             (i32.const 128)))
         (i32.store (i32.const 0) (i32.const 316))
-          (i32.store (i32.const 4) (i32.const 29))
+          (i32.store (i32.const 4) (i32.const 27))
           (drop (call $fd_write
             (i32.const 1)
             (i32.const 0)
             (i32.const 1)
             (i32.const 128)))
-        (i32.store (i32.const 0) (i32.const 345))
+        (i32.store (i32.const 0) (i32.const 343))
           (i32.store (i32.const 4) (i32.const 33))
           (drop (call $fd_write
             (i32.const 1)
@@ -60,6 +60,6 @@
   (data (i32.const 284) "\3c\21\44\4f\43\54\59\50\45\20\68\74\6d\6c\3e\0a")
   (data (i32.const 300) "\3c\68\74\6d\6c\3e\0a")
   (data (i32.const 307) "\20\20\3c\68\65\61\64\3e\0a")
-  (data (i32.const 316) "\20\20\20\20\3c\6d\65\74\61\20\63\68\61\72\73\65\74\3d\5c\22\75\74\66\2d\38\5c\22\3e\0a")
-  (data (i32.const 345) "\20\20\20\20\3c\74\69\74\6c\65\3e\47\6f\20\62\79\20\45\78\61\6d\70\6c\65\3c\2f\74\69\74\6c\65\3e\0a")
+  (data (i32.const 316) "\20\20\20\20\3c\6d\65\74\61\20\63\68\61\72\73\65\74\3d\22\75\74\66\2d\38\22\3e\0a")
+  (data (i32.const 343) "\20\20\20\20\3c\74\69\74\6c\65\3e\47\6f\20\62\79\20\45\78\61\6d\70\6c\65\3c\2f\74\69\74\6c\65\3e\0a")
 )
