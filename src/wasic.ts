@@ -718,6 +718,12 @@ class WasicTranspiler {
 
   // Class definitions (Phase 9): className → ClassDef
   private classDefs: Map<string, ClassDef> = new Map();
+  // Phase 47: derived class name → base class name (populated by parseClasses)
+  private classInheritance: Map<string, string> = new Map();
+  // Phase 47: className → integer tag (1, 2, ...) assigned when any class uses extends
+  private classTags: Map<string, number> = new Map();
+  // Phase 47: 4 when any class in this module uses extends (all classes get a 4-byte tag header), 0 otherwise.
+  private classHeaderSize: number = 0;
   // Per-function class instance variable tracking: varName → { className, ptr }
   // ptr=-1 means the instance comes from a parameter (runtime pointer); ptr>=0 is static address.
   // Reset at the start of each emitFunction call.
@@ -2659,11 +2665,13 @@ class WasicTranspiler {
    */
   private parseClasses(): void {
     const src = this.src;
-    const classRe = /(?:export\s+)?class\s+(\w+)(?:\s+extends\s+\w+)?\s*\{/g;
+    const classRe = /(?:export\s+)?class\s+(\w+)(?:\s+extends\s+(\w+))?\s*\{/g;
     let m: RegExpExecArray | null;
 
     while ((m = classRe.exec(src)) !== null) {
       const className = m[1];
+      const baseName = m[2] ?? null;
+      if (baseName !== null) this.classInheritance.set(className, baseName);
       const classBodyStart = m.index + m[0].length;
 
       // Find end of class body by brace counting
@@ -2680,6 +2688,15 @@ class WasicTranspiler {
       const fields: StructField[] = [];
       let fieldOffset = 0;
       let fieldDepth = 0;
+
+      // Phase 47: prepend parent struct fields when extending another class
+      if (baseName !== null) {
+        const parentCd = this.classDefs.get(baseName);
+        if (parentCd) {
+          for (const pf of parentCd.struct.fields) fields.push({ ...pf });
+          fieldOffset = parentCd.struct.totalSize;
+        }
+      }
 
       for (const rawLine of classBody.split("\n")) {
         const line = rawLine.trim();
@@ -2814,15 +2831,42 @@ class WasicTranspiler {
         scanPos++;
       }
     }
+
+    // Phase 47: if any class uses extends, add a 4-byte tag header to every class in this module.
+    if (this.classInheritance.size > 0) {
+      this.classHeaderSize = 4;
+      let nextTag = 1;
+      for (const name of this.classDefs.keys()) this.classTags.set(name, nextTag++);
+      // Shift all class field offsets by +4 and grow totalSize by 4.
+      for (const [, cd] of this.classDefs) {
+        for (const f of cd.struct.fields) f.offset += 4;
+        cd.struct.totalSize += 4;
+      }
+    }
+  }
+
+  /** Phase 47: Walk the classInheritance chain to find the WAT function implementing a method. */
+  private resolveMethodFunc(className: string, methodName: string): string | null {
+    let current: string | undefined = className;
+    while (current !== undefined) {
+      const funcName = `${current}_${methodName}`;
+      if (this.functions.find(f => f.name === funcName)) return funcName;
+      current = this.classInheritance.get(current);
+    }
+    return null;
   }
 
   /** Allocates `totalSize` zero-filled bytes in the data section. Returns base pointer. */
-  private allocStructData(def: StructDef, initFields: Record<string, string>): number {
+  private allocStructData(def: StructDef, initFields: Record<string, string>, classTag?: number): number {
     const ptr = this.dataOffset;
     this.dataOffset += def.totalSize; // reserve struct bytes FIRST so string allocs land after
     // Build a byte array of totalSize, filling each field
     const bytes = new Uint8Array(def.totalSize);
     const view  = new DataView(bytes.buffer);
+    // Phase 47: write class tag at offset 0 when inheritance header is present
+    if (this.classHeaderSize > 0 && classTag !== undefined) {
+      view.setInt32(0, classTag, true);
+    }
     for (const field of def.fields) {
       const raw = initFields[field.name];
       if (raw === undefined) continue;
@@ -4465,7 +4509,8 @@ class WasicTranspiler {
       if (dotMethodMatch) {
         const methodName = dotMethodMatch[1];
         const argsStr = dotMethodMatch[2].trim();
-        const funcName = `${this.currentMethodClass}_${methodName}`;
+        // Phase 47: walk inheritance chain to find overriding or inherited method
+        const funcName = this.resolveMethodFunc(this.currentMethodClass!, methodName) ?? `${this.currentMethodClass}_${methodName}`;
         const fn = this.functions.find(f => f.name === funcName);
         if (fn) {
           const args = argsStr ? this.splitArgs(argsStr) : [];
@@ -4810,7 +4855,8 @@ class WasicTranspiler {
       // Instance method call
       const cv = this.classVars.get(receiver);
       if (cv) {
-        const funcName = `${cv.className}_${methodName}`;
+        // Phase 47: walk inheritance chain to find overriding or inherited method
+        const funcName = this.resolveMethodFunc(cv.className, methodName) ?? `${cv.className}_${methodName}`;
         const fn = this.functions.find(f => f.name === funcName);
         if (fn) {
           const baseWat = cv.ptr === -1 ? `(local.get $${receiver})` : `(i32.const ${cv.ptr})`;
@@ -6944,6 +6990,20 @@ class WasicTranspiler {
         }
       }
       const structLookupFn: StructFieldLookup = (vn, fn) => {
+        // Phase 9 / 47: `this.field` access inside a class instance method body
+        if (vn === "this" && this.currentMethodClass) {
+          const cd = this.classDefs.get(this.currentMethodClass);
+          const f = cd?.struct.fields.find(fi => fi.name === fn);
+          if (f) {
+            const loadOp = f.type === "f64" ? "f64.load" : f.type === "i64" ? "i64.load" : "i32.load";
+            return { type: f.type, watLoad: `(${loadOp} (i32.add (local.get $__self) (i32.const ${f.offset})))` };
+          }
+          const getter = cd?.methods.find(m => m.isGetter && m.name === fn);
+          if (getter) {
+            const getFn = this.functions.find(gf => gf.name === `${this.currentMethodClass}_get_${fn}`);
+            return { type: getFn?.result ?? "f64", watLoad: `(call $${this.currentMethodClass}_get_${fn} (local.get $__self))` };
+          }
+        }
         // Phase 42: dotted vn = "a.b" — look up field fn on the struct pointed to by a.b
         if (vn.includes(".")) {
           const dotIdx = vn.indexOf(".");
@@ -7134,6 +7194,20 @@ class WasicTranspiler {
         }
       }
       const structLookupFn: StructFieldLookup = (vn, fn) => {
+        // Phase 9 / 47: `this.field` access inside a class instance method body
+        if (vn === "this" && this.currentMethodClass) {
+          const cd = this.classDefs.get(this.currentMethodClass);
+          const f = cd?.struct.fields.find(fi => fi.name === fn);
+          if (f) {
+            const loadOp = f.type === "f64" ? "f64.load" : f.type === "i64" ? "i64.load" : "i32.load";
+            return { type: f.type, watLoad: `(${loadOp} (i32.add (local.get $__self) (i32.const ${f.offset})))` };
+          }
+          const getter = cd?.methods.find(m => m.isGetter && m.name === fn);
+          if (getter) {
+            const getFn = this.functions.find(gf => gf.name === `${this.currentMethodClass}_get_${fn}`);
+            return { type: getFn?.result ?? "f64", watLoad: `(call $${this.currentMethodClass}_get_${fn} (local.get $__self))` };
+          }
+        }
         // Phase 42: dotted vn = "a.b" — look up field fn on the struct pointed to by a.b
         if (vn.includes(".")) {
           const dotIdx = vn.indexOf(".");
@@ -7365,7 +7439,8 @@ class WasicTranspiler {
       const args = argsStr ? this.splitArgs(argsStr) : [];
 
       if (receiver === "this" && this.currentMethodClass) {
-        const funcName = `${this.currentMethodClass}_${methodName}`;
+        // Phase 47: walk inheritance chain to find overriding or inherited method
+        const funcName = this.resolveMethodFunc(this.currentMethodClass, methodName) ?? `${this.currentMethodClass}_${methodName}`;
         const fn = this.functions.find(f => f.name === funcName);
         if (fn) {
           const emittedArgs = args.flatMap((a, i) => {
@@ -7380,7 +7455,8 @@ class WasicTranspiler {
 
       const cv = this.classVars.get(receiver);
       if (cv) {
-        const funcName = `${cv.className}_${methodName}`;
+        // Phase 47: walk inheritance chain to find overriding or inherited method
+        const funcName = this.resolveMethodFunc(cv.className, methodName) ?? `${cv.className}_${methodName}`;
         const fn = this.functions.find(f => f.name === funcName);
         if (fn) {
           const baseWat = cv.ptr === -1 ? `(local.get $${receiver})` : `(i32.const ${cv.ptr})`;
@@ -7502,6 +7578,24 @@ class WasicTranspiler {
             const hasResult = inner.result !== null && inner.result !== "never" && inner.result !== "string";
             return hasResult ? `(drop ${callWat})` : callWat;
           }
+        }
+      }
+    }
+
+    // Phase 47: super(...) — constructor chaining from derived class to parent
+    const superCallMatch = line.match(/^super\s*\((.*)\)\s*;?$/);
+    if (superCallMatch && this.currentMethodClass) {
+      const parentName = this.classInheritance.get(this.currentMethodClass);
+      if (parentName) {
+        const parentCtorFn = this.functions.find(f => f.name === `${parentName}_constructor`);
+        if (parentCtorFn) {
+          const rawSuperArgs = superCallMatch[1].trim();
+          const superArgs = rawSuperArgs ? this.splitArgs(rawSuperArgs) : [];
+          const emittedSuperArgs = superArgs.flatMap((a, i) => {
+            const pt = parentCtorFn.params[i + 1]?.type ?? ("i32" as WatType);
+            return [this.emitExpr(a, locals, pt)];
+          });
+          return `(call $${parentName}_constructor (local.get $__self) ${emittedSuperArgs.join(" ")})`.trim();
         }
       }
     }
@@ -10285,9 +10379,13 @@ class WasicTranspiler {
         const varName = newClassPre[1];
         const ctorName = newClassPre[3];
         const typeName = newClassPre[2] ?? ctorName;
-        const cd = this.classDefs.get(typeName) ?? this.classDefs.get(ctorName);
+        // Phase 47: prefer ctorName (concrete constructed type) so classVar.className tracks the
+        // concrete type, enabling correct method dispatch for base-typed variables like:
+        //   const a: Animal = new Dog(3)  →  classVar.className = "Dog"
+        const cd = this.classDefs.get(ctorName) ?? this.classDefs.get(typeName);
         if (cd) {
-          const ptr = this.allocStructData(cd.struct, {});
+          const classTag = this.classTags.get(cd.name);
+          const ptr = this.allocStructData(cd.struct, {}, classTag);
           this.classVars.set(varName, { className: cd.name, ptr });
           declaredLocals.push([varName, "i32"]);
           locals.set(varName, "i32");
