@@ -19,13 +19,16 @@ import { rt } from "./rt.ts";
 
 // ── WIT type definitions ─────────────────────────────────────────────────────
 
+/** WIT primitive type that can appear as a parameter or return type in a world declaration. */
 export type WitType = "s32" | "s64" | "f32" | "f64" | "bool" | "string";
 
+/** A single parameter in a WIT function signature with its camelCase TypeScript name and WIT type. */
 export interface WitParam {
   name: string;  // camelCase (already converted from kebab)
   type: WitType;
 }
 
+/** A parsed WIT function declaration with its original kebab-case name, derived camelCase name, params, and optional return type. */
 export interface WitFunc {
   name: string;     // original kebab-case WIT name (used to derive WASM symbol)
   tsName: string;   // camelCase TypeScript name
@@ -33,6 +36,7 @@ export interface WitFunc {
   result: WitType | null;  // null = void
 }
 
+/** The complete parsed representation of a `.wit` file produced by `wasmtk wasic` or `wasmtk modc`. */
 export interface ParsedWit {
   packageName: string;  // e.g. "local:basic-wit-gen-41"
   worldName: string;    // e.g. "basic-wit-gen-41"
@@ -40,6 +44,7 @@ export interface ParsedWit {
   exports: WitFunc[];
 }
 
+/** Options passed to `generateBindings()` and `runBindgen()`. */
 export interface BindgenOptions {
   runtime?: "deno" | "node" | "bun";
 }

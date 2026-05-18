@@ -34,6 +34,7 @@ import { runBindgen } from "./bindgen.ts";
 
 // ── types ────────────────────────────────────────────────────────────────────
 
+/** A `// @wasm`-annotated function extracted from a hybrid TypeScript source file. */
 export interface WasmFunc {
   name: string;
   text: string;      // complete function source text, guaranteed to start with "export "
@@ -41,6 +42,7 @@ export interface WasmFunc {
   lineEnd: number;   // 0-indexed last line of the function body
 }
 
+/** Result of `parseHybridFile()`: the extracted WASM functions, remaining TypeScript source, and any warnings. */
 export interface ParseResult {
   wasmFuncs: WasmFunc[];
   remainingSrc: string; // original source with @wasm functions (and their annotations) removed
@@ -56,6 +58,7 @@ const WASIC_PRIMITIVES = new Set([
   "number", // maps to f64 in wasic
 ]);
 
+/** Returns `true` if `t` is a wasic-compatible primitive type name (e.g. `"i32"`, `"string"`, `"bool[]"`). */
 export function isWasicType(t: string): boolean {
   const clean = t.trim().replace(/\s/g, "");
   if (WASIC_PRIMITIVES.has(clean)) return true;
