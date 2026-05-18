@@ -4,16 +4,18 @@
   <img src="wasmtk_logo.png" alt="wasmtk logo" width="300">
 </p>
 
-A polyglot WebAssembly toolkit for Deno. Seamlessly run, inspect, and convert Wasm modules regardless of their source language (Zig, Rust, AssemblyScript, or Javy).
+A polyglot WebAssembly toolkit for Deno. Compile TypeScript directly to optimized WASM via the `wasic` compiler, run and inspect modules from any source language, and compose multi-language projects into a single artifact.
 
 ## 🌟 Why wasmtk?
 
-Most runners are either too minimal (breaking on complex Zig/Rust builds) or too heavy. `wasmtk` provides a "just right" developer experience with:
+`wasmtk` is the home of **`wasic`** — a direct TypeScript-to-WASM compiler that emits optimized WAT with no embedded JavaScript runtime. It also provides a complete toolkit for running, inspecting, and composing WASM modules from any source language.
 
-- **Universal Running**: Execute `.ts`, `.js`, `.wasm`, and `.wat` with a single command.
-- **Strict WASI Support**: Expanded syscall shims (`fd_pwrite`, `clock_time_get`, etc.) ensure compatibility with Zig 0.11+ and Rust modules.
-- **Intelligent Inspection**: `wasmtk info` filters out the noise (CABI glue, memory helpers) to show you only what's callable.
-- **JIT WAT Compilation**: Run WebAssembly Text files directly—no manual `wat2wasm` steps required.
+- **`wasic` compiler**: Compile a TypeScript subset directly to optimized `.wasm` via WAT + wabt + Binaryen `-Oz`. Supports 49 language phases including closures, generics, classes, inheritance, discriminated unions, TypedArrays, and more — all without an embedded JS runtime.
+- **WIT interface generation**: Every compiled module automatically produces a `.wit` file describing its exports and imports — the foundation for cross-language interop and the WASM Component Model.
+- **Universal running**: Execute `.ts`, `.js`, `.wasm`, and `.wat` with a single command across Deno, Bun, and Node. Expanded WASI syscall shims ensure compatibility with modules compiled from Zig, Rust, C/C++, and Go.
+- **Library mode (`modc`)**: Compile TypeScript to a WASM library with no `_start` entry point — callable from any host environment.
+- **WASM bundling**: Merge multiple `.wasm` files into a single artifact; import pre-compiled `.wasm` modules directly from TypeScript source via `tsbundler`.
+- **jstyper**: Convert `.js` + `.d.ts` pairs to typed TypeScript that `wasic` can compile — bridges existing JS libraries into the WASM pipeline.
 
 ## 🚀 Quick Start
 
@@ -468,7 +470,6 @@ Patterns 1–3 route through a named function that `_start` calls. Patterns 4–
 
 | Feature | Status |
 | --- | --- |
-| Class inheritance (`extends`) | Deferred — virtual dispatch via vtable requires heap |
 | Multi-dimensional arrays beyond `i32[][]` | Phase 6d covers `i32[][]`; `f64[][]` and deeper nesting not yet implemented |
 
 > **Why the limitations?** `wasic` compiles directly to raw WAT with no runtime. Dynamic allocation, garbage collection, and prototype semantics cannot be expressed without an embedded runtime library. Use `wasmtk javyc` for programs that need them today.
@@ -738,7 +739,7 @@ All planned phases are implementable under WASI Preview 1. **All 247/247 tests p
 
 | Phase | Feature | Target tests | Key changes |
 | --- | --- | --- | --- |
-| 50 | **`bindgen`: TypeScript host binding generator** | New integration tests: `bindgen_math_50`, `bindgen_strings_50`, `bindgen_bool_50`, `bindgen_imports_50` | New `wasmtk bindgen <module.wit>` command; new `src/bindgen.ts` module. Reads a Phase 41 `.wit` file; emits a typed TypeScript binding file (`module.bindings.ts`) with a `loadModule()` async function and a matching `ModuleExports` interface. ABI translation: numeric WIT types (`s32`/`f64` etc.) pass directly; consecutive `(ptr: s32, len: s32)` param pairs detected as string ABI and wrapped with `TextEncoder`/`TextDecoder` against `WebAssembly.Memory`; bool params/returns normalized to `0`/`1` ↔ `boolean`; string returns read from exported `$__str_ret_ptr`/`$__str_ret_len` globals (Phase 42 side-channel). WIT `import` section maps to optional `ModuleImports` interface. `--runtime deno\|node\|bun` flag controls the `instantiate` call style. Completes the DLL model: write TypeScript → compile to `.wasm` → load from TypeScript host with full type safety. |
+| 50 | **Canonical ABI alignment + WIT-aware universalWasmLoader** | New integration tests verifying canonical ABI round-trips for strings, numerics, and booleans from a JS/TS host; existing 247 tests must continue to pass after ABI change | **wasmtk (prerequisite):** replace `__malloc` export with `cabi_realloc(ptr, old_size, align, new_size) → i32`; change string return emission from `$__str_ret_ptr`/`$__str_ret_len` globals to out-parameter convention (caller allocates 8-byte return area via `cabi_realloc`, callee stores ptr+len there) — aligns wasmtk output with the WASM Component Model Canonical ABI, making compiled modules natively consumable by any Component Model-aware runtime or `wit-bindgen`-generated host in Rust, Python, Go, Java, or C#. **universalWasmLoader enhancement:** WIT auto-detection (`.wit` alongside `.wasm`), WIT parser, canonical ABI translation layer (string encode/decode, out-param string return decoding, bool normalization), options interface `wasmImport(path, { abi?, wit?, imports? })`, ABI profiles `"component"` (default) and `"raw"` (legacy passthrough). **Spec document (`SPEC.md` in universalWasmLoader repo):** defines the cross-language loader contract — interface, ABI conventions, and reference test suite — that every language port (Rust, Python, Go, Java, C#) must implement. This phase completes the DLL model and is the foundation of the polyglot WASM ecosystem described in VISION.md. |
 
 ### WASM Compatibility Limitations
 
