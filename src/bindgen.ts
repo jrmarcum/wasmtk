@@ -176,11 +176,6 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
         if (p.type === "bool") return `_a${i} !== 0`;
         return `_a${i}`;
       }).join(", ");
-      const retConvert = fn.result === "bool"
-        ? `(v: number) => v ? 1 : 0`
-        : fn.result === null
-          ? `(${argList}: number) => { imports?.env?.${fn.tsName}?.(${callArgs}); }`
-          : `(${argList}: number) => (imports?.env?.${fn.tsName}?.(${callArgs}) ?? 0)`;
       if (fn.result === null) {
         lines.push(`  env["${wasmName}"] = (${argList}: number) => { imports?.env?.${fn.tsName}?.(${callArgs}); };`);
       } else {
