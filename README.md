@@ -734,6 +734,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | 48 (2026-05-15) | Language completeness: Number API, operators, control flow | **`Number.*` constants:** `NUMBER_CONSTS` lookup map added in `emitExpr` (`wasic.ts`) and `exprToWat` (`console_log.ts`) — `Number.NaN→(f64.const nan)`, `Number.POSITIVE_INFINITY→(f64.const inf)`, `Number.NEGATIVE_INFINITY→(f64.const -inf)`, `Number.EPSILON→(f64.const 2.22e-16)`, `Number.MAX_SAFE_INTEGER→(f64.const 9007199254740991)`, `Number.MIN_SAFE_INTEGER→(f64.const -9007199254740991)`, `Number.MAX_VALUE→(f64.const 1.7976931348623157e308)`, `Number.MIN_VALUE→(f64.const 5e-324)`. **`Number.*` predicates:** `Number.isNaN(x)→(f64.ne x x)` (NaN ≠ itself); `Number.isFinite(x)→(i32.and (f64.lt x inf) (f64.gt x -inf))`; `Number.isInteger(x)→(f64.eq (f64.floor x) x)`. **`dotCallLookup` guard:** added `!token.startsWith("Number.")` alongside the existing `!token.startsWith("Math.")` guard so `Number.isNaN(x)` is not misrouted through the dot-call i32 path. **`parseSingleArg` boolexpr ordering fix (critical):** the entire boolexpr detection block (comparisons, `&&`, `\|\|`, `!`) moved BEFORE the `Number.*` and `Math.*` handlers — without this, `Number.MAX_SAFE_INTEGER > 1e16` was caught by the `Number.*` guard and returned `f64expr`, causing `$__f64_to_str` to receive the i32 result of `f64.gt` (WAT type error). **Scientific notation literals:** numeric literal regex extended from `/^-?\d+(\.\d+)?$/` to `/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/` in both `emitExpr` (`wasic.ts`) and `exprToWat` / `parseSingleArg` (`console_log.ts`) so `1e16`, `3.5e-4`, etc. are recognized. **`**=` compound assignment:** new `expAssignMatch` handler in `emitStatement` before `compoundMatch`; uses `$__math_pow` via `mathHelpers.add("math_pow")`; supports locals and module globals. **`$__math_pow` sqrt special case:** early-return branches added for `exp === 0.5` → `(f64.sqrt base)` and `exp === -0.5` → `(f64.div 1 (f64.sqrt base))` before the integer-exponent loop. **Object destructuring with defaults:** `destructMatch` block updated with 4-form binding parser (`"field"`, `"field = default"`, `"field: local"`, `"field: local = default"`); when default present, emits `(if (result T) (eqz loadWat) (then defWat) (else loadWat))` with zero-sentinel semantics (default fires when field is 0). **Labeled `continue` and switch fallthrough:** verified already implemented — no code changes needed. Seven test files: `NumberConstants_48`, `NumberPredicates_48`, `SwitchFallthrough_48`, `ObjectDestructDefault_48`, `LabeledContinue_48`, `ExponentAssign_48`, `Phase48Combined_48` — 170/170 wasic suite, 242/242 total |
 | 49 (2026-05-15) | Optional chaining and collection method completeness | **`?.` optional chaining:** global source pre-pass `src.replace(/[?][.]/g, ".")` at the start of `transpile()`, before `expandGenerics` — all `?.` on non-nullable types is stripped at compile time (safe because wasic's closed-world; nullable types use explicit `!== null` ternary per Phase 24). **`String.prototype.at(n)`:** inline pointer arithmetic without calling `$__str_char_at` (which returns multi-value `(result i32 i32)`): `normIdx = (select n (i32.add len n) (i32.ge_s n (i32.const 0)))`, result is `(ptr+normIdx, 1)`; added to `emitStringAssign` (`strAtAssignM`), `emitStringPtrLen` (`strAtSPLM`), `appendConcatPart` (`strAtCP`), and `parseSingleArg` in `console_log.ts` (returns `strexpr`). Prologue checks extended to include `.at(` alongside `.charAt(` and `.slice(`. **`Array.prototype.concat(other)`:** added `concat` to `dynArrMethod` dispatch regex with `parenDepthNeverNegative` guard; delegates to existing `$__dynarr_concat_T` helper (already present from Phase 13 spread literals) — no new WAT generation needed. **Chained array method calls** (`arr.filter(f).map(g)`): new `splitLastMethodCall(expr)` private method (backward balanced-paren scan → finds outermost `.method(args)` split) and `inferChainElemType(expr, locals)` (recursively infers element type of chained expression via `arrayVars` or method-type rules). Chain dispatch block after `dynArrMethod` block: when `parenDepthNeverNegative` fails (unbalanced `argsStr` = chained expression), `splitLastMethodCall` separates receiver and outer method; `emitExpr(receiver, "i32")` generates the inner call WAT inline as the first argument to the outer method call — no temp locals needed. Five test files: `OptionalChaining_49`, `StringAt_49`, `ArrayConcat_49`, `ChainedMethods_49`, `Phase49Combined_49` — 175/175 wasic suite, **247/247 total (all tests passing)** |
 | 50 (2026-05-18) | `bindgen`: TypeScript host binding generator | **Overview:** `wasmtk bindgen <file.wit>` reads a `.wit` interface file (produced automatically by Phase 41) and emits a self-contained TypeScript binding file with full ABI translation — no manual `WebAssembly` API usage required by the host. Completes the TypeScript-as-DLL model. **`src/bindgen.ts`** — new standalone module (pure regex/brace-counting, no external dependencies). `parseWit(src)` extracts `packageName`, `worldName`, `imports[]`, `exports[]` with types and params using regex over the WIT text. `kebabToCamel(name)` converts WIT kebab names to TypeScript camelCase for WASM export lookup; `kebabToWasmName(name)` converts to underscore format for Phase 40 `env` import keys. `generateBindings(witSrc, opts)` produces the complete TypeScript file: `ModuleExports` interface, optional `ModuleImports` interface (when WIT has `import` section), and `loadModule(source, imports?)` async function. **ABI translation in generated bindings:** numeric types (`s32`/`s64`/`f32`/`f64`) pass directly; `bool` params → `v ? 1 : 0`, returns → `result !== 0`; `string` params → `TextEncoder` → `__malloc(len)` → ptr+len WASM args; `string` returns → call function (void result) → read `__str_ret_ptr`/`__str_ret_len` globals → `TextDecoder`. **`--runtime` flag:** `deno` (default, `fetch` + `WebAssembly.instantiate`), `node` (`node:fs` + `readFileSync`), `bun` (`Bun.file().arrayBuffer()`). **`src/wasic.ts` changes — three edits:** (1) `watTypeToWit("string")` now returns `"string"` (WIT-native type) instead of `"s32"` — enables clean ABI mapping in bindgen without ptr/len heuristics; (2) `generateWit()` emits `name: string` (single param) instead of `name-ptr: s32, name-len: s32` pair for string parameters; (3) `toWat()` conditionally appends `(export "__malloc" ...)`, `(export "__str_ret_ptr" ...)`, `(export "__str_ret_len" ...)` to the WAT module when needed by exported string params or string-returning functions. **`main.ts` wiring:** `case "bindgen"`, `-o` / `--runtime` flags, help text. **`deno.json`:** `"./bindgen": "./src/bindgen.ts"` export added. Five test files: `math_50` (i32/f64 numeric round-trip), `booleans_50` (bool param/return normalization), `strings_50` (string param encoding + string return side-channel), `imports_50` (WIT import section + host callback wiring) — **102/102 bindgen assertions, 349/349 total** |
+| hybrid (post-Phase-50) | `hybrid`: TypeScript/WASM split compiler | **Overview:** `wasmtk hybrid <file.ts>` splits a mixed TypeScript file into a wasic-compiled WASM core and a TypeScript runner. Functions annotated with `// @wasm` on the immediately preceding line are extracted, compiled via `modc`, bound via `bindgen`, and replaced with `lib.funcName(...)` call sites in the generated runner. **Five-step pipeline:** parse → extract annotated functions into `_core.ts` → `modc` compiles `_core.ts` → `_core.wasm` + `_core.wit` → `bindgen` reads `_core.wit` → `_core.bindings.ts` → write `_runner.ts` with imports + `const lib = await loadModule(...)` + rewritten call sites. **`src/hybrid.ts`** — new standalone module. `parseHybridFile(src)` uses regex + brace-counting to extract annotated functions and return `{ wasmFuncs, remainingSrc, warnings }`; skips async functions with a warning; warns on non-wasic types. `generateCoreModule()` writes the wasic-compilable module. `generateRunner()` injects the binding import and `loadModule` call after the last `import` statement, then rewrites bare call sites via negative-lookbehind regex `(?<![."'\x60\w])funcName\s*\(` — method calls, string literals, and backtick expressions are preserved unchanged. Runner uses top-level `await` (native Deno ES module). **Prototype constraints:** `// @wasm` must be exact; only named `function` declarations; call-site rewriting is regex-based (not AST-based); module-level shared mutable state does not cross the WASM boundary; `@wasm` functions calling back into TypeScript require manual `declare const` Phase 40 import stubs. **Test fixtures:** `math_hybrid.ts` (i32/f64/bool), `strings_hybrid.ts` (string params/returns + async skip warning). **New files:** `src/hybrid.ts`, `tests/hybrid_fixtures/`. **Changed:** `main.ts` (`case "hybrid"`), `deno.json` (`"./hybrid"` export). |
 
 **All 349/349 tests pass as of 2026-05-18** (247 wasic + Go-by-Example tests + 102 bindgen tests).
 
@@ -963,7 +964,7 @@ The TypeScript-to-JS bundler command is renamed from `bundle` to `tsbundle` to c
 
 ### Future Directions
 
-All 247/247 tests pass as of Phase 49 (2026-05-15). Phases 46–49 added string escape sequences, class inheritance with virtual dispatch, the `Number` API, optional chaining (`?.`), labeled `continue`, `switch` fallthrough, `str.at(n)`, `Array.concat`, and chained array method calls. Phase 50 completes the DLL model — `wasmtk bindgen` generates typed TypeScript host bindings from a `.wit` file so that wasic-compiled WASM modules can be loaded and called from a TypeScript host with full type safety and no manual `WebAssembly` API work. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
+All 349/349 tests pass as of 2026-05-18 (247 wasic + Go-by-Example + 102 bindgen). Phase 50 completed the DLL model — `wasmtk bindgen` generates typed TypeScript host bindings from a `.wit` file so that wasic-compiled WASM modules are loaded from a TypeScript host with full type safety and no manual `WebAssembly` API work. The `hybrid` command (post-Phase-50 prototype) bridges wasic and javyc: annotate pure-computation functions with `// @wasm` and the tool splits the file into a WASM core + TypeScript runner automatically. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
 
 ---
 
@@ -1242,6 +1243,80 @@ const lib = await loadModule("./sensor.wasm", {
 **Files added:** `src/bindgen.ts`, `tests/bindgen_tests.ts`, `tests/bindgen_fixtures/` (4 `.ts` fixture files: `math_50.ts`, `booleans_50.ts`, `strings_50.ts`, `imports_50.ts`).
 
 **Files changed:** `main.ts` (`case "bindgen"`, `-o`/`--runtime` flags, help text), `deno.json` (`"./bindgen"` export), `src/wasic.ts` (WIT `string` type, `__malloc`/`__str_ret_ptr`/`__str_ret_len` WASM exports).
+
+---
+
+### `hybrid` — TypeScript/WASM Split Compiler
+
+`wasmtk hybrid` bridges the gap between wasic and javyc: annotate the pure-computation functions in an existing TypeScript file with `// @wasm`, and the tool automatically extracts them into a compiled WASM module, generates TypeScript bindings, and produces a runner file that wires everything back together.
+
+**Workflow:**
+
+```bash
+wasmtk hybrid myapp.ts
+# produces:
+#   myapp_core.ts          ← extracted @wasm functions (wasic source)
+#   myapp_core.wasm        ← compiled WASM library (via modc)
+#   myapp_core.wit         ← interface contract (auto-generated)
+#   myapp_core.bindings.ts ← TypeScript host bindings (via bindgen)
+#   myapp_runner.ts        ← remaining TypeScript with lib.* call sites
+
+deno run --allow-read myapp_runner.ts
+```
+
+**Annotation syntax:**
+
+```typescript
+// @wasm                          ← annotation on the immediately preceding line
+export function add(a: i32, b: i32): i32 {
+  return a + b;
+}
+
+// @wasm
+export function greet(name: string): string {
+  return "Hello, " + name + "!";
+}
+
+// No annotation — stays as TypeScript in the runner
+async function fetchConfig(): Promise<string> {
+  return await Deno.readTextFile("config.json");
+}
+
+// Call sites are rewritten automatically in the runner:
+const result = add(10, 32);       // → lib.add(10, 32)
+const msg = greet("World");       // → lib.greet("World")
+const cfg = await fetchConfig();  // unchanged
+```
+
+**CLI:**
+
+```text
+wasmtk hybrid <file.ts> [-o outdir]
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `<file.ts>` | (required) | TypeScript source file to split |
+| `-o, --name <dir>` | same directory as input | Output directory for all generated files |
+
+**Rules and constraints:**
+
+- `// @wasm` must be the exact content of the annotation line — no trailing text
+- Only named `function` declarations are supported (not arrow functions or class methods)
+- Async functions are skipped with a warning — wasic cannot compile them
+- All `@wasm` function param/return types should be wasic-compatible (`i32`, `i64`, `f32`, `f64`, `bool`, `string`, `void`, `number`, or simple `T[]`); incompatible types produce a warning but extraction still proceeds — wasic reports the error at compile time
+- Call-site rewriting is regex-based: bare calls (`funcName(`) are rewritten; method calls (`obj.funcName(`), string literal occurrences (`"funcName("`), and template expressions are left unchanged
+- The generated runner uses top-level `await` (native in Deno ES modules)
+
+**Shared state limitation:** module-level globals read/written by both `@wasm` and non-`@wasm` code are not synchronized — each side has its own copy. Expose shared state explicitly as exported getter/setter functions in the `@wasm` section if cross-boundary mutation is needed.
+
+**`@wasm` functions calling non-`@wasm` TypeScript:** add a `declare const` Phase 40 import stub to the core module manually before running `wasmtk hybrid`, then provide the implementation via the `ModuleImports` parameter of `loadModule` in the runner.
+
+**Implementation:** `src/hybrid.ts` — `parseHybridFile()` (regex + brace-counting extractor), `generateCoreModule()`, `generateRunner()` (call-site rewriter + import injector), `runHybrid()` (pipeline orchestrator). Calls `compileModule()` from `modc.ts` and `runBindgen()` from `bindgen.ts` directly — no subprocess spawning.
+
+**Files added:** `src/hybrid.ts`, `tests/hybrid_fixtures/math_hybrid.ts`, `tests/hybrid_fixtures/strings_hybrid.ts`.
+
+**Files changed:** `main.ts` (`case "hybrid"`, `-o` flag), `deno.json` (`"./hybrid"` export).
 
 ---
 
