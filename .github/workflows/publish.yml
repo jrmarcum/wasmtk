@@ -28,3 +28,12 @@ jobs:
         run: |
           git checkout -b release/${GITHUB_REF_NAME}
           git push origin release/${GITHUB_REF_NAME}
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create ${GITHUB_REF_NAME} \
+            --title "${GITHUB_REF_NAME}" \
+            --target release/${GITHUB_REF_NAME} \
+            --generate-notes
