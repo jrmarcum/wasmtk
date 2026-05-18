@@ -9,7 +9,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       id-token: write
 
     steps:
@@ -23,3 +23,8 @@ jobs:
 
       - name: Publish to JSR
         run: deno publish
+
+      - name: Create release branch
+        run: |
+          git checkout -b release/${GITHUB_REF_NAME}
+          git push origin release/${GITHUB_REF_NAME}
