@@ -1003,6 +1003,8 @@
             (i32.const 128)))
     (call $proc_exit (i32.const 0))
   )
+  (export "__str_ret_ptr" (global $__str_ret_ptr))
+  (export "__str_ret_len" (global $__str_ret_len))
   (data (i32.const 260) "\70\6f\73\74\67\72\65\73\3a\2f\2f\75\73\65\72\3a\70\61\73\73\40\68\6f\73\74\2e\63\6f\6d\3a\35\34\33\32\2f\70\61\74\68\3f\6b\3d\76\23\66")
   (data (i32.const 305) "\3a\2f\2f")
   (data (i32.const 308) "")

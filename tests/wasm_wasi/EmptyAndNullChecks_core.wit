@@ -2,6 +2,6 @@
 package local:empty-and-null-checks-core;
 
 world empty-and-null-checks-core {
-  export is-string-empty: func(a-ptr: s32, a-len: s32) -> bool;
-  export is-string-null: func(a-ptr: s32, a-len: s32) -> bool;
+  export is-string-empty: func(a: string) -> bool;
+  export is-string-null: func(a: string) -> bool;
 }

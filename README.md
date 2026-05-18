@@ -10,8 +10,9 @@ A polyglot WebAssembly toolkit for Deno. Compile TypeScript directly to optimize
 
 `wasmtk` is the home of **`wasic`** — a direct TypeScript-to-WASM compiler that emits optimized WAT with no embedded JavaScript runtime. It also provides a complete toolkit for running, inspecting, and composing WASM modules from any source language.
 
-- **`wasic` compiler**: Compile a TypeScript subset directly to optimized `.wasm` via WAT + wabt + Binaryen `-Oz`. Supports 49 language phases including closures, generics, classes, inheritance, discriminated unions, TypedArrays, and more — all without an embedded JS runtime.
+- **`wasic` compiler**: Compile a TypeScript subset directly to optimized `.wasm` via WAT + wabt + Binaryen `-Oz`. Supports 50 language phases including closures, generics, classes, inheritance, discriminated unions, TypedArrays, and more — all without an embedded JS runtime.
 - **WIT interface generation**: Every compiled module automatically produces a `.wit` file describing its exports and imports — the foundation for cross-language interop and the WASM Component Model.
+- **Host binding generation (`bindgen`)**: Generate a self-contained TypeScript binding file from any `.wit` interface. Load and call WASM exports from a TypeScript host with full type safety and automatic ABI translation for numbers, booleans, and strings.
 - **Universal running**: Execute `.ts`, `.js`, `.wasm`, and `.wat` with a single command across Deno, Bun, and Node. Expanded WASI syscall shims ensure compatibility with modules compiled from Zig, Rust, C/C++, and Go.
 - **Library mode (`modc`)**: Compile TypeScript to a WASM library with no `_start` entry point — callable from any host environment.
 - **WASM bundling**: Merge multiple `.wasm` files into a single artifact; import pre-compiled `.wasm` modules directly from TypeScript source via `tsbundler`.
@@ -732,14 +733,15 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | 47 (2026-05-15) | Class inheritance | **Overview:** `class Dog extends Animal` — field layout inheritance, `super(args)` constructor chaining, and static virtual dispatch via concrete-type tracking. **Field inheritance:** `parseClasses()` regex updated to capture `extends BaseName`; when found, parent struct fields (cloned via `{ ...pf }`) are prepended to the derived class's `fields[]` before the derived class's own fields are scanned; `fieldOffset` starts at `parentCd.struct.totalSize`. Multi-level chains work automatically because parent classes appear before derived classes in source order. **Class tag header:** after all classes are parsed, if `classInheritance.size > 0`, a 4-byte tag header is added to every class in the file — `classHeaderSize = 4`, all field offsets shift by `+4`, all `totalSize` values grow by 4; integer tags assigned in parse order via `classTags: Map<string, number>`; tag written to offset 0 of each instance in `allocStructData`. **`resolveMethodFunc(className, methodName): string \| null`** — new private helper; walks `classInheritance` chain to find the WAT function name (`current_methodName`) that implements a method, falling through to the parent if not found; called at all four method-dispatch sites in `emitExpr` and `emitStatement`. **Virtual dispatch via concrete-type tracking:** `newClassPre` pre-scan now prefers `ctorName` over `typeName` — `const a: Animal = new Dog(3)` registers `classVars.className = "Dog"`, so every subsequent `a.method()` call routes through `resolveMethodFunc("Dog", ...)` automatically (no runtime tag-based dispatch table needed for concrete-type variables). **`super(args)` handler:** inserted in `emitStatement` before `callMatch`; matches `/^super\s*\((.*)\)\s*;?$/` when `currentMethodClass` is a derived class; emits `(call $ParentName_constructor (local.get $__self) args...)`. **`structLookupFn` `this` handler:** added to both `structLookupFn` closures (console.log and console.error paths); when `vn === "this"` and `currentMethodClass` is set, looks up the field in `classDefs.get(currentMethodClass).struct.fields` and emits the correct `loadOp` with `(local.get $__self)` — enables `console.log("Age:", this.age)` inside method bodies. Five test files: `BasicClassInheritance_47`, `SuperConstructor_47`, `ClassMethodOverride_47`, `VirtualDispatch_47`, `Phase47Combined_47` — 163/163 wasic suite, **235/235 total (all tests passing)** |
 | 48 (2026-05-15) | Language completeness: Number API, operators, control flow | **`Number.*` constants:** `NUMBER_CONSTS` lookup map added in `emitExpr` (`wasic.ts`) and `exprToWat` (`console_log.ts`) — `Number.NaN→(f64.const nan)`, `Number.POSITIVE_INFINITY→(f64.const inf)`, `Number.NEGATIVE_INFINITY→(f64.const -inf)`, `Number.EPSILON→(f64.const 2.22e-16)`, `Number.MAX_SAFE_INTEGER→(f64.const 9007199254740991)`, `Number.MIN_SAFE_INTEGER→(f64.const -9007199254740991)`, `Number.MAX_VALUE→(f64.const 1.7976931348623157e308)`, `Number.MIN_VALUE→(f64.const 5e-324)`. **`Number.*` predicates:** `Number.isNaN(x)→(f64.ne x x)` (NaN ≠ itself); `Number.isFinite(x)→(i32.and (f64.lt x inf) (f64.gt x -inf))`; `Number.isInteger(x)→(f64.eq (f64.floor x) x)`. **`dotCallLookup` guard:** added `!token.startsWith("Number.")` alongside the existing `!token.startsWith("Math.")` guard so `Number.isNaN(x)` is not misrouted through the dot-call i32 path. **`parseSingleArg` boolexpr ordering fix (critical):** the entire boolexpr detection block (comparisons, `&&`, `\|\|`, `!`) moved BEFORE the `Number.*` and `Math.*` handlers — without this, `Number.MAX_SAFE_INTEGER > 1e16` was caught by the `Number.*` guard and returned `f64expr`, causing `$__f64_to_str` to receive the i32 result of `f64.gt` (WAT type error). **Scientific notation literals:** numeric literal regex extended from `/^-?\d+(\.\d+)?$/` to `/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/` in both `emitExpr` (`wasic.ts`) and `exprToWat` / `parseSingleArg` (`console_log.ts`) so `1e16`, `3.5e-4`, etc. are recognized. **`**=` compound assignment:** new `expAssignMatch` handler in `emitStatement` before `compoundMatch`; uses `$__math_pow` via `mathHelpers.add("math_pow")`; supports locals and module globals. **`$__math_pow` sqrt special case:** early-return branches added for `exp === 0.5` → `(f64.sqrt base)` and `exp === -0.5` → `(f64.div 1 (f64.sqrt base))` before the integer-exponent loop. **Object destructuring with defaults:** `destructMatch` block updated with 4-form binding parser (`"field"`, `"field = default"`, `"field: local"`, `"field: local = default"`); when default present, emits `(if (result T) (eqz loadWat) (then defWat) (else loadWat))` with zero-sentinel semantics (default fires when field is 0). **Labeled `continue` and switch fallthrough:** verified already implemented — no code changes needed. Seven test files: `NumberConstants_48`, `NumberPredicates_48`, `SwitchFallthrough_48`, `ObjectDestructDefault_48`, `LabeledContinue_48`, `ExponentAssign_48`, `Phase48Combined_48` — 170/170 wasic suite, 242/242 total |
 | 49 (2026-05-15) | Optional chaining and collection method completeness | **`?.` optional chaining:** global source pre-pass `src.replace(/[?][.]/g, ".")` at the start of `transpile()`, before `expandGenerics` — all `?.` on non-nullable types is stripped at compile time (safe because wasic's closed-world; nullable types use explicit `!== null` ternary per Phase 24). **`String.prototype.at(n)`:** inline pointer arithmetic without calling `$__str_char_at` (which returns multi-value `(result i32 i32)`): `normIdx = (select n (i32.add len n) (i32.ge_s n (i32.const 0)))`, result is `(ptr+normIdx, 1)`; added to `emitStringAssign` (`strAtAssignM`), `emitStringPtrLen` (`strAtSPLM`), `appendConcatPart` (`strAtCP`), and `parseSingleArg` in `console_log.ts` (returns `strexpr`). Prologue checks extended to include `.at(` alongside `.charAt(` and `.slice(`. **`Array.prototype.concat(other)`:** added `concat` to `dynArrMethod` dispatch regex with `parenDepthNeverNegative` guard; delegates to existing `$__dynarr_concat_T` helper (already present from Phase 13 spread literals) — no new WAT generation needed. **Chained array method calls** (`arr.filter(f).map(g)`): new `splitLastMethodCall(expr)` private method (backward balanced-paren scan → finds outermost `.method(args)` split) and `inferChainElemType(expr, locals)` (recursively infers element type of chained expression via `arrayVars` or method-type rules). Chain dispatch block after `dynArrMethod` block: when `parenDepthNeverNegative` fails (unbalanced `argsStr` = chained expression), `splitLastMethodCall` separates receiver and outer method; `emitExpr(receiver, "i32")` generates the inner call WAT inline as the first argument to the outer method call — no temp locals needed. Five test files: `OptionalChaining_49`, `StringAt_49`, `ArrayConcat_49`, `ChainedMethods_49`, `Phase49Combined_49` — 175/175 wasic suite, **247/247 total (all tests passing)** |
+| 50 (2026-05-18) | `bindgen`: TypeScript host binding generator | **Overview:** `wasmtk bindgen <file.wit>` reads a `.wit` interface file (produced automatically by Phase 41) and emits a self-contained TypeScript binding file with full ABI translation — no manual `WebAssembly` API usage required by the host. Completes the TypeScript-as-DLL model. **`src/bindgen.ts`** — new standalone module (pure regex/brace-counting, no external dependencies). `parseWit(src)` extracts `packageName`, `worldName`, `imports[]`, `exports[]` with types and params using regex over the WIT text. `kebabToCamel(name)` converts WIT kebab names to TypeScript camelCase for WASM export lookup; `kebabToWasmName(name)` converts to underscore format for Phase 40 `env` import keys. `generateBindings(witSrc, opts)` produces the complete TypeScript file: `ModuleExports` interface, optional `ModuleImports` interface (when WIT has `import` section), and `loadModule(source, imports?)` async function. **ABI translation in generated bindings:** numeric types (`s32`/`s64`/`f32`/`f64`) pass directly; `bool` params → `v ? 1 : 0`, returns → `result !== 0`; `string` params → `TextEncoder` → `__malloc(len)` → ptr+len WASM args; `string` returns → call function (void result) → read `__str_ret_ptr`/`__str_ret_len` globals → `TextDecoder`. **`--runtime` flag:** `deno` (default, `fetch` + `WebAssembly.instantiate`), `node` (`node:fs` + `readFileSync`), `bun` (`Bun.file().arrayBuffer()`). **`src/wasic.ts` changes — three edits:** (1) `watTypeToWit("string")` now returns `"string"` (WIT-native type) instead of `"s32"` — enables clean ABI mapping in bindgen without ptr/len heuristics; (2) `generateWit()` emits `name: string` (single param) instead of `name-ptr: s32, name-len: s32` pair for string parameters; (3) `toWat()` conditionally appends `(export "__malloc" ...)`, `(export "__str_ret_ptr" ...)`, `(export "__str_ret_len" ...)` to the WAT module when needed by exported string params or string-returning functions. **`main.ts` wiring:** `case "bindgen"`, `-o` / `--runtime` flags, help text. **`deno.json`:** `"./bindgen": "./src/bindgen.ts"` export added. Five test files: `math_50` (i32/f64 numeric round-trip), `booleans_50` (bool param/return normalization), `strings_50` (string param encoding + string return side-channel), `imports_50` (WIT import section + host callback wiring) — **102/102 bindgen assertions, 349/349 total** |
+
+**All 349/349 tests pass as of 2026-05-18** (247 wasic + Go-by-Example tests + 102 bindgen tests).
 
 ### Planned Phases
 
-All planned phases are implementable under WASI Preview 1. **All 247/247 tests pass as of 2026-05-15.** The next phase completes the DLL model.
+All planned phases are implementable under WASI Preview 1. **No further phases are currently scheduled.** The DLL model (compile → `.wasm` + `.wit` → `.bindings.ts` → host) is now complete end-to-end.
 
-| Phase | Feature | Target tests | Key changes |
-| --- | --- | --- | --- |
-| 50 | **Canonical ABI alignment + WIT-aware universalWasmLoader** | New integration tests verifying canonical ABI round-trips for strings, numerics, and booleans from a JS/TS host; existing 247 tests must continue to pass after ABI change | **wasmtk (prerequisite):** replace `__malloc` export with `cabi_realloc(ptr, old_size, align, new_size) → i32`; change string return emission from `$__str_ret_ptr`/`$__str_ret_len` globals to out-parameter convention (caller allocates 8-byte return area via `cabi_realloc`, callee stores ptr+len there) — aligns wasmtk output with the WASM Component Model Canonical ABI, making compiled modules natively consumable by any Component Model-aware runtime or `wit-bindgen`-generated host in Rust, Python, Go, Java, or C#. **universalWasmLoader enhancement:** WIT auto-detection (`.wit` alongside `.wasm`), WIT parser, canonical ABI translation layer (string encode/decode, out-param string return decoding, bool normalization), options interface `wasmImport(path, { abi?, wit?, imports? })`, ABI profiles `"component"` (default) and `"raw"` (legacy passthrough). **Spec document (`SPEC.md` in universalWasmLoader repo):** defines the cross-language loader contract — interface, ABI conventions, and reference test suite — that every language port (Rust, Python, Go, Java, C#) must implement. This phase completes the DLL model and is the foundation of the polyglot WASM ecosystem described in VISION.md. |
+Future directions: Canonical ABI alignment with the WASM Component Model (`cabi_realloc`, out-parameter string returns), universalWasmLoader WIT-aware integration, and cross-language host binding generation (Rust, Python, Go via `wit-bindgen`). See `VISION.md` for the broader polyglot ecosystem roadmap.
 
 ### WASM Compatibility Limitations
 
@@ -1011,7 +1013,7 @@ world my-module {
 
 **Test coverage:** four wasic-compiled integration tests — `BasicWitGen_41` (i32/f64 exports), `WitReturnTypes_41` (all four return type variants), `WitWithExternalImports_41` (import + export sections together), `Phase41Combined_41` (full combination of Phase 40 imports and Phase 41 WIT generation).
 
-**Known limitations:** string parameters are represented as `s32` (pointer only — the length parameter of wasic's ptr+len ABI is not visible in WIT); generic / template-instantiated function names appear in their monomorphized form (`add_i32`, `add_f64`).
+**Known limitations (updated by Phase 50):** string parameters are now emitted as the WIT-native `string` type (changed from `s32` pointer representation in Phase 50); generic / template-instantiated function names appear in their monomorphized form (`add_i32`, `add_f64`).
 
 ---
 
@@ -1125,6 +1127,121 @@ wasmtk jstyper <file.js> -n out.ts       # override output path
 **Files added:** `src/jstyper.ts`, `tests/jstyper_tests.ts`, `tests/jstyper_fixtures/` (3 `.js` + `.d.ts` fixture pairs).
 
 **Files changed:** `main.ts` (`case "jstyper"`, `--dts-only`/`--dry-run`/`--any-policy` flags), `deno.json` (`"./jstyper"` export).
+
+---
+
+### Phase 50 — `bindgen`: TypeScript Host Binding Generator
+
+`wasmtk bindgen` completes the DLL model. Given a `.wit` interface file produced by Phase 41 alongside every compiled `.wasm`, it generates a self-contained TypeScript binding file that loads the WASM module and wraps every export with correct ABI translation — no manual `WebAssembly` API usage required by the host.
+
+**Workflow:**
+
+```bash
+# 1. Write TypeScript library
+cat > math.ts <<'EOF'
+export function add(a: i32, b: i32): i32 { return a + b; }
+export function multiply(a: f64, b: f64): f64 { return a * b; }
+EOF
+
+# 2. Compile to WASM (generates math.wasm + math.wit automatically)
+wasmtk modc math.ts
+
+# 3. Generate TypeScript host bindings
+wasmtk bindgen math.wit
+
+# 4. Use from a TypeScript host
+```
+
+```typescript
+// host.ts
+import { loadModule } from "./math.bindings.ts";
+const lib = await loadModule("./math.wasm");
+console.log(lib.add(2, 3));       // 5
+console.log(lib.multiply(2.0, 3.14)); // 6.28
+```
+
+**CLI:**
+
+```text
+wasmtk bindgen <file.wit> [-o output.ts] [--runtime deno|node|bun]
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `<file.wit>` | (required) | WIT interface file from `wasmtk wasic` or `wasmtk modc` |
+| `-o output.ts` | `<file>.bindings.ts` | Output TypeScript binding file path |
+| `--runtime deno\|node\|bun` | `deno` | Target JS runtime for the `loadModule` loader |
+
+**Generated binding structure:**
+
+```typescript
+// auto-generated by wasmtk bindgen — do not edit manually
+export interface ModuleExports {
+  add(a: number, b: number): number;
+  multiply(a: number, b: number): number;
+  greet(name: string): string;
+  isPositive(x: number): boolean;
+}
+
+// Present only when the WIT file has an `import` section:
+export interface ModuleImports {
+  env?: {
+    hostMul?: (a: number, b: number) => number;
+  };
+}
+
+export async function loadModule(
+  source: string | URL | BufferSource,
+  imports?: ModuleImports,   // only when imports exist
+): Promise<ModuleExports>;
+```
+
+**WIT → TypeScript ABI mapping:**
+
+| WIT type | TypeScript type | WASM ABI |
+| --- | --- | --- |
+| `s32` | `number` | `i32` — passed directly |
+| `s64` | `bigint` | `i64` — passed directly |
+| `f32` | `number` | `f32` — passed directly |
+| `f64` | `number` | `f64` — passed directly |
+| `bool` | `boolean` | `i32` `0`/`1` ↔ `false`/`true` |
+| `string` (param) | `string` | `TextEncoder` → `__malloc(len)` → `(ptr, len)` |
+| `string` (return) | `string` | call function (void) → read `__str_ret_ptr` / `__str_ret_len` globals → `TextDecoder` |
+
+**How strings work:**
+
+- *Host → WASM (param):* the generated binding calls `__malloc(bytes.length)` to allocate space in WASM linear memory, writes the encoded bytes, and passes `(ptr, len)` as two separate WASM arguments. Requires `(export "__malloc" ...)` in the WASM module — wasic adds this automatically when any exported function has a `string` parameter.
+- *WASM → Host (return):* string-returning functions store their result into two exported globals `__str_ret_ptr` / `__str_ret_len` (Phase 42 side-channel). The binding reads those globals after the call and decodes via `TextDecoder`. Requires `(export "__str_ret_ptr" ...)` / `(export "__str_ret_len" ...)` — wasic adds these automatically when `needsStringRetGlobals` is true.
+
+**Import sections (Phase 40 externals):**
+
+When the WASM module was compiled with `declare const` external bindings, the WIT file contains an `import` section. The generated binding produces a `ModuleImports` interface with an optional `env` sub-object. Each imported function is optional (`?:`), so hosts only need to provide the ones they implement:
+
+```typescript
+const lib = await loadModule("./sensor.wasm", {
+  env: {
+    sensorRead: () => Math.random() * 100,
+  },
+});
+```
+
+**Runtime flag — generated loader differences:**
+
+| `--runtime` | Loader mechanism |
+| --- | --- |
+| `deno` (default) | `fetch(source)` → `WebAssembly.instantiate` — works in Deno and browsers |
+| `node` | `import("node:fs").readFileSync(source)` → `WebAssembly.instantiate` |
+| `bun` | `Bun.file(source).arrayBuffer()` → `WebAssembly.instantiate` |
+
+**Implementation:** `src/bindgen.ts` — pure regex-based WIT parser and TypeScript code generator, no external dependencies. `parseWit()` extracts package/world name, import/export functions, and parameter types. `generateBindings()` produces the complete binding file. `runBindgen()` is the CLI entry point (reads `.wit`, writes `.bindings.ts`). The WIT string type was changed in Phase 50 from the previous `s32` (pointer representation) to the native `string` type, enabling clean ABI mapping without heuristics.
+
+**Test coverage:** 102 assertions in `tests/bindgen_tests.ts` — 4 `parseWit` unit tests, 4 `generateBindings` unit tests (interface shape, bool conversions, string ABI, import section), 4 integration tests (compile fixture via `wasmtk modc` → generate binding → run in Deno subprocess), 1 CLI invocation test.
+
+**Known limitations:** `__malloc` uses wasic's bump allocator (no free); hosts making many string-param calls in a long-running process may eventually exhaust the heap. Struct/object returns from WASM appear as `number` (raw pointer into WASM linear memory). The `--runtime node` and `--runtime bun` loaders are code-generated but not integration-tested (no Node/Bun in the test environment).
+
+**Files added:** `src/bindgen.ts`, `tests/bindgen_tests.ts`, `tests/bindgen_fixtures/` (4 `.ts` fixture files: `math_50.ts`, `booleans_50.ts`, `strings_50.ts`, `imports_50.ts`).
+
+**Files changed:** `main.ts` (`case "bindgen"`, `-o`/`--runtime` flags, help text), `deno.json` (`"./bindgen"` export), `src/wasic.ts` (WIT `string` type, `__malloc`/`__str_ret_ptr`/`__str_ret_len` WASM exports).
 
 ---
 

@@ -605,6 +605,8 @@
     (call $measure (local.get $c))
     (call $proc_exit (i32.const 0))
   )
+  (export "__str_ret_ptr" (global $__str_ret_ptr))
+  (export "__str_ret_len" (global $__str_ret_len))
   (data (i32.const 260) "\72\65\63\74")
   (data (i32.const 264) "\63\69\72\63\6c\65")
   (data (i32.const 270) "\7b")

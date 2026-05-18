@@ -254,7 +254,7 @@ function watTypeToWit(t: WatType | null): string | null {
     case "f32":    return "f32";
     case "f64":    return "f64";
     case "bool":   return "bool";
-    case "string": return "s32"; // linear-memory pointer (wasic string ABI uses ptr+len)
+    case "string": return "string"; // Phase 50: emit WIT-native string type (bindgen reads this for ABI mapping)
     default:       return "s32";
   }
 }
@@ -11449,9 +11449,8 @@ class WasicTranspiler {
       for (const p of fn.params) {
         if (p.name === "__self") continue; // class `this` pointer — not part of public API
         if (p.type === "string") {
-          // wasic string ABI: two i32 locals (ptr + len)
-          paramParts.push(`${toKebabCase(p.name)}-ptr: s32`);
-          paramParts.push(`${toKebabCase(p.name)}-len: s32`);
+          // Phase 50: emit WIT-native string type (bindgen maps this to ptr+len WASM ABI)
+          paramParts.push(`${toKebabCase(p.name)}: string`);
         } else {
           const wt = watTypeToWit(p.type);
           if (wt) paramParts.push(`${toKebabCase(p.name)}: ${wt}`);
@@ -12064,6 +12063,19 @@ class WasicTranspiler {
       return `  (global $${name} ${typeDecl} ${initWat})`;
     });
 
+    // Phase 50: export __malloc when any exported function has string params (host needs it to write strings into WASM memory).
+    const hasExportedStringParams = this.functions.some(
+      f => f.exported && !f.isClosureFactory && f.params.some(p => p.type === "string")
+    );
+    const extraExports: string[] = [];
+    if (hasExportedStringParams) {
+      extraExports.push(`  (export "__malloc" (func $__malloc))`);
+    }
+    if (this.needsStringRetGlobals) {
+      extraExports.push(`  (export "__str_ret_ptr" (global $__str_ret_ptr))`);
+      extraExports.push(`  (export "__str_ret_len" (global $__str_ret_len))`);
+    }
+
     return [
       `(module`,
       imports,
@@ -12081,6 +12093,7 @@ class WasicTranspiler {
       ``,
       ...startFunc,
       funcTableWat,
+      ...extraExports,
       dataSection ? `` : "",
       dataSection,
       `)`,

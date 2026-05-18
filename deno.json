@@ -15,7 +15,9 @@
     "./console_log": "./src/console_log.ts",
     "./wasmbundle": "./src/wasmbundle.ts",
     "./wasmmerge": "./src/wasmmerge.ts",
-    "./jstyper": "./src/jstyper.ts"
+    "./jstyper": "./src/jstyper.ts",
+    "./bindgen": "./src/bindgen.ts",
+    "./hybrid": "./src/hybrid.ts"
   },
   "bin": {
     "wasmtk": "./main.ts"

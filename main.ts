@@ -25,6 +25,8 @@ import {
   bundleTs
 } from "./src/utils.ts";
 import { runJstyper } from "./src/jstyper.ts";
+import { runBindgen } from "./src/bindgen.ts";
+import { runHybrid } from "./src/hybrid.ts";
 
 /**
  * Main entry point for the wasmtk CLI application.
@@ -51,9 +53,10 @@ async function main(): Promise<void> {
       V: "version",
       h: "help",
       n: "name",
+      o: "name",
     },
     boolean: ["version", "help", "dts-only", "dry-run"],
-    string: ["name", "on-conflict", "alias", "any-policy"],
+    string: ["name", "on-conflict", "alias", "any-policy", "runtime"],
   });
 
   if (args.version) {
@@ -81,11 +84,13 @@ Usage:
   wasmtk tsbundle <file.ts>               Bundle a .ts project to a single .js file
   wasmtk wasmbundle <a.wasm> [b.wasm...]  Bundle multiple .wasm files into a single library
   wasmtk jstyper <file.js>               Convert .js + .d.ts to typed .ts for wasic compilation
+  wasmtk bindgen <file.wit>              Generate TypeScript host bindings from a .wit interface file
+  wasmtk hybrid <file.ts>               Split into a WASM core (// @wasm functions) + TypeScript runner
 
 Options:
   -v, -V, --version            Show version information
   -h, --help                   Show this help message
-  -n, --name <path>            Output file path (e.g. dist/mymodule.wasm)
+  -n, -o, --name <path>        Output file path (e.g. dist/mymodule.wasm or bindings.ts)
       --on-conflict=prefix     (wasmbundle) Auto-prefix conflicting exports with module name
       --on-conflict=alias      (wasmbundle) Auto-prefix conflicting exports with --alias values
       --on-conflict=exclude    (wasmbundle) Auto-exclude conflicting exports
@@ -93,6 +98,8 @@ Options:
       --dts-only               (jstyper) Generate skeleton .d.ts instead of .ts
       --dry-run                (jstyper) Print output to stdout, don't write files
       --any-policy=skip|warn|default  (jstyper) How to handle 'any' typed params/returns
+      --runtime=deno|node|bun  (bindgen) Target runtime for generated binding (default: deno)
+      -o, --name <dir>         (hybrid)  Output directory for generated files (default: same as input)
     `);
     return;
   }
@@ -164,6 +171,19 @@ Options:
         }
       }
       await runWasmBundle(inputFiles, bundleOut, onConflict, aliases);
+      break;
+    }
+    case "bindgen": {
+      const runtimeRaw = args["runtime"] as string | undefined;
+      const runtime =
+        runtimeRaw === "deno" || runtimeRaw === "node" || runtimeRaw === "bun"
+          ? (runtimeRaw as "deno" | "node" | "bun")
+          : "deno";
+      await runBindgen(target, { outPath, runtime });
+      break;
+    }
+    case "hybrid": {
+      await runHybrid(target, { outDir: outPath });
       break;
     }
     default:

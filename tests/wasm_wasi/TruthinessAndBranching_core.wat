@@ -321,6 +321,7 @@
             (i32.const 128)))
     (call $proc_exit (i32.const 0))
   )
+  (export "__malloc" (func $__malloc))
   (data (i32.const 260) "")
   (data (i32.const 260) "\74\72\75\65")
   (data (i32.const 264) "\66\61\6c\73\65")

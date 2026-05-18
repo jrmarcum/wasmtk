@@ -600,6 +600,8 @@
   )
   (table 1 funcref)
   (elem (i32.const 0) $__anon_0__factory__trampoline)
+  (export "__str_ret_ptr" (global $__str_ret_ptr))
+  (export "__str_ret_len" (global $__str_ret_len))
   (data (i32.const 260) "\62\61\73\65\20\77\69\74\68\20\6e\75\6d\3d")
   (data (i32.const 274) "\73\6f\6d\65\20\6e\61\6d\65")
 )

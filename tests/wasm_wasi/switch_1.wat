@@ -630,6 +630,8 @@
             (i32.const 128)))
     (call $proc_exit (i32.const 0))
   )
+  (export "__str_ret_ptr" (global $__str_ret_ptr))
+  (export "__str_ret_len" (global $__str_ret_len))
   (data (i32.const 260) "")
   (data (i32.const 260) "\62\6f\6f\6c")
   (data (i32.const 264) "\69\6e\74")

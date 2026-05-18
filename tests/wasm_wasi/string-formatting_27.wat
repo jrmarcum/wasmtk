@@ -1346,6 +1346,8 @@
             (i32.const 128)))
     (call $proc_exit (i32.const 0))
   )
+  (export "__str_ret_ptr" (global $__str_ret_ptr))
+  (export "__str_ret_len" (global $__str_ret_len))
   (data (i32.const 260) "\30\31\32\33\34\35\36\37\38\39\61\62\63\64\65\66")
   (data (i32.const 276) "\30")
   (data (i32.const 277) "")

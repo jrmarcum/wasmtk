@@ -1242,6 +1242,8 @@
   )
   (table 4 funcref)
   (elem (i32.const 0) $__anon_0 $__anon_1 $__anon_2 $__anon_3)
+  (export "__str_ret_ptr" (global $__str_ret_ptr))
+  (export "__str_ret_len" (global $__str_ret_len))
   (data (i32.const 260) "\5b")
   (data (i32.const 261) "\20")
   (data (i32.const 262) "\5d")

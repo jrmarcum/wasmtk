@@ -2,7 +2,7 @@
 package local:string-equality-inequality-core;
 
 world string-equality-inequality-core {
-  export test-string-eq: func(a-ptr: s32, a-len: s32, b-ptr: s32, b-len: s32) -> bool;
-  export test-string-strict-eq: func(a-ptr: s32, a-len: s32, b-ptr: s32, b-len: s32) -> bool;
-  export test-string-ne: func(a-ptr: s32, a-len: s32, b-ptr: s32, b-len: s32) -> bool;
+  export test-string-eq: func(a: string, b: string) -> bool;
+  export test-string-strict-eq: func(a: string, b: string) -> bool;
+  export test-string-ne: func(a: string, b: string) -> bool;
 }
