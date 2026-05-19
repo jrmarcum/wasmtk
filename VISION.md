@@ -268,16 +268,69 @@ out-parameter convention for string returns. All 349/349 tests pass.*
 Reference implementation: `wasmtk/src/bindgen.ts` (Phase 50) — the compile-time code
 generator that Stage 1 replicates at runtime. All ABI details are authoritative there.
 
+**Core loader:**
+
 - `wit-parser.js` — parse WIT exports, imports, function signatures and types;
   same regex approach as `wasmtk/src/bindgen.ts` `parseWit()`
-- `abi.js` — ABI encode/decode with `"wasic"` profile (matching bindgen exactly) and
-  stub `"component"` profile for future Canonical ABI support
+- `abi.js` — ABI encode/decode; primary `"component"` profile matches the Canonical ABI
+  in `src/bindgen.ts` exactly (`cabi_realloc`, out-parameter string returns, bool as i32,
+  numerics direct); `"raw"` profile for modules not following the Canonical ABI
 - Update `universal-wasm-loader.js` — WIT auto-detection, options interface
   `wasm_import(path, { abi?, wit?, imports? })`, typed export proxy
-- Update `universal-wasm-loader.d.ts` — `WasmImportOptions`, generic return type
-- `SPEC.md` — full cross-language specification
+- Update `universal-wasm-loader.d.ts` — `WasmImportOptions`, `InstancePool`, generic
+  return type
+
+**Instance lifecycle (bump-allocator memory model):**
+
+wasic uses a bump allocator with no `free`. Each WASM instance has its own isolated
+linear memory that accumulates allocations for the lifetime of the instance. The two
+supported patterns and their correct usage:
+
+- **Singleton** `wasm_import(path, opts)` — one instance, cached after first load.
+  Correct for: CLI tools, applications that load a library at startup, modules with
+  numeric-only exports, any bounded-call scenario. Memory accumulates but never
+  meaningfully fills up in normal application lifetimes.
+
+- **Pool** `createPool(path, { size, ...opts })` — returns an `InstancePool` that
+  holds `size` fresh WASM instances and cycles through them. Each checkout gets a
+  fresh bump pointer; no memory reset logic needed. Correct for: servers handling
+  many requests with string-param calls, loop-intensive processing.
+
+`InstancePool` API to implement in `universal-wasm-loader.js`:
+
+```javascript
+// Singleton (DLL pattern — default)
+const lib = await wasm_import("./module.wasm");
+lib.greet("world");
+
+// Pool (server/loop pattern)
+const pool = await createPool("./module.wasm", { size: 4 });
+const result = await pool.run(lib => lib.greet("world"));  // acquire → call → release
+
+// Manual acquire/release
+const lib2 = await pool.acquire();
+try { lib2.greet("world"); }
+finally { pool.release(lib2); }
+```
+
+`InstancePool` interface:
+
+- `acquire(): Promise<T>` — checks out an instance (waits if all busy)
+- `release(instance: T): void` — returns instance to the pool
+- `run<R>(fn: (lib: T) => R | Promise<R>): Promise<R>` — acquire + call + release
+- `size: number` — total pool capacity
+- `available: number` — instances currently idle
+- `destroy(): void` — tears down all instances
+
+**Spec and tests:**
+
+- `SPEC.md` — full cross-language specification; sections: core interface, WIT
+  auto-detection, ABI profiles, Canonical ABI definition, instance lifecycle model
+  (singleton vs. pool, bump allocator memory model), language port requirements,
+  reference test suite, versioning
 - Reference test suite — `.wasm` + `.wit` pairs from wasmtk Phase 50 fixtures
-  (`math_50`, `booleans_50`, `strings_50`, `imports_50`) with known I/O
+  (`math_50`, `booleans_50`, `strings_50`, `imports_50`) with known I/O; plus a
+  pool test using `strings_50` with 100 iterations to verify no memory exhaustion
 
 ---
 
