@@ -15,6 +15,15 @@
     (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))
     (local.get $ptr)
   )
+  ;; Canonical ABI allocator — fresh allocation (ptr==0) delegates to $__malloc;
+  ;; realloc requests (ptr!=0) return ptr unchanged (bump allocator has no free).
+  (func $cabi_realloc (param $ptr i32) (param $old_size i32) (param $align i32) (param $new_size i32) (result i32)
+    (select
+      (call $__malloc (local.get $new_size))
+      (local.get $ptr)
+      (i32.eqz (local.get $ptr))
+    )
+  )
 
   ;; ── str_cmp: lexicographic byte comparison ─────────────────────────────────
   ;; Returns negative if a<b, 0 if a==b, positive if a>b.
@@ -630,8 +639,6 @@
             (i32.const 128)))
     (call $proc_exit (i32.const 0))
   )
-  (export "__str_ret_ptr" (global $__str_ret_ptr))
-  (export "__str_ret_len" (global $__str_ret_len))
   (data (i32.const 260) "")
   (data (i32.const 260) "\62\6f\6f\6c")
   (data (i32.const 264) "\69\6e\74")

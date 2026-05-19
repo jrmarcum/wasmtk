@@ -200,14 +200,15 @@ world strings-50 {
   contains("greet(name: string): string", ts, "greet(name: string): string");
   contains("strLen(s: string): number", ts, "strLen(s: string): number");
   contains("_writeStr helper", ts, "function _writeStr(s: string)");
-  contains("_readStr helper", ts, "function _readStr()");
-  contains("__malloc accessed", ts, `exp["__malloc"]`);
-  contains("__str_ret_ptr accessed", ts, `exp["__str_ret_ptr"]`);
-  contains("__str_ret_len accessed", ts, `exp["__str_ret_len"]`);
+  contains("cabi_realloc accessed", ts, `exp["cabi_realloc"]`);
   contains("_writeStr called in greet", ts, "_writeStr(name)");
-  contains("_readStr called in greet", ts, "_readStr()");
+  contains("return area allocated", ts, `_cabi_realloc(0, 0, 4, 8)`);
+  contains("DataView used for string return", ts, "DataView");
   contains("TextEncoder used", ts, "TextEncoder");
   contains("TextDecoder used", ts, "TextDecoder");
+  ok("no __malloc (replaced by cabi_realloc)", !ts.includes(`exp["__malloc"]`));
+  ok("no __str_ret_ptr (replaced by out-param)", !ts.includes(`__str_ret_ptr`));
+  ok("no _readStr (replaced by inline DataView)", !ts.includes(`function _readStr`));
 }
 
 // ── 8. generateBindings — import section ─────────────────────────────────────
@@ -369,7 +370,7 @@ async function testIntegrationStrings() {
   const ts = generateBindings(witSrc);
   await Deno.writeTextFile(fixtureBinding, ts);
   contains("binding has _writeStr", ts, "_writeStr");
-  contains("binding has _readStr", ts, "_readStr");
+  contains("binding has cabi_realloc", ts, "_cabi_realloc");
 
   const bindingUrl3 = toFileUrl(fixtureBinding).href;
   const wasmUrl3    = toFileUrl(fixtureWasm).href;

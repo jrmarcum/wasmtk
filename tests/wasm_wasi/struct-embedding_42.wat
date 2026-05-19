@@ -13,6 +13,15 @@
     (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))
     (local.get $ptr)
   )
+  ;; Canonical ABI allocator — fresh allocation (ptr==0) delegates to $__malloc;
+  ;; realloc requests (ptr!=0) return ptr unchanged (bump allocator has no free).
+  (func $cabi_realloc (param $ptr i32) (param $old_size i32) (param $align i32) (param $new_size i32) (result i32)
+    (select
+      (call $__malloc (local.get $new_size))
+      (local.get $ptr)
+      (i32.eqz (local.get $ptr))
+    )
+  )
 
   ;; ── str_gather: copy len bytes from src to dst (byte-copy loop, no bulk-memory) ──
   ;; Used by gather-buffer mode in console.log for strvar/boolvar segments.
@@ -600,8 +609,6 @@
   )
   (table 1 funcref)
   (elem (i32.const 0) $__anon_0__factory__trampoline)
-  (export "__str_ret_ptr" (global $__str_ret_ptr))
-  (export "__str_ret_len" (global $__str_ret_len))
   (data (i32.const 260) "\62\61\73\65\20\77\69\74\68\20\6e\75\6d\3d")
   (data (i32.const 274) "\73\6f\6d\65\20\6e\61\6d\65")
 )

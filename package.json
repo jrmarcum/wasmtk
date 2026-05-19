@@ -1,6 +1,6 @@
 {
   "name": "@jrmarcum/wasmtk",
-  "version": "1.5.8",
+  "version": "1.5.9",
   "bin": {
     "wasmtk": "./main.ts"
   }

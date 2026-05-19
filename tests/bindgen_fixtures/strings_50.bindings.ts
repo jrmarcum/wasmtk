@@ -23,28 +23,25 @@ export async function loadModule(
   const { instance } = await WebAssembly.instantiate(raw, importObj);
   const exp = instance.exports as Record<string, unknown>;
   const _mem = exp["memory"] as WebAssembly.Memory;
-  const _malloc = exp["__malloc"] as ((n: number) => number);
+  const _cabi_realloc = exp["cabi_realloc"] as ((ptr: number, oldSize: number, align: number, newSize: number) => number);
   function _writeStr(s: string): [number, number] {
     const b = new TextEncoder().encode(s);
-    const ptr = _malloc(b.length);
+    const ptr = _cabi_realloc(0, 0, 1, b.length);
     new Uint8Array(_mem.buffer).set(b, ptr);
     return [ptr, b.length];
   }
-  const _strRetPtr = exp["__str_ret_ptr"] as WebAssembly.Global;
-  const _strRetLen = exp["__str_ret_len"] as WebAssembly.Global;
-  function _readStr(): string {
-    const p = (_strRetPtr as unknown as { value: number }).value as number;
-    const l = (_strRetLen as unknown as { value: number }).value as number;
-    return new TextDecoder().decode(new Uint8Array(_mem.buffer, p, l));
-  }
   return {
     greet(name: string): string {
-      (exp["greet"] as (...a: unknown[]) => unknown)(..._writeStr(name));
-      return _readStr();
+      const _r = _cabi_realloc(0, 0, 4, 8);
+      (exp["greet"] as (...a: unknown[]) => unknown)(..._writeStr(name), _r);
+      const _v = new DataView(_mem.buffer);
+      return new TextDecoder().decode(new Uint8Array(_mem.buffer, _v.getInt32(_r, true), _v.getInt32(_r + 4, true)));
     },
     shout(msg: string): string {
-      (exp["shout"] as (...a: unknown[]) => unknown)(..._writeStr(msg));
-      return _readStr();
+      const _r = _cabi_realloc(0, 0, 4, 8);
+      (exp["shout"] as (...a: unknown[]) => unknown)(..._writeStr(msg), _r);
+      const _v = new DataView(_mem.buffer);
+      return new TextDecoder().decode(new Uint8Array(_mem.buffer, _v.getInt32(_r, true), _v.getInt32(_r + 4, true)));
     },
     strLen(s: string): number { return (exp["strLen"] as (...a: unknown[]) => unknown)(..._writeStr(s)) as number; },
   };

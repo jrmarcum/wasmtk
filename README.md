@@ -688,7 +688,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | 15 | Exception handling | `throw new Error("msg")` / `throw "lit"` / `throw strVar` → `(throw $__exn_tag ptr len)` — WASM exception tag carries a `(ptr i32, len i32)` string payload; catchable by any enclosing `try/catch`; `try/catch(e)/finally` via WAT exceptions proposal; `(tag $__exn_tag (param i32 i32))` declared once per module when any throw is emitted; `e` / `e.message` in catch bound as string locals; `exceptions: true` in wabt options; `binMod.setFeatures(Features.All)` before Binaryen `-Oz` to preserve exception sections |
 | 16 | Module system extras | Default imports (`import foo from "./lib.ts"`); namespace imports (`import * as ns from "./lib.ts"`) with `ns.name` → `lib_name` rewriting; named re-exports (`export { foo } from "./lib.ts"`); wildcard re-exports (`export * from "./lib.ts"`); `export default function`; `exportRenamesCache` to resolve re-export chains across already-visited files; `applyRenames` updated to escape regex metacharacters (enabling dotted-key `ns.foo` rewrites) |
 | 17 | wasic library mode | `WasicTranspiler` gains `mode: "wasi" \| "library"` constructor param; library mode skips `_start`, `proc_exit` import, and top-level statement processing; `compileLibTs()` public function mirrors `compileWasiTs()`; `modc.ts` backend replaced — AssemblyScript toolchain (`asc`), temp-file creation, and binary post-processor (`removeEnvAbortImport`) all removed; `compileModule` calls `compileLibTs` directly; supports full wasic TypeScript subset (no type restrictions) |
-| 18 | WASM import bundling | `tsbundler.ts` detects `.wasm` specifiers in ESM imports and `wasmImport()` loader calls; new `wasmmerge.ts` module performs WAT-level merge with module-prefix name mangling; `_start`, `proc_exit`, `args_get/sizes_get`, `environ_get/sizes_get` stripped with notice; WASI imports deduplicated; data segments relocated by `mainModule.dataOffset`; static-data pointer `i32.const` values conservatively relocated; `WasicTranspiler` gains `externalFuncs` constructor param so call sites type-check before WAT merge; `iovBase`/`scratchBase` promoted to instance variables for collision-free merge of `fd_write` scratch areas; `bundleImportsEx()` returns `{ source, wasmImports }` alongside backward-compat `bundleImports()` |
+| 18 | WASM import bundling | `tsbundler.ts` detects `.wasm` specifiers in ESM imports and `wasm_import()` loader calls; new `wasmmerge.ts` module performs WAT-level merge with module-prefix name mangling; `_start`, `proc_exit`, `args_get/sizes_get`, `environ_get/sizes_get` stripped with notice; WASI imports deduplicated; data segments relocated by `mainModule.dataOffset`; static-data pointer `i32.const` values conservatively relocated; `WasicTranspiler` gains `externalFuncs` constructor param so call sites type-check before WAT merge; `iovBase`/`scratchBase` promoted to instance variables for collision-free merge of `fd_write` scratch areas; `bundleImportsEx()` returns `{ source, wasmImports }` alongside backward-compat `bundleImports()` |
 | 19 | `wasmbundle` CLI | New `wasmbundle.ts` + `wasmtk wasmbundle` command bundles multiple `.wasm` files into a single combined `.wasm` library; cross-module export conflict detection; interactive per-conflict prompt or `--on-conflict=prefix\|exclude` flag; non-conflicting exports keep bare names; conflicting exports prefixed or excluded; sequential `mergeWasmWat` with tracked `dataOffset`; master WAT assembled with WASI imports (14 common signatures), auto-sized `(memory N)`, and explicit `(export ...)` declarations; `extractExportNames()` added to `wasmmerge.ts`; `exportOverrides` parameter added to `mergeWasmWat` for export name control |
 | 20 | Export name transparency + `tsbundle` rename | `wasmmerge.ts`: `mergeWasmWat` emits `(export "add" (func $mathlib_add))` — original export name preserved, internal mangling unchanged; `WatMergeResult` gains `exportMap: Map<string, string>` (`originalName → $mangledName`); `wasmbundle.ts`: conflict resolution upgraded to 4-option interactive prompt (prefix / alias / exclude / stop) + `--alias file=name` and `--on-conflict=alias` non-interactive flags; `bundle` CLI command renamed to `tsbundle` |
 | 21 | `never` type, `void` (complete), `readonly` | `"never"` added to `WatType`; `mapType("never")` returns `"never"`; `never`-return functions emit no WAT `(result ...)` and get `(unreachable)` appended to the body; all call-statement `drop` sites guarded against never/string results; `StructField.readonly?` flag; interface and class field parsing captures `readonly` modifier; `this.field = val` writes blocked outside the constructor; `obj.field = val` writes blocked for readonly struct/class fields; `currentMethodName` instance variable added |
@@ -740,9 +740,19 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 
 ### Planned Phases
 
-All planned phases are implementable under WASI Preview 1. **No further phases are currently scheduled.** The DLL model (compile → `.wasm` + `.wit` → `.bindings.ts` → host) is now complete end-to-end.
+All 50 wasic compiler phases are complete. The DLL model (compile → `.wasm` + `.wit` → `.bindings.ts` → host) is complete end-to-end. Active development has moved to the broader polyglot ecosystem — see `VISION.md`.
 
-Future directions: Canonical ABI alignment with the WASM Component Model (`cabi_realloc`, out-parameter string returns), universalWasmLoader WIT-aware integration, and cross-language host binding generation (Rust, Python, Go via `wit-bindgen`). See `VISION.md` for the broader polyglot ecosystem roadmap.
+#### Stage 0 — Canonical ABI Alignment ✅ COMPLETE (2026-05-19)
+
+Aligns wasic's ABI with the WASM Component Model Canonical ABI. Completed ahead of Stage 1 — wasic now exports `cabi_realloc` and uses the out-parameter string return convention. 349/349 tests pass.
+
+- [x] Replace `__malloc` export with `cabi_realloc(ptr, old_size, align, new_size) → i32` in `wasic.ts` emitter
+- [x] Update `bindgen.ts` to use `cabi_realloc` for string param encoding instead of `__malloc`
+- [x] Change string return emission in `wasic.ts`: replace `$__str_ret_ptr`/`$__str_ret_len` globals with out-parameter convention (caller allocates 8-byte return area, callee writes ptr+len)
+- [x] Update `bindgen.ts` string-return ABI: allocate 8-byte return area, pass pointer as last arg, read ptr+len after call
+- [x] Update `utils.ts` test runner WASI shim to use canonical call convention for string returns
+- [x] Verify WIT generation: string params as `string`, string returns as single `string` return type (no regression from Phase 50)
+- [x] Run full test suite and verify 349/349 PASS
 
 ### WASM Compatibility Limitations
 
@@ -768,8 +778,8 @@ Phase 18 extends the compiler pipeline to merge pre-compiled `.wasm` modules dir
 import { add, multiply } from "./math.wasm";
 
 // 2. universal-wasm-loader pattern
-import { wasmImport } from "./universal-wasm-loader.js";
-const { calculate: runMath, version: wasmVer } = await wasmImport("./math.wasm");
+import { wasm_import } from "./universal-wasm-loader.js";
+const { calculate: runMath, version: wasmVer } = await wasm_import("./math.wasm");
 ```
 
 Both forms support rename aliases. Call sites in the TypeScript source are rewritten to the canonical prefixed name (`math_add`) before transpilation.

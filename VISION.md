@@ -65,7 +65,7 @@ prototype with a Rust production implementation is a one-line manifest change.
 ┌─────────────────────────────────────────────────────────────┐
 │                   HOST RUNTIME LAYER                        │
 │  universalWasmLoader(JS/TS) │ loader-rs │ loader-py         │
-│  loader-go │ loader-java │ loader-cs │ loader-c(header)     │
+│  loader-go │ loader-jvm │ loader-dotnet │ loader-c(header)  │
 │         (all implement the UniversalWasmLoader Spec)        │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -80,11 +80,12 @@ prototype with a Rust production implementation is a one-line manifest change.
 **Role:** TypeScript-to-WASM compiler; reference language pillar; polyglot build
 orchestrator CLI
 
-Current state: **All 50 phases complete. 349/349 tests passing (2026-05-18).** Compiles
-TypeScript to optimized WASM via WAT + Binaryen. Generates WIT files alongside every
-compiled module (Phase 41). Phase 50 (`wasmtk bindgen`) generates typed TypeScript host
-binding files from WIT — this is the reference implementation of the wasic ABI translation
-layer. `wasmtk hybrid` (prototype) splits a TypeScript file into a WASM core + TS runner.
+Current state: **All 50 phases complete + Stage 0 Canonical ABI alignment complete.
+349/349 tests passing (2026-05-19).** Compiles TypeScript to optimized WASM via WAT +
+Binaryen. Generates WIT files alongside every compiled module (Phase 41). Phase 50
+(`wasmtk bindgen`) generates typed TypeScript host binding files from WIT using the
+Canonical ABI (`cabi_realloc`, out-parameter string returns). `wasmtk hybrid` (prototype)
+splits a TypeScript file into a WASM core + TS runner.
 
 Remaining additions scoped here:
 
@@ -93,8 +94,6 @@ Remaining additions scoped here:
 - `wasmtk setup <language>` — language recipe installer (Stage 4)
 - `wasmtk port <component> --to <language>` — porting scaffold (Stage 4)
 - `[wasmtk]` section support in `pixi.toml` (Stage 3)
-- Canonical ABI alignment (`cabi_realloc`, out-parameter string returns) — deferred;
-  wasic ABI proven sufficient for Stage 1 via Phase 50 bindgen
 
 ---
 
@@ -103,21 +102,23 @@ Remaining additions scoped here:
 **Repository:** `jrmarcum/universalWasmLoader`
 **Role:** JS/TS host runtime; reference implementation of the loader spec
 
-Current state: `wasmImport(path, importObject?)` handles Node, Deno, Bun, browsers,
+Current state: `wasm_import(path, importObject?)` handles Node, Deno, Bun, browsers,
 and TypeScript via fetch + WebAssembly API.
 
 The ABI translation reference is now available: `wasmtk/src/bindgen.ts` (Phase 50)
-implements the full wasic ABI — string encoding via `__malloc`, string return via
-`__str_ret_ptr`/`__str_ret_len` globals, bool normalization, numeric passthrough, and
-import callback wiring. universalWasmLoader Stage 1 replicates this at runtime
-(reading WIT dynamically) rather than at compile time (code generation).
+implements the Canonical ABI — string encoding via `cabi_realloc`, string returns via
+the out-parameter convention (caller allocates an 8-byte return area via
+`cabi_realloc(0,0,4,8)`, passes its address as the trailing arg, callee writes ptr+len),
+bool normalization, numeric passthrough, and import callback wiring. universalWasmLoader
+Stage 1 replicates this at runtime (reading WIT dynamically) rather than at compile time
+(code generation).
 
 Additions scoped here (Stage 1):
 
 - `wit-parser.js` — regex-based WIT parser; same format wasmtk emits (see CLAUDE.md)
-- `abi.js` — wasic ABI encode/decode utilities with `"wasic"` and `"component"` profiles;
-  `"wasic"` profile matches `src/bindgen.ts` exactly; `"component"` profile (Canonical ABI
-  with `cabi_realloc` and out-parameter string returns) added as a future-facing extension
+- `abi.js` — ABI encode/decode utilities; primary `"component"` profile matches the
+  Canonical ABI in `src/bindgen.ts` exactly (`cabi_realloc`, out-parameter string returns);
+  `"raw"` profile for modules not following the Canonical ABI
 - Updated `universal-wasm-loader.js` — WIT auto-detection, options interface, ABI
   translation layer, typed export proxy
 - Updated `universal-wasm-loader.d.ts` — `WasmImportOptions`, generic return type
@@ -130,25 +131,29 @@ Additions scoped here (Stage 1):
 **Repositories:** separate repos per language under `jrmarcum/`
 **Role:** Per-language host runtimes; each implements the UniversalWasmLoader Spec
 
-| Repo                          | Language       | Underlying Runtime | Distribution     |
-|-------------------------------|----------------|--------------------|------------------|
-| `universal-wasm-loader-rs`    | Rust           | wasmtime crate     | crates.io        |
-| `universal-wasm-loader-py`    | Python         | wasmtime-py        | PyPI             |
-| `universal-wasm-loader-go`    | Go             | wazero             | pkg.go.dev       |
-| `universal-wasm-loader-java`  | Java / Kotlin  | Chicory            | Maven Central    |
-| `universal-wasm-loader-cs`    | C# / .NET      | Wasmtime NuGet     | NuGet            |
-| `universal-wasm-loader-c`     | C/C++/Zig/V    | wasmtime C API     | header-only      |
+| Repo                         | Language            | Underlying Runtime | Distribution     |
+|------------------------------|---------------------|--------------------|------------------|
+| `universalWasmLoader-rs`     | Rust                | wasmtime crate     | crates.io        |
+| `universalWasmLoader-py`     | Python              | wasmtime-py        | PyPI             |
+| `universalWasmLoader-go`     | Go                  | wazero             | pkg.go.dev       |
+| `universalWasmLoader-jvm`    | Java / Kotlin       | Chicory            | Maven Central    |
+| `universalWasmLoader-dotnet` | C# / .NET           | Wasmtime NuGet     | NuGet            |
+| `universalWasmLoader-c`      | C/C++/Zig/V/Julia   | wasmtime C API     | header-only      |
+
+Julia uses this loader via Julia's `ccall` FFI to the wasmtime C API — no separate
+Julia-specific repo is planned. Julia is Tier 3 (community-contributed or long-term).
 
 Every loader exposes the same conceptual API in its language's idiom:
 
 ```
-// JS/TS   → wasmImport("./module.wasm")
+// JS/TS   → wasm_import("./module.wasm")
 // Python  → wasm_import("./module.wasm")
 // Rust    → wasm_import("./module.wasm").await?
+// C       → wasm_import("./module.wasm", &exports)
+
 // Go      → WasmImport("./module.wasm")
 // Java    → WasmImport.load("./module.wasm")
 // C#      → await WasmImport.LoadAsync("./module.wasm")
-// C       → wasm_import("./module.wasm", &exports)
 ```
 
 All pass the same reference test suite defined in the spec.
@@ -231,6 +236,9 @@ WIT interfaces, composes components, and produces the final `app.wasm`.
 | V           | v -os wasm                               | Basic                   | Tier 3          |
 | Julia       | ccall to wasmtime C API                  | None native             | Tier 3          |
 
+Julia hosts WASM via `ccall` into the wasmtime C API. No Julia-specific loader repo is
+planned — Julia consumers use `universalWasmLoader-c` directly.
+
 Tier 1 languages ship with the first build orchestrator release. Tier 2 follow in
 subsequent releases. Tier 3 are community-contributed or long-term.
 
@@ -238,19 +246,18 @@ subsequent releases. Tier 3 are community-contributed or long-term.
 
 ## Phased Roadmap
 
-### Stage 0 — Canonical ABI Alignment (deferred, wasmtk)
+### Stage 0 — Canonical ABI Alignment ✅ COMPLETE (wasmtk, 2026-05-19)
 
-*Originally planned as a prerequisite. Now deferred — wasic ABI proven end-to-end
-by Phase 50 bindgen. Stage 1 proceeds against the wasic ABI; Canonical ABI becomes
-an additive `"component"` profile in `abi.js` rather than a prerequisite migration.*
+*Completed. wasic now exports `cabi_realloc` instead of `__malloc` and uses the
+out-parameter convention for string returns. All 349/349 tests pass.*
 
-When undertaken:
-
-- Replace `__malloc` export with `cabi_realloc(ptr, old_size, align, new_size) → i32`
-- Change string return emission: globals `$__str_ret_ptr`/`$__str_ret_len` →
-  out-parameter convention (caller allocates 8-byte return area, callee writes ptr+len)
-- Update `utils.ts` test runner to use canonical call convention
-- Verify 349/349 tests still pass
+- ✅ Replaced `__malloc` export with `cabi_realloc(ptr, old_size, align, new_size) → i32`
+- ✅ Changed string return emission: shim wrappers write ptr+len to caller-provided 8-byte
+  return area (`_r = cabi_realloc(0,0,4,8)` passed as trailing arg)
+- ✅ Updated `bindgen.ts`: uses `cabi_realloc` + `DataView` out-parameter pattern
+- ✅ `utils.ts` test runner verified — no changes needed (internal WASM calls unaffected)
+- ✅ WIT generation confirmed — `string` type in WIT, no regression
+- ✅ 349/349 tests pass
 
 ---
 
@@ -266,7 +273,7 @@ generator that Stage 1 replicates at runtime. All ABI details are authoritative 
 - `abi.js` — ABI encode/decode with `"wasic"` profile (matching bindgen exactly) and
   stub `"component"` profile for future Canonical ABI support
 - Update `universal-wasm-loader.js` — WIT auto-detection, options interface
-  `wasmImport(path, { abi?, wit?, imports? })`, typed export proxy
+  `wasm_import(path, { abi?, wit?, imports? })`, typed export proxy
 - Update `universal-wasm-loader.d.ts` — `WasmImportOptions`, generic return type
 - `SPEC.md` — full cross-language specification
 - Reference test suite — `.wasm` + `.wit` pairs from wasmtk Phase 50 fixtures
@@ -277,8 +284,8 @@ generator that Stage 1 replicates at runtime. All ABI details are authoritative 
 ### Stage 2 — High-Priority Cross-Language Loaders
 *Separate repos. Approximately 2–3 sessions each.*
 
-- `universal-wasm-loader-rs` — Rust (crates.io)
-- `universal-wasm-loader-py` — Python (PyPI)
+- `universalWasmLoader-rs` — Rust (crates.io)
+- `universalWasmLoader-py` — Python (PyPI)
 
 These two cover the highest-demand use cases outside the JS ecosystem and validate
 that the spec is implementable before committing to additional ports.
@@ -307,7 +314,7 @@ that the spec is implementable before committing to additional ports.
 - `wasmtk activate <component>` — swaps implementation, validates WIT compatibility
 - Incremental builds — source hashing, only rebuild what changed
 - Additional language recipes: Go, C#, Zig
-- Additional loaders: Go, Java/Kotlin, C#, C/C++ header
+- Additional loaders: `universalWasmLoader-go`, `universalWasmLoader-jvm`, `universalWasmLoader-dotnet`, `universalWasmLoader-c`
 
 ---
 
@@ -328,12 +335,12 @@ that the spec is implementable before committing to additional ports.
 jrmarcum/
 ├── wasmtk                        ← TypeScript compiler + polyglot build CLI
 ├── universalWasmLoader           ← JS/TS loader + SPEC.md (reference impl)
-├── universal-wasm-loader-rs      ← Rust port (Stage 2)
-├── universal-wasm-loader-py      ← Python port (Stage 2)
-├── universal-wasm-loader-go      ← Go port (Stage 4)
-├── universal-wasm-loader-java    ← Java/Kotlin port (Stage 4)
-├── universal-wasm-loader-cs      ← C# port (Stage 4)
-└── universal-wasm-loader-c       ← C/C++/Zig/V header (Stage 4)
+├── universalWasmLoader-rs        ← Rust port (Stage 2)
+├── universalWasmLoader-py        ← Python port (Stage 2)
+├── universalWasmLoader-go        ← Go port (Stage 4)
+├── universalWasmLoader-jvm       ← Java/Kotlin port (Stage 4)
+├── universalWasmLoader-dotnet    ← C# port (Stage 4)
+└── universalWasmLoader-c         ← C/C++/Zig/V/Julia header (Stage 4)
 ```
 
 The spec in `universalWasmLoader/SPEC.md` is the single written contract that all
@@ -347,8 +354,7 @@ for what wasmtk emits. The two documents cross-reference each other.
 In order:
 
 1. **Stage 1** — Enhance universalWasmLoader + write SPEC.md — **CURRENT PRIORITY**
-   Reference: `wasmtk/src/bindgen.ts` (Phase 50) for all ABI details
-2. **Stage 2** — Rust and Python loaders — validates the spec is solid
+   Reference: `wasmtk/src/bindgen.ts` (Phase 50) for all ABI details (Canonical ABI complete)
+2. **Stage 2** — `universalWasmLoader-rs` and `universalWasmLoader-py` — validates the spec
 3. **Stage 3** — Build orchestration — the pixi integration becomes real
-4. **Stage 0** (deferred) — Canonical ABI alignment in wasmtk; add `"component"` profile
-   to `abi.js` in universalWasmLoader once complete
+4. **Stage 0** ✅ COMPLETE — Canonical ABI alignment in wasmtk done (2026-05-19); 349/349 pass

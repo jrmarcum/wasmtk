@@ -12,6 +12,15 @@
     (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))
     (local.get $ptr)
   )
+  ;; Canonical ABI allocator — fresh allocation (ptr==0) delegates to $__malloc;
+  ;; realloc requests (ptr!=0) return ptr unchanged (bump allocator has no free).
+  (func $cabi_realloc (param $ptr i32) (param $old_size i32) (param $align i32) (param $new_size i32) (result i32)
+    (select
+      (call $__malloc (local.get $new_size))
+      (local.get $ptr)
+      (i32.eqz (local.get $ptr))
+    )
+  )
 
   ;; ── str_gather: copy len bytes from src to dst (byte-copy loop, no bulk-memory) ──
   ;; Used by gather-buffer mode in console.log for strvar/boolvar segments.
@@ -1039,8 +1048,6 @@
             (i32.const 128)))
     (call $proc_exit (i32.const 0))
   )
-  (export "__str_ret_ptr" (global $__str_ret_ptr))
-  (export "__str_ret_len" (global $__str_ret_len))
   (data (i32.const 260) "\41\42\43\44\45\46\47\48\49\4a\4b\4c\4d\4e\4f\50\51\52\53\54\55\56\57\58\59\5a\61\62\63\64\65\66\67\68\69\6a\6b\6c\6d\6e\6f\70\71\72\73\74\75\76\77\78\79\7a\30\31\32\33\34\35\36\37\38\39\2b\2f")
   (data (i32.const 324) "\41\42\43\44\45\46\47\48\49\4a\4b\4c\4d\4e\4f\50\51\52\53\54\55\56\57\58\59\5a\61\62\63\64\65\66\67\68\69\6a\6b\6c\6d\6e\6f\70\71\72\73\74\75\76\77\78\79\7a\30\31\32\33\34\35\36\37\38\39\2d\5f")
   (data (i32.const 388) "\61\62\63\31\32\33\21\3f\24\2a\26\28\29\27\2d\3d\40\7e")

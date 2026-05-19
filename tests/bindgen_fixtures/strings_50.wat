@@ -11,6 +11,15 @@
     (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))
     (local.get $ptr)
   )
+  ;; Canonical ABI allocator — fresh allocation (ptr==0) delegates to $__malloc;
+  ;; realloc requests (ptr!=0) return ptr unchanged (bump allocator has no free).
+  (func $cabi_realloc (param $ptr i32) (param $old_size i32) (param $align i32) (param $new_size i32) (result i32)
+    (select
+      (call $__malloc (local.get $new_size))
+      (local.get $ptr)
+      (i32.eqz (local.get $ptr))
+    )
+  )
 
   ;; ── str_gather: copy len bytes from src to dst (byte-copy loop, no bulk-memory) ──
   ;; Used by gather-buffer mode in console.log for strvar/boolvar segments.
@@ -168,7 +177,7 @@
     )
     (i32.const -1)
   )
-  (func $greet (export "greet") (param $name_ptr i32) (param $name_len i32) 
+  (func $greet (param $name_ptr i32) (param $name_len i32) 
     (local $__ret_str_ptr i32)
     (local $__ret_str_len i32)
     (local.set $__ret_str_ptr (i32.const 260))
@@ -184,7 +193,7 @@
       (return)
   )
 
-  (func $shout (export "shout") (param $msg_ptr i32) (param $msg_len i32) 
+  (func $shout (param $msg_ptr i32) (param $msg_len i32) 
     (local $__ret_str_ptr i32)
     (local $__ret_str_len i32)
     (local.set $__ret_str_ptr (local.get $msg_ptr))
@@ -200,9 +209,17 @@
   (func $strLen (export "strLen") (param $s_ptr i32) (param $s_len i32) (result i32)
     (return (local.get $s_len))
   )
-  (export "__malloc" (func $__malloc))
-  (export "__str_ret_ptr" (global $__str_ret_ptr))
-  (export "__str_ret_len" (global $__str_ret_len))
+  (func $greet__cabi (export "greet") (param $name_ptr i32) (param $name_len i32) (param $__ret_area i32)
+    (call $greet (local.get $name_ptr) (local.get $name_len))
+    (i32.store (local.get $__ret_area) (global.get $__str_ret_ptr))
+    (i32.store offset=4 (local.get $__ret_area) (global.get $__str_ret_len))
+  )
+  (func $shout__cabi (export "shout") (param $msg_ptr i32) (param $msg_len i32) (param $__ret_area i32)
+    (call $shout (local.get $msg_ptr) (local.get $msg_len))
+    (i32.store (local.get $__ret_area) (global.get $__str_ret_ptr))
+    (i32.store offset=4 (local.get $__ret_area) (global.get $__str_ret_len))
+  )
+  (export "cabi_realloc" (func $cabi_realloc))
   (data (i32.const 260) "\48\65\6c\6c\6f\2c\20")
   (data (i32.const 267) "\21")
 )

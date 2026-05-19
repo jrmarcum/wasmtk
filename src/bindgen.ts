@@ -7,8 +7,9 @@
  * export with correct ABI translation:
  *   - Numeric types (s32/s64/f32/f64) pass directly as JS numbers.
  *   - `bool` params → `value ? 1 : 0`; returns → `result !== 0`.
- *   - `string` params → TextEncoder → `__malloc`, pass (ptr, len).
- *   - `string` returns → call function (void in WAT), read `__str_ret_ptr`/`__str_ret_len`.
+ *   - `string` params → TextEncoder → `cabi_realloc(0,0,1,len)`, pass (ptr, len).
+ *   - `string` returns → allocate 8-byte return area via `cabi_realloc(0,0,4,8)`, pass as
+ *     trailing arg to the shim, read ptr+len back via DataView.
  *   - WIT `import` section → `ModuleImports` interface + env object wiring.
  *
  * CLI:
@@ -221,24 +222,20 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
   if (needsMemory) {
     lines.push(`  const _mem = exp["memory"] as WebAssembly.Memory;`);
   }
+  if (needsMalloc || needsStrRet) {
+    lines.push(`  const _cabi_realloc = exp["cabi_realloc"] as ((ptr: number, oldSize: number, align: number, newSize: number) => number);`);
+  }
   if (needsMalloc) {
-    lines.push(`  const _malloc = exp["__malloc"] as ((n: number) => number);`);
     lines.push(`  function _writeStr(s: string): [number, number] {`);
     lines.push(`    const b = new TextEncoder().encode(s);`);
-    lines.push(`    const ptr = _malloc(b.length);`);
+    lines.push(`    const ptr = _cabi_realloc(0, 0, 1, b.length);`);
     lines.push(`    new Uint8Array(_mem.buffer).set(b, ptr);`);
     lines.push(`    return [ptr, b.length];`);
     lines.push(`  }`);
   }
-  if (needsStrRet) {
-    lines.push(`  const _strRetPtr = exp["__str_ret_ptr"] as WebAssembly.Global;`);
-    lines.push(`  const _strRetLen = exp["__str_ret_len"] as WebAssembly.Global;`);
-    lines.push(`  function _readStr(): string {`);
-    lines.push(`    const p = (_strRetPtr as unknown as { value: number }).value as number;`);
-    lines.push(`    const l = (_strRetLen as unknown as { value: number }).value as number;`);
-    lines.push(`    return new TextDecoder().decode(new Uint8Array(_mem.buffer, p, l));`);
-    lines.push(`  }`);
-  }
+  // String returns use the out-parameter convention: caller allocates an 8-byte return area via
+  // cabi_realloc(0,0,4,8) and passes its address as the last argument to the shim function.
+  // After the call, ptr and len are read back from the return area via DataView.
 
   // Return object
   lines.push(`  return {`);
@@ -256,9 +253,12 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
     }).join(", ");
 
     if (fn.result === "string") {
+      const cabiArgs = callArgs ? `${callArgs}, _r` : `_r`;
       lines.push(`    ${fn.tsName}(${paramStr}): string {`);
-      lines.push(`      ${wasm}(${callArgs});`);
-      lines.push(`      return _readStr();`);
+      lines.push(`      const _r = _cabi_realloc(0, 0, 4, 8);`);
+      lines.push(`      ${wasm}(${cabiArgs});`);
+      lines.push(`      const _v = new DataView(_mem.buffer);`);
+      lines.push(`      return new TextDecoder().decode(new Uint8Array(_mem.buffer, _v.getInt32(_r, true), _v.getInt32(_r + 4, true)));`);
       lines.push(`    },`);
     } else if (fn.result === "bool") {
       lines.push(`    ${fn.tsName}(${paramStr}): boolean { return ${wasm}(${callArgs}) !== 0; },`);

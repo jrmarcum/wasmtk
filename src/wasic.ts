@@ -8718,6 +8718,15 @@ class WasicTranspiler {
     (local.set $ptr (global.get $__heap_ptr))
     (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))
     (local.get $ptr)
+  )
+  ;; Canonical ABI allocator — fresh allocation (ptr==0) delegates to $__malloc;
+  ;; realloc requests (ptr!=0) return ptr unchanged (bump allocator has no free).
+  (func $cabi_realloc (param $ptr i32) (param $old_size i32) (param $align i32) (param $new_size i32) (result i32)
+    (select
+      (call $__malloc (local.get $new_size))
+      (local.get $ptr)
+      (i32.eqz (local.get $ptr))
+    )
   )`);
     if (this.needsStringHelpers)   parts.push(this.getStringHelperWat());
     // getStringExtHelperWat() includes $__str_replace/$__str_split which depend on
@@ -10540,8 +10549,11 @@ class WasicTranspiler {
     const watResult = fn.result === null || isStringReturn || fn.result === "never"
       ? null : watBaseType(fn.result);
     const result    = watResult ? `(result ${watResult})` : "";
-    // _start is always exported (IIFE pattern parses it with exported=false, but WASI requires it)
-    const exportAttr = (fn.exported || fn.name === "_start") ? `(export "${fn.name}") ` : "";
+    // _start is always exported (IIFE pattern parses it with exported=false, but WASI requires it).
+    // Exported string-returning functions are NOT exported directly; a cabi shim wrapper
+    // (emitted in toWat) exports them under the original name with the canonical out-parameter convention.
+    const isExportedStringRet = fn.exported && fn.result === "string" && fn.name !== "_start";
+    const exportAttr = (!isExportedStringRet && (fn.exported || fn.name === "_start")) ? `(export "${fn.name}") ` : "";
 
     // Phase 10b: identify arrays that need dynamic (heap) layout because push/pop/shift/unshift are called.
     const dynamicArrayNames = this.findDynamicArrays(fn.bodyLines);
@@ -12063,18 +12075,49 @@ class WasicTranspiler {
       return `  (global $${name} ${typeDecl} ${initWat})`;
     });
 
-    // Phase 50: export __malloc when any exported function has string params (host needs it to write strings into WASM memory).
+    // Stage 0 / Canonical ABI: export cabi_realloc when any exported function has string params or
+    // string returns. The host uses cabi_realloc(0,0,1,n) to allocate param buffers and
+    // cabi_realloc(0,0,4,8) to allocate the 8-byte return area for string-returning functions.
     const hasExportedStringParams = this.functions.some(
       f => f.exported && !f.isClosureFactory && f.params.some(p => p.type === "string")
     );
+    const hasExportedStringRets = this.functions.some(
+      f => f.exported && !f.isClosureFactory && f.result === "string"
+    );
     const extraExports: string[] = [];
-    if (hasExportedStringParams) {
-      extraExports.push(`  (export "__malloc" (func $__malloc))`);
+    if (hasExportedStringParams || hasExportedStringRets) {
+      extraExports.push(`  (export "cabi_realloc" (func $cabi_realloc))`);
     }
-    if (this.needsStringRetGlobals) {
-      extraExports.push(`  (export "__str_ret_ptr" (global $__str_ret_ptr))`);
-      extraExports.push(`  (export "__str_ret_len" (global $__str_ret_len))`);
-    }
+    // $__str_ret_ptr / $__str_ret_len are no longer exported — string returns use the
+    // out-parameter convention via the __cabi shim wrappers generated below.
+
+    // Generate canonical ABI shim wrappers for each exported string-returning function.
+    // The shim adds a trailing $__ret_area i32 param, calls the internal function (which sets
+    // the globals side-channel), then writes ptr+len into the caller-provided return area.
+    const exportedStringRetFns = this.functions.filter(
+      f => f.exported && !f.isClosureFactory && f.result === "string" && f.name !== "_start"
+    );
+    const shimsWat = exportedStringRetFns.map(fn => {
+      const paramDecls = fn.params.flatMap(p => p.type === "string"
+        ? [`(param $${p.name}_ptr i32)`, `(param $${p.name}_len i32)`]
+        : [`(param $${p.name} ${watBaseType(p.type)})`]
+      );
+      paramDecls.push(`(param $__ret_area i32)`);
+      const callArgParts = fn.params.flatMap(p => p.type === "string"
+        ? [`(local.get $${p.name}_ptr)`, `(local.get $${p.name}_len)`]
+        : [`(local.get $${p.name})`]
+      );
+      const callExpr = callArgParts.length > 0
+        ? `(call $${fn.name} ${callArgParts.join(" ")})`
+        : `(call $${fn.name})`;
+      return [
+        `  (func $${fn.name}__cabi (export "${fn.name}") ${paramDecls.join(" ")}`,
+        `    ${callExpr}`,
+        `    (i32.store (local.get $__ret_area) (global.get $__str_ret_ptr))`,
+        `    (i32.store offset=4 (local.get $__ret_area) (global.get $__str_ret_len))`,
+        `  )`,
+      ].join("\n");
+    }).join("\n");
 
     return [
       `(module`,
@@ -12091,6 +12134,7 @@ class WasicTranspiler {
       helpers,
       funcWat,
       ``,
+      shimsWat,
       ...startFunc,
       funcTableWat,
       ...extraExports,
