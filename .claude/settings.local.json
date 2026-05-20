@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "PowerShell(\\(Get-Item \"C:\\\\Users\\\\Jmarcum\\\\TEMP\\\\claude\\\\d--Programs--ProgramExamples-Example-Programs-wasmExamples-wasmtk\\\\a5cbd85f-ad34-4be5-9113-3a12b04782d9\\\\tasks\\\\bdctg3oub.output\"\\).Length)"
-    ]
-  }
-}
