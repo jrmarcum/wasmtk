@@ -123,18 +123,27 @@ wasmtk/
 │   ├── wasmbundle.ts    # CLI bundler for combining multiple .wasm files
 │   ├── modc.ts          # Library-mode compilation (no _start, no WASI)
 │   ├── javyc.ts         # TypeScript via Javy/QuickJS embedded runtime
+│   ├── jstyper.ts       # .js + .d.ts → typed .ts pre-processor (jstyper CLI)
+│   ├── bindgen.ts       # WIT → TypeScript host binding generator (bindgen CLI)
+│   ├── hybrid.ts        # TypeScript/WASM split compiler (hybrid CLI)
 │   ├── utils.ts         # WASM runner, WASI shims, and CLI command handlers
 │   ├── runner.ts        # Standalone WASM/WAT runner utilities
+│   ├── rt.ts            # Runtime shim for Deno/Bun compatibility
 │   ├── args.ts          # CLI argument parsing helpers
 │   └── wasm/            # Pre-compiled WASM library assets (Phase 38+)
 ├── scripts/
 │   └── sync-version.ts  # Version sync — propagates deno.json version → package.json + src/utils.ts
 ├── tests/               # Test suite
-│   ├── wasi_tests.ts
+│   ├── wasi_tests.ts    # Main wasic + Go-by-Example test runner
+│   ├── bindgen_tests.ts # bindgen integration and unit tests
+│   ├── jstyper_tests.ts # jstyper unit test runner
 │   ├── bundle_tests.ts
 │   ├── mod_tests.ts
 │   ├── wasi_javy_tests.ts
-│   ├── wasm_wasi/       # wasic test programs (one per feature/phase)
+│   ├── wasm_wasi/            # wasic test programs (one per feature/phase)
+│   ├── bindgen_fixtures/     # wasic modc source files for bindgen integration tests
+│   ├── jstyper_fixtures/     # .js + .d.ts fixture pairs for jstyper tests
+│   ├── hybrid_fixtures/      # input TypeScript files for hybrid tests
 │   ├── wasm_wasi_bundle/
 │   ├── wasm_wasi_javy/
 │   └── wasm_mod/
@@ -226,7 +235,7 @@ wasmtk run myprogram.wasm
 | Comparison | `=== !== == != < > <= >=` |
 | Logical | `&& \|\| !` |
 | Bitwise | `& \| ^ ~ << >> >>>` |
-| Compound assignment | `+= -= *= /= %= &= \|= ^= <<= >>= >>>=` |
+| Compound assignment | `+= -= *= /= %= &= \|= ^= <<= >>= >>>= **=` |
 | Logical assignment | `??= \|\|= &&=` — assign only when null/falsy/truthy (Phase 25) |
 | Nullish coalescing | `??` — returns rhs when lhs is `null`/`undefined`, else lhs (Phase 25) |
 
@@ -268,6 +277,17 @@ wasmtk run myprogram.wasm
 | `str.includes(sub)` | Returns bool — `true` if substring is present |
 | `String(n)` | Converts numeric value to a heap-allocated string |
 | `n.toString()` | Same as `String(n)` — works on `i32`, `f64`, `i64` variables |
+| `str.trim()` / `str.trimStart()` / `str.trimEnd()` | Remove whitespace from both ends, start, or end |
+| `str.charCodeAt(n)` | Returns the UTF-8 byte value at index n as i32 |
+| `str.charAt(n)` | Returns a single-character string at index n |
+| `str.at(n)` | Returns a single-character string; negative indices count from the end |
+| `str.startsWith(prefix)` / `str.endsWith(suffix)` | Returns bool — prefix or suffix match |
+| `str.toUpperCase()` / `str.toLowerCase()` | Returns a new string with ASCII case conversion |
+| `str.replace(old, new)` / `str.replaceAll(old, new)` | Returns a new string with first/all occurrences replaced |
+| `str.padStart(n, fill)` / `str.padEnd(n, fill)` | Returns a new string padded to length n |
+| `str.repeat(n)` | Returns the string repeated n times |
+| `str.split(sep)` | Returns a `string[]` dynamic array of substrings split at the separator |
+| `str.indexOf(sub, pos?)` | Optional second argument: start search from position; returns -1 if not found |
 
 ##### Arrays
 
@@ -296,6 +316,20 @@ wasmtk run myprogram.wasm
 | Multi-dimensional arrays | `i32[][]` — nested dynamic array; `const m: i32[][] = [[1,2],[3,4]]` allocates outer + row arrays; `m[i].push(val)` updates the outer slot after possible row growth; `console.log(m)` prints `[ [ 1, 2 ], ... ]` (Deno format) |
 | `console.log` of array-returning calls | `console.log("scores:", getScores())` where `getScores(): i32[]` prints `scores: [ 95, 88, 72 ]` — the `arrptr` LogSegment dispatches to a `$__write_i32arr_to_scratch` WAT helper that walks the dynamic-array header and formats elements in `[ a, b, c ]` style |
 | Array destructuring with defaults | `const [a = 10, b = 20] = arr` — each binding gets the array element if in-bounds, or the default value; runtime length check for dynamic arrays; static arrays resolved at compile time |
+| `every(fn)` | Returns bool — `true` if `fn(element)` is truthy for every element |
+| `some(fn)` | Returns bool — `true` if `fn(element)` is truthy for at least one element |
+| `findIndex(fn)` | Returns the index of the first element for which `fn(element)` is truthy, or -1 |
+| `at(i)` | Returns the element at index i; negative indices count from the end |
+| `reverse()` | In-place two-pointer swap; mutates the array and returns the pointer |
+| `fill(val, start?, end?)` | Fills elements from start to end with val; bounds clamped to [0, length] |
+| `join(sep?)` | Joins all elements into a string with the given separator (default `","`) |
+| `sort()` / `sort(cmpFn)` | In-place insertion sort — ascending by default; custom comparator via `call_indirect` |
+| `flat()` | Flatten a `T[][]` one level deep — two-pass WAT helper sums all inner lengths, allocates result, copies |
+| `flatMap(fn)` | Map each element through `fn` (returning `T[]`) then flatten one level |
+| `concat(other)` | Returns a new array with all elements of this array followed by all elements of other |
+| Chained calls | `arr.filter(f).map(g)` — intermediate result inlined as WAT expression; no temp variable needed |
+| String array params | `function f(arr: string[], pred: (s: string) => boolean)` — string arrays passed as i32 pointer; each element is 8 bytes (ptr i32 + len i32); shift=3 |
+| Function pointer arrays | `const fns: Array<() => void> = []` — stores closure struct pointers; `fns[i]()` dispatches via `call_indirect` trampoline |
 
 ##### Structs & Objects
 
@@ -466,6 +500,40 @@ Patterns 1–3 route through a named function that `_start` calls. Patterns 4–
 | `Foo.staticMethod(args)` | Dispatches to `Foo_staticMethod(args...)` |
 | `instance.field` | Field read/write via instance pointer in classVars; getter/setter checked before raw load/store |
 | Class instance params | Functions accepting `obj: Foo` receive an `i32` struct pointer |
+| `class Dog extends Animal` | Field layout inheritance — parent fields prepended at their original offsets; derived fields start at parent's `totalSize`; multi-level chains supported |
+| `super(args)` | In the derived constructor body, calls the parent constructor: `(call $Animal_constructor (local.get $__self) args...)` |
+| Method overriding | `speak()` in Dog overrides Animal's `speak()`; dispatch resolves via concrete-type tracking at the call site — no runtime vtable |
+| Class type tags | When any `extends` is present, every class in the file gets a 4-byte integer tag header at offset 0 of each instance |
+
+#### TypedArrays
+
+All eight typed array types from the JavaScript standard library are supported. Each uses an 8-byte header `[length i32, 0 i32]` followed by typed element data.
+
+| Feature | Notes |
+| --- | --- |
+| Construction | `new Int32Array(n)` — literal length; `new Int32Array(runtimeVar)` — runtime length; `new Int32Array([1, 2, 3])` — literal initializer (data segment + `memory.copy`) |
+| Supported types | `Int8Array`, `Uint8Array`, `Int16Array`, `Uint16Array`, `Int32Array`, `Uint32Array`, `Float32Array`, `Float64Array` |
+| Element access | Typed read/write (`i32.load8_u`, `i32.load`, `f64.load`, etc.) at `ptr+8+idx*bytesPerElem` |
+| `.length` | `i32.load ptr` — count of elements |
+| `.byteLength` | `length × bytesPerElem` |
+| `.fill(val, start?, end?)` | Range fill via WAT helper `$__ta_fill_T`; bounds clamped |
+| `.set(src, offset?)` | Element copy via WAT helper `$__ta_set_T` |
+| TypedArray parameters | `function f(arr: Int32Array)` — registered as i32 pointer with correct load/store ops |
+| `console.log` | `Int32Array(4) [ 1, 2, 3, 4 ]`-style output |
+
+#### Advanced Type System Features
+
+| Feature | Syntax / Notes |
+| --- | --- |
+| Discriminated union types | `type Shape = { kind: "circle"; r: f64 } \| { kind: "rect"; w: f64; h: f64 }` — flat super-struct layout; `switch (s.kind)` and `if (s.kind === "circle")` compile to integer tag comparisons |
+| Intersection types | `type Widget = Nameable & Sizeable` — all fields merged into a flat struct; chained intersections (`A & B & C`) resolved in source order |
+| Type predicates | `function isCircle(s: Shape): s is Circle { ... }` — return type annotation; compile-time narrowing of `structVars` in if-branch scopes |
+| `typeof x` | Compile-time evaluation: `typeof x === "number"` → `(i32.const 1/0)`; `const t: string = typeof x` → static string in data section; `console.log(typeof x)` → zero-overhead literal |
+| `keyof T` | Source pre-pass rewrites `: keyof T` → `: string`; works in function params and variable declarations |
+| Conditional types | `type Toggle<T> = T extends i32 ? f64 : i32` (generic) and `type AlwaysI32 = f64 extends number ? i32 : string` (non-generic) — resolved entirely at compile time by `expandConditionalTypes()` |
+| `?.` optional chaining | Stripped to `.` at compile time (safe for non-nullable types; nullable types use explicit `!== null` ternary) |
+| `Number` constants | `Number.NaN`, `Number.POSITIVE_INFINITY`, `Number.NEGATIVE_INFINITY`, `Number.EPSILON`, `Number.MAX_SAFE_INTEGER`, `Number.MIN_SAFE_INTEGER`, `Number.MAX_VALUE`, `Number.MIN_VALUE` |
+| `Number` predicates | `Number.isNaN(x)`, `Number.isFinite(x)`, `Number.isInteger(x)` — compile-time expressions |
 
 #### Current Limitations
 
@@ -580,6 +648,104 @@ See [Phase 19 — `wasmbundle` CLI](#phase-19--wasmbundle-cli) and [Phase 20 —
 
 ---
 
+### `wasmtk jstyper` — JS + .d.ts to Typed TypeScript
+
+Converts an existing JavaScript file and its `.d.ts` type declaration into a typed TypeScript file that `wasic` can compile. Bridges existing JS libraries into the WASM pipeline without requiring a TypeScript rewrite.
+
+```bash
+wasmtk jstyper mylib.js                    # reads mylib.js + mylib.d.ts → mylib.ts
+wasmtk jstyper mylib.js --dts-only         # generate skeleton mylib.d.ts for hand-editing
+wasmtk jstyper mylib.js --dry-run          # preview output without writing files
+wasmtk jstyper mylib.js --any-policy=skip  # exclude functions with 'any' typed params
+```
+
+**What it produces:** A `.ts` file with every JS function body combined with the matching typed declaration from `.d.ts`. The output is a valid wasic input file.
+
+**`--any-policy` modes:**
+
+| Mode | Behavior |
+| --- | --- |
+| `warn` (default) | `any` mapped to `i32`; warning with corrected declaration suggestion |
+| `skip` | Functions with `any`-typed params or returns excluded; warning emitted |
+| `default` | `any` mapped to `i32` silently, no warnings |
+
+---
+
+### `wasmtk bindgen` — TypeScript Host Binding Generator
+
+Reads a `.wit` interface file (generated automatically by `wasic`/`modc` alongside every compiled module) and generates a self-contained TypeScript binding file with full ABI translation. No manual `WebAssembly` API usage required in the host.
+
+```bash
+wasmtk bindgen mylib.wit                         # generates mylib.bindings.ts (Deno)
+wasmtk bindgen mylib.wit --runtime node          # Node.js host loader
+wasmtk bindgen mylib.wit --runtime bun           # Bun host loader
+wasmtk bindgen mylib.wit -o path/to/binding.ts   # custom output path
+```
+
+**What it produces:** A `mylib.bindings.ts` file with:
+
+- `ModuleExports` interface — typed exports for every WIT export
+- `ModuleImports` interface — host callbacks for every WIT import (when present)
+- `loadModule(source, imports?)` async function — loads the `.wasm` and returns a typed proxy
+
+**Example usage of the generated binding:**
+
+```typescript
+import { loadModule } from "./mylib.bindings.ts";
+const lib = await loadModule("./mylib.wasm");
+console.log(lib.add(2, 3));       // number
+console.log(lib.greet("world"));  // string
+console.log(lib.isEven(4));       // boolean
+```
+
+**ABI translation (Canonical ABI):**
+
+| WIT type | Host JS type | Encoding |
+| --- | --- | --- |
+| `s32` / `s64` / `f32` / `f64` | `number` | Direct passthrough |
+| `bool` | `boolean` | params: `v ? 1 : 0`; returns: `result !== 0` |
+| `string` (param) | `string` | `TextEncoder` → `cabi_realloc` → ptr+len WASM args |
+| `string` (return) | `string` | 8-byte return area via `cabi_realloc(0,0,4,8)`; `TextDecoder` from ptr+len |
+
+---
+
+### `wasmtk hybrid` — TypeScript/WASM Split Compiler
+
+Splits a mixed TypeScript file into a wasic-compiled WASM core and a TypeScript runner. Functions annotated with `// @wasm` are compiled to a `.wasm` library; the rest stays as TypeScript with call sites automatically rewritten to use the WASM binding.
+
+```bash
+wasmtk hybrid myapp.ts          # generates myapp_core.wasm, myapp_core.wit,
+                                 # myapp_core.bindings.ts, myapp_runner.ts
+wasmtk hybrid myapp.ts -o dist/ # write generated files to dist/
+```
+
+**Annotation syntax:**
+
+```typescript
+// @wasm
+export function heavyCompute(n: i32): i32 {
+  // This function is compiled to WASM
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum += i;
+  return sum;
+}
+
+// This stays as TypeScript
+console.log(heavyCompute(1000));  // call site rewritten to lib.heavyCompute(1000)
+```
+
+**Five-step pipeline:**
+
+1. Parse source → extract `// @wasm`-annotated functions
+2. Write `_core.ts` with extracted functions (all `export`)
+3. `modc` compiles `_core.ts` → `_core.wasm` + `_core.wit`
+4. `bindgen` reads `_core.wit` → `_core.bindings.ts`
+5. Write `_runner.ts`: remaining TypeScript + `import { loadModule }` + `const lib = await loadModule(...)` + rewritten call sites
+
+**Limitations:** Async functions are excluded (with a warning). Call-site rewriting is regex-based (not AST-based). Module-level shared mutable state does not cross the WASM boundary.
+
+---
+
 ### `wasmtk run` — Multi-Format Executor
 
 Runs a file directly. Accepts four input formats:
@@ -613,6 +779,10 @@ import { compileJavy }                              from "@jrmarcum/wasmtk/javyc
 import { bundleImports }                            from "@jrmarcum/wasmtk/tsbundler";
 import { runWasmBundle }                            from "@jrmarcum/wasmtk/wasmbundle";
 import { mergeWasmWat, extractExportNames }         from "@jrmarcum/wasmtk/wasmmerge";
+import { runJstyper, parseJsFunctions,
+         parseDtsFunctions, generateTypedTs }       from "@jrmarcum/wasmtk/jstyper";
+import { runBindgen, parseWit, generateBindings }   from "@jrmarcum/wasmtk/bindgen";
+import { runHybrid }                                from "@jrmarcum/wasmtk/hybrid";
 ```
 
 | Export | Module | Description |
@@ -627,6 +797,14 @@ import { mergeWasmWat, extractExportNames }         from "@jrmarcum/wasmtk/wasmm
 | `runWasmBundle(inputs, out, onConflict?, aliases?)` | `./wasmbundle` | Bundle multiple `.wasm` files into a single `.wasm` library |
 | `mergeWasmWat(wat, prefix, dataReloc, overrides?)` | `./wasmmerge` | Merge one WAT module into a parent with prefix mangling and data relocation; returns `exportMap` |
 | `extractExportNames(wat)` | `./wasmmerge` | Return bare export names from a WAT module (for conflict detection) |
+| `runJstyper(path, opts)` | `./jstyper` | CLI entry point — convert `.js` + `.d.ts` to typed `.ts` |
+| `parseJsFunctions(src)` | `./jstyper` | Extract function definitions from JS source; returns `JsFuncDef[]` |
+| `parseDtsFunctions(dts)` | `./jstyper` | Extract typed signatures from `.d.ts` source; returns `DtsFuncDef[]` |
+| `generateTypedTs(jsFns, dtsFns, anyPolicy)` | `./jstyper` | Merge bodies + types into a wasic-compilable `.ts` string |
+| `runBindgen(witPath, opts)` | `./bindgen` | CLI entry point — generate TypeScript bindings from a `.wit` file |
+| `parseWit(src)` | `./bindgen` | Parse a WIT file into `ParsedWit` (exports, imports, types) |
+| `generateBindings(witSrc, opts)` | `./bindgen` | Generate the full TypeScript binding file as a string |
+| `runHybrid(path, opts)` | `./hybrid` | CLI entry point — split a `.ts` file into WASM core + TS runner |
 
 ---
 
@@ -644,6 +822,9 @@ import { mergeWasmWat, extractExportNames }         from "@jrmarcum/wasmtk/wasmm
 | WASM library for Deno/Node/browser consumption | `modc` |
 | Combine multiple `.wasm` files into one library | `wasmbundle` |
 | Distribute a set of compiled modules as a single artifact | `wasmbundle` |
+| Generate TypeScript bindings from a WIT interface | `bindgen` |
+| Convert JS library to typed wasic-compatible TypeScript | `jstyper` |
+| Split a TypeScript file into WASM hotspots + TS runner | `hybrid` |
 
 ---
 

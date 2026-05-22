@@ -1,14 +1,17 @@
 /**
  * @module main
  * @description The primary CLI entry point for wasmtk.
- * * Supports a comprehensive suite of WebAssembly development tools:
- * - `modc`: AssemblyScript library compilation (asc)
- * - `wasic`: WASI module compilation (Javy)
+ * Supports a comprehensive suite of WebAssembly development tools:
+ * - `wasic`: Direct TypeScript-to-WASM compiler (no embedded JS runtime)
+ * - `modc`: WASM library module compilation (TypeScript → WASM, no _start entry point)
+ * - `javyc`: TypeScript/JavaScript via Javy/QuickJS embedded runtime
+ * - `bindgen`: TypeScript host binding generator from WIT interface files
+ * - `hybrid`: TypeScript/WASM split compiler (// @wasm annotations)
+ * - `jstyper`: Convert .js + .d.ts pairs to typed .ts for wasic compilation
  * - `run`: Multi-format execution (.wasm, .wat, .js, .ts)
- * - `info`: Module inspection
- * - `wasm2js`: JS porting
- * - `convert`: Format toggling
- * - `tsbundle`: TS bundling
+ * - `convert`: Format toggling (.wasm ↔ .wat)
+ * - `tsbundle`: TypeScript multi-file bundler
+ * - `wasmbundle`: Bundle multiple .wasm files into a single library
  */
 
 import { parseArgs } from "@std/cli/parse-args";
