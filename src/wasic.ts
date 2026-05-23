@@ -696,6 +696,16 @@ class WasicTranspiler {
   // Reset at the start of each emitFunction call.
   private findResultVars: Set<string> = new Set();
 
+  // Tracks catch exception binding names (e.g. `catch (e)` → "e").
+  // Used so String(e) can emit "Error: " + e instead of treating e as a number.
+  // Reset at the start of each emitFunction call and startBodyLines processing.
+  private catchVarNames: Set<string> = new Set();
+
+  // Tracks catch variable names that shadow an outer string variable of the same name.
+  // When a catch var shadows, an alias local ($__catch_cv) is used so the outer is preserved.
+  // Reset at the start of each emitFunction call and startBodyLines processing.
+  private catchVarShadows: Set<string> = new Set();
+
   // Set to true when any throw/try/catch is emitted; causes (tag $__exn_tag) to be emitted.
   private needsExceptionTag = false;
 
@@ -3347,6 +3357,24 @@ class WasicTranspiler {
       }
       return tmplStmts.join(`\n${ind}`);
     }
+    // VAR instanceof Error ? VAR.message : String(VAR) — idiomatic catch pattern.
+    // In wasic, all exceptions are stored as plain strings (ptr+len); e.message === e.
+    // The `instanceof Error` branch is always taken, so simplify to a direct copy.
+    {
+      const errTernary = initExpr.match(
+        /^(\w+)\s+instanceof\s+Error\s*\?\s*\1\.message\s*:\s*String\s*\(\s*\1\s*\)\s*$/
+      );
+      if (errTernary) {
+        const varE = errTernary[1]!;
+        if (locals.get(varE) === "string") {
+          return [
+            `(local.set $${varName}_ptr (local.get $${varE}_ptr))`,
+            `${ind}(local.set $${varName}_len (local.get $${varE}_len))`,
+          ].join("\n");
+        }
+      }
+    }
+
     // Ternary: cond ? stringExpr1 : stringExpr2
     {
       const qIdx = this.findBinaryOp(initExpr, "?");
@@ -3616,9 +3644,20 @@ class WasicTranspiler {
     // String(n) → same pattern
     const stringOfMatch = initExpr.match(/^String\s*\((.+?)\)\s*$/);
     if (stringOfMatch) {
-      this.needsNumericHelpers = true;
       const argExpr = stringOfMatch[1].trim();
       const argType: WatType = this.inferExprType(argExpr, locals);
+      // String(catchVar) where the arg is a caught exception: produce "Error: <message>"
+      // matching JavaScript's Error.prototype.toString() behaviour.
+      if (argType === "string" && this.catchVarNames.has(argExpr)) {
+        this.needsStringOpHelpers = true;
+        const [prefixPtr, prefixLen] = this.allocString("Error: ");
+        return [
+          `(call $__str_concat (i32.const ${prefixPtr}) (i32.const ${prefixLen}) (local.get $${argExpr}_ptr) (local.get $${argExpr}_len))`,
+          `${ind}(local.set $${varName}_len)`,
+          `${ind}(local.set $${varName}_ptr)`,
+        ].join("\n");
+      }
+      this.needsNumericHelpers = true;
       const helperName = argType === "f64" ? "$__f64_to_str" : argType === "i64" ? "$__i64_to_str" : "$__i32_to_str";
       const valWat = this.emitExpr(argExpr, locals, argType);
       return [
@@ -8603,9 +8642,29 @@ class WasicTranspiler {
         }
 
         this.needsExceptionTag = true;
-        const tryWat     = this.emitBlock(tryBody,     locals, funcResult, indent + "    ");
-        const catchWat   = hasCatch   ? this.emitBlock(catchBody,   locals, funcResult, indent + "    ") : "";
-        const finallyWat = hasFinally ? this.emitBlock(finallyBody, locals, funcResult, indent + "    ") : "";
+
+        // If the catch variable name shadows an outer string local (detected during pre-scan),
+        // use an alias WAT name so the outer variable's ptr/len locals are never overwritten.
+        const catchShadowsOuter = catchVar !== "" && this.catchVarShadows.has(catchVar);
+        const internalCatchVar  = catchShadowsOuter ? `__catch_${catchVar}` : catchVar;
+
+        // Patch catch body: rename catchVar → internalCatchVar so emission uses alias locals.
+        let catchBodyToEmit = catchBody;
+        if (catchShadowsOuter) {
+          const cvRe = new RegExp(`\\b${catchVar}\\b`, "g");
+          catchBodyToEmit = catchBody.map(l => l.replace(cvRe, internalCatchVar));
+          locals.set(internalCatchVar, "string");
+          this.stringVars.add(internalCatchVar);
+        }
+
+        const tryWat     = this.emitBlock(tryBody,          locals, funcResult, indent + "    ");
+        const catchWat   = hasCatch   ? this.emitBlock(catchBodyToEmit, locals, funcResult, indent + "    ") : "";
+        const finallyWat = hasFinally ? this.emitBlock(finallyBody,     locals, funcResult, indent + "    ") : "";
+
+        if (catchShadowsOuter) {
+          locals.delete(internalCatchVar);
+          this.stringVars.delete(internalCatchVar);
+        }
 
         out.push(`${indent}(try`);
         out.push(`${indent}  (do`);
@@ -8615,10 +8674,10 @@ class WasicTranspiler {
 
         if (hasCatch) {
           out.push(`${indent}  (catch $__exn_tag`);
-          if (catchVar) {
+          if (internalCatchVar) {
             // Payload is (ptr i32, len i32); len is on top of stack.
-            out.push(`${indent}    (local.set $${catchVar}_len)`);
-            out.push(`${indent}    (local.set $${catchVar}_ptr)`);
+            out.push(`${indent}    (local.set $${internalCatchVar}_len)`);
+            out.push(`${indent}    (local.set $${internalCatchVar}_ptr)`);
           } else {
             out.push(`${indent}    (drop)`);
             out.push(`${indent}    (drop)`);
@@ -10498,6 +10557,8 @@ class WasicTranspiler {
     this.classVars              = new Map();
     this.interfaceVars          = new Map();
     this.findResultVars         = new Set();
+    this.catchVarNames          = new Set();
+    this.catchVarShadows        = new Set();
     this.nullableVarInnerType   = new Map();
     this.currentFuncResultTsName    = null;
     this.currentFuncIsNullableReturn = this.nullableFuncReturnType.has(fn.name);
@@ -11031,11 +11092,19 @@ class WasicTranspiler {
       }
       // catch variable: } catch (e) { — registers e as a (ptr, len) string pair
       const catchVarPre = line.match(/^}\s*catch\s*\(\s*(\w+)(?:\s*:\s*\w+)?\s*\)\s*\{?$/);
-      if (catchVarPre && catchVarPre[1] && !locals.has(catchVarPre[1])) {
+      if (catchVarPre && catchVarPre[1]) {
         const cv = catchVarPre[1];
-        declaredLocals.push([`${cv}_ptr`, "i32"], [`${cv}_len`, "i32"]);
-        locals.set(cv, "string");
-        this.stringVars.add(cv);
+        this.catchVarNames.add(cv);
+        if (!locals.has(cv)) {
+          declaredLocals.push([`${cv}_ptr`, "i32"], [`${cv}_len`, "i32"]);
+          locals.set(cv, "string");
+          this.stringVars.add(cv);
+        } else if (locals.get(cv) === "string") {
+          // Catch var shadows an outer string — declare alias locals so the outer is not overwritten
+          this.catchVarShadows.add(cv);
+          const alias = `__catch_${cv}`;
+          declaredLocals.push([`${alias}_ptr`, "i32"], [`${alias}_len`, "i32"]);
+        }
       }
     }
     // Add $__rest_ptr if any body line calls a rest-param function with literal args
@@ -11598,6 +11667,8 @@ class WasicTranspiler {
       this.structVarRuntimeInits       = new Map();
       this.classVars                   = new Map();
       this.nullableVarInnerType        = new Map();
+      this.catchVarNames               = new Set();
+      this.catchVarShadows             = new Set();
       this.currentFuncIsNullableReturn = false;
       const startDynArrayNames = this.findDynamicArrays(this.startBodyLines);
       const startLocals = new Map<string, WatType>();
@@ -11984,11 +12055,18 @@ class WasicTranspiler {
         }
         // catch variable: } catch (e) { — registers e as a (ptr, len) string pair
         const catchVarPre2 = line.match(/^}\s*catch\s*\(\s*(\w+)(?:\s*:\s*\w+)?\s*\)\s*\{?$/);
-        if (catchVarPre2 && catchVarPre2[1] && !startLocals.has(catchVarPre2[1])) {
+        if (catchVarPre2 && catchVarPre2[1]) {
           const cv2 = catchVarPre2[1];
-          startDeclaredLocals.push([`${cv2}_ptr`, "i32"], [`${cv2}_len`, "i32"]);
-          startLocals.set(cv2, "string");
-          this.stringVars.add(cv2);
+          this.catchVarNames.add(cv2);
+          if (!startLocals.has(cv2)) {
+            startDeclaredLocals.push([`${cv2}_ptr`, "i32"], [`${cv2}_len`, "i32"]);
+            startLocals.set(cv2, "string");
+            this.stringVars.add(cv2);
+          } else if (startLocals.get(cv2) === "string") {
+            this.catchVarShadows.add(cv2);
+            const alias2 = `__catch_${cv2}`;
+            startDeclaredLocals.push([`${alias2}_ptr`, "i32"], [`${alias2}_len`, "i32"]);
+          }
         }
       }
       // Add $__rest_ptr if any start body line calls a rest-param function with literal args

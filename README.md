@@ -405,8 +405,9 @@ After every successful `wasmtk wasic` or `wasmtk modc` compilation a `.wit` file
 | `try { } catch (e) { } finally { }` | Combined form — `finally` runs on success, catch success, and unhandled exception paths |
 | `e` in catch | Bound as a string variable (`$e_ptr` + `$e_len` i32 locals) — the throw message |
 | `e.message` | Alias for `e` — resolves to the same string ptr/len pair |
-| `String(e)` in catch | Same as `e` — `String(varName)` where `varName` is a string local passes through as the same ptr/len pair |
-| `e instanceof Error ? e.message : String(e)` | Idiomatic TypeScript try/catch pattern — both branches resolve to the caught string; compiles correctly to the `$e_ptr`/`$e_len` locals |
+| `String(e)` in catch | Produces `"Error: <message>"` — matches JavaScript's `Error.prototype.toString()` (e.g. `String(e)` → `"Error: Structural Error Message"`). Only applies when `e` is a catch exception binding; `String()` on non-catch strings behaves normally |
+| `e instanceof Error ? e.message : String(e)` | Idiomatic TypeScript catch pattern — simplified at compile time to a direct copy of the exception string (`e.message`), producing just the message text (without `"Error: "` prefix); `String(e)` in the else-branch is unreachable in wasic since all exceptions are string-typed |
+| `catch (e)` shadowing outer `e: string` | The outer string variable is preserved — the catch block uses alias locals `$__catch_e_ptr`/`$__catch_e_len` so `$e_ptr`/`$e_len` are never overwritten; the outer `e` is readable again after the catch scope exits |
 
 ##### Math
 
