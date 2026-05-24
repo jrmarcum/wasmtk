@@ -106,6 +106,76 @@ async function readExpectedFailures(tsPath: string): Promise<Set<string>> {
   return expected;
 }
 
+/**
+ * Reads the first 10 lines of a .ts file and returns the path from a
+ * "// @modc-prereq: path/to/library.ts" comment, or null if absent.
+ *
+ * Phase 18 WASM-import tests must pre-compile their library with `modc` before
+ * the standard wasic compile step can find the .wasm import.
+ */
+async function readModcPrereq(tsPath: string): Promise<string | null> {
+  try {
+    const text = await Deno.readTextFile(tsPath);
+    for (const line of text.split("\n").slice(0, 10)) {
+      const m = line.match(/\/\/\s*@modc-prereq\s*:\s*(.+)/);
+      if (m) return m[1].trim();
+    }
+  } catch { /* ignore unreadable files */ }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom pipeline support  (@test-pipeline / @step)
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface PipelineStep {
+  label: string;   // wasmtk sub-command (modc, wasic, wasmbundle, run, …)
+  args:  string[]; // full arg list passed to wasmtk (subcommand first)
+}
+
+/**
+ * Reads the first 40 lines of a .ts file looking for:
+ *   // @test-pipeline          ← activates custom pipeline mode
+ *   // @step <cmd> <args...>   ← one step in the pipeline
+ *
+ * Returns the ordered list of steps, or null if no @test-pipeline marker found.
+ * Paths inside @step lines are left as-is (relative to the test directory);
+ * they are resolved to absolute paths in startTestSuite before execution.
+ */
+async function readTestPipeline(tsPath: string): Promise<PipelineStep[] | null> {
+  try {
+    const text = await Deno.readTextFile(tsPath);
+    const lines = text.split("\n").slice(0, 40);
+    if (!lines.some((l) => /\/\/\s*@test-pipeline\b/.test(l))) return null;
+
+    const steps: PipelineStep[] = [];
+    for (const line of lines) {
+      const m = line.match(/\/\/\s*@step\s+(\S+)\s*(.*)/);
+      if (!m) continue;
+      const subCmd = m[1];
+      const rest   = m[2]?.trim() ?? "";
+      const extra  = rest.length > 0 ? rest.split(/\s+/) : [];
+      steps.push({ label: subCmd, args: [subCmd, ...extra] });
+    }
+    return steps.length > 0 ? steps : null;
+  } catch { /* ignore unreadable files */ }
+  return null;
+}
+
+/**
+ * Resolves a single pipeline argument relative to baseDir.
+ * Flags (starting with "-") are returned unchanged.
+ * Any argument that contains a path separator or has a known file extension
+ * is joined with baseDir; everything else is returned unchanged.
+ */
+function resolvePipelineArg(arg: string, baseDir: string): string {
+  if (arg.startsWith("-")) return arg;
+  if (/\.(ts|wasm|wat)(\s|$)/.test(arg) || arg.startsWith("../") || arg.startsWith("./")) {
+    return join(baseDir, arg);
+  }
+  return arg;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Test suite
 // ─────────────────────────────────────────────────────────────────────────────
@@ -158,16 +228,63 @@ async function startTestSuite() {
     console.log(yellow(bold(`── ${file}`)));
     processed++;
 
+    // ── @test-pipeline: custom command sequence ───────────────────────
+    const pipeline = await readTestPipeline(tsPath);
+    if (pipeline !== null) {
+      let allPipelinePassed = true;
+      let failedPipelineStep = "";
+      for (const step of pipeline) {
+        const resolvedArgs = step.args.map((a) => resolvePipelineArg(a, resolvedPath));
+        const [subCmd, ...stepArgs] = resolvedArgs;
+        const r = await runStep(step.label, WASMTK_BIN, [subCmd, ...stepArgs]);
+        if (!r.success) {
+          allPipelinePassed = false;
+          failedPipelineStep = step.label;
+          break;
+        }
+      }
+      if (allPipelinePassed) {
+        console.log(green(`✅ ${file} PASSED\n`));
+        passedCount++;
+      } else {
+        console.log(red(`❌ ${file} FAILED  [${failedPipelineStep}]\n`));
+        failedCount++;
+      }
+      continue; // skip standard compile / run-ts / run-wasm pipeline
+    }
+
     const expectFail = await readExpectedFailures(tsPath);
     // A step "passes" if it succeeded when not expected to fail, or failed when expected to fail.
     const stepOk = (r: StepResult, step: string) =>
       expectFail.has(step) ? !r.success : r.success;
 
+    // ── Step 0: modc-prereq (Phase 18 — compile library before app) ──
+    const prereqRel = await readModcPrereq(tsPath);
+    let prereq: StepResult = { success: true, code: 0 };
+    if (prereqRel !== null) {
+      const prereqFull = join(resolvedPath, prereqRel);
+      prereq = await runStep("modc-prereq", WASMTK_BIN, ["modc", prereqFull]);
+    }
+
     // ── Step 1: Compile TS → WASM ─────────────────────────────────
-    const compile = await runStep("compile", WASMTK_BIN, ["wasic", tsPath], expectFail.has("compile"));
+    let compile: StepResult;
+    if (!prereq.success) {
+      console.log(dim("  (skipping compile — modc-prereq failed)"));
+      compile = { success: false, code: -1 };
+    } else {
+      compile = await runStep("compile", WASMTK_BIN, ["wasic", tsPath], expectFail.has("compile"));
+    }
 
     // ── Step 2: Run TS source directly (reference baseline) ────────
-    const runTs = await runStep("run-ts", WASMTK_BIN, ["run", tsPath], expectFail.has("run-ts"));
+    // Files with @modc-prereq import .wasm modules; Deno cannot resolve those,
+    // so run-ts is N/A (skipped, not counted as pass or fail).
+    let runTs: StepResult;
+    if (prereqRel !== null) {
+      console.log(dim("  (skipping run-ts — .wasm imports require modc-prereq)"));
+      runTs = { success: true, code: 0 };
+    } else {
+      runTs = await runStep("run-ts", WASMTK_BIN, ["run", tsPath], expectFail.has("run-ts"));
+    }
 
     // ── Step 3: Run compiled WASM ─────────────────────────────────
     let runWasm: StepResult;
@@ -186,7 +303,7 @@ async function startTestSuite() {
     }
 
     // ── File verdict ──────────────────────────────────────────────
-    const allPassed = stepOk(compile, "compile") && stepOk(runTs, "run-ts") && stepOk(runWasm, "run-wasm");
+    const allPassed = prereq.success && stepOk(compile, "compile") && stepOk(runTs, "run-ts") && stepOk(runWasm, "run-wasm");
     if (allPassed) {
       const note = expectFail.size > 0 ? dim(` (expected failures: ${[...expectFail].join(", ")})`) : "";
       console.log(green(`✅ ${file} PASSED`) + note + "\n");
@@ -195,8 +312,9 @@ async function startTestSuite() {
       // List steps whose outcome didn't match expectations.
       const badSteps = (
         [
-          !stepOk(compile, "compile") && "compile",
-          !stepOk(runTs,   "run-ts")  && "run-ts",
+          !prereq.success              && "modc-prereq",
+          !stepOk(compile, "compile")  && "compile",
+          !stepOk(runTs,   "run-ts")   && "run-ts",
           !stepOk(runWasm, "run-wasm") && "run-wasm",
         ] as (string | false)[]
       ).filter((s): s is string => s !== false).join(", ");

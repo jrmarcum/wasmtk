@@ -130,7 +130,10 @@ async function promptConflict(
  */
 function getDataMaxEnd(wat: string): number {
   let maxEnd = 0;
-  const dataRe = /\(data\s+\(i32\.const\s+(\d+)\)\s+"((?:[^"\\]|\\.)*)"\)/g;
+  // Match both plain and wabt-indexed formats:
+  //   (data (i32.const N) "...")
+  //   (data (;N;) (i32.const N) "...")
+  const dataRe = /\(data\s+(?:\(;[^;]*;\)\s+)?\(i32\.const\s+(\d+)\)\s+"((?:[^"\\]|\\.)*)"\)/g;
   let m: RegExpExecArray | null;
   while ((m = dataRe.exec(wat)) !== null) {
     const base = parseInt(m[1]);
@@ -193,6 +196,11 @@ export async function runWasmBundle(
     const wat = wabtMod.toText({ foldExprs: false });
     wabtMod.destroy();
     const exports = extractExportNames(wat);
+    // Also include _start for WASI executables — mergeWasmWat preserves it in
+    // wasmbundle mode (when exportOverrides is supplied) so the bundle is runnable.
+    if (/\(export\s+"_start"\s+\(func\s+\d+\)\)/.test(wat) && !exports.includes("_start")) {
+      exports.push("_start");
+    }
     modules.push({ filePath, prefix: modulePrefix(filePath), wat, exports });
     const expList = exports.length ? exports.join(", ") : "(none)";
     console.log(`  ✓ ${basename(filePath)}: ${exports.length} export(s): ${expList}`);
@@ -318,12 +326,15 @@ export async function runWasmBundle(
         `  (import "${WASI_MODULE}" "${name}" (func $${name} ${WASI_SIGNATURES[name]}))`,
     );
 
+  // WAT spec: imports must precede all non-import definitions (memory, funcs, etc.)
   const watParts: string[] = ["(module"];
-  watParts.push(`  (memory ${pagesNeeded})`);
   if (wasiDecls.length > 0) watParts.push(wasiDecls.join("\n"));
+  watParts.push(`  (memory ${pagesNeeded})`);
   if (funcParts.length > 0) watParts.push("  " + funcParts.join("\n  "));
   if (globalParts.length > 0) watParts.push("  " + globalParts.join("\n  "));
   if (dataParts.length > 0) watParts.push("  " + dataParts.join("\n  "));
+  // Always export memory — the wasmtk runner and host bindings require it
+  watParts.push(`  (export "memory" (memory 0))`);
   if (exportDeclParts.length > 0) watParts.push("  " + exportDeclParts.join("\n  "));
   watParts.push(")");
   const masterWat = watParts.join("\n");

@@ -253,25 +253,33 @@ export function mergeWasmWat(
   }
 
   // ── Identify & strip entry-only items ────────────────────────────────────
+  // In wasmbundle mode (exportOverrides provided) we preserve _start and
+  // proc_exit so the bundle remains a runnable WASI executable. In Phase-18
+  // library-merge mode (no exportOverrides) we strip them as before.
+  const skipEntryStrip = exportOverrides !== undefined;
 
   const strippedNames: string[] = [];
 
   // Strip entry-only from export map
-  for (const [idx, name] of exportFuncMap) {
-    if (ENTRY_ONLY_NAMES.has(name)) {
-      strippedNames.push(name);
-      exportFuncMap.delete(idx);
+  if (!skipEntryStrip) {
+    for (const [idx, name] of exportFuncMap) {
+      if (ENTRY_ONLY_NAMES.has(name)) {
+        strippedNames.push(name);
+        exportFuncMap.delete(idx);
+      }
     }
   }
   // Find import indices for entry-only WASI functions
   const entryOnlyImportIdxs = new Set<number>();
-  for (const [idx, info] of importMap) {
-    if (ENTRY_ONLY_NAMES.has(info.name)) {
-      strippedNames.push(`${info.name} (import)`);
-      entryOnlyImportIdxs.add(idx);
+  if (!skipEntryStrip) {
+    for (const [idx, info] of importMap) {
+      if (ENTRY_ONLY_NAMES.has(info.name)) {
+        strippedNames.push(`${info.name} (import)`);
+        entryOnlyImportIdxs.add(idx);
+      }
     }
+    for (const idx of entryOnlyImportIdxs) importMap.delete(idx);
   }
-  for (const idx of entryOnlyImportIdxs) importMap.delete(idx);
 
   if (strippedNames.length > 0) {
     const unique = [...new Set(strippedNames.map(n => n.replace(" (import)", "")))];
@@ -408,7 +416,9 @@ export function mergeWasmWat(
       if (info.module === WASI_MODULE) continue;   // deduplicated — main module declares these
       // Non-WASI external import: include with mangled name
       const newName = funcName.get(idx) ?? `$${prefix}__fn${idx}`;
-      funcParts.push(form.replace(/\(func\s+\(;(\d+);\)/, `(func ${newName}`));
+      // Use a function callback to avoid JavaScript's $1/$2 backreference substitution
+      // in the replacement string — critical when newName starts with $1x (e.g. $18_prefix_...).
+      funcParts.push(form.replace(/\(func\s+\(;(\d+);\)/, () => `(func ${newName}`));
       continue;
     }
 
@@ -429,7 +439,8 @@ export function mergeWasmWat(
       if (importMap.has(idx)) continue; // import stubs handled above
 
       const newName = funcName.get(idx) ?? `$${prefix}__fn${idx}`;
-      let body = form.replace(/\(func\s+\(;(\d+);\)(?:\s+\(type\s+\d+\))?/, `(func ${newName}`);
+      // Use a function callback to prevent $1 backreference substitution in newName.
+      let body = form.replace(/\(func\s+\(;(\d+);\)(?:\s+\(type\s+\d+\))?/, () => `(func ${newName}`);
       body = renameCallSites(body);
       body = renameGlobalRefs(body);
       body = relocateDataPtrs(body);
@@ -445,7 +456,8 @@ export function mergeWasmWat(
       // Skip the heap-pointer global — the main module manages its own heap
       if (form.includes("(mut i32)")) continue;
       const newName = `$${prefix}_global${idx}`;
-      let renamed = form.replace(/\(global\s+\(;(\d+);\)/, `(global ${newName}`);
+      // Use a function callback to prevent $1 backreference substitution in newName.
+      let renamed = form.replace(/\(global\s+\(;(\d+);\)/, () => `(global ${newName}`);
       renamed = relocateDataPtrs(renamed);
       globalParts.push(renamed);
       continue;
