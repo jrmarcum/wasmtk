@@ -43,7 +43,7 @@ prototype with a Rust production implementation is a one-line manifest change.
 
 ## The Ecosystem Map
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    POLYGLOT BUILD LAYER                     │
 │              (pixi foundation + wasmtk orchestration)       │
@@ -81,7 +81,7 @@ prototype with a Rust production implementation is a one-line manifest change.
 orchestrator CLI
 
 Current state: **All 50 phases complete + Stage 0 Canonical ABI alignment complete.
-356/356 tests passing (2026-05-24).** Compiles TypeScript to optimized WASM via WAT +
+359/359 tests passing (2026-05-24).** Compiles TypeScript to optimized WASM via WAT +
 Binaryen. Generates WIT files alongside every compiled module (Phase 41). Phase 50
 (`wasmtk bindgen`) generates typed TypeScript host binding files from WIT using the
 Canonical ABI (`cabi_realloc`, out-parameter string returns). `wasmtk hybrid` (prototype)
@@ -128,6 +128,7 @@ Additions scoped here (Stage 1):
 ---
 
 ### Project 3 — Cross-Language Loaders (new)
+
 **Repositories:** separate repos per language under `jrmarcum/`
 **Role:** Per-language host runtimes; each implements the UniversalWasmLoader Spec
 
@@ -145,7 +146,7 @@ Julia-specific repo is planned. Julia is Tier 3 (community-contributed or long-t
 
 Every loader exposes the same conceptual API in its language's idiom:
 
-```
+```typescript
 // JS/TS   → wasm_import("./module.wasm")
 // Python  → wasm_import("./module.wasm")
 // Rust    → wasm_import("./module.wasm").await?
@@ -161,10 +162,13 @@ All pass the same reference test suite defined in the spec.
 ---
 
 ### Project 4 — UniversalWasmLoader Spec (new, lives in Project 2 repo)
+
 **File:** `SPEC.md` in `jrmarcum/universalWasmLoader`
+
 **Role:** The cross-language contract that all loaders implement
 
 Sections:
+
 1. **Core interface** — function signature, options shape, return type contract
 2. **WIT auto-detection** — path convention, fallback behavior
 3. **ABI profiles** — `component` (canonical), `raw`, and future named profiles
@@ -177,7 +181,9 @@ Sections:
 ---
 
 ### Project 5 — Polyglot Build Orchestrator (new, extends wasmtk CLI)
+
 **Lives in:** `jrmarcum/wasmtk` as additional CLI commands
+
 **Role:** The pixi-aware project manager that ties all components together
 
 The `[wasmtk]` section of `pixi.toml` defines components, interfaces, and composition
@@ -249,7 +255,7 @@ subsequent releases. Tier 3 are community-contributed or long-term.
 ### Stage 0 — Canonical ABI Alignment ✅ COMPLETE (wasmtk, 2026-05-19)
 
 *Completed. wasic now exports `cabi_realloc` instead of `__malloc` and uses the
-out-parameter convention for string returns. All 356/356 tests pass.*
+out-parameter convention for string returns. All 359/359 tests pass.*
 
 - ✅ Replaced `__malloc` export with `cabi_realloc(ptr, old_size, align, new_size) → i32`
 - ✅ Changed string return emission: shim wrappers write ptr+len to caller-provided 8-byte
@@ -257,7 +263,7 @@ out-parameter convention for string returns. All 356/356 tests pass.*
 - ✅ Updated `bindgen.ts`: uses `cabi_realloc` + `DataView` out-parameter pattern
 - ✅ `utils.ts` test runner verified — no changes needed (internal WASM calls unaffected)
 - ✅ WIT generation confirmed — `string` type in WIT, no regression
-- ✅ 356/356 tests pass
+- ✅ 359/359 tests pass
 
 ---
 
@@ -335,6 +341,7 @@ finally { pool.release(lib2); }
 ---
 
 ### Stage 2 — High-Priority Cross-Language Loaders
+
 *Separate repos. Approximately 2–3 sessions each.*
 
 - `universalWasmLoader-rs` — Rust (crates.io)
@@ -346,6 +353,7 @@ that the spec is implementable before committing to additional ports.
 ---
 
 ### Stage 3 — Build Orchestration Foundation
+
 *wasmtk repo. Approximately 3–4 sessions.*
 
 - `[wasmtk]` section parser in wasmtk CLI
@@ -360,6 +368,7 @@ that the spec is implementable before committing to additional ports.
 ---
 
 ### Stage 4 — Full Polyglot Project System
+
 *wasmtk repo + additional language repos. Ongoing.*
 
 - `wasmtk setup <language>` — scaffolds component + adds pixi.toml configuration
@@ -372,6 +381,7 @@ that the spec is implementable before committing to additional ports.
 ---
 
 ### Stage 5 — Ecosystem
+
 *Long-term.*
 
 - Component registry — publish and consume pre-built WASM components
@@ -384,7 +394,7 @@ that the spec is implementable before committing to additional ports.
 
 ## Repository Summary
 
-```
+```text
 jrmarcum/
 ├── wasmtk                        ← TypeScript compiler + polyglot build CLI
 ├── universalWasmLoader           ← JS/TS loader + SPEC.md (reference impl)

@@ -2866,6 +2866,19 @@ class WasicTranspiler {
     return null;
   }
 
+  /** Find all class names that are (or transitively extend) baseClass in this module. */
+  private findSubclasses(baseClass: string): string[] {
+    const result: string[] = [];
+    for (const name of this.classDefs.keys()) {
+      let cur: string | undefined = name;
+      while (cur) {
+        if (cur === baseClass) { result.push(name); break; }
+        cur = this.classInheritance.get(cur);
+      }
+    }
+    return result;
+  }
+
   /** Allocates `totalSize` zero-filled bytes in the data section. Returns base pointer. */
   private allocStructData(def: StructDef, initFields: Record<string, string>, classTag?: number): number {
     const ptr = this.dataOffset;
@@ -4409,6 +4422,55 @@ class WasicTranspiler {
       }
     }
 
+    // Phase 47: arr[idx].method(args) — class method call on array element (supports runtime vtable dispatch)
+    const arrMethodCallRe = /^(\w+)\[([^\]]+)\]\.(\w+)\s*\((.*)\)$/;
+    const amcMatch = expr.match(arrMethodCallRe);
+    if (amcMatch) {
+      const [, amcArr, amcIdx, amcMethod, amcArgsStr] = amcMatch;
+      const amcInfo = this.arrayVars.get(amcArr);
+      const amcStn = amcInfo?.structTypeName ??
+        (amcInfo && amcInfo.elemType !== "f64" && amcInfo.elemType !== "i32" && amcInfo.elemType !== "i64"
+          ? amcInfo.elemType : undefined);
+      if (amcInfo && amcStn && this.classDefs.has(amcStn)) {
+        const amcIdxWat = this.emitArrayIndex(amcIdx, locals);
+        const amcBase = (amcInfo.ptr === -1 || amcInfo.dynamic)
+          ? this.arrGetWat(amcArr)
+          : `(i32.const ${amcInfo.ptr})`;
+        // Object pointer stored in array at shift=2 (i32 elements)
+        const amcObjPtr = `(i32.load (i32.add (i32.add ${amcBase} (i32.const 8)) (i32.shl ${amcIdxWat} (i32.const 2))))`;
+        const amcArgs = amcArgsStr ? this.splitArgs(amcArgsStr) : [];
+        const amcEmitCall = (cls: string): string => {
+          const fn2 = this.resolveMethodFunc(cls, amcMethod) ?? `${cls}_${amcMethod}`;
+          const fn2Def = this.functions.find(f => f.name === fn2);
+          const eArgs = amcArgs.map((a, i) =>
+            this.emitExpr(a, locals, fn2Def?.params[i + 1]?.type ?? ("i32" as WatType)));
+          return `(call $${fn2} ${amcObjPtr} ${eArgs.join(" ")})`.trim();
+        };
+        if (this.classHeaderSize === 0) {
+          return amcEmitCall(amcStn);
+        }
+        // Runtime vtable dispatch: read class tag at offset 0, dispatch to matching method
+        const amcSubs = this.findSubclasses(amcStn);
+        amcSubs.sort((a, b) => (this.classTags.get(a) ?? 0) - (this.classTags.get(b) ?? 0));
+        if (amcSubs.length === 0) return `(i32.const 0)`;
+        if (amcSubs.length === 1) return amcEmitCall(amcSubs[0]);
+        const amcBaseFunc = this.resolveMethodFunc(amcStn, amcMethod);
+        const amcBaseFnDef = amcBaseFunc ? this.functions.find(f => f.name === amcBaseFunc) : null;
+        const amcResult = amcBaseFnDef?.result ?? null;
+        // Build if-else dispatch from last class outward (last is the default)
+        let amcDispatch = amcEmitCall(amcSubs[amcSubs.length - 1]);
+        for (let k = amcSubs.length - 2; k >= 0; k--) {
+          const cls = amcSubs[k];
+          const tag = this.classTags.get(cls) ?? (k + 1);
+          const cond = `(i32.eq (i32.load ${amcObjPtr}) (i32.const ${tag}))`;
+          amcDispatch = amcResult
+            ? `(if (result ${amcResult}) ${cond} (then ${amcEmitCall(cls)}) (else ${amcDispatch}))`
+            : `(if ${cond} (then ${amcEmitCall(cls)}) (else ${amcDispatch}))`;
+        }
+        return amcDispatch;
+      }
+    }
+
     // Array element read: arr[idx]
     const bracketMatch = expr.match(/^(\w+)\[([^\]]*)\]$/);
     if (bracketMatch) {
@@ -5026,7 +5088,7 @@ class WasicTranspiler {
       const argsStr = newMatch[2].trim();
       const cd = this.classDefs.get(ctorClassName);
       if (cd) {
-        const ptr = this.allocStructData(cd.struct, {});
+        const ptr = this.allocStructData(cd.struct, {}, this.classTags.get(ctorClassName));
         const constructorName = `${ctorClassName}_constructor`;
         const ctorFn = this.functions.find(f => f.name === constructorName);
         if (ctorFn) {
@@ -5039,6 +5101,24 @@ class WasicTranspiler {
           return `(block (result i32) ${ctorCall} (i32.const ${ptr}))`;
         }
         return `(i32.const ${ptr})`;
+      }
+    }
+
+    // Phase 47: super.method(args) in non-constructor method body (expression form)
+    const superDotExprMatch = expr.match(/^super\.(\w+)\s*\((.*)\)$/);
+    if (superDotExprMatch && this.currentMethodClass) {
+      const sdMethod = superDotExprMatch[1];
+      const sdArgsRaw = superDotExprMatch[2].trim();
+      const sdParent = this.classInheritance.get(this.currentMethodClass);
+      if (sdParent) {
+        const sdFuncName = this.resolveMethodFunc(sdParent, sdMethod) ?? `${sdParent}_${sdMethod}`;
+        const sdFn = this.functions.find(f => f.name === sdFuncName);
+        if (sdFn) {
+          const sdArgs = sdArgsRaw ? this.splitArgs(sdArgsRaw) : [];
+          const sdEmitted = sdArgs.map((a, i) =>
+            this.emitExpr(a, locals, sdFn.params[i + 1]?.type ?? ("i32" as WatType)));
+          return `(call $${sdFuncName} (local.get $__self) ${sdEmitted.join(" ")})`.trim();
+        }
       }
     }
 
@@ -7821,6 +7901,25 @@ class WasicTranspiler {
             const hasResult = inner.result !== null && inner.result !== "never" && inner.result !== "string";
             return hasResult ? `(drop ${callWat})` : callWat;
           }
+        }
+      }
+    }
+
+    // Phase 47: super.method(args) — non-constructor super method call (statement form)
+    const superMethodStmt = line.match(/^super\.(\w+)\s*\((.*)\)\s*;?$/);
+    if (superMethodStmt && this.currentMethodClass) {
+      const smsMethod = superMethodStmt[1];
+      const smsArgsRaw = superMethodStmt[2].trim();
+      const smsParent = this.classInheritance.get(this.currentMethodClass);
+      if (smsParent) {
+        const smsFuncName = this.resolveMethodFunc(smsParent, smsMethod) ?? `${smsParent}_${smsMethod}`;
+        const smsFn = this.functions.find(f => f.name === smsFuncName);
+        if (smsFn) {
+          const smsArgs = smsArgsRaw ? this.splitArgs(smsArgsRaw) : [];
+          const smsEmitted = smsArgs.map((a, i) =>
+            this.emitExpr(a, locals, smsFn.params[i + 1]?.type ?? ("i32" as WatType)));
+          const smsCall = `(call $${smsFuncName} (local.get $__self) ${smsEmitted.join(" ")})`.trim();
+          return smsFn.result ? `(drop ${smsCall})` : smsCall;
         }
       }
     }
