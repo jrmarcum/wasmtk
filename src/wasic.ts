@@ -2149,8 +2149,8 @@ class WasicTranspiler {
       const typeParams = m[3].split(",").map(t => t.trim()).filter(Boolean);
       const openParen  = m.index + m[0].length - 1;
       const [rawParams, afterClose] = WasicTranspiler.extractParamBlock(src, openParen);
-      // Return type may be a type param (T) or a generic type (Box<T>) — use permissive match
-      const restMatch = src.slice(afterClose).match(/^\s*(?::\s*([\w<>, ]+?))?\s*\{/);
+      // Return type may be a type param (T), generic type (Box<T>), or array type (T[]) — use permissive match
+      const restMatch = src.slice(afterClose).match(/^\s*(?::\s*([\w\[\]<>, ]+?))?\s*\{/);
       if (!restMatch) continue;
       const rawResult = (restMatch[1] ?? "void").trim();
       const bodyStart = afterClose + restMatch[0].length;
