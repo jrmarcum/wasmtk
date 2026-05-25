@@ -84,7 +84,7 @@ Usage:
   wasmtk info <file>                      Show callable WASM functions in .wasm or .wat library/module
   wasmtk wasm2js <file.wasm>              Convert .wasm -> .js based script
   wasmtk convert <file>                   Convert .wasm -> .wat and .wat -> .wasm
-  wasmtk tsbundle <file.ts>               Bundle a .ts project to a single .js file
+  wasmtk tsbundle <file.ts>               Bundle a .ts project to a single .ts file (inlines all imports)
   wasmtk wasmbundle <a.wasm> [b.wasm...]  Bundle multiple .wasm files into a single library
   wasmtk jstyper <file.js>               Convert .js + .d.ts to typed .ts for wasic compilation
   wasmtk bindgen <file.wit>              Generate TypeScript host bindings from a .wit interface file
@@ -140,7 +140,7 @@ Options:
       await convertFile(target, outPath);
       break;
     case "tsbundle":
-      await bundleTs(target, outPath ?? target.replace(/\.ts$/, ".js"));
+      await bundleTs(target, outPath ?? target.replace(/\.ts$/, ".bundled.ts"));
       break;
     case "jstyper": {
       const anyPolicyRaw = args["any-policy"] as string | undefined;

@@ -15,6 +15,7 @@ import {
   isJavyAvailable,
   getJavyInstallPath,
 } from "./javyc.ts";
+import { bundleImports } from "./tsbundler.ts";
 
 export { compileJavy } from "./javyc.ts";
 export { compileWasi } from "./wasic.ts";
@@ -513,14 +514,13 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
 
 
 /**
- * Bundles a TypeScript project into a single JavaScript file.
+ * Bundles a TypeScript project into a single TypeScript file by inlining all imports.
  * @param p - Path to the source file.
  * @param outPath - The output destination.
  */
 export async function bundleTs(p: string, outPath?: string): Promise<void> {
-  const out = outPath || p.replace(".ts", ".js");
-  const b = new rt.Command(rt.execPath(), { args: ["bundle", "--quiet", p], stdout: "piped" });
-  const output = await b.output();
-  await rt.writeTextFile(out, new TextDecoder().decode(output.stdout));
+  const out = outPath || p.replace(".ts", ".bundled.ts");
+  const bundled = await bundleImports(p);
+  await rt.writeTextFile(out, bundled);
   console.log(`✅ Bundled: ${out}`);
 }

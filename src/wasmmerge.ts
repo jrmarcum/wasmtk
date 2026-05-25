@@ -89,6 +89,10 @@ export interface WatMergeResult {
    * mapping without reconstructing it from the prefix and export name.
    */
   exportMap: Map<string, string>;
+  /** True if the imported module contained at least one (mut i32) global (e.g. a bump
+   * allocator free pointer). The caller must ensure the main module has enough memory
+   * pages to accommodate the relocated global's initial address. */
+  hasMutableGlobals: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -402,6 +406,7 @@ export function mergeWasmWat(
   const funcParts: string[] = [];
   const globalParts: string[] = [];
   const dataParts: string[] = [];
+  let hasMutableGlobals = false;
 
   for (const form of forms) {
     const kind = formKind(form);
@@ -453,12 +458,17 @@ export function mergeWasmWat(
       const idxM = form.match(/\(global\s+\(;(\d+);\)/);
       if (!idxM) continue;
       const idx = parseInt(idxM[1]);
-      // Skip the heap-pointer global — the main module manages its own heap
-      if (form.includes("(mut i32)")) continue;
       const newName = `$${prefix}_global${idx}`;
       // Use a function callback to prevent $1 backreference substitution in newName.
       let renamed = form.replace(/\(global\s+\(;(\d+);\)/, () => `(global ${newName}`);
-      renamed = relocateDataPtrs(renamed);
+      if (form.includes("(mut i32)")) {
+        // Mutable allocator global: place at page-2 boundary (131072) to avoid
+        // overlapping with the main module's static data and heap.
+        renamed = renamed.replace(/\(i32\.const\s+\d+\)/, `(i32.const ${2 * 65536})`);
+        hasMutableGlobals = true;
+      } else {
+        renamed = relocateDataPtrs(renamed);
+      }
       globalParts.push(renamed);
       continue;
     }
@@ -485,5 +495,6 @@ export function mergeWasmWat(
     notices,
     exportDecls,
     exportMap,
+    hasMutableGlobals,
   };
 }
