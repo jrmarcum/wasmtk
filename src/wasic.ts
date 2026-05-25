@@ -1501,6 +1501,23 @@ class WasicTranspiler {
             (_m, params, ret, body) => `return ${params}${ret ?? ""} => {${body}};`
           );
           bodyLines.push(rewrit);
+        } else if (/^(?:var|let|const)\s+\w+/.test(l)) {
+          // Join multi-line `const arr: T[] = [ ... ]` array literals into one line
+          // so the arrPre regex (which requires closing ] on same line) can process them.
+          let arrDepth = 0;
+          for (const ch of l) { if (ch === "[") arrDepth++; else if (ch === "]") arrDepth--; }
+          if (arrDepth > 0) {
+            let joined = l;
+            while (arrDepth > 0 && li + 1 < rawLines.length) {
+              li++;
+              const next = rawLines[li];
+              joined += " " + next;
+              for (const ch of next) { if (ch === "[") arrDepth++; else if (ch === "]") arrDepth--; }
+            }
+            bodyLines.push(joined.replace(/\s+/g, " ").trim());
+          } else {
+            bodyLines.push(l);
+          }
         } else {
           bodyLines.push(l);
         }
@@ -6310,7 +6327,7 @@ class WasicTranspiler {
           const defVal    = eqPos !== -1 ? b.slice(eqPos + 1).trim() : null;
           const loadWat   = srcInfo.dynamic
             ? `(${loadOp} (i32.add (i32.add (local.get $${srcName}) (i32.const 8)) (i32.shl (i32.const ${idx}) (i32.const ${shift}))))`
-            : `(${loadOp} (i32.const ${srcInfo.ptr + idx * elemSize}))`;
+            : `(${loadOp} (i32.const ${srcInfo.ptr + 8 + idx * elemSize}))`;
           if (defVal !== null) {
             // Emit default: if idx < length load element, else use default
             const defWat = `(${watType}.const ${defVal})`;
@@ -6341,7 +6358,7 @@ class WasicTranspiler {
             stmts.push(`(i32.store (local.get $${restName}) (i32.const ${restLen}))`);
             stmts.push(`(i32.store offset=4 (local.get $${restName}) (i32.const ${capacity}))`);
             for (let i = 0; i < restLen; i++) {
-              const srcWat = `(${loadOp} (i32.const ${srcInfo.ptr + (simpleCount + i) * elemSize}))`;
+              const srcWat = `(${loadOp} (i32.const ${srcInfo.ptr + 8 + (simpleCount + i) * elemSize}))`;
               stmts.push(`(${storeOp} offset=${8 + i * elemSize} (local.get $${restName}) ${srcWat})`);
             }
           }
@@ -7579,6 +7596,26 @@ class WasicTranspiler {
           }
           return undefined;
         }
+        // Array element struct field access: arr[idx].field (virtual vn = "arr[idx]")
+        const bracketVnMatch = vn.match(/^(\w+)\[([^\]]*)\]$/);
+        if (bracketVnMatch) {
+          const arrName = bracketVnMatch[1];
+          const idxExpr = bracketVnMatch[2];
+          const arrInfo = this.arrayVars.get(arrName);
+          const structTypeNameBV = arrInfo?.structTypeName;
+          const structDefBV = structTypeNameBV ? this.structDefs.get(structTypeNameBV) : undefined;
+          if (arrInfo && structDefBV) {
+            const field = structDefBV.fields.find(f => f.name === fn);
+            if (field) {
+              const idxWat = this.emitArrayIndex(idxExpr, locals);
+              const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic) ? this.arrGetWat(arrName) : `(i32.const ${arrInfo.ptr})`;
+              const ptrWat = `(i32.load (i32.add (i32.add ${baseWat} (i32.const 8)) (i32.shl ${idxWat} (i32.const 2))))`;
+              const loadOp = field.type === "f64" ? "f64.load" : field.type === "i64" ? "i64.load" : "i32.load";
+              return { type: field.type, watLoad: `(${loadOp} (i32.add ${ptrWat} (i32.const ${field.offset})))` };
+            }
+          }
+          return undefined;
+        }
         // Check class instance vars first
         const cv = this.classVars.get(vn);
         if (cv) {
@@ -7779,6 +7816,26 @@ class WasicTranspiler {
                                   : innerField.type === "i64" ? "i64.load" : "i32.load";
                 return { type: innerField.type, watLoad: `(${innerLoadOp} (i32.add ${outerPtrWat} (i32.const ${innerField.offset})))` };
               }
+            }
+          }
+          return undefined;
+        }
+        // Array element struct field access: arr[idx].field (virtual vn = "arr[idx]")
+        const bracketVnMatchE = vn.match(/^(\w+)\[([^\]]*)\]$/);
+        if (bracketVnMatchE) {
+          const arrNameE = bracketVnMatchE[1];
+          const idxExprE = bracketVnMatchE[2];
+          const arrInfoE = this.arrayVars.get(arrNameE);
+          const structTypeNameE = arrInfoE?.structTypeName;
+          const structDefE = structTypeNameE ? this.structDefs.get(structTypeNameE) : undefined;
+          if (arrInfoE && structDefE) {
+            const field = structDefE.fields.find(f => f.name === fn);
+            if (field) {
+              const idxWat = this.emitArrayIndex(idxExprE, locals);
+              const baseWat = (arrInfoE.ptr === -1 || arrInfoE.dynamic) ? this.arrGetWat(arrNameE) : `(i32.const ${arrInfoE.ptr})`;
+              const ptrWat = `(i32.load (i32.add (i32.add ${baseWat} (i32.const 8)) (i32.shl ${idxWat} (i32.const 2))))`;
+              const loadOp = field.type === "f64" ? "f64.load" : field.type === "i64" ? "i64.load" : "i32.load";
+              return { type: field.type, watLoad: `(${loadOp} (i32.add ${ptrWat} (i32.const ${field.offset})))` };
             }
           }
           return undefined;
@@ -11248,10 +11305,13 @@ class WasicTranspiler {
         const srcNamePre      = arrDestructPre[2];
         const srcInfoPre      = this.arrayVars.get(srcNamePre);
         const elemTypePre: WatType = srcInfoPre?.elemType ?? "i32";
+        const structTypeNamePre = srcInfoPre?.structTypeName;
+        const structDefPre = structTypeNamePre ? this.structDefs.get(structTypeNamePre) : undefined;
+        let simpleCountPre = 0;
         for (const b of bindingsListPre) {
           if (b.startsWith("...")) {
             const restNamePre = b.slice(3).trim();
-            this.arrayVars.set(restNamePre, { elemType: elemTypePre, ptr: -2, length: 0, dynamic: true });
+            this.arrayVars.set(restNamePre, { elemType: elemTypePre, ptr: -2, length: 0, dynamic: true, structTypeName: structTypeNamePre });
             declaredLocals.push([restNamePre, "i32"]);
             locals.set(restNamePre, "i32");
           } else {
@@ -11261,6 +11321,12 @@ class WasicTranspiler {
               declaredLocals.push([bName, elemTypePre]);
               locals.set(bName, elemTypePre);
             }
+            // If source array holds struct pointers, register binding in structVars
+            // so field access like bindingName.field resolves correctly.
+            if (structDefPre) {
+              this.structVars.set(bName, { def: structDefPre, ptr: -1 });
+            }
+            simpleCountPre++;
           }
         }
         continue;

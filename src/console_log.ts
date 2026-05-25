@@ -433,6 +433,23 @@ function parseSingleArg(
     }
   }
 
+  // Array element struct field access: arr[idx].field
+  // Pass "arr[idx]" as virtual varName to structLookup; structLookupFn handles the bracket form.
+  const arrElemDotMatch = token.match(/^(\w+)\[([^\]]*)\]\.(\w+)$/);
+  if (arrElemDotMatch && structLookup) {
+    const fi = structLookup(`${arrElemDotMatch[1]}[${arrElemDotMatch[2]}]`, arrElemDotMatch[3]);
+    if (fi) {
+      if (fi.type === "string" && fi.watLoadLen) {
+        return [{ kind: "strexpr" as const, ptrWat: fi.watLoad, lenWat: fi.watLoadLen }];
+      }
+      const kind = fi.type === "f64" || fi.type === "f32" ? "f64expr" as const
+                 : fi.type === "i64" ? "i64expr" as const
+                 : fi.type === "bool" ? "boolexpr" as const
+                 : "i32expr" as const;
+      return [{ kind, wat: fi.watLoad }];
+    }
+  }
+
   // Phase 42: three-part chained struct field access: a.b.c
   // Pass "a.b" as virtual varName to structLookup so it resolves nested struct pointer
   const sfChainedDotMatch = token.match(/^(\w+)\.(\w+)\.(\w+)$/);
