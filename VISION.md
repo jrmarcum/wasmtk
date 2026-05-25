@@ -81,7 +81,7 @@ prototype with a Rust production implementation is a one-line manifest change.
 orchestrator CLI
 
 Current state: **All 50 phases complete + Stage 0 Canonical ABI alignment complete.
-443/443 tests passing (2026-05-25; 267 wasic + Go-by-Example + 103 bindgen + 73 jstyper).** Compiles TypeScript to optimized WASM via WAT +
+446/446 tests passing (2026-05-25; 270 wasic + Go-by-Example + 103 bindgen + 73 jstyper).** Compiles TypeScript to optimized WASM via WAT +
 Binaryen. Generates WIT files alongside every compiled module (Phase 41). Phase 50
 (`wasmtk bindgen`) generates typed TypeScript host binding files from WIT using the
 Canonical ABI (`cabi_realloc`, out-parameter string returns). `wasmtk hybrid` (prototype)
@@ -255,7 +255,7 @@ subsequent releases. Tier 3 are community-contributed or long-term.
 ### Stage 0 — Canonical ABI Alignment ✅ COMPLETE (wasmtk, 2026-05-19)
 
 *Completed. wasic now exports `cabi_realloc` instead of `__malloc` and uses the
-out-parameter convention for string returns. All 443/443 tests pass (as of 2026-05-25).*
+out-parameter convention for string returns. All 446/446 tests pass (as of 2026-05-25).*
 
 - ✅ Replaced `__malloc` export with `cabi_realloc(ptr, old_size, align, new_size) → i32`
 - ✅ Changed string return emission: shim wrappers write ptr+len to caller-provided 8-byte
@@ -263,7 +263,7 @@ out-parameter convention for string returns. All 443/443 tests pass (as of 2026-
 - ✅ Updated `bindgen.ts`: uses `cabi_realloc` + `DataView` out-parameter pattern
 - ✅ `utils.ts` test runner verified — no changes needed (internal WASM calls unaffected)
 - ✅ WIT generation confirmed — `string` type in WIT, no regression
-- ✅ 443/443 tests pass (267 wasic + Go-by-Example + 103 bindgen + 73 jstyper; +3 Phase 21 stress tests added 2026-05-25)
+- ✅ 446/446 tests pass (270 wasic + Go-by-Example + 103 bindgen + 73 jstyper; +3 Phase 21 stress tests, +3 Phase 22 stress tests added 2026-05-25)
 
 ---
 
@@ -420,4 +420,4 @@ In order:
    Reference: `wasmtk/src/bindgen.ts` (Phase 50) for all ABI details (Canonical ABI complete)
 2. **Stage 2** — `universalWasmLoader-rs` and `universalWasmLoader-py` — validates the spec
 3. **Stage 3** — Build orchestration — the pixi integration becomes real
-4. **Stage 0** ✅ COMPLETE — Canonical ABI alignment in wasmtk done (2026-05-19); 443/443 pass (2026-05-25)
+4. **Stage 0** ✅ COMPLETE — Canonical ABI alignment in wasmtk done (2026-05-19); 446/446 pass (2026-05-25)

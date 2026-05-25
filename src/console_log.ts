@@ -403,17 +403,19 @@ function parseSingleArg(
   }
 
   // ── Enum member access: EnumName.MemberName → i32 constant or string literal
+  // Check enumStringLookup FIRST so heterogeneous enums (string + numeric members
+  // in the same enum, where string members also have synthetic i32 tags) still
+  // print the string value in display contexts.
   const enumMatch = token.match(/^(\w+)\.(\w+)$/);
   if (enumMatch) {
     const key = `${enumMatch[1]}.${enumMatch[2]}`;
-    if (enumLookup) {
-      const val = enumLookup(key);
-      if (val !== undefined) return [{ kind: "i32expr", wat: `(i32.const ${val})` }];
-    }
-    // Phase 29: string enum member → literal text
     if (enumStringLookup) {
       const strVal = enumStringLookup(key);
       if (strVal !== undefined) return [{ kind: "literal", text: strVal }];
+    }
+    if (enumLookup) {
+      const val = enumLookup(key);
+      if (val !== undefined) return [{ kind: "i32expr", wat: `(i32.const ${val})` }];
     }
   }
 

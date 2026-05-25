@@ -2387,22 +2387,102 @@ class WasicTranspiler {
     while ((m = enumRe.exec(this.src)) !== null) {
       const enumName = m[1];
       const body = m[2];
-      let autoVal = 0;
-      // Each member: name, optional = (number | "string" | 'string'), optional comma
-      const memberRe = /(\w+)\s*(?:=\s*(?:(-?\d+)|"([^"]*)"|'([^']*)')\s*)?\s*,?/g;
-      let mm: RegExpExecArray | null;
-      while ((mm = memberRe.exec(body)) !== null) {
-        const memberName = mm[1];
-        if (mm[3] !== undefined || mm[4] !== undefined) {
-          // Phase 29: string-valued member
-          this.enumStringValues.set(`${enumName}.${memberName}`, mm[3] ?? mm[4]!);
-        } else {
-          // Numeric member (explicit or auto-increment)
-          const val = mm[2] !== undefined ? parseInt(mm[2], 10) : autoVal;
-          this.enumValues.set(`${enumName}.${memberName}`, val);
-          autoVal = val + 1;
+
+      // Strip line/block comments before splitting
+      const cleaned = body
+        .replace(/\/\/[^\n]*/g, "")
+        .replace(/\/\*[\s\S]*?\*\//g, "");
+
+      // Split body at top-level commas
+      const parts: string[] = [];
+      let depth = 0, start = 0;
+      for (let i = 0; i < cleaned.length; i++) {
+        const ch = cleaned[i];
+        if (ch === "(" || ch === "[" || ch === "{") depth++;
+        else if (ch === ")" || ch === "]" || ch === "}") depth--;
+        else if (ch === "," && depth === 0) {
+          parts.push(cleaned.slice(start, i));
+          start = i + 1;
         }
       }
+      parts.push(cleaned.slice(start));
+
+      // First pass: parse each member into (name, kind, rhs/stringVal)
+      type Raw = { name: string; kind: "numeric" | "string" | "auto"; rhs: string; stringVal: string };
+      const raws: Raw[] = [];
+      for (let part of parts) {
+        part = part.trim();
+        if (!part) continue;
+        const eqIdx = part.indexOf("=");
+        if (eqIdx === -1) {
+          if (!/^\w+$/.test(part)) continue;
+          raws.push({ name: part, kind: "auto", rhs: "", stringVal: "" });
+        } else {
+          const name = part.slice(0, eqIdx).trim();
+          const rhs = part.slice(eqIdx + 1).trim();
+          if (!/^\w+$/.test(name)) continue;
+          const strMatch = rhs.match(/^"([^"]*)"$/) ?? rhs.match(/^'([^']*)'$/);
+          if (strMatch) {
+            raws.push({ name, kind: "string", rhs: "", stringVal: strMatch[1] });
+          } else {
+            raws.push({ name, kind: "numeric", rhs, stringVal: "" });
+          }
+        }
+      }
+
+      // Second pass: resolve numeric members and auto-increment
+      const resolved = new Map<string, number>();
+      let autoVal = 0;
+      for (const r of raws) {
+        if (r.kind === "string") {
+          this.enumStringValues.set(`${enumName}.${r.name}`, r.stringVal);
+          continue;
+        }
+        let val: number;
+        if (r.kind === "auto") {
+          val = autoVal;
+        } else {
+          val = this.evalEnumExpr(r.rhs, resolved);
+        }
+        this.enumValues.set(`${enumName}.${r.name}`, val);
+        resolved.set(r.name, val);
+        autoVal = val + 1;
+      }
+
+      // Third pass: heterogeneous enums — assign synthetic integer tags to string
+      // members so comparisons (env === DeployEnv.Prod) work as i32 ops. The string
+      // display value is still tracked in enumStringValues; console_log.ts checks
+      // enumStringValues first so display contexts keep printing the string.
+      const hasString = raws.some(r => r.kind === "string");
+      const hasNumeric = raws.some(r => r.kind !== "string");
+      if (hasString && hasNumeric) {
+        let maxVal = -1;
+        for (const v of resolved.values()) if (v > maxVal) maxVal = v;
+        let nextTag = maxVal + 1;
+        for (const r of raws) {
+          if (r.kind === "string") {
+            this.enumValues.set(`${enumName}.${r.name}`, nextTag);
+            nextTag++;
+          }
+        }
+      }
+    }
+  }
+
+  // Evaluate a compile-time enum initializer expression. Supports prior
+  // member references (substituted from `resolved`), integer literals,
+  // bitwise operators (| & ^ << >> >>>), arithmetic (+ - * / %), and parens.
+  private evalEnumExpr(expr: string, resolved: Map<string, number>): number {
+    // Substitute identifiers with already-resolved member values
+    const sub = expr.replace(/\b([A-Za-z_]\w*)\b/g, (_m, name) => {
+      if (resolved.has(name)) return String(resolved.get(name));
+      return name;
+    });
+    try {
+      const result = Function(`"use strict"; return (${sub});`)();
+      return (result | 0);
+    } catch {
+      return 0;
     }
   }
 
