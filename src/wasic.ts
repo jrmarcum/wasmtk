@@ -289,6 +289,9 @@ interface StructField {
   funcType?: { params: WatType[]; result: WatType | null };
   /** Phase 42: when this i32 field is a pointer to a named struct, stores the struct name. */
   structType?: string;
+  /** Phase 21: when this field is an embedded tuple, names the tuple StructDef.
+   *  Field bytes are stored inline (not as a pointer); access yields a tuple pointer. */
+  tupleTypeName?: string;
 }
 
 interface StructDef {
@@ -2842,6 +2845,27 @@ class WasicTranspiler {
           } else {
             // Phase 21: capture readonly modifier before stripping all access modifiers
             const isReadonly = /\breadonly\b/.test(line);
+            // Try tuple-type field first: `name: [T1, T2, ...]` — embedded inline, not a pointer
+            const fmTup = line.match(/^(?:(?:private|protected|public|readonly)\s+)*(\w+)\s*[!?]?\s*:\s*(\[[^\]]+\])/);
+            if (fmTup) {
+              const tdef = this.getOrCreateTupleDef(fmTup[2]);
+              if (tdef) {
+                // Align based on first tuple field's natural alignment
+                const firstSize = tdef.fields[0]?.size ?? 4;
+                if (fieldOffset % firstSize !== 0) fieldOffset = Math.ceil(fieldOffset / firstSize) * firstSize;
+                fields.push({
+                  name: fmTup[1],
+                  type: "i32",
+                  offset: fieldOffset,
+                  size: tdef.totalSize,
+                  ...(isReadonly ? { readonly: true } : {}),
+                  tupleTypeName: tdef.name,
+                });
+                fieldOffset += tdef.totalSize;
+                fieldDepth += opens - closes;
+                continue;
+              }
+            }
             const fm = line.match(/^(?:(?:private|protected|public|readonly)\s+)*(\w+)\s*[!?]?\s*:\s*([\w\[\]]+)/);
             if (fm) {
               const type = mapType(fm[2]);
@@ -6297,9 +6321,10 @@ class WasicTranspiler {
     }
 
     // Array destructuring with rest/defaults: const [a, b = 20, ...rest] = srcArr
+    // Phase 21: preserve empty slots ("gaps") so index advances correctly: [a, , c]
     const arrDestructMatch = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\s*;?$/);
     if (arrDestructMatch) {
-      const bindingsList = arrDestructMatch[1].split(",").map(b => b.trim()).filter(Boolean);
+      const bindingsList = arrDestructMatch[1].split(",").map(b => b.trim());
       const srcName      = arrDestructMatch[2];
       const srcInfo      = this.arrayVars.get(srcName);
       if (srcInfo) {
@@ -6312,15 +6337,17 @@ class WasicTranspiler {
         const stmts: string[] = [];
         let simpleCount = 0;
         let restName: string | null = null;
-        // Count simple bindings and find rest name
+        // Count simple bindings (including gaps) and find rest name
         for (const b of bindingsList) {
           if (b.startsWith("...")) restName = b.slice(3).trim();
           else simpleCount++;
         }
-        // Emit load for each simple binding, supporting optional default values
+        // Emit load for each simple binding, supporting optional default values.
+        // Empty slots (gaps) advance idx without emitting a binding.
         let idx = 0;
         for (const b of bindingsList) {
           if (b.startsWith("...")) break;
+          if (b === "") { idx++; continue; }
           // Parse "name" or "name = default"
           const eqPos     = b.indexOf("=");
           const bindName  = eqPos !== -1 ? b.slice(0, eqPos).trim() : b;
@@ -6511,15 +6538,46 @@ class WasicTranspiler {
       }
     }
 
+    // Phase 21: destructure from a class's embedded tuple field — const [a, b] = obj.bounds
+    const tupleFieldDestructStmt = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\.(\w+)\s*;?$/);
+    if (tupleFieldDestructStmt) {
+      const recv = tupleFieldDestructStmt[2];
+      const fname = tupleFieldDestructStmt[3];
+      const cv = this.classVars.get(recv);
+      if (cv) {
+        const cd = this.classDefs.get(cv.className);
+        const cf = cd?.struct.fields.find(f => f.name === fname);
+        if (cf?.tupleTypeName) {
+          const tdef = this.structDefs.get(cf.tupleTypeName);
+          if (tdef) {
+            const blist = tupleFieldDestructStmt[1].split(",").map(b => b.trim());
+            const stmts: string[] = [];
+            const baseWat = cv.ptr === -1 ? `(local.get $${recv})` : `(i32.const ${cv.ptr})`;
+            for (let i = 0; i < blist.length; i++) {
+              const b = blist[i];
+              if (b === "" || b.startsWith("...")) continue;
+              const tf = tdef.fields[i];
+              if (!tf) continue;
+              const loadOp = tf.type === "f64" ? "f64.load" : tf.type === "i64" ? "i64.load" : "i32.load";
+              stmts.push(`(local.set $${b} (${loadOp} offset=${cf.offset + tf.offset} ${baseWat}))`);
+            }
+            return stmts.join("\n      ");
+          }
+        }
+      }
+    }
+
     // Phase 23: tuple destructuring: const [a, b] = tupleVar (when source is a structVar/tuple)
+    // Phase 21: preserve empty slots ("gaps") so positional index advances correctly: [a, , c]
     const tupleArrDestructStmt = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\s*;?$/);
     if (tupleArrDestructStmt) {
       const sv = this.structVars.get(tupleArrDestructStmt[2]);
       if (sv) {
-        const bindings2 = tupleArrDestructStmt[1].split(",").map(b => b.trim()).filter(Boolean);
+        const bindings2 = tupleArrDestructStmt[1].split(",").map(b => b.trim());
         const stmts2: string[] = [];
         for (let i = 0; i < bindings2.length; i++) {
           const b = bindings2[i];
+          if (b === "") continue;
           if (b.startsWith("...")) continue;
           const field = sv.def.fields[i];
           if (!field) continue;
@@ -6920,6 +6978,24 @@ class WasicTranspiler {
           this.diagnostics.push(
             `Cannot assign to readonly field '${thisWriteMatch[1]}' of '${this.currentMethodClass}'`
           );
+        }
+        // Phase 21: embedded tuple field — `this.bounds = [a, b]` writes per-element inline.
+        if (field.tupleTypeName) {
+          const tdef = this.structDefs.get(field.tupleTypeName);
+          const rhs = thisWriteMatch[2].trim();
+          const lit = rhs.match(/^\[(.+)\]$/);
+          if (tdef && lit) {
+            const elems = lit[1].split(",").map(s => s.trim());
+            const parts: string[] = [];
+            for (let i = 0; i < tdef.fields.length && i < elems.length; i++) {
+              const tf = tdef.fields[i];
+              const sop = tf.type === "f64" ? "f64.store"
+                       : tf.type === "i64" ? "i64.store" : "i32.store";
+              const vw = this.emitExpr(elems[i], locals, tf.type);
+              parts.push(`(${sop} offset=${field.offset + tf.offset} (local.get $__self) ${vw})`);
+            }
+            return parts.join("\n      ");
+          }
         }
         const storeOp = field.type === "f64" ? "f64.store"
                       : field.type === "i64" ? "i64.store" : "i32.store";
@@ -11121,14 +11197,45 @@ class WasicTranspiler {
           continue;
         }
       }
+      // Phase 21: destructure from a class's embedded tuple field — const [a, b] = obj.bounds
+      {
+        const tupleFieldDestructPre = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\.(\w+)\s*;?$/);
+        if (tupleFieldDestructPre) {
+          const recv = tupleFieldDestructPre[2];
+          const fname = tupleFieldDestructPre[3];
+          const cv = this.classVars.get(recv);
+          if (cv) {
+            const cd = this.classDefs.get(cv.className);
+            const cf = cd?.struct.fields.find(f => f.name === fname);
+            if (cf?.tupleTypeName) {
+              const tdef = this.structDefs.get(cf.tupleTypeName);
+              if (tdef) {
+                const blist = tupleFieldDestructPre[1].split(",").map(b => b.trim());
+                for (let i = 0; i < blist.length; i++) {
+                  const b = blist[i];
+                  if (b === "" || b.startsWith("...")) continue;
+                  const tf = tdef.fields[i];
+                  if (tf) {
+                    declaredLocals.push([b, tf.type]);
+                    locals.set(b, tf.type);
+                  }
+                }
+                continue;
+              }
+            }
+          }
+        }
+      }
       // Phase 23: tuple destructuring: const [a, b] = tupleVar (when source is a tuple in structVars)
+      // Phase 21: preserve empty slots ("gaps") so positional index aligns with field index
       const tupleDestructPre = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\s*;?$/);
       if (tupleDestructPre) {
         const sv = this.structVars.get(tupleDestructPre[2]);
         if (sv) {
-          const bindingsTD = tupleDestructPre[1].split(",").map(b => b.trim()).filter(Boolean);
+          const bindingsTD = tupleDestructPre[1].split(",").map(b => b.trim());
           for (let i = 0; i < bindingsTD.length; i++) {
             const b = bindingsTD[i];
+            if (b === "") continue;
             if (b.startsWith("...")) continue;
             const field = sv.def.fields[i];
             if (field) {
@@ -11299,9 +11406,10 @@ class WasicTranspiler {
         continue;
       }
       // Array destructuring with rest/defaults: const [a, b = 20, ...rest] = srcArr
+      // Phase 21: preserve empty slots ("gaps") — skip them without declaring locals
       const arrDestructPre = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\s*;?$/);
       if (arrDestructPre) {
-        const bindingsListPre = arrDestructPre[1].split(",").map(b => b.trim()).filter(Boolean);
+        const bindingsListPre = arrDestructPre[1].split(",").map(b => b.trim());
         const srcNamePre      = arrDestructPre[2];
         const srcInfoPre      = this.arrayVars.get(srcNamePre);
         const elemTypePre: WatType = srcInfoPre?.elemType ?? "i32";
@@ -11309,6 +11417,7 @@ class WasicTranspiler {
         const structDefPre = structTypeNamePre ? this.structDefs.get(structTypeNamePre) : undefined;
         let simpleCountPre = 0;
         for (const b of bindingsListPre) {
+          if (b === "") { simpleCountPre++; continue; }
           if (b.startsWith("...")) {
             const restNamePre = b.slice(3).trim();
             this.arrayVars.set(restNamePre, { elemType: elemTypePre, ptr: -2, length: 0, dynamic: true, structTypeName: structTypeNamePre });
@@ -12312,14 +12421,45 @@ class WasicTranspiler {
             continue;
           }
         }
+        // Phase 21: destructure from a class's embedded tuple field — const [a, b] = obj.bounds
+        {
+          const tupleFieldDestructPre2 = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\.(\w+)\s*;?$/);
+          if (tupleFieldDestructPre2) {
+            const recv2 = tupleFieldDestructPre2[2];
+            const fname2 = tupleFieldDestructPre2[3];
+            const cv2 = this.classVars.get(recv2);
+            if (cv2) {
+              const cd2 = this.classDefs.get(cv2.className);
+              const cf2 = cd2?.struct.fields.find(f => f.name === fname2);
+              if (cf2?.tupleTypeName) {
+                const tdef2 = this.structDefs.get(cf2.tupleTypeName);
+                if (tdef2) {
+                  const blistTF = tupleFieldDestructPre2[1].split(",").map(b => b.trim());
+                  for (let i = 0; i < blistTF.length; i++) {
+                    const b = blistTF[i];
+                    if (b === "" || b.startsWith("...")) continue;
+                    const tf = tdef2.fields[i];
+                    if (tf) {
+                      startLocals.set(b, tf.type);
+                      startDeclaredLocals.push([b, tf.type]);
+                    }
+                  }
+                  continue;
+                }
+              }
+            }
+          }
+        }
         // Phase 23: tuple destructuring — const [a, b] = tupleVar (mirrors emitFunction pre-scan)
+        // Phase 21: preserve empty slots ("gaps") so positional index aligns with field index
         const tupleDestructPre2 = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\s*;?$/);
         if (tupleDestructPre2) {
           const sv2 = this.structVars.get(tupleDestructPre2[2]);
           if (sv2) {
-            const blist2 = tupleDestructPre2[1].split(",").map(b => b.trim()).filter(Boolean);
+            const blist2 = tupleDestructPre2[1].split(",").map(b => b.trim());
             for (let i = 0; i < blist2.length; i++) {
               const b = blist2[i];
+              if (b === "") continue;
               if (b.startsWith("...")) continue;
               const field2 = sv2.def.fields[i];
               if (field2) {
@@ -12395,13 +12535,15 @@ class WasicTranspiler {
           }
         }
         // Array destructuring with rest/defaults — mirrors emitFunction pre-scan
+        // Phase 21: preserve empty slots ("gaps") — skip them without declaring locals
         const arrDestructPre2 = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\s*;?$/);
         if (arrDestructPre2) {
-          const bindingsListPre2 = arrDestructPre2[1].split(",").map(b => b.trim()).filter(Boolean);
+          const bindingsListPre2 = arrDestructPre2[1].split(",").map(b => b.trim());
           const srcNamePre2      = arrDestructPre2[2];
           const srcInfoPre2      = this.arrayVars.get(srcNamePre2);
           const elemTypePre2: WatType = srcInfoPre2?.elemType ?? "i32";
           for (const b of bindingsListPre2) {
+            if (b === "") continue;
             if (b.startsWith("...")) {
               const restNamePre2 = b.slice(3).trim();
               this.arrayVars.set(restNamePre2, { elemType: elemTypePre2, ptr: -2, length: 0, dynamic: true });
