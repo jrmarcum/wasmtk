@@ -43,7 +43,7 @@ function wasmToWatText(
 }
 
 /** The current version of the wasmtk toolkit. */
-export const VERSION = "1.6.0";
+export const VERSION = "1.6.1";
 
 let wasiInstance: WebAssembly.Instance | undefined;
 
