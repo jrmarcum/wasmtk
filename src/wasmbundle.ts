@@ -39,10 +39,31 @@
  */
 
 import { basename } from "@std/path";
-import wabtInit from "wabt";
+import { wat2wasm, wasm2wat, formatErrors, Result } from "wabt";
 import binaryen from "binaryen";
 import { extractExportNames, mergeWasmWat } from "./wasmmerge.ts";
 import { rt } from "./rt.ts";
+
+/** Parse WAT text to a WASM binary, throwing on parse errors. */
+function watToBinary(source: string, filename: string): Uint8Array {
+  const { binary, errors, result } = wat2wasm(source, { filename });
+  if (result !== Result.Ok) {
+    throw new Error(`wat2wasm failed:\n${formatErrors(errors)}`);
+  }
+  return binary;
+}
+
+/** Disassemble a WASM binary to WAT text, throwing on decode errors. */
+function wasmToWatText(
+  bytes: Uint8Array,
+  opts: { readDebugNames?: boolean; inlineExport?: boolean } = {},
+): string {
+  const { text, errors, result } = wasm2wat(bytes, opts);
+  if (result !== Result.Ok) {
+    throw new Error(`wasm2wat failed:\n${formatErrors(errors)}`);
+  }
+  return text;
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -184,17 +205,12 @@ export async function runWasmBundle(
     rt.exit(1);
   }
 
-  // ── Load wabt ─────────────────────────────────────────────────────────────
-  const wabt = await wabtInit();
-
   // ── Load and disassemble each module ─────────────────────────────────────
   console.log(`\nLoading ${inputs.length} module(s)...`);
   const modules: ModuleEntry[] = [];
   for (const filePath of inputs) {
     const bytes = await rt.readFile(filePath);
-    const wabtMod = wabt.readWasm(bytes, { readDebugNames: true });
-    const wat = wabtMod.toText({ foldExprs: false });
-    wabtMod.destroy();
+    const wat = wasmToWatText(bytes, { readDebugNames: true });
     const exports = extractExportNames(wat);
     // Also include _start for WASI executables — mergeWasmWat preserves it in
     // wasmbundle mode (when exportOverrides is supplied) so the bundle is runnable.
@@ -341,21 +357,19 @@ export async function runWasmBundle(
 
   // ── Compile master WAT → binary ───────────────────────────────────────────
   console.log("\nCompiling...");
-  const masterMod = wabt.parseWat("combined.wat", masterWat, { exceptions: true });
-  const { buffer } = masterMod.toBinary({});
-  masterMod.destroy();
+  const rawBinary = watToBinary(masterWat, "combined.wat");
 
   // ── Optimize with Binaryen ────────────────────────────────────────────────
   let finalBytes: Uint8Array;
   try {
-    const bMod = binaryen.readBinary(new Uint8Array(buffer));
+    const bMod = binaryen.readBinary(rawBinary);
     bMod.setFeatures(binaryen.Features.All);
     bMod.optimize();
     finalBytes = bMod.emitBinary();
     bMod.dispose();
     console.log("  ✓ Optimized with Binaryen");
   } catch {
-    finalBytes = new Uint8Array(buffer);
+    finalBytes = rawBinary;
   }
 
   // ── Write output ──────────────────────────────────────────────────────────

@@ -30,6 +30,8 @@ import {
 
 const WASMTK_BIN = "wasmtk";
 const targetDir  = Deno.args[0] ?? join(import.meta.dirname ?? Deno.cwd(), "wasm_wasi");
+// Optional second arg: regex filter applied to file basenames (e.g. "^01_" for phase 1)
+const fileFilter = Deno.args[1] ? new RegExp(Deno.args[1]) : null;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Step runner
@@ -204,12 +206,16 @@ async function startTestSuite() {
     if (
       entry.isFile &&
       entry.name.endsWith(".ts") &&
-      !entry.name.endsWith("_tests.ts")   // exclude wasi_tests.ts, mod_tests.ts, etc.
+      !entry.name.endsWith("_tests.ts") &&  // exclude wasi_tests.ts, mod_tests.ts, etc.
+      (fileFilter === null || fileFilter.test(entry.name))
     ) {
       files.push(entry.name);
     }
   }
   files.sort();
+  if (fileFilter !== null) {
+    console.log(cyan(`   Filter:    /${fileFilter.source}/  → ${files.length} file(s)\n`));
+  }
 
   if (files.length === 0) {
     console.log(yellow("No TypeScript files found to test."));

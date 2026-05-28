@@ -40,7 +40,7 @@
     "@std/path": "jsr:@std/path@^1.1.2",
     "binaryen": "npm:binaryen@^116.0.0",
     "wasm2js": "npm:wasm2js@^0.2.0",
-    "wabt": "npm:wabt@^1.0.36"
+    "wabt": "jsr:@jrmarcum/wabt-ts@^1.1.8"
   },
   "tasks": {
     "dev": "deno run --watch main.ts",

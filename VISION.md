@@ -81,14 +81,21 @@ prototype with a Rust production implementation is a one-line manifest change.
 orchestrator CLI
 
 Current state: **All 50 phases complete + Stage 0 Canonical ABI alignment complete.
-446/446 tests passing (2026-05-25; 270 wasic + Go-by-Example + 103 bindgen + 73 jstyper).** Compiles TypeScript to optimized WASM via WAT +
-Binaryen. Generates WIT files alongside every compiled module (Phase 41). Phase 50
-(`wasmtk bindgen`) generates typed TypeScript host binding files from WIT using the
-Canonical ABI (`cabi_realloc`, out-parameter string returns). `wasmtk hybrid` (prototype)
-splits a TypeScript file into a WASM core + TS runner.
+Last full-suite validation under npm:wabt: 446/446 tests passing (2026-05-25; 270 wasic
++ Go-by-Example + 103 bindgen + 73 jstyper). Under wabt-ts 1.1.8 (current dependency),
+phase 1 re-verified at 38/38; remaining phases pending re-validation.** Compiles
+TypeScript to optimized WASM via WAT (assembled by `jsr:@jrmarcum/wabt-ts`, the JSR-native
+TypeScript port of wabt) and Binaryen `-Oz` (still `npm:binaryen`; future migration to
+`binaryen-ts` is a roadmap item). Generates WIT files alongside every compiled module
+(Phase 41). Phase 50 (`wasmtk bindgen`) generates typed TypeScript host binding files
+from WIT using the Canonical ABI (`cabi_realloc`, out-parameter string returns).
+`wasmtk hybrid` (prototype) splits a TypeScript file into a WASM core + TS runner.
 
 Remaining additions scoped here:
 
+- Complete wabt-ts re-validation across phases 3, 9, 11–50 + non-phase Go-by-Example tests
+- Migrate `npm:binaryen` → `binaryen-ts` (deferred; binaryen-ts not yet feature-complete
+  — no working `toBinary()` native path, no working binaryen.js subprocess bridge)
 - `wasmtk build` — polyglot build orchestration command (Stage 3)
 - `wasmtk compose` — component composition wrapper (Stage 3)
 - `wasmtk setup <language>` — language recipe installer (Stage 4)
@@ -255,7 +262,9 @@ subsequent releases. Tier 3 are community-contributed or long-term.
 ### Stage 0 — Canonical ABI Alignment ✅ COMPLETE (wasmtk, 2026-05-19)
 
 *Completed. wasic now exports `cabi_realloc` instead of `__malloc` and uses the
-out-parameter convention for string returns. All 446/446 tests pass (as of 2026-05-25).*
+out-parameter convention for string returns. 446/446 tests pass under npm:wabt (as of
+2026-05-25). Under the current wabt-ts dependency (1.1.8), Stage 0 functionality is
+unchanged at the wasic / bindgen layer; full-suite re-validation is in progress.*
 
 - ✅ Replaced `__malloc` export with `cabi_realloc(ptr, old_size, align, new_size) → i32`
 - ✅ Changed string return emission: shim wrappers write ptr+len to caller-provided 8-byte
@@ -263,7 +272,30 @@ out-parameter convention for string returns. All 446/446 tests pass (as of 2026-
 - ✅ Updated `bindgen.ts`: uses `cabi_realloc` + `DataView` out-parameter pattern
 - ✅ `utils.ts` test runner verified — no changes needed (internal WASM calls unaffected)
 - ✅ WIT generation confirmed — `string` type in WIT, no regression
-- ✅ 446/446 tests pass (270 wasic + Go-by-Example + 103 bindgen + 73 jstyper; +3 Phase 21 stress tests, +3 Phase 22 stress tests added 2026-05-25)
+- ✅ 446/446 tests pass under npm:wabt (270 wasic + Go-by-Example + 103 bindgen + 73 jstyper; +3 Phase 21 stress tests, +3 Phase 22 stress tests added 2026-05-25)
+
+---
+
+### Stage 0.5 — wabt → wabt-ts Migration (wasmtk, in progress)
+
+*The first wasmtk compiler-toolkit dependency to move into the jrmarcum JSR ecosystem.
+`npm:wabt@^1.0.36` was swapped for `jsr:@jrmarcum/wabt-ts@^1.1.8` in `deno.json`.
+Call sites in `src/utils.ts`, `src/wasic.ts`, and `src/wasmbundle.ts` were rewritten from
+the npm-wabt `await wabt()` factory + `module.parseWat(...)` / `module.readWasm(...)`
+pattern to the wabt-ts top-level `wat2wasm(source, opts)` / `wasm2wat(bytes, opts)` exports.
+`mergeOneWasmImport` no longer threads a `wabtMod` parameter (the new API is stateless).
+The bare specifier `"wabt"` is preserved in import statements so the call-site diff stays
+minimal. Six wabt-ts bugs discovered during this work (folded `(return val1 val2)`,
+opcode alignment defaults, store-with-call operand order, parenless-folded opcodes,
+nested-call function-index resolution, `br_if`-cond `global.get` name resolution) were
+filed and fixed upstream across versions 1.0.3 → 1.1.8.*
+
+- ✅ `deno.json`: `"wabt": "jsr:@jrmarcum/wabt-ts@^1.1.8"`
+- ✅ Call-site rewrites in `src/utils.ts`, `src/wasic.ts`, `src/wasmbundle.ts`
+- ✅ Phase 1 re-verified at 38/38 under wabt-ts 1.1.8
+- 🔄 Phases 3, 9, 11–50 + non-phase Go-by-Example tests — re-validation in progress
+- ⏳ `npm:binaryen` → `binaryen-ts` is the analogous follow-on, deferred until binaryen-ts
+  ships a working native `toBinary()` and binaryen.js subprocess bridge
 
 ---
 
@@ -397,6 +429,8 @@ that the spec is implementable before committing to additional ports.
 ```text
 jrmarcum/
 ├── wasmtk                        ← TypeScript compiler + polyglot build CLI
+├── wabt-ts                       ← JSR-native TS port of wabt; consumed by wasmtk (Stage 0.5 ✅)
+├── binaryen-ts                   ← JSR-native TS port of binaryen; future wasmtk dep (deferred)
 ├── universalWasmLoader           ← JS/TS loader + SPEC.md (reference impl)
 ├── universalWasmLoader-rs        ← Rust port (Stage 2)
 ├── universalWasmLoader-py        ← Python port (Stage 2)
@@ -416,8 +450,10 @@ for what wasmtk emits. The two documents cross-reference each other.
 
 In order:
 
-1. **Stage 1** — Enhance universalWasmLoader + write SPEC.md — **CURRENT PRIORITY**
+1. **Stage 0.5** — Complete wabt-ts re-validation across remaining phases (in progress;
+   phase 1 ✅ 38/38 under wabt-ts 1.1.8)
+2. **Stage 1** — Enhance universalWasmLoader + write SPEC.md — **CURRENT PRIORITY**
    Reference: `wasmtk/src/bindgen.ts` (Phase 50) for all ABI details (Canonical ABI complete)
-2. **Stage 2** — `universalWasmLoader-rs` and `universalWasmLoader-py` — validates the spec
-3. **Stage 3** — Build orchestration — the pixi integration becomes real
-4. **Stage 0** ✅ COMPLETE — Canonical ABI alignment in wasmtk done (2026-05-19); 446/446 pass (2026-05-25)
+3. **Stage 2** — `universalWasmLoader-rs` and `universalWasmLoader-py` — validates the spec
+4. **Stage 3** — Build orchestration — the pixi integration becomes real
+5. **Stage 0** ✅ COMPLETE — Canonical ABI alignment in wasmtk done (2026-05-19); 446/446 pass under npm:wabt (2026-05-25)

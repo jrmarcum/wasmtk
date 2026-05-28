@@ -10,7 +10,7 @@ A polyglot WebAssembly toolkit for Deno. Compile TypeScript directly to optimize
 
 `wasmtk` is the home of **`wasic`** — a direct TypeScript-to-WASM compiler that emits optimized WAT with no embedded JavaScript runtime. It also provides a complete toolkit for running, inspecting, and composing WASM modules from any source language.
 
-- **`wasic` compiler**: Compile a TypeScript subset directly to optimized `.wasm` via WAT + wabt + Binaryen `-Oz`. Supports 50 language phases including closures, generics, classes, inheritance, discriminated unions, TypedArrays, and more — all without an embedded JS runtime.
+- **`wasic` compiler**: Compile a TypeScript subset directly to optimized `.wasm` via WAT, assembled by [`@jrmarcum/wabt-ts`](https://jsr.io/@jrmarcum/wabt-ts) (JSR-native TypeScript port of wabt) and optimized via Binaryen `-Oz`. Supports 50 language phases including closures, generics, classes, inheritance, discriminated unions, TypedArrays, and more — all without an embedded JS runtime.
 - **WIT interface generation**: Every compiled module automatically produces a `.wit` file describing its exports and imports — the foundation for cross-language interop and the WASM Component Model.
 - **Host binding generation (`bindgen`)**: Generate a self-contained TypeScript binding file from any `.wit` interface. Load and call WASM exports from a TypeScript host with full type safety and automatic ABI translation for numbers, booleans, and strings.
 - **Universal running**: Execute `.ts`, `.js`, `.wasm`, and `.wat` with a single command across Deno, Bun, and Node. Expanded WASI syscall shims ensure compatibility with modules compiled from Zig, Rust, C/C++, and Go.
@@ -172,8 +172,8 @@ wasmtk provides three distinct compilation paths. Choosing the right one depends
 
 Compiles a TypeScript or WAT source file to a **standalone WASI module** with no embedded JavaScript runtime. Two input paths are supported:
 
-- **`.ts`** — runs through the tsbundler import pre-pass, WasicTranspiler, wabt, and Binaryen `-Oz`
-- **`.wat`** — assembled directly by wabt and optimized by Binaryen `-Oz` (no transpiler step)
+- **`.ts`** — runs through the tsbundler import pre-pass, WasicTranspiler, `@jrmarcum/wabt-ts` (WAT → binary), and Binaryen `-Oz`
+- **`.wat`** — assembled directly by `@jrmarcum/wabt-ts` and optimized by Binaryen `-Oz` (no transpiler step)
 
 ```bash
 wasmtk wasic myprogram.ts       # TypeScript → WAT → optimized .wasm
@@ -589,7 +589,7 @@ wasmtk mod mylib.wasm myFunction 42   # call an exported function directly
 .ts source
   → tsbundler   (import resolution, module-prefix name mangling)
   → WasicTranspiler in library mode   (TypeScript → WAT, no _start, no proc_exit)
-  → wabt parseWat   (WAT → raw WASM binary)
+  → @jrmarcum/wabt-ts wat2wasm   (WAT → raw WASM binary)
   → Binaryen -Oz   (dead-code elimination, size optimisation)
   → .wasm library
 ```
@@ -754,7 +754,7 @@ Runs a file directly. Accepts four input formats:
 | Input | Behavior |
 | --- | --- |
 | `.wasm` | Instantiates and executes the WASM module via the built-in WASI runtime |
-| `.wat` | Assembled by wabt, then executed as above |
+| `.wat` | Assembled by `@jrmarcum/wabt-ts`, then executed as above |
 | `.ts` | Passed through to the Deno/Bun runtime (`deno run -A` / `bun run`) — not compiled to WASM |
 | `.js` | Same passthrough to the Deno/Bun runtime |
 
@@ -791,7 +791,7 @@ import { runHybrid }                                from "@jrmarcum/wasmtk/hybri
 | `compileWasi(path, outPath?)` | `./wasic` | Compile `.ts` or `.wat` to a WASI standalone `.wasm` |
 | `compileWasiTs(path, outPath?)` | `./wasic` | TypeScript-only path — runs bundler + transpiler + optimizer |
 | `compileLibTs(path, outPath?)` | `./wasic` | TypeScript → WASM library (no `_start`, no WASI scaffolding) |
-| `compileWat(path, outPath?)` | `./wasic` | WAT-only path — wabt parse + Binaryen `-Oz` |
+| `compileWat(path, outPath?)` | `./wasic` | WAT-only path — `@jrmarcum/wabt-ts` parse + Binaryen `-Oz` |
 | `compileModule(path, outPath?)` | `./modc` | Compile `.ts` to a WASM library via wasic transpiler |
 | `compileJavy(path, outPath?)` | `./javyc` | Compile `.ts` to a WASI module via Javy/QuickJS |
 | `bundleImports(entryPath)` | `./tsbundler` | Resolve and merge relative imports into a single source string |
@@ -835,6 +835,13 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 
 ### Completed Phases
 
+> **Test-count taglines in this table are historical snapshots under `npm:wabt` (last
+> full-suite validation 2026-05-25: 446/446 PASS). The current wasmtk dependency is
+> `jsr:@jrmarcum/wabt-ts@^1.1.8` — under that toolchain phase 1 is re-verified at 38/38;
+> remaining phases pending re-validation. The per-phase historical counts are preserved
+> as a record of when each phase first reached green; they should not be read as a
+> live-system invariant.**
+
 | Phase | Feature | Highlights |
 | --- | --- | --- |
 | Core | Functions, variables, control flow | `function`, `let`/`const`/`var`, `if`/`else`, `while`, `do-while`, `for` |
@@ -867,7 +874,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 | 13b | `console.log` of struct-returning calls | `console.log(tryDivide(10, 2))` where `tryDivide` returns an interface type prints `{ value: 5, hasError: 0 }` — struct pointer stored to `$__struct_tmp`, fields loaded by offset and formatted as `{ fieldName: value, ... }`; `$__struct_tmp` local injected by pre-scan of `_start` and `emitFunction` body lines; `LogSegment` array built directly in `emitStatement` and passed to `emitConsoleLog` |
 | bug fix | `console.log` of array-returning calls | `console.log("scores:", getScores())` where `getScores(): i32[]` was printing the raw heap pointer; fix: `FuncLookup` now exposes `resultTsName`; `parseSingleArg` checks for `[]` suffix → new `arrptr` LogSegment; gather mode calls `$__write_i32arr_to_scratch` which loops the dynamic-array header and writes `[ a, b, c ]`; `getArrPrintHelperWat()` emits the WAT helper; `wasic.ts` tracks `needsArrPrintHelper` flag |
 | 14 | Generics (monomorphization) | `function f<T>(x: T): T` — one concrete copy per distinct type; `interface Box<T> { value: T; }` → `Box_i32`, `Box_f64`, etc.; explicit type args (`f<i32>(x)`) and single-T literal inference (`f(42)` → `f_i32`); generic struct refs in function signatures rewritten automatically; source-level `expandGenerics()` pre-pass runs before all other parsing |
-| 15 | Exception handling | `throw new Error("msg")` / `throw "lit"` / `throw strVar` → `(throw $__exn_tag ptr len)` — WASM exception tag carries a `(ptr i32, len i32)` string payload; catchable by any enclosing `try/catch`; `try/catch(e)/finally` via WAT exceptions proposal; `(tag $__exn_tag (param i32 i32))` declared once per module when any throw is emitted; `e` / `e.message` in catch bound as string locals; `exceptions: true` in wabt options; `binMod.setFeatures(Features.All)` before Binaryen `-Oz` to preserve exception sections |
+| 15 | Exception handling | `throw new Error("msg")` / `throw "lit"` / `throw strVar` → `(throw $__exn_tag ptr len)` — WASM exception tag carries a `(ptr i32, len i32)` string payload; catchable by any enclosing `try/catch`; `try/catch(e)/finally` via WAT exceptions proposal; `(tag $__exn_tag (param i32 i32))` declared once per module when any throw is emitted; `e` / `e.message` in catch bound as string locals; the WAT-to-binary assembler (`@jrmarcum/wabt-ts`) accepts the exception proposal opcodes by default — no per-call feature flag needed; `binMod.setFeatures(Features.All)` before Binaryen `-Oz` to preserve exception sections |
 | stress tests (2026-05-22) | Phase 15 exception handling stress tests | Three edge-case stress tests added: `15_TestCase1-NestedEscalation` — three-level nested try/catch escalation with accumulating trace score; `15_LexicalShadowing_Stress` — `catch (e)` shadowing an outer string variable `e`, inner catch re-throws, outer catch verifies the shadow did not pollute the outer scope; `15_IdiomaticCatch_Stress` — `throw new Error("msg")` caught and converted via `instanceof Error ? e.message : String(e)` ternary and bare `String(e)`, verifying both conversion idioms |
 | bug fix (2026-05-24) | `expandGenerics` regex — array return types in generic functions | `restMatch` regex in `expandGenerics()` (`src/wasic.ts` line 2153) changed from `[\w<>, ]+?` to `[\w\[\]<>, ]+?` — adds `[` and `]` to the character class so generic functions with array return types (e.g. `mapArray<T, U>(arr: T[], fn: (x: T) => U): U[]`) are correctly recognized during template extraction. Without the fix, any generic with an array return type was silently skipped — the call site was left as raw TypeScript which emitted comparison operators instead of the intended WAT function call |
 | stress tests (2026-05-24) | Phase 16 generic monomorphization stress tests | Three edge-case stress tests added: `16_NestedMonomorphization` — concrete monomorphized classes `BoxI32`/`BoxF64` with local temporaries to prevent greedy `dotCallExprMatch` from consuming method arguments; `16_GenericInterfaceMappingsAndClosures` — non-capturing named function passed as bare function reference via `funcTypeVars` call_indirect path (capturing closures incompatible with this path); `16_DeepGenericConstraintResolution` — Phase 47 class inheritance (`Item` → `HeavyItem`) with `super()` + `override getWeight()` replacing unsupported `class Scale<T extends Measurable>` |
@@ -937,7 +944,7 @@ All 50 wasic compiler phases are complete. The DLL model (compile → `.wasm` + 
 
 #### Stage 0 — Canonical ABI Alignment ✅ COMPLETE (2026-05-19)
 
-Aligns wasic's ABI with the WASM Component Model Canonical ABI. Completed ahead of Stage 1 — wasic now exports `cabi_realloc` and uses the out-parameter string return convention. 349/349 tests pass.
+Aligns wasic's ABI with the WASM Component Model Canonical ABI. Completed ahead of Stage 1 — wasic now exports `cabi_realloc` and uses the out-parameter string return convention. 349/349 tests passing at completion under npm:wabt (2026-05-19); subsequent suite growth + wabt-ts migration noted in the table banner above and in CLAUDE.md § "wabt → wabt-ts migration".
 
 - [x] Replace `__malloc` export with `cabi_realloc(ptr, old_size, align, new_size) → i32` in `wasic.ts` emitter
 - [x] Update `bindgen.ts` to use `cabi_realloc` for string param encoding instead of `__malloc`
@@ -980,7 +987,7 @@ Both forms support rename aliases. Call sites in the TypeScript source are rewri
 **WAT merge pipeline:**
 
 1. **Detect** — `tsbundler.ts` recognises `.wasm` specifiers; records them in `WasmImportEntry[]`; applies call-site renames in the merged TS source
-2. **Pre-register** — wabt disassembles each `.wasm`; `ExternalFuncDef` signatures are injected into `WasicTranspiler` so the transpiler types call expressions correctly before merge
+2. **Pre-register** — `@jrmarcum/wabt-ts` disassembles each `.wasm`; `ExternalFuncDef` signatures are injected into `WasicTranspiler` so the transpiler types call expressions correctly before merge
 3. **Transpile** — main TS source compiled to WAT normally; merged module has no knowledge of the import at WAT level yet
 4. **Disassemble & parse** — `wasmmerge.ts` extracts all top-level WAT forms using a parenthesis-depth scanner
 5. **Strip entry-only features** — `_start`, `proc_exit`, `args_get/sizes_get`, `environ_get/sizes_get` dropped with notice
@@ -1059,13 +1066,13 @@ When `--alias` is provided, option 2 shows the resolved names directly:
 
 **Bundle pipeline:**
 
-1. Load each `.wasm` with wabt; disassemble to WAT text
+1. Load each `.wasm` with `@jrmarcum/wabt-ts`; disassemble to WAT text
 2. Extract export names via `extractExportNames()`; identify conflicts across all modules
 3. Resolve conflicts (interactive or `--on-conflict`)
 4. Build `exportOverrides` map for each module: bare name, prefixed name, or `null` (exclude)
 5. Merge each module's WAT with `mergeWasmWat(..., exportOverrides)`, tracking cumulative `dataOffset`
 6. Assemble master WAT with WASI imports, `(memory N)` (auto-sized), all fragments, and `(export ...)` declarations
-7. Compile master WAT → binary via wabt
+7. Compile master WAT → binary via `@jrmarcum/wabt-ts`
 8. Optimize with Binaryen `-Oz`
 9. Write output (default: `combined.wasm`)
 
