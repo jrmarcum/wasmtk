@@ -299,6 +299,10 @@ export function mergeWasmWat(
   const exportFuncMap = new Map<number, string>();
   // funcIdx → WAT type index string (for resolving signatures)
   const funcTypeIndexMap = new Map<number, number>();
+  // funcIdx → inline signature, for disassemblies that emit `(func (;N;) (param ...)
+  // (result ...))` WITHOUT a `(type T)` reference (wabt-ts 1.3.0 emits this form).
+  // Used as a fallback when funcTypeIndexMap has no entry for the function.
+  const funcInlineSig = new Map<number, { params: WasmWatType[]; result: WasmWatType | null }>();
   // Allocator unification (Phase 18.5): when the imported library carries
   // wasic's bump allocator + heap-ptr global, drop them and redirect call /
   // global.get sites to the main module's $__malloc and $__heap_ptr.
@@ -333,6 +337,20 @@ export function mergeWasmWat(
       const typeM = form.match(/\(type\s+(\d+)\)/);
       if (idxM && typeM) {
         funcTypeIndexMap.set(parseInt(idxM[1]), parseInt(typeM[1]));
+      } else if (idxM) {
+        // Inline-signature form (no `(type T)` reference). Parse params + result
+        // from the func header — its first line — so signatures still resolve.
+        // Only the header carries `(param ...)` / a leading `(result ...)`; body
+        // block signatures live on later lines, so restricting to line 0 is safe.
+        const headerLine = form.split("\n")[0];
+        const params: WasmWatType[] = [];
+        for (const pm of (headerLine.match(/\(param([^)]*)\)/g) ?? [])) {
+          for (const t of pm.replace("(param", "").replace(")", "").trim().split(/\s+/)) {
+            if (t === "i32" || t === "i64" || t === "f32" || t === "f64") params.push(t as WasmWatType);
+          }
+        }
+        const resM = headerLine.match(/\(result\s+(i32|i64|f32|f64)\)/);
+        funcInlineSig.set(parseInt(idxM[1]), { params, result: resM ? (resM[1] as WasmWatType) : null });
       }
       // Bump-allocator detection. Each wasic-emitted library carries the same
       // tiny $__malloc body; we keep only the main module's copy and route
@@ -430,7 +448,7 @@ export function mergeWasmWat(
   for (const [idx, exportName] of exportFuncMap) {
     if (importMap.has(idx)) continue; // skip WASI re-exports
     const typeIdx = funcTypeIndexMap.get(idx);
-    const sig = typeIdx !== undefined ? typeTable.get(typeIdx) : undefined;
+    const sig = typeIdx !== undefined ? typeTable.get(typeIdx) : funcInlineSig.get(idx);
     exportedFuncs.push({
       name: `${prefix}_${exportName}`,
       params: sig?.params ?? [],

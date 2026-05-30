@@ -11216,6 +11216,24 @@ class WasicTranspiler {
           continue;
         }
       }
+      // TypedArray view via type annotation without `new`:
+      //   const view: Int32Array = ptr as unknown as Int32Array
+      // Registers `view` as a typed-array view over an existing base pointer so that
+      // element read AND write use the typed addressing path (ptr + 8 + idx*bytesPerElem).
+      // Without this the read falls through to the i32-pointer fallback (coincidentally
+      // correct for i32) while the write path stubs out — see the shared-heap stdlib pattern.
+      {
+        const taViewPre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(Int8Array|Uint8Array|Int16Array|Uint16Array|Int32Array|Uint32Array|Float32Array|Float64Array)\s*=\s*(?!new\s)/);
+        if (taViewPre) {
+          const varName = taViewPre[1];
+          const taType  = taViewPre[2];
+          const taInfo  = getTypedArrayInfo(taType)!;
+          this.typedArrayVars.set(varName, { taType, ...taInfo, length: 0 });
+          declaredLocals.push([varName, "i32"]);
+          locals.set(varName, "i32");
+          continue;
+        }
+      }
       // Class instance: const obj: ClassName = new ClassName(args) or const obj = new ClassName(args)
       const newClassPre = line.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*([A-Z]\w*))?\s*=\s*new\s+([A-Z]\w*)\s*\(/);
       if (newClassPre) {
@@ -12574,6 +12592,19 @@ class WasicTranspiler {
               length2 = elems2.length;
             }
             this.typedArrayVars.set(varName2, { taType: taType2, ...taInfo2, length: length2 });
+            startLocals.set(varName2, "i32");
+            startDeclaredLocals.push([varName2, "i32"]);
+            continue;
+          }
+        }
+        // TypedArray view via type annotation without `new` (mirrors emitFunction pre-scan).
+        {
+          const taViewPre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(Int8Array|Uint8Array|Int16Array|Uint16Array|Int32Array|Uint32Array|Float32Array|Float64Array)\s*=\s*(?!new\s)/);
+          if (taViewPre2) {
+            const varName2 = taViewPre2[1];
+            const taType2  = taViewPre2[2];
+            const taInfo2  = getTypedArrayInfo(taType2)!;
+            this.typedArrayVars.set(varName2, { taType: taType2, ...taInfo2, length: 0 });
             startLocals.set(varName2, "i32");
             startDeclaredLocals.push([varName2, "i32"]);
             continue;
