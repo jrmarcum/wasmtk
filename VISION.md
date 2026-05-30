@@ -80,22 +80,33 @@ prototype with a Rust production implementation is a one-line manifest change.
 **Role:** TypeScript-to-WASM compiler; reference language pillar; polyglot build
 orchestrator CLI
 
-Current state: **All 50 phases complete + Stage 0 Canonical ABI alignment complete.
-Last full-suite validation under npm:wabt: 446/446 tests passing (2026-05-25; 270 wasic
-+ Go-by-Example + 103 bindgen + 73 jstyper). Under wabt-ts 1.1.8 (current dependency),
-phase 1 re-verified at 38/38; remaining phases pending re-validation.** Compiles
-TypeScript to optimized WASM via WAT (assembled by `jsr:@jrmarcum/wabt-ts`, the JSR-native
-TypeScript port of wabt) and Binaryen `-Oz` (still `npm:binaryen`; future migration to
-`binaryen-ts` is a roadmap item). Generates WIT files alongside every compiled module
-(Phase 41). Phase 50 (`wasmtk bindgen`) generates typed TypeScript host binding files
-from WIT using the Canonical ABI (`cabi_realloc`, out-parameter string returns).
-`wasmtk hybrid` (prototype) splits a TypeScript file into a WASM core + TS runner.
+Current state: **All 50 phases complete; Stage 0 Canonical ABI alignment complete;
+Stage 0.5 (dual JSR /compat backends) substantively complete; Stage 0.6
+(allocator unification in wasmmerge) complete.** Historical baseline under
+npm:wabt + npm:binaryen: 446/446 tests passing (2026-05-25; 270 wasic +
+Go-by-Example + 103 bindgen + 73 jstyper). **Under the current dual JSR /compat
+stack (`jsr:@jrmarcum/wabt-ts@^1.2.9/compat` +
+`jsr:@jrmarcum/binaryen-ts@^1.3.1/compat`) with the allocator-unification pass
+active: full wasic suite 262/271 PASS (96.7%)** — one extra pass over the
+previous 260/270 baseline (binaryen-ts 1.3.1 picked up an additional prior
+failure) plus the new `18b_SharedHeapTwoLibraries` regression test for the
+unification pass. Compiles TypeScript to optimized WASM via WAT (assembled by
+`wabt-ts/compat`, the JSR-native TypeScript port of wabt) and Binaryen `-Oz`
+(via `binaryen-ts/compat`, the JSR-native TypeScript port of binaryen). Both
+compat modules deliberately mirror their upstream npm shape so wasmtk's
+deno.json is the single switch point — flipping back to `npm:wabt` /
+`npm:binaryen` is a one-line specifier change. Generates WIT files alongside
+every compiled module (Phase 41). Phase 50 (`wasmtk bindgen`) generates typed
+TypeScript host binding files from WIT using the Canonical ABI (`cabi_realloc`,
+out-parameter string returns). `wasmtk hybrid` (prototype) splits a TypeScript
+file into a WASM core + TS runner.
 
 Remaining additions scoped here:
 
-- Complete wabt-ts re-validation across phases 3, 9, 11–50 + non-phase Go-by-Example tests
-- Migrate `npm:binaryen` → `binaryen-ts` (deferred; binaryen-ts not yet feature-complete
-  — no working `toBinary()` native path, no working binaryen.js subprocess bridge)
+- Triage the 10 remaining wasi-suite failures under dual /compat (9 wasic-side
+  codegen issues that predate the migration: top-level throw handling,
+  nested-if/else fallthru validation, f64→i32 truncation in mathlib call paths;
+  1 binaryen-ts `optimize()` pipeline pass interaction)
 - `wasmtk build` — polyglot build orchestration command (Stage 3)
 - `wasmtk compose` — component composition wrapper (Stage 3)
 - `wasmtk setup <language>` — language recipe installer (Stage 4)
@@ -262,9 +273,12 @@ subsequent releases. Tier 3 are community-contributed or long-term.
 ### Stage 0 — Canonical ABI Alignment ✅ COMPLETE (wasmtk, 2026-05-19)
 
 *Completed. wasic now exports `cabi_realloc` instead of `__malloc` and uses the
-out-parameter convention for string returns. 446/446 tests pass under npm:wabt (as of
-2026-05-25). Under the current wabt-ts dependency (1.1.8), Stage 0 functionality is
-unchanged at the wasic / bindgen layer; full-suite re-validation is in progress.*
+out-parameter convention for string returns. 446/446 tests pass under npm:wabt +
+npm:binaryen (historical baseline, 2026-05-25). Under the current dual JSR
+/compat stack (wabt-ts/compat 1.2.9 + binaryen-ts/compat 1.2.9), the wasic
+population is 260/270 PASS (96.3%); Stage 0 functionality (Canonical ABI shim
+generation, bindgen out-parameter convention) is unchanged at the wasic /
+bindgen layer.*
 
 - ✅ Replaced `__malloc` export with `cabi_realloc(ptr, old_size, align, new_size) → i32`
 - ✅ Changed string return emission: shim wrappers write ptr+len to caller-provided 8-byte
@@ -276,26 +290,75 @@ unchanged at the wasic / bindgen layer; full-suite re-validation is in progress.
 
 ---
 
-### Stage 0.5 — wabt → wabt-ts Migration (wasmtk, in progress)
+### Stage 0.5 — Dual JSR /compat Migration ✅ COMPLETE (wasmtk, 2026-05-28)
 
-*The first wasmtk compiler-toolkit dependency to move into the jrmarcum JSR ecosystem.
-`npm:wabt@^1.0.36` was swapped for `jsr:@jrmarcum/wabt-ts@^1.1.8` in `deno.json`.
-Call sites in `src/utils.ts`, `src/wasic.ts`, and `src/wasmbundle.ts` were rewritten from
-the npm-wabt `await wabt()` factory + `module.parseWat(...)` / `module.readWasm(...)`
-pattern to the wabt-ts top-level `wat2wasm(source, opts)` / `wasm2wat(bytes, opts)` exports.
-`mergeOneWasmImport` no longer threads a `wabtMod` parameter (the new API is stateless).
-The bare specifier `"wabt"` is preserved in import statements so the call-site diff stays
-minimal. Six wabt-ts bugs discovered during this work (folded `(return val1 val2)`,
-opcode alignment defaults, store-with-call operand order, parenless-folded opcodes,
-nested-call function-index resolution, `br_if`-cond `global.get` name resolution) were
-filed and fixed upstream across versions 1.0.3 → 1.1.8.*
+*Substantively complete. Both wasmtk compiler-toolkit dependencies (wabt and
+binaryen) now resolve to JSR-native TypeScript ports in the jrmarcum ecosystem:
+`npm:wabt@^1.0.36` → `jsr:@jrmarcum/wabt-ts@^1.2.9/compat`, and
+`npm:binaryen@^116.0.0` → `jsr:@jrmarcum/binaryen-ts@^1.2.9/compat`. The wasmtk
+source code calls the upstream-npm-shaped API (`await wabt()` + `parseWat` /
+`readWasm`; `binaryen.readBinary(...)` + `Module` methods) — both compat modules
+deliberately mirror that shape, so deno.json is the single switch point. A
+3-line `src/binaryen.ts` wrapper handles the only structural asymmetry (CJS
+default-export under npm vs ES namespace under JSR). Fifteen toolchain bugs
+discovered during this work — 10 in wabt-ts (folded expression parsing, type
+section omission, call/call_indirect name resolution, tag-export parsing,
+f64 literal encoding, multi-value return, memory alignment defaults,
+store-with-call ordering, parenless-folded opcodes, br_if-cond global.get
+resolution, try/catch encoding) and 5 in binaryen-ts (if-without-else
+inversion, RemoveUnusedModuleElements tag mangling, elem-segment drop on
+round-trip, CoalesceLocals signature mismatch, catch-body spurious block
+wrapper) — were all filed and fixed upstream by 1.2.9. See CLAUDE.md §
+"Pluggable wabt + binaryen backends" for the full bug tables.*
 
-- ✅ `deno.json`: `"wabt": "jsr:@jrmarcum/wabt-ts@^1.1.8"`
-- ✅ Call-site rewrites in `src/utils.ts`, `src/wasic.ts`, `src/wasmbundle.ts`
-- ✅ Phase 1 re-verified at 38/38 under wabt-ts 1.1.8
-- 🔄 Phases 3, 9, 11–50 + non-phase Go-by-Example tests — re-validation in progress
-- ⏳ `npm:binaryen` → `binaryen-ts` is the analogous follow-on, deferred until binaryen-ts
-  ships a working native `toBinary()` and binaryen.js subprocess bridge
+- ✅ `deno.json`: `"wabt": "jsr:@jrmarcum/wabt-ts@^1.2.9/compat"`, `"binaryen": "jsr:@jrmarcum/binaryen-ts@^1.2.9/compat"`
+- ✅ `src/binaryen.ts` wrapper handles CJS-default vs ES-namespace asymmetry
+- ✅ Call-site shape preserved (upstream-npm-shaped API works against both backends)
+- ✅ Wasic-side patch: explicit `inlineExport: false` on `.toText(...)` calls (wabt-ts/compat's default differs from npm:wabt's)
+- ✅ Full wasic suite: **260/270 PASS (96.3%)** under dual /compat 1.2.9 (10 known remaining failures — 9 wasic-side codegen issues that predate the migration + 1 binaryen-ts `-Oz` pass interaction)
+- ✅ Switching back to `npm:wabt` / `npm:binaryen` is a one-line deno.json change — both backends remain supported as fallbacks
+
+---
+
+### Stage 0.6 — Allocator Unification in wasmmerge ✅ COMPLETE (wasmtk, 2026-05-30)
+
+*Closes the last gap that prevented `wasmbundle` from acting as a real on-demand
+linker for stdlib capability modules. Pre-unification, each `wasic` / `modc`
+module shipped its own bump allocator: `$__malloc` advancing a module-local
+`$__heap_ptr` seated past that module's static data. After prefix-mangling, a
+merge produced two independent allocators over one linear memory, with
+overlapping addresses on the first allocation from either side. With Stage 0.6,
+`wasmmerge` detects the bump-allocator function form semantically, drops it from
+each merged module, and redirects every call site and global reference to the
+master module's shared `$__malloc` and `$__heap_ptr`. The master's heap cursor
+is recomputed in `wasic.ts` / `wasmbundle.ts` to sit past the **combined**
+post-relocation static data.*
+
+- ✅ `src/wasmmerge.ts` — `detectBumpAllocator()` helper identifies the form
+  semantically (single i32 param/result, one set/get on a single global,
+  `local.get 0` + `i32.add`, no loads/stores/calls); dropped function index
+  redirected to `$__malloc` in `funcName`; `renameGlobalRefs()` extended to
+  redirect the heap-ptr global to `$__heap_ptr`. `WatMergeResult` gains
+  `droppedAllocator: boolean`.
+- ✅ `src/wasic.ts` — post-merge rewrite in `compileWasiTs` and `compileLibTs`
+  rewrites `$__heap_ptr` to `(i32.const dataOffset)` and grows memory to
+  `max(2, ceil(dataOffset / 65536) + 1)` pages when any sub-merge dropped an
+  allocator.
+- ✅ `src/wasmbundle.ts` — when any sub-merge dropped an allocator, the master
+  WAT synthesizes a shared `$__heap_ptr` global and `$__malloc` function pair
+  and recomputes pages.
+- ✅ Regression test `tests/wasm_wasi/18b_SharedHeapTwoLibraries.ts` — two
+  modc-compiled libraries both allocate via `.push()`; main asserts both
+  return the expected length; PASSING.
+- ✅ Runtime notice on each unified merge:
+  `allocator unified: dropped $__malloc + heap-ptr global; call sites redirected
+  to main module's $__malloc / $__heap_ptr.`
+- ✅ Binaryen upgrade: `binaryen-ts/compat` 1.2.9 → 1.3.1 (fixes one prior wasic-side
+  failure in the suite); full wasic suite **262/271 PASS (96.7%)** under
+  wabt-ts/compat 1.2.9 + binaryen-ts/compat 1.3.1 + the unification pass.
+
+This unblocks the Tier-1 stdlib capability libraries
+(`wasmtk-stdlib-bundling-brief.md` §3) — the next planned work in this area.
 
 ---
 
@@ -429,8 +492,8 @@ that the spec is implementable before committing to additional ports.
 ```text
 jrmarcum/
 ├── wasmtk                        ← TypeScript compiler + polyglot build CLI
-├── wabt-ts                       ← JSR-native TS port of wabt; consumed by wasmtk (Stage 0.5 ✅)
-├── binaryen-ts                   ← JSR-native TS port of binaryen; future wasmtk dep (deferred)
+├── wabt-ts                       ← JSR-native TS port of wabt; consumed by wasmtk via /compat (Stage 0.5 ✅)
+├── binaryen-ts                   ← JSR-native TS port of binaryen; consumed by wasmtk via /compat (Stage 0.5 ✅)
 ├── universalWasmLoader           ← JS/TS loader + SPEC.md (reference impl)
 ├── universalWasmLoader-rs        ← Rust port (Stage 2)
 ├── universalWasmLoader-py        ← Python port (Stage 2)
@@ -450,10 +513,13 @@ for what wasmtk emits. The two documents cross-reference each other.
 
 In order:
 
-1. **Stage 0.5** — Complete wabt-ts re-validation across remaining phases (in progress;
-   phase 1 ✅ 38/38 under wabt-ts 1.1.8)
-2. **Stage 1** — Enhance universalWasmLoader + write SPEC.md — **CURRENT PRIORITY**
+1. **Stage 1** — Enhance universalWasmLoader + write SPEC.md — **CURRENT PRIORITY**
    Reference: `wasmtk/src/bindgen.ts` (Phase 50) for all ABI details (Canonical ABI complete)
+2. **wasmtk-stdlib-bundling-brief.md §5–7** — Tier-1 capability libraries (JSON, Date,
+   Map, Set, RegExp) as `modc` modules + tree-shake wiring in `wasmbundle`; now unblocked
+   by Stage 0.6 allocator unification. Parallel track to Stage 1.
 3. **Stage 2** — `universalWasmLoader-rs` and `universalWasmLoader-py` — validates the spec
 4. **Stage 3** — Build orchestration — the pixi integration becomes real
-5. **Stage 0** ✅ COMPLETE — Canonical ABI alignment in wasmtk done (2026-05-19); 446/446 pass under npm:wabt (2026-05-25)
+5. **Stage 0** ✅ COMPLETE — Canonical ABI alignment in wasmtk done (2026-05-19); 446/446 pass under npm:wabt baseline (2026-05-25)
+6. **Stage 0.5** ✅ COMPLETE — Dual JSR /compat migration done (2026-05-28); wabt-ts/compat 1.2.9 + binaryen-ts/compat 1.2.9; 260/270 PASS on the wasic population; 15 toolchain bugs filed and fixed during rollout; deno.json is the single switch point for npm ↔ JSR backends
+7. **Stage 0.6** ✅ COMPLETE — Allocator unification in wasmmerge done (2026-05-30); binaryen-ts/compat bumped to 1.3.1; 262/271 PASS; `wasmbundle` now functions as an on-demand stdlib linker

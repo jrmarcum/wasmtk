@@ -835,11 +835,20 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 
 ### Completed Phases
 
-> **Test-count taglines in this table are historical snapshots under `npm:wabt` (last
-> full-suite validation 2026-05-25: 446/446 PASS). The current wasmtk dependency is
-> `jsr:@jrmarcum/wabt-ts@^1.1.8` — under that toolchain phase 1 is re-verified at 38/38;
-> remaining phases pending re-validation. The per-phase historical counts are preserved
-> as a record of when each phase first reached green; they should not be read as a
+> **Test-count taglines in this table are historical snapshots under `npm:wabt` +
+> `npm:binaryen` (last full-suite validation 2026-05-25: 446/446 PASS). The current
+> wasmtk dependencies are `jsr:@jrmarcum/wabt-ts@^1.2.9/compat` and
+> `jsr:@jrmarcum/binaryen-ts@^1.3.1/compat` (dual JSR-native TS ecosystem) — under
+> that toolchain, with the Stage 0.6 allocator-unification pass active, the full
+> wasic suite is **262/271 PASS (96.7%)** (one more pass than the prior 260/270
+> baseline — binaryen-ts 1.3.1 fixed one previously failing test — plus the new
+> `18b_SharedHeapTwoLibraries` regression test for allocator unification). 9 known
+> remaining failures: all wasic-side codegen issues that predate the migration —
+> top-level throw handling, nested-if/else fallthru validation, f64→i32 truncation
+> in mathlib call paths, an `as unknown as i32` cast emitting a stray f64 convert
+> on the return path (newly tracked). See CLAUDE.md § "Pluggable wabt + binaryen
+> backends" for the breakdown. The per-phase historical counts are preserved as a
+> record of when each phase first reached green; they should not be read as a
 > live-system invariant.**
 
 | Phase | Feature | Highlights |

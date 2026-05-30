@@ -117,7 +117,7 @@
  */
 
 import wabt from "wabt";
-import binaryen from "binaryen";
+import binaryen from "./binaryen.ts";
 import { basename, dirname } from "@std/path";
 import { rt } from "./rt.ts";
 import { bundleImportsEx } from "./tsbundler.ts";
@@ -13023,7 +13023,7 @@ function mergeOneWasmImport(
 ): { mergedWat: string; notices: string[]; exportedFuncs: ExternalFuncDef[]; hasMutableGlobals: boolean } {
   // Disassemble the binary to WAT text
   const importedMod = wabtMod.readWasm(wasmBytes.buffer as ArrayBuffer, { readDebugNames: true });
-  const importedWat = importedMod.toText({ foldExprs: false });
+  const importedWat = importedMod.toText({ foldExprs: false, inlineExport: false });
   importedMod.destroy();
 
   const result = mergeWasmWat(importedWat, prefix, dataOffset);
@@ -13093,7 +13093,7 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
       const bytes = await rt.readFile(entry.filePath);
       wasmBytesMap.set(entry.filePath, bytes);
       const mod = wabtMod.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: true });
-      const importedWat = mod.toText({ foldExprs: false });
+      const importedWat = mod.toText({ foldExprs: false, inlineExport: false });
       mod.destroy();
       const preResult = mergeWasmWat(importedWat, entry.prefix, 0);
       allExternalFuncs.push(...preResult.exportedFuncs);
@@ -13134,7 +13134,7 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
     // A second pass with mergeWasmWat(dataReloc=0) gives us the imported module's own
     // dataOffset, which we use as the relocation size.
     const mod2 = wabtMod.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: false });
-    const wat2 = mod2.toText({ foldExprs: false });
+    const wat2 = mod2.toText({ foldExprs: false, inlineExport: false });
     mod2.destroy();
     // Advance dataOffset by the imported module's static footprint
     const heapM = wat2.match(/\(global\s+\(;0;\)\s+\(mut i32\)\s+\(i32\.const\s+(\d+)\)\)/);
@@ -13153,6 +13153,26 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
   if (transpiler.needsMathLib) {
     const { mergedWat } = mergeOneWasmImport(wat, MATHLIB_BYTES, "mathlib", dataOffset, wabtMod);
     wat = mergedWat;
+  }
+
+  // Phase 18.5: re-seat $__heap_ptr past the COMBINED static data of all
+  // merged modules. The transpiler emitted the initial `(global $__heap_ptr
+  // (mut i32) (i32.const N))` line with N = main module's own dataEnd; with
+  // wasmmerge's allocator unification, every merged library shares this one
+  // heap cursor, so the initial value must clear all relocated data segments.
+  // Also grow memory to fit the new heap-start (binaryen / runtime can grow
+  // further at execution time, but the static initialiser must not point past
+  // the declared page count).
+  if (wasmImports.length > 0 || transpiler.needsMathLib) {
+    wat = wat.replace(
+      /\(global \$__heap_ptr \(mut i32\) \(i32\.const \d+\)\)/,
+      `(global $__heap_ptr (mut i32) (i32.const ${dataOffset}))`,
+    );
+    const requiredPages = Math.max(2, Math.ceil(dataOffset / 65536) + 1);
+    wat = wat.replace(
+      /\(memory\s+\(export\s+"memory"\)\s+(\d+)\)/,
+      (_full, nStr) => `(memory (export "memory") ${Math.max(requiredPages, parseInt(nStr))})`,
+    );
   }
 
   // Write WAT alongside the output for inspection / debugging
@@ -13216,7 +13236,7 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
       const bytes = await rt.readFile(entry.filePath);
       wasmBytesMap2.set(entry.filePath, bytes);
       const mod = wabtMod2.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: true });
-      const importedWat = mod.toText({ foldExprs: false });
+      const importedWat = mod.toText({ foldExprs: false, inlineExport: false });
       mod.destroy();
       const preResult2 = mergeWasmWat(importedWat, entry.prefix, 0);
       allExternalFuncs2.push(...preResult2.exportedFuncs);
@@ -13250,7 +13270,7 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
     }
     wat = mergedWat;
     const mod2 = wabtMod2.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: false });
-    const wat2 = mod2.toText({ foldExprs: false });
+    const wat2 = mod2.toText({ foldExprs: false, inlineExport: false });
     mod2.destroy();
     const heapM = wat2.match(/\(global\s+\(;0;\)\s+\(mut i32\)\s+\(i32\.const\s+(\d+)\)\)/);
     dataOffset2 += heapM ? parseInt(heapM[1]) : 260;
@@ -13260,6 +13280,20 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
   if (transpiler.needsMathLib) {
     const { mergedWat } = mergeOneWasmImport(wat, MATHLIB_BYTES, "mathlib", dataOffset2, wabtMod2);
     wat = mergedWat;
+  }
+
+  // Phase 18.5: re-seat $__heap_ptr past the COMBINED static data of all
+  // merged modules. Same logic as compileWasiTs — see comment there.
+  if (wasmImports.length > 0 || transpiler.needsMathLib) {
+    wat = wat.replace(
+      /\(global \$__heap_ptr \(mut i32\) \(i32\.const \d+\)\)/,
+      `(global $__heap_ptr (mut i32) (i32.const ${dataOffset2}))`,
+    );
+    const requiredPages = Math.max(2, Math.ceil(dataOffset2 / 65536) + 1);
+    wat = wat.replace(
+      /\(memory\s+\(export\s+"memory"\)\s+(\d+)\)/,
+      (_full, nStr) => `(memory (export "memory") ${Math.max(requiredPages, parseInt(nStr))})`,
+    );
   }
 
   await rt.writeTextFile(watPath, wat);

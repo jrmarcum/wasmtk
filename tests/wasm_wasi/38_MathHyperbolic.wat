@@ -474,4 +474,937 @@
             (i32.const 128)))
     (call $proc_exit (i32.const 0))
   )
+
+  ;; globals from mathlib
+  (global $mathlib_global0 (mut i64) (i64.const 7809847782465536322))
+  ;; functions from mathlib
+  (func $mathlib_random (result f64)
+    (local i64)
+    global.get $mathlib_global0
+    local.set 0
+    local.get 0
+    local.get 0
+    i64.const 13
+    i64.shl
+    i64.xor
+    local.set 0
+    local.get 0
+    local.get 0
+    i64.const 7
+    i64.shr_u
+    i64.xor
+    local.set 0
+    local.get 0
+    local.get 0
+    i64.const 17
+    i64.shl
+    i64.xor
+    local.set 0
+    local.get 0
+    global.set $mathlib_global0
+    local.get 0
+    i64.const 12
+    i64.shr_u
+    i64.const 4607182418800017408
+    i64.or
+    f64.reinterpret_i64
+    f64.const 0x1.0p+0 (;=1;)
+    f64.sub)
+  (func $mathlib_sin (param f64) (result f64)
+    (local f64) (local f64)
+    local.get 0
+    f64.const 0x1.921fb54442d18p+2 (;=6.283185307179586;)
+    local.get 0
+    f64.const 0x1.45f306dc9c883p-3 (;=0.15915494309189535;)
+    f64.mul
+    f64.const 0x1.0p-1 (;=0.5;)
+    f64.add
+    f64.floor
+    f64.mul
+    f64.sub
+    local.set 0
+    local.get 0
+    f64.const 0x1.921fb54442d18p+0 (;=1.5707963267948966;)
+    f64.gt
+    if  ;; label = @1
+      f64.const 0x1.921fb54442d18p+1 (;=3.141592653589793;)
+      local.get 0
+      f64.sub
+      local.set 0
+    end
+    local.get 0
+    f64.const -0x1.921fb54442d18p+0 (;=-1.5707963267948966;)
+    f64.lt
+    if  ;; label = @1
+      f64.const 0x1.921fb54442d18p+1 (;=3.141592653589793;)
+      local.get 0
+      f64.add
+      f64.neg
+      local.set 0
+    end
+    local.get 0
+    local.get 0
+    f64.mul
+    local.set 1
+    f64.const 0x1.5d8fd1fd19ccdp-33 (;=1.5896230157654656e-10;)
+    local.set 2
+    f64.const -0x1.ae6454baa2959p-26 (;=-2.5052106814843123e-8;)
+    local.get 1
+    local.get 2
+    f64.mul
+    f64.add
+    local.set 2
+    f64.const 0x1.71de357b1fe7dp-19 (;=0.0000027557313707070068;)
+    local.get 1
+    local.get 2
+    f64.mul
+    f64.add
+    local.set 2
+    f64.const -0x1.a01a019c161d5p-13 (;=-0.0001984126982985795;)
+    local.get 1
+    local.get 2
+    f64.mul
+    f64.add
+    local.set 2
+    f64.const 0x1.11111110a14d2p-7 (;=0.008333333332539192;)
+    local.get 1
+    local.get 2
+    f64.mul
+    f64.add
+    local.set 2
+    f64.const -0x1.5555555555549p-3 (;=-0.16666666666666632;)
+    local.get 1
+    local.get 2
+    f64.mul
+    f64.add
+    local.set 2
+    f64.const 0x1.0p+0 (;=1;)
+    local.get 1
+    local.get 2
+    f64.mul
+    f64.add
+    local.set 2
+    local.get 0
+    local.get 2
+    f64.mul)
+  (func $mathlib_cos (param f64) (result f64)
+    (local f64) (local f64) (local i32)
+    i32.const 1
+    local.set 3
+    local.get 0
+    f64.const 0x1.921fb54442d18p+2 (;=6.283185307179586;)
+    local.get 0
+    f64.const 0x1.45f306dc9c883p-3 (;=0.15915494309189535;)
+    f64.mul
+    f64.const 0x1.0p-1 (;=0.5;)
+    f64.add
+    f64.floor
+    f64.mul
+    f64.sub
+    local.set 0
+    local.get 0
+    f64.const 0x1.921fb54442d18p+0 (;=1.5707963267948966;)
+    f64.gt
+    if  ;; label = @1
+      f64.const 0x1.921fb54442d18p+1 (;=3.141592653589793;)
+      local.get 0
+      f64.sub
+      local.set 0
+      i32.const -1
+      local.set 3
+    end
+    local.get 0
+    f64.const -0x1.921fb54442d18p+0 (;=-1.5707963267948966;)
+    f64.lt
+    if  ;; label = @1
+      f64.const 0x1.921fb54442d18p+1 (;=3.141592653589793;)
+      local.get 0
+      f64.add
+      f64.neg
+      local.set 0
+      i32.const -1
+      local.set 3
+    end
+    local.get 0
+    local.get 0
+    f64.mul
+    local.set 1
+    f64.const 0x1.1eed8eff8d898p-29 (;=2.08767569878681e-9;)
+    local.set 2
+    f64.const -0x1.27e4fb7789f5cp-22 (;=-2.755731922398589e-7;)
+    local.get 1
+    local.get 2
+    f64.mul
+    f64.add
+    local.set 2
+    f64.const 0x1.a01a01a01a01ap-16 (;=0.0000248015873015873;)
+    local.get 1
+    local.get 2
+    f64.mul
+    f64.add
+    local.set 2
+    f64.const -0x1.6c16c16c16c16p-10 (;=-0.0013888888888888887;)
+    local.get 1
+    local.get 2
+    f64.mul
+    f64.add
+    local.set 2
+    f64.const 0x1.5555555555556p-5 (;=0.04166666666666667;)
+    local.get 1
+    local.get 2
+    f64.mul
+    f64.add
+    local.set 2
+    f64.const -0x1.fffffffffffffp-2 (;=-0.49999999999999994;)
+    local.get 1
+    local.get 2
+    f64.mul
+    f64.add
+    local.set 2
+    f64.const 0x1.0p+0 (;=1;)
+    local.get 1
+    local.get 2
+    f64.mul
+    f64.add
+    local.set 2
+    local.get 3
+    i32.const -1
+    i32.eq
+    if  ;; label = @1
+      local.get 2
+      f64.neg
+      local.set 2
+    end
+    local.get 2)
+  (func $mathlib_tan (param f64) (result f64)
+    local.get 0
+    call $mathlib_sin
+    local.get 0
+    call $mathlib_cos
+    f64.div)
+  (func $mathlib_atan (param f64) (result f64)
+    (local i32) (local f64) (local f64) (local f64) (local f64) (local i32) (local i32)
+    i32.const 1
+    local.set 1
+    local.get 0
+    local.set 2
+    i32.const 0
+    local.set 6
+    i32.const 0
+    local.set 7
+    local.get 0
+    f64.const 0x0p+0 (;=0;)
+    f64.lt
+    if  ;; label = @1
+      i32.const -1
+      local.set 1
+      local.get 0
+      f64.neg
+      local.set 2
+    end
+    local.get 2
+    f64.const 0x1.0p+0 (;=1;)
+    f64.gt
+    if  ;; label = @1
+      f64.const 0x1.0p+0 (;=1;)
+      local.get 2
+      f64.div
+      local.set 2
+      i32.const 1
+      local.set 6
+    end
+    local.get 2
+    f64.const 0x1.a827999fcef33p-2 (;=0.4142135623730951;)
+    f64.gt
+    if  ;; label = @1
+      local.get 2
+      f64.const 0x1.0p+0 (;=1;)
+      f64.sub
+      local.get 2
+      f64.const 0x1.0p+0 (;=1;)
+      f64.add
+      f64.div
+      local.set 2
+      i32.const 1
+      local.set 7
+    end
+    local.get 2
+    local.get 2
+    f64.mul
+    local.set 3
+    f64.const 0x1.0ad3ae322da11p-6 (;=0.016285820115365782;)
+    local.set 5
+    f64.const -0x1.2b4442c6a6c2fp-5 (;=-0.036531572744216916;)
+    local.get 3
+    local.get 5
+    f64.mul
+    f64.add
+    local.set 5
+    f64.const 0x1.97b492df83c18p-5 (;=0.049768721448451625;)
+    local.get 3
+    local.get 5
+    f64.mul
+    f64.add
+    local.set 5
+    f64.const -0x1.dde2d52df3df4p-5 (;=-0.058335701338020046;)
+    local.get 3
+    local.get 5
+    f64.mul
+    f64.add
+    local.set 5
+    f64.const 0x1.10d66a0d03d54p-4 (;=0.06661073137387535;)
+    local.get 3
+    local.get 5
+    f64.mul
+    f64.add
+    local.set 5
+    f64.const -0x1.3b0f2af749a6dp-4 (;=-0.0769187620504483;)
+    local.get 3
+    local.get 5
+    f64.mul
+    f64.add
+    local.set 5
+    f64.const 0x1.745cdc54c206ep-4 (;=0.09090887133436507;)
+    local.get 3
+    local.get 5
+    f64.mul
+    f64.add
+    local.set 5
+    f64.const -0x1.c71c6fe231671p-4 (;=-0.11111110405462356;)
+    local.get 3
+    local.get 5
+    f64.mul
+    f64.add
+    local.set 5
+    f64.const 0x1.24924920083ffp-3 (;=0.14285714272503466;)
+    local.get 3
+    local.get 5
+    f64.mul
+    f64.add
+    local.set 5
+    f64.const -0x1.999999998ebc4p-3 (;=-0.19999999999876483;)
+    local.get 3
+    local.get 5
+    f64.mul
+    f64.add
+    local.set 5
+    f64.const 0x1.555555555550dp-2 (;=0.3333333333333293;)
+    local.get 3
+    local.get 5
+    f64.mul
+    f64.add
+    local.set 5
+    local.get 2
+    local.get 2
+    local.get 3
+    f64.mul
+    local.get 5
+    f64.mul
+    f64.sub
+    local.set 4
+    local.get 6
+    local.get 7
+    i32.and
+    if  ;; label = @1
+      f64.const 0x1.921fb54442d18p-1 (;=0.7853981633974483;)
+      local.get 4
+      f64.sub
+      local.set 4
+    else
+      local.get 6
+      if  ;; label = @2
+        f64.const 0x1.921fb54442d18p+0 (;=1.5707963267948966;)
+        local.get 4
+        f64.sub
+        local.set 4
+      else
+        local.get 7
+        if  ;; label = @3
+          f64.const 0x1.921fb54442d18p-1 (;=0.7853981633974483;)
+          local.get 4
+          f64.add
+          local.set 4
+        end
+      end
+    end
+    local.get 1
+    i32.const -1
+    i32.eq
+    if  ;; label = @1
+      local.get 4
+      f64.neg
+      local.set 4
+    end
+    local.get 4)
+  (func $mathlib_atan2 (param f64 f64) (result f64)
+    (local f64)
+    local.get 1
+    f64.const 0x0p+0 (;=0;)
+    f64.eq
+    if  ;; label = @1
+      local.get 0
+      f64.const 0x0p+0 (;=0;)
+      f64.gt
+      if  ;; label = @2
+        f64.const 0x1.921fb54442d18p+0 (;=1.5707963267948966;)
+        return
+      end
+      local.get 0
+      f64.const 0x0p+0 (;=0;)
+      f64.lt
+      if  ;; label = @2
+        f64.const -0x1.921fb54442d18p+0 (;=-1.5707963267948966;)
+        return
+      end
+      f64.const 0x0p+0 (;=0;)
+      return
+    end
+    local.get 0
+    local.get 1
+    f64.div
+    call $mathlib_atan
+    local.set 2
+    local.get 1
+    f64.const 0x0p+0 (;=0;)
+    f64.lt
+    if  ;; label = @1
+      local.get 0
+      f64.const 0x0p+0 (;=0;)
+      f64.ge
+      if  ;; label = @2
+        local.get 2
+        f64.const 0x1.921fb54442d18p+1 (;=3.141592653589793;)
+        f64.add
+        local.set 2
+      else
+        local.get 2
+        f64.const 0x1.921fb54442d18p+1 (;=3.141592653589793;)
+        f64.sub
+        local.set 2
+      end
+    end
+    local.get 2)
+  (func $mathlib_asin (param f64) (result f64)
+    (local i32) (local f64) (local f64)
+    i32.const 0
+    local.set 1
+    local.get 0
+    local.set 2
+    local.get 0
+    f64.const 0x0p+0 (;=0;)
+    f64.lt
+    if  ;; label = @1
+      i32.const 1
+      local.set 1
+      local.get 0
+      f64.neg
+      local.set 2
+    end
+    local.get 2
+    f64.const 0x1.6666666666666p-1 (;=0.7;)
+    f64.le
+    if  ;; label = @1
+      local.get 2
+      f64.const 0x1.0p+0 (;=1;)
+      local.get 2
+      local.get 2
+      f64.mul
+      f64.sub
+      f64.sqrt
+      f64.div
+      call $mathlib_atan
+      local.set 3
+    else
+      f64.const 0x1.921fb54442d18p+0 (;=1.5707963267948966;)
+      f64.const 0x1.0p+1 (;=2;)
+      f64.const 0x1.0p-1 (;=0.5;)
+      f64.const 0x1.0p+0 (;=1;)
+      local.get 2
+      f64.sub
+      f64.mul
+      f64.sqrt
+      call $mathlib_asin
+      f64.mul
+      f64.sub
+      local.set 3
+    end
+    local.get 1
+    i32.const 1
+    i32.eq
+    if  ;; label = @1
+      local.get 3
+      f64.neg
+      local.set 3
+    end
+    local.get 3)
+  (func $mathlib_acos (param f64) (result f64)
+    f64.const 0x1.921fb54442d18p+0 (;=1.5707963267948966;)
+    local.get 0
+    call $mathlib_asin
+    f64.sub)
+  (func $mathlib_exp (param f64) (result f64)
+    (local i64) (local f64) (local f64)
+    local.get 0
+    f64.const 0x1.62e42fefa39efp+9 (;=709.782712893384;)
+    f64.gt
+    if  ;; label = @1
+      f64.const 0x1.fffffffffffffp+1023 (;=1.7976931348623157e+308;)
+      f64.const 0x1.fffffffffffffp+1023 (;=1.7976931348623157e+308;)
+      f64.mul
+      return
+    end
+    local.get 0
+    f64.const -0x1.6232bdd7abcd2p+9 (;=-708.3964185322641;)
+    f64.lt
+    if  ;; label = @1
+      f64.const 0x0p+0 (;=0;)
+      return
+    end
+    local.get 0
+    f64.const 0x1.71547652b82fep+0 (;=1.4426950408889634;)
+    f64.mul
+    f64.nearest
+    i64.trunc_f64_s
+    local.set 1
+    local.get 0
+    local.get 1
+    f64.convert_i64_s
+    f64.const 0x1.62e42fefa39efp-1 (;=0.6931471805599453;)
+    f64.mul
+    f64.sub
+    local.get 1
+    f64.convert_i64_s
+    f64.const 0x1.a39ef35793c76p-33 (;=1.9082149292705877e-10;)
+    f64.mul
+    f64.sub
+    local.set 2
+    f64.const 0x1.27e4fb7789f5cp-22 (;=2.755731922398589e-7;)
+    local.set 3
+    f64.const 0x1.71de3a556c733p-19 (;=0.000002755731922398589;)
+    local.get 2
+    local.get 3
+    f64.mul
+    f64.add
+    local.set 3
+    f64.const 0x1.a01a01a01a01ap-16 (;=0.0000248015873015873;)
+    local.get 2
+    local.get 3
+    f64.mul
+    f64.add
+    local.set 3
+    f64.const 0x1.a01a01a01a01ap-13 (;=0.0001984126984126984;)
+    local.get 2
+    local.get 3
+    f64.mul
+    f64.add
+    local.set 3
+    f64.const 0x1.6c16c16c16c17p-10 (;=0.001388888888888889;)
+    local.get 2
+    local.get 3
+    f64.mul
+    f64.add
+    local.set 3
+    f64.const 0x1.1111111111111p-7 (;=0.008333333333333333;)
+    local.get 2
+    local.get 3
+    f64.mul
+    f64.add
+    local.set 3
+    f64.const 0x1.5555555555555p-5 (;=0.041666666666666664;)
+    local.get 2
+    local.get 3
+    f64.mul
+    f64.add
+    local.set 3
+    f64.const 0x1.5555555555555p-3 (;=0.16666666666666666;)
+    local.get 2
+    local.get 3
+    f64.mul
+    f64.add
+    local.set 3
+    f64.const 0x1.0p-1 (;=0.5;)
+    local.get 2
+    local.get 3
+    f64.mul
+    f64.add
+    local.set 3
+    f64.const 0x1.0p+0 (;=1;)
+    local.get 2
+    local.get 3
+    f64.mul
+    f64.add
+    local.set 3
+    f64.const 0x1.0p+0 (;=1;)
+    local.get 2
+    local.get 3
+    f64.mul
+    f64.add
+    local.set 3
+    local.get 3
+    local.get 1
+    i64.const 1023
+    i64.add
+    i64.const 52
+    i64.shl
+    f64.reinterpret_i64
+    f64.mul)
+  (func $mathlib_log (param f64) (result f64)
+    (local i64) (local i64) (local f64) (local f64) (local f64) (local f64)
+    local.get 0
+    f64.const 0x0p+0 (;=0;)
+    f64.le
+    if  ;; label = @1
+      local.get 0
+      f64.const 0x0p+0 (;=0;)
+      f64.eq
+      if (result f64)  ;; label = @2
+        f64.const -0x1.0p+0 (;=-1;)
+        f64.const 0x0p+0 (;=0;)
+        f64.div
+      else
+        f64.const 0x0p+0 (;=0;)
+        f64.const 0x0p+0 (;=0;)
+        f64.div
+      end
+      return
+    end
+    local.get 0
+    f64.const 0x1.fffffffffffffp+1023 (;=1.7976931348623157e+308;)
+    f64.gt
+    if  ;; label = @1
+      local.get 0
+      return
+    end
+    local.get 0
+    i64.reinterpret_f64
+    local.set 1
+    local.get 1
+    i64.const 9218868437227405312
+    i64.and
+    i64.const 52
+    i64.shr_u
+    i64.const 1023
+    i64.sub
+    local.set 2
+    local.get 1
+    i64.const 4503599627370495
+    i64.and
+    i64.const 4607182418800017408
+    i64.or
+    f64.reinterpret_i64
+    local.set 3
+    local.get 3
+    f64.const 0x1.6a09e667f3bcdp+0 (;=1.4142135623730951;)
+    f64.gt
+    if  ;; label = @1
+      local.get 3
+      f64.const 0x1.0p-1 (;=0.5;)
+      f64.mul
+      local.set 3
+      local.get 2
+      i64.const 1
+      i64.add
+      local.set 2
+    end
+    local.get 3
+    f64.const 0x1.0p+0 (;=1;)
+    f64.sub
+    local.get 3
+    f64.const 0x1.0p+0 (;=1;)
+    f64.add
+    f64.div
+    local.set 4
+    local.get 4
+    local.get 4
+    f64.mul
+    local.set 5
+    f64.const 0x1.1111111111111p-4 (;=0.06666666666666667;)
+    local.set 6
+    f64.const 0x1.3b13b13b13b13p-4 (;=0.07692307692307691;)
+    local.get 5
+    local.get 6
+    f64.mul
+    f64.add
+    local.set 6
+    f64.const 0x1.745d1745d1746p-4 (;=0.09090909090909091;)
+    local.get 5
+    local.get 6
+    f64.mul
+    f64.add
+    local.set 6
+    f64.const 0x1.c71c71c71c71cp-4 (;=0.1111111111111111;)
+    local.get 5
+    local.get 6
+    f64.mul
+    f64.add
+    local.set 6
+    f64.const 0x1.2492492492492p-3 (;=0.14285714285714285;)
+    local.get 5
+    local.get 6
+    f64.mul
+    f64.add
+    local.set 6
+    f64.const 0x1.999999999999ap-3 (;=0.2;)
+    local.get 5
+    local.get 6
+    f64.mul
+    f64.add
+    local.set 6
+    f64.const 0x1.5555555555555p-2 (;=0.3333333333333333;)
+    local.get 5
+    local.get 6
+    f64.mul
+    f64.add
+    local.set 6
+    f64.const 0x1.0p+0 (;=1;)
+    local.get 5
+    local.get 6
+    f64.mul
+    f64.add
+    local.set 6
+    local.get 2
+    f64.convert_i64_s
+    f64.const 0x1.62e42fefa39efp-1 (;=0.6931471805599453;)
+    f64.mul
+    f64.const 0x1.0p+1 (;=2;)
+    local.get 4
+    local.get 6
+    f64.mul
+    f64.mul
+    f64.add)
+  (func $mathlib_log2 (param f64) (result f64)
+    local.get 0
+    call $mathlib_log
+    f64.const 0x1.71547652b82fep+0 (;=1.4426950408889634;)
+    f64.mul)
+  (func $mathlib_log10 (param f64) (result f64)
+    local.get 0
+    call $mathlib_log
+    f64.const 0x1.bcb7b1526e50ep-2 (;=0.4342944819032518;)
+    f64.mul)
+  (func $mathlib_cbrt (param f64) (result f64)
+    (local i32) (local f64)
+    i32.const 0
+    local.set 1
+    local.get 0
+    f64.const 0x0p+0 (;=0;)
+    f64.eq
+    if  ;; label = @1
+      f64.const 0x0p+0 (;=0;)
+      return
+    end
+    local.get 0
+    f64.const 0x1.fffffffffffffp+1023 (;=1.7976931348623157e+308;)
+    f64.gt
+    if  ;; label = @1
+      local.get 0
+      return
+    end
+    local.get 0
+    f64.const 0x0p+0 (;=0;)
+    f64.lt
+    if  ;; label = @1
+      i32.const 1
+      local.set 1
+      local.get 0
+      f64.neg
+      local.set 0
+    end
+    local.get 0
+    call $mathlib_log
+    f64.const 0x1.8p+1 (;=3;)
+    f64.div
+    call $mathlib_exp
+    local.set 2
+    f64.const 0x1.0p+1 (;=2;)
+    local.get 2
+    f64.mul
+    local.get 0
+    local.get 2
+    local.get 2
+    f64.mul
+    f64.div
+    f64.add
+    f64.const 0x1.8p+1 (;=3;)
+    f64.div
+    local.set 2
+    f64.const 0x1.0p+1 (;=2;)
+    local.get 2
+    f64.mul
+    local.get 0
+    local.get 2
+    local.get 2
+    f64.mul
+    f64.div
+    f64.add
+    f64.const 0x1.8p+1 (;=3;)
+    f64.div
+    local.set 2
+    f64.const 0x1.0p+1 (;=2;)
+    local.get 2
+    f64.mul
+    local.get 0
+    local.get 2
+    local.get 2
+    f64.mul
+    f64.div
+    f64.add
+    f64.const 0x1.8p+1 (;=3;)
+    f64.div
+    local.set 2
+    local.get 1
+    i32.const 1
+    i32.eq
+    if  ;; label = @1
+      local.get 2
+      f64.neg
+      local.set 2
+    end
+    local.get 2)
+  (func $mathlib_sinh (param f64) (result f64)
+    (local f64)
+    local.get 0
+    call $mathlib_exp
+    local.set 1
+    f64.const 0x1.0p-1 (;=0.5;)
+    local.get 1
+    f64.const 0x1.0p+0 (;=1;)
+    local.get 1
+    f64.div
+    f64.sub
+    f64.mul)
+  (func $mathlib_cosh (param f64) (result f64)
+    (local f64)
+    local.get 0
+    call $mathlib_exp
+    local.set 1
+    f64.const 0x1.0p-1 (;=0.5;)
+    local.get 1
+    f64.const 0x1.0p+0 (;=1;)
+    local.get 1
+    f64.div
+    f64.add
+    f64.mul)
+  (func $mathlib_tanh (param f64) (result f64)
+    (local f64)
+    f64.const 0x1.0p+1 (;=2;)
+    local.get 0
+    f64.mul
+    call $mathlib_exp
+    local.set 1
+    local.get 1
+    f64.const 0x1.0p+0 (;=1;)
+    f64.sub
+    local.get 1
+    f64.const 0x1.0p+0 (;=1;)
+    f64.add
+    f64.div)
+  (func $mathlib_asinh (param f64) (result f64)
+    local.get 0
+    local.get 0
+    local.get 0
+    f64.mul
+    f64.const 0x1.0p+0 (;=1;)
+    f64.add
+    f64.sqrt
+    f64.add
+    call $mathlib_log)
+  (func $mathlib_acosh (param f64) (result f64)
+    local.get 0
+    local.get 0
+    local.get 0
+    f64.mul
+    f64.const 0x1.0p+0 (;=1;)
+    f64.sub
+    f64.sqrt
+    f64.add
+    call $mathlib_log)
+  (func $mathlib_atanh (param f64) (result f64)
+    f64.const 0x1.0p-1 (;=0.5;)
+    f64.const 0x1.0p+0 (;=1;)
+    local.get 0
+    f64.add
+    call $mathlib_log
+    f64.const 0x1.0p+0 (;=1;)
+    local.get 0
+    f64.sub
+    call $mathlib_log
+    f64.sub
+    f64.mul)
+  (func $mathlib_expm1 (param f64) (result f64)
+    (local f64) (local f64)
+    local.get 0
+    f64.abs
+    local.set 1
+    local.get 1
+    f64.const 0x1.0p-52 (;=2.220446049250313e-16;)
+    f64.lt
+    if  ;; label = @1
+      local.get 0
+      return
+    end
+    local.get 1
+    f64.const 0x1.0p+0 (;=1;)
+    f64.ge
+    if  ;; label = @1
+      local.get 0
+      call $mathlib_exp
+      f64.const 0x1.0p+0 (;=1;)
+      f64.sub
+      return
+    end
+    f64.const 0x1.a01a01a01a01ap-13 (;=0.0001984126984126984;)
+    local.set 2
+    f64.const 0x1.6c16c16c16c17p-10 (;=0.001388888888888889;)
+    local.get 0
+    local.get 2
+    f64.mul
+    f64.add
+    local.set 2
+    f64.const 0x1.1111111111111p-7 (;=0.008333333333333333;)
+    local.get 0
+    local.get 2
+    f64.mul
+    f64.add
+    local.set 2
+    f64.const 0x1.5555555555555p-5 (;=0.041666666666666664;)
+    local.get 0
+    local.get 2
+    f64.mul
+    f64.add
+    local.set 2
+    f64.const 0x1.5555555555555p-3 (;=0.16666666666666666;)
+    local.get 0
+    local.get 2
+    f64.mul
+    f64.add
+    local.set 2
+    f64.const 0x1.0p-1 (;=0.5;)
+    local.get 0
+    local.get 2
+    f64.mul
+    f64.add
+    local.set 2
+    f64.const 0x1.0p+0 (;=1;)
+    local.get 0
+    local.get 2
+    f64.mul
+    f64.add
+    local.set 2
+    local.get 0
+    local.get 2
+    f64.mul)
+  (func $mathlib_log1p (param f64) (result f64)
+    local.get 0
+    f64.abs
+    f64.const 0x1.0p-52 (;=2.220446049250313e-16;)
+    f64.lt
+    if  ;; label = @1
+      local.get 0
+      return
+    end
+    f64.const 0x1.0p+0 (;=1;)
+    local.get 0
+    f64.add
+    call $mathlib_log)
 )

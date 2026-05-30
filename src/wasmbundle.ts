@@ -40,7 +40,7 @@
 
 import { basename } from "@std/path";
 import wabtInit from "wabt";
-import binaryen from "binaryen";
+import binaryen from "./binaryen.ts";
 import { extractExportNames, mergeWasmWat } from "./wasmmerge.ts";
 import { rt } from "./rt.ts";
 
@@ -193,7 +193,7 @@ export async function runWasmBundle(
   for (const filePath of inputs) {
     const bytes = await rt.readFile(filePath);
     const wabtMod = wabt.readWasm(bytes, { readDebugNames: true });
-    const wat = wabtMod.toText({ foldExprs: false });
+    const wat = wabtMod.toText({ foldExprs: false, inlineExport: false });
     wabtMod.destroy();
     const exports = extractExportNames(wat);
     // Also include _start for WASI executables — mergeWasmWat preserves it in
@@ -279,6 +279,12 @@ export async function runWasmBundle(
   const exportDeclParts: string[] = [];
   const allWasiNames = new Set<string>();
   const allNotices: string[] = [];
+  // Phase 18.5: track whether any merge dropped a bump allocator. When true,
+  // the master WAT must synthesise a single shared $__malloc + $__heap_ptr
+  // because each library's call / global.get sites were redirected to those
+  // names. Without a synthesis here, the WAT compile step fails with
+  // "undefined function $__malloc".
+  let anyDroppedAllocator = false;
 
   for (const mod of modules) {
     // Build exportOverrides for this module:
@@ -301,6 +307,7 @@ export async function runWasmBundle(
     for (const notice of result.notices) {
       allNotices.push(`  ⚠️  ${basename(mod.filePath)}: ${notice}`);
     }
+    if (result.droppedAllocator) anyDroppedAllocator = true;
 
     // Advance dataOffset: next module's data goes above this module's data region.
     // getDataMaxEnd returns the highest original address + length in this module's
@@ -316,7 +323,10 @@ export async function runWasmBundle(
   }
 
   // ── Assemble master WAT ───────────────────────────────────────────────────
-  const pagesNeeded = Math.max(1, Math.ceil(dataOffset / 65536));
+  // Memory pages: enough for the combined static data PLUS at least one growth
+  // page for the shared bump heap (Phase 18.5). Without the +1, an immediately-
+  // first allocation can land at the page boundary and trap.
+  const pagesNeeded = Math.max(1, Math.ceil(dataOffset / 65536) + (anyDroppedAllocator ? 1 : 0));
 
   // WASI imports — one (import ...) per unique WASI function referenced
   const wasiDecls = [...allWasiNames]
@@ -326,10 +336,27 @@ export async function runWasmBundle(
         `  (import "${WASI_MODULE}" "${name}" (func $${name} ${WASI_SIGNATURES[name]}))`,
     );
 
+  // Phase 18.5: when any merged library dropped its bump allocator, synthesise
+  // a single shared $__malloc + $__heap_ptr at module scope. Initial cursor is
+  // seated past the combined static data (sum of every relocated segment).
+  // This is what makes a Map built in libA and read by libB share one heap.
+  const sharedAllocatorParts: string[] = [];
+  if (anyDroppedAllocator) {
+    sharedAllocatorParts.push(
+      `  (global $__heap_ptr (mut i32) (i32.const ${dataOffset}))`,
+      `  (func $__malloc (param $size i32) (result i32)`,
+      `    (local $ptr i32)`,
+      `    (local.set $ptr (global.get $__heap_ptr))`,
+      `    (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))`,
+      `    (local.get $ptr))`,
+    );
+  }
+
   // WAT spec: imports must precede all non-import definitions (memory, funcs, etc.)
   const watParts: string[] = ["(module"];
   if (wasiDecls.length > 0) watParts.push(wasiDecls.join("\n"));
   watParts.push(`  (memory ${pagesNeeded})`);
+  if (sharedAllocatorParts.length > 0) watParts.push(sharedAllocatorParts.join("\n"));
   if (funcParts.length > 0) watParts.push("  " + funcParts.join("\n  "));
   if (globalParts.length > 0) watParts.push("  " + globalParts.join("\n  "));
   if (dataParts.length > 0) watParts.push("  " + dataParts.join("\n  "));

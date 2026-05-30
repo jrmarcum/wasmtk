@@ -2,7 +2,7 @@
   (import "wasi_snapshot_preview1" "proc_exit" (func $proc_exit (param i32)))
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
   (memory (export "memory") 2)
-  (global $__heap_ptr (mut i32) (i32.const 346))
+  (global $__heap_ptr (mut i32) (i32.const 606))
   ;; Bump allocator — advances __heap_ptr and returns the old value
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
@@ -335,16 +335,23 @@
   (data (i32.const 260) "\2d\2d\2d\20\54\65\73\74\20\31\3a\20\53\74\61\74\69\63\20\46\75\6e\63\74\69\6f\6e\20\4c\69\6e\6b\61\67\65\20\2d\2d\2d\0a")
   (data (i32.const 300) "\2d\2d\2d\20\54\65\73\74\20\32\3a\20\53\68\69\66\74\65\64\20\44\61\74\61\20\53\65\67\6d\65\6e\74\20\50\6f\69\6e\74\65\72\73\20\2d\2d\2d\0a")
 
+  ;; globals from 18_MathLibrary_Modc
+  (global $18_MathLibrary_Modc_global0 i32 (i32.const 3))
   ;; functions from 18_MathLibrary_Modc
   (func $18_MathLibrary_Modc_computeScaledArea (param i32 i32) (result i32)
+    (local i32)
     local.get 0
     local.get 1
     i32.mul
     i32.const 1
     i32.shr_s
-    i32.const 3
-    i32.mul)
+    local.set 2
+    local.get 2
+    global.get $18_MathLibrary_Modc_global0
+    i32.mul
+    return)
   (func $18_MathLibrary_Modc_logLibraryVersion
+    (local i32)
     i32.const 0
     i32.const 606
     i32.store

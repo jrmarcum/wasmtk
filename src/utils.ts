@@ -7,7 +7,7 @@
 import { basename, dirname } from "@std/path";
 import { rt } from "./rt.ts";
 import wasm2js_compiler from "wasm2js";
-import binaryen from "binaryen";
+import binaryen from "./binaryen.ts";
 import wabt from "wabt";
 import {
   detectJavyProvider,
@@ -30,7 +30,7 @@ interface WabtModule {
 }
 
 /** The current version of the wasmtk toolkit. */
-export const VERSION = "1.6.0";
+export const VERSION = "1.6.1";
 
 let wasiInstance: WebAssembly.Instance | undefined;
 
