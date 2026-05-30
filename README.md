@@ -837,19 +837,20 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 
 > **Test-count taglines in this table are historical snapshots under `npm:wabt` +
 > `npm:binaryen` (last full-suite validation 2026-05-25: 446/446 PASS). The current
-> wasmtk dependencies are `jsr:@jrmarcum/wabt-ts@^1.2.9/compat` and
-> `jsr:@jrmarcum/binaryen-ts@^1.3.1/compat` (dual JSR-native TS ecosystem) — under
-> that toolchain, with the Stage 0.6 allocator-unification pass active, the full
-> wasic suite is **262/271 PASS (96.7%)** (one more pass than the prior 260/270
-> baseline — binaryen-ts 1.3.1 fixed one previously failing test — plus the new
-> `18b_SharedHeapTwoLibraries` regression test for allocator unification). 9 known
-> remaining failures: all wasic-side codegen issues that predate the migration —
-> top-level throw handling, nested-if/else fallthru validation, f64→i32 truncation
-> in mathlib call paths, an `as unknown as i32` cast emitting a stray f64 convert
-> on the return path (newly tracked). See CLAUDE.md § "Pluggable wabt + binaryen
-> backends" for the breakdown. The per-phase historical counts are preserved as a
-> record of when each phase first reached green; they should not be read as a
-> live-system invariant.**
+> wasmtk dependencies are `jsr:@jrmarcum/wabt-ts@^1.3.0/compat` and
+> `jsr:@jrmarcum/binaryen-ts@^1.3.1/compat` (dual JSR-native TS ecosystem). wabt-ts
+> 1.3.0 fixed a folded `(call …)`-before-`(return …)` encoder bug, recovering two
+> previously-failing wasic tests (`15_panic`, `18_Multi-Scope`). Under that
+> toolchain, with the Stage 0.6 allocator-unification pass and the first Tier-1
+> stdlib capability (Stage 0.7, `Set<i32>`) in place, the numbered wasic-phase suite
+> is **233/240** (`core_` 33/33, jstyper 73/73, bindgen **103/103**). 7 remaining
+> phase failures: pre-existing wasic-side codegen issues — nested-if/else fallthru
+> validation (`19_*`), f64→i32 truncation in mathlib call paths (`38_*`),
+> `5e_MixedSignatures`. (The earlier `as unknown as i32` stray-f64-convert cast bug
+> and the modc unused-`fd_write`-import bug have since been fixed.) See CLAUDE.md
+> § "Pluggable wabt + binaryen backends" for the encoder-bug table. The per-phase
+> historical counts are preserved as a record of when each phase first reached
+> green; they should not be read as a live-system invariant.**
 
 | Phase | Feature | Highlights |
 | --- | --- | --- |
@@ -962,6 +963,14 @@ Aligns wasic's ABI with the WASM Component Model Canonical ABI. Completed ahead 
 - [x] Update `utils.ts` test runner WASI shim to use canonical call convention for string returns
 - [x] Verify WIT generation: string params as `string`, string returns as single `string` return type (no regression from Phase 50)
 - [x] Run full test suite and verify 364/364 PASS
+
+#### Stage 0.6 — Allocator Unification in `wasmmerge` ✅ COMPLETE (2026-05-30)
+
+Turns `wasmbundle` from a packager into a real on-demand stdlib linker. Each `wasic`/`modc` module ships its own bump allocator (`$__malloc` over a module-local `$__heap_ptr`); after prefix-mangling, a naive merge leaves two independent allocators over one linear memory that hand out overlapping addresses. `wasmmerge` now detects the bump-allocator form semantically, drops it from each merged module, and redirects every call site + heap-ptr reference to the master module's shared `$__malloc`/`$__heap_ptr`; the master heap cursor is reseated past the combined post-relocation static data. Regression test `18b_SharedHeapTwoLibraries.ts` (two modc libraries both allocating via `.push()` over one shared heap). Binaryen bumped to `binaryen-ts/compat 1.3.1`.
+
+#### Stage 0.7 — Tier-1 stdlib capabilities: `Set<i32>` ✅ SHIPPED (2026-05-30)
+
+First Tier-1 stdlib capability and the pattern for the rest (Map, Date, JSON, RegExp). `Set<i32>` is an open-addressing hash table authored as a `modc` library (`tests/wasm_wasi_bundle/set_bundle/set_lib_modc.ts`): handle = i32 pointer to a 4-slot `Int32Array` header `[count, cap, keysPtr, usedPtr]`, two `Int32Array(cap)` bucket arrays, linear probing on `key & (cap-1)`, ×2 grow + rehash at load factor 0.5. A `wasic` driver imports it and — via Stage 0.6 unification — the library's allocations land on the host's shared heap. Self-checking `@test-pipeline` `18c_SetCapabilityLibrary.ts` (PASS). Two supporting compiler fixes: TypedArray-view-over-pointer writes (`const v: Int32Array = ptr as unknown as Int32Array; v[i] = x`) and imported-function signature resolution from inline `(param …)` headers. Backend bumped to `wabt-ts@^1.3.0/compat` (fixes the folded call-before-return encoder bug). Also fixed a pre-existing modc bug where string-returning library functions imported an unused `fd_write` (bindgen `99/103 → 103/103`). See `wasmtk-stdlib-bundling-brief.md`. **Next: Map** (reuses the Set hash core), then Date / JSON / RegExp.
 
 ### WASM Compatibility Limitations
 

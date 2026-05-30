@@ -5,9 +5,11 @@
 growing class of programs can use stdlib features (JSON, Date, Map, Set, RegExp,
 eventually Promise) **without** embedding QuickJS via `javyc`.
 
-**Status:** §3 allocator-unification pass shipped (2026-05-30). §5 capability libraries
-(JSON / Date / Map / Set / RegExp) are next. §6 kernel-scope decision and Promise/async
-track remain open.
+**Status:** §3 allocator-unification pass shipped (2026-05-30). §5/§7-#3 first capability
+**`Set<i32>` shipped** (2026-05-30) as a shared-heap `modc` library — see §7-#3. Remaining
+Tier-1 capabilities (Map next, then Date / JSON / RegExp) still to author. §6 kernel-scope
+decision and Promise/async track remain open. Backend bumped to `wabt-ts@^1.3.0/compat`
+(fixes the §7a-adjacent call-before-return encoder bug found during Set development).
 
 ---
 
@@ -156,7 +158,20 @@ this change makes the former a scope decision rather than a technical blocker.
    `18b_SharedHeapTwoLibraries` in place; full suite **262/271 PASS (96.7%)** under
    `wabt-ts/compat 1.2.9` + `binaryen-ts/compat 1.3.1` with the unification pass active.
 3. **Author** Tier-1 capability libraries as `modc` modules: JSON, Date (UTC/offset
-   first), Map, Set; plus a RegExp leaf module. *(next session)*
+   first), Map, Set; plus a RegExp leaf module.
+   - ✅ **`Set<i32>` shipped 2026-05-30** — `tests/wasm_wasi_bundle/set_bundle/set_lib_modc.ts`
+     (open-addressing hash table; handle = i32 ptr to a 4-slot `Int32Array` header
+     `[count, cap, keysPtr, usedPtr]` + two `Int32Array(cap)` bucket arrays; linear probing
+     on `key & (cap-1)`; ×2 grow + rehash at load factor 0.5; exports
+     `setNew`/`setAdd`/`setHas`/`setSize`). Shared-heap driver `main_wasic.ts` +
+     `@test-pipeline` `tests/wasm_wasi/18c_SetCapabilityLibrary.ts` (PASS). Required two
+     wasic-side fixes: TypedArray-view-over-pointer **writes** (`const v: Int32Array = ptr
+     as unknown as Int32Array; v[i] = x`) and imported-function signature resolution from
+     inline `(param …)` headers in `wasmmerge`. A pre-existing modc bug (string-returning
+     library functions imported an unused `fd_write`) was fixed alongside (bindgen
+     99/103 → 103/103).
+   - **Map next** — reuses the Set hash core (same probing + grow), adds a parallel values
+     array. Then Date (pure integer calendar math, leaf), JSON, RegExp (leaf).
 4. **Wire** capability selection: bundle only referenced capabilities (tree-shake at the
    feature level; `wasic` already does this for its own helpers via Binaryen `-Oz`).
 5. **(Separate track)** Promise/async: state-machine lowering in `wasic` + microtask

@@ -3222,11 +3222,18 @@ class WasicTranspiler {
     const entry: [number, number] = [this.dataOffset, bytes.length];
     this.dataMap.set(msg, entry);
     this.dataOffset += bytes.length;
-    this.hasConsoleLog = true;
+    // NOTE: do NOT set hasConsoleLog here. Allocating string DATA is unrelated to
+    // whether the module emits console output via fd_write. Every console.log/error/warn
+    // handler sets hasConsoleLog explicitly before emitting fd_write (and console_log.ts's
+    // fd_write emission only runs through those handlers). Setting it here caused any
+    // string-literal allocation — e.g. a string-returning modc library function like
+    // `greet(n) { return "Hi, " + n; }` with no console at all — to import an unused
+    // `wasi_snapshot_preview1.fd_write`, which a non-WASI host (bindgen loader) can't supply.
     return entry;
   }
 
-  /** Allocates a string in the data section without setting hasConsoleLog (for throw messages). */
+  /** Allocates a string in the data section (historically distinct from allocString, which
+   *  used to set hasConsoleLog; now identical — retained for the throw-message call sites). */
   private allocStringNoLog(raw: string): [number, number] {
     const msg = unescapeString(raw); // process escape sequences from source code
     const existing = this.dataMap.get(msg);

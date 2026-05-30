@@ -82,31 +82,35 @@ orchestrator CLI
 
 Current state: **All 50 phases complete; Stage 0 Canonical ABI alignment complete;
 Stage 0.5 (dual JSR /compat backends) substantively complete; Stage 0.6
-(allocator unification in wasmmerge) complete.** Historical baseline under
+(allocator unification in wasmmerge) complete; Stage 0.7 (first Tier-1 stdlib
+capability — `Set<i32>` shared-heap library) shipped.** Historical baseline under
 npm:wabt + npm:binaryen: 446/446 tests passing (2026-05-25; 270 wasic +
 Go-by-Example + 103 bindgen + 73 jstyper). **Under the current dual JSR /compat
-stack (`jsr:@jrmarcum/wabt-ts@^1.2.9/compat` +
-`jsr:@jrmarcum/binaryen-ts@^1.3.1/compat`) with the allocator-unification pass
-active: full wasic suite 262/271 PASS (96.7%)** — one extra pass over the
-previous 260/270 baseline (binaryen-ts 1.3.1 picked up an additional prior
-failure) plus the new `18b_SharedHeapTwoLibraries` regression test for the
-unification pass. Compiles TypeScript to optimized WASM via WAT (assembled by
-`wabt-ts/compat`, the JSR-native TypeScript port of wabt) and Binaryen `-Oz`
-(via `binaryen-ts/compat`, the JSR-native TypeScript port of binaryen). Both
-compat modules deliberately mirror their upstream npm shape so wasmtk's
-deno.json is the single switch point — flipping back to `npm:wabt` /
-`npm:binaryen` is a one-line specifier change. Generates WIT files alongside
-every compiled module (Phase 41). Phase 50 (`wasmtk bindgen`) generates typed
-TypeScript host binding files from WIT using the Canonical ABI (`cabi_realloc`,
-out-parameter string returns). `wasmtk hybrid` (prototype) splits a TypeScript
-file into a WASM core + TS runner.
+stack (`jsr:@jrmarcum/wabt-ts@^1.3.0/compat` +
+`jsr:@jrmarcum/binaryen-ts@^1.3.1/compat`):** wabt-ts 1.3.0 fixed a folded
+`(call …)`-before-`(return …)` encoder bug, which recovered two previously-failing
+wasic tests (`15_panic`, `18_Multi-Scope`); the numbered wasic-phase suite is
+**233/240** (7 remaining = pre-existing wasic-codegen issues: nested-if/else
+fallthru validation in `19_*`, f64→i32 truncation in mathlib call paths `38_*`,
+`5e_MixedSignatures`), `core_` 33/33, jstyper 73/73, and **bindgen 103/103**
+(a modc unused-`fd_write`-import bug was fixed alongside Stage 0.7). Compiles
+TypeScript to optimized WASM via WAT (assembled by `wabt-ts/compat`, the
+JSR-native TypeScript port of wabt) and Binaryen `-Oz` (via `binaryen-ts/compat`,
+the JSR-native TypeScript port of binaryen). Both compat modules deliberately
+mirror their upstream npm shape so wasmtk's deno.json is the single switch point —
+flipping back to `npm:wabt` / `npm:binaryen` is a one-line specifier change.
+Generates WIT files alongside every compiled module (Phase 41). Phase 50
+(`wasmtk bindgen`) generates typed TypeScript host binding files from WIT using
+the Canonical ABI (`cabi_realloc`, out-parameter string returns). `wasmtk hybrid`
+(prototype) splits a TypeScript file into a WASM core + TS runner.
 
 Remaining additions scoped here:
 
-- Triage the 10 remaining wasi-suite failures under dual /compat (9 wasic-side
-  codegen issues that predate the migration: top-level throw handling,
-  nested-if/else fallthru validation, f64→i32 truncation in mathlib call paths;
-  1 binaryen-ts `optimize()` pipeline pass interaction)
+- Author the remaining Tier-1 stdlib capabilities (Map next — builds on the Set
+  hash-table core — then Date, JSON, RegExp); see `wasmtk-stdlib-bundling-brief.md`
+- Triage the remaining wasi-suite failures (pre-existing wasic-side codegen
+  issues: nested-if/else fallthru validation, f64→i32 truncation in mathlib call
+  paths)
 - `wasmtk build` — polyglot build orchestration command (Stage 3)
 - `wasmtk compose` — component composition wrapper (Stage 3)
 - `wasmtk setup <language>` — language recipe installer (Stage 4)
@@ -358,7 +362,43 @@ post-relocation static data.*
   wabt-ts/compat 1.2.9 + binaryen-ts/compat 1.3.1 + the unification pass.
 
 This unblocks the Tier-1 stdlib capability libraries
-(`wasmtk-stdlib-bundling-brief.md` §3) — the next planned work in this area.
+(`wasmtk-stdlib-bundling-brief.md` §3) — delivered first in Stage 0.7 below.
+
+---
+
+### Stage 0.7 — Tier-1 stdlib capabilities: `Set<i32>` (wasmtk, 2026-05-30)
+
+*First Tier-1 stdlib capability and the pattern-setter for the rest (Map, Date,
+JSON, RegExp). Demonstrates the headline shared-heap case the Stage 0.6 allocator
+unification was built for: a hash table built inside a separately-compiled `modc`
+library shares ONE live heap with the `wasic` program that imports it.*
+
+- ✅ `tests/wasm_wasi_bundle/set_bundle/set_lib_modc.ts` — `Set<i32>` open-addressing
+  hash table. Handle = i32 pointer to a 4-slot `Int32Array` header
+  `[count, cap, keysPtr, usedPtr]`; two `Int32Array(cap)` bucket arrays; linear
+  probing on `key & (cap-1)`; ×2 grow + rehash at load factor 0.5 (handle stays
+  stable). Exports `setNew`/`setAdd`/`setHas`/`setSize`.
+- ✅ Driver imports the library; the library's `$__malloc` resolves to the host
+  module's bump cursor via Stage 0.6 unification → one shared heap. Self-checking
+  (`@test-pipeline` `18c_SetCapabilityLibrary.ts`, PASSING; traps on any wrong
+  result so the `run` step proves Set semantics).
+- ✅ Two supporting compiler fixes the shared-heap pointer pattern required:
+  (1) **TypedArray view over a raw pointer** (`src/wasic.ts`) — `const v: Int32Array
+  = ptr as unknown as Int32Array` now registers a typed-array view so element
+  **writes** through it work (previously stubbed; reads worked only by a
+  coincidental i32-pointer fallback); (2) **imported-function signature resolution
+  from inline params** (`src/wasmmerge.ts`) — `mergeWasmWat` now parses
+  `(param i32 i32)` headers when wabt-ts 1.3.0 emits them without a `(type N)`
+  reference (otherwise import args defaulted to f64 → `call[0] expected i32, found
+  f64`).
+- ✅ Backend bump to `wabt-ts@^1.3.0/compat` (fixes the folded call-before-return
+  encoder bug — see brief §7a / CLAUDE.md bug table). Recovered `15_panic` and
+  `18_Multi-Scope`.
+- ✅ Fixed a pre-existing modc bug: string-**returning** library functions imported
+  an unused `wasi_snapshot_preview1.fd_write` (the bindgen loader can't supply it).
+  `allocString` no longer sets `hasConsoleLog`. `bindgen_tests.ts` 99/103 → 103/103.
+
+Next: **Map** (reuses the Set hash core), then Date / JSON / RegExp.
 
 ---
 
