@@ -4445,6 +4445,15 @@ class WasicTranspiler {
       if (satIdx !== -1) expr = expr.slice(0, satIdx).trim();
     }
 
+    // `as unknown` / `as any` are pure type erasure with no runtime representation.
+    // Strip them up front so the double-cast idiom `expr as unknown as T` reduces to
+    // `expr as T` and `expr as unknown` reduces to `expr`. Without this, the intermediate
+    // erasure would reach mapType("unknown"), which falls through to f64 and injects a
+    // stray f64.convert_i32_s (e.g. `ptr as unknown as i32` on a pointer return).
+    if (/\bas\s+(?:unknown|any)\b/.test(expr)) {
+      expr = expr.replace(/\s+as\s+(?:unknown|any)\b/g, " ").replace(/\s{2,}/g, " ").trim();
+    }
+
     // Phase 22: `as` type assertion — `expr as T` → appropriate WASM conversion
     // Scan right-to-left at depth 0 (lowest-precedence, like a unary postfix suffix).
     {

@@ -165,15 +165,24 @@ this change makes the former a scope decision rather than a technical blocker.
 7. **Decide** the §6 scope question (drop the kernel vs own runtime) — determines whether
    `javyc` is eventually removed or retained as the dynamic-kernel fallback.
 
-### 7a. Wasic codegen bug uncovered during §3 development
+### 7a. Wasic codegen bug uncovered during §3 development — ✅ FIXED 2026-05-30
 
 `return expr as unknown as i32` (the standard TypeScript double-cast idiom for
-forcing through `any`) is currently mis-emitted by wasic: the return path ends with
-a stray `f64.convert_i32_s` on what should be an i32 result, producing a
-`(result i32)` declaration with an f64 value on the stack. Manifests as
+forcing through `any`) was mis-emitted by wasic: the return path ended with a stray
+`f64.convert_i32_s` on what should be an i32 result, producing a `(result i32)`
+declaration with an f64 value on the stack. Manifested as
 `Compiling function #N failed: type error in return[0] (expected i32, got f64)` at
-runtime. Worked around in `18b_SharedHeapTwoLibraries.ts` by returning `.length`
-(which is natively i32) instead of casting the buffer pointer. Tracked separately
-in the wasic todo list; not a blocker for the allocator-unification work but should
-be fixed before the Tier-1 stdlib libraries are written since several of them will
-want pointer-typed returns.
+runtime.
+
+**Root cause:** the `as` handler in `emitExpr` (`src/wasic.ts`) scans right-to-left,
+so `buf as unknown as i32` recursed into the intermediate `buf as unknown`. The
+intermediate target `unknown` reached `mapType("unknown")`, which falls through to
+`f64`, so the i32 pointer was cast i32→f64 before the outer `as i32` saw it.
+
+**Fix:** strip pure type-erasure casts (`as unknown` / `as any`) up front in
+`emitExpr`, reducing `expr as unknown as T` → `expr as T` and `expr as unknown` →
+`expr`. The now-simple inner operand lets the normal single-cast path infer the
+correct source type. Regression test: `tests/wasm_wasi/22_DoubleCastErasure.ts`
+(i32 + f64 double-cast, `as any` variant, bare `as unknown`; zero TS↔WASM delta).
+The Tier-1 stdlib libraries can now use pointer-typed `as unknown as i32` returns
+directly.
