@@ -8,7 +8,7 @@ import { basename, dirname } from "@std/path";
 import { rt } from "./rt.ts";
 import wasm2js_compiler from "wasm2js";
 import binaryen from "binaryen";
-import { wat2wasm, wasm2wat, formatErrors, Result } from "wabt";
+import wabt from "wabt";
 import {
   detectJavyProvider,
   ensureJavy,
@@ -21,29 +21,16 @@ export { compileJavy } from "./javyc.ts";
 export { compileWasi } from "./wasic.ts";
 export { compileModule } from "./modc.ts";
 
-/** Parse WAT text to a WASM binary, throwing on parse errors. */
-function watToBinary(source: string, filename: string): Uint8Array {
-  const { binary, errors, result } = wat2wasm(source, { filename });
-  if (result !== Result.Ok) {
-    throw new Error(`wat2wasm failed:\n${formatErrors(errors)}`);
-  }
-  return binary;
-}
-
-/** Disassemble a WASM binary to WAT text, throwing on decode errors. */
-function wasmToWatText(
-  bytes: Uint8Array,
-  opts: { readDebugNames?: boolean; inlineExport?: boolean } = {},
-): string {
-  const { text, errors, result } = wasm2wat(bytes, opts);
-  if (result !== Result.Ok) {
-    throw new Error(`wasm2wat failed:\n${formatErrors(errors)}`);
-  }
-  return text;
+// Minimal type stubs for the wabt npm package API
+interface WasmFeatures { enable_all?: boolean; [key: string]: boolean | undefined; }
+interface WabtWasmModule { toBinary(opts: object): { buffer: ArrayBuffer }; toText(opts: object): string; destroy(): void; applyNames(): void; }
+interface WabtModule {
+  parseWat(filename: string, source: string, features?: WasmFeatures): WabtWasmModule;
+  readWasm(buffer: Uint8Array, opts: { readDebugNames: boolean }): WabtWasmModule;
 }
 
 /** The current version of the wasmtk toolkit. */
-export const VERSION = "1.6.1";
+export const VERSION = "1.6.0";
 
 let wasiInstance: WebAssembly.Instance | undefined;
 
@@ -162,7 +149,11 @@ async function getWasmBytes(path: string): Promise<Uint8Array> {
   if (path.endsWith(".wat")) {
     try {
       const watSource = await rt.readTextFile(path);
-      return watToBinary(watSource, path);
+      const wabtModule = await (wabt as unknown as () => Promise<WabtModule>)();
+      const parsed = wabtModule.parseWat(path, watSource, { enable_all: true } as WasmFeatures);
+      const { buffer } = parsed.toBinary({});
+      parsed.destroy();
+      return new Uint8Array(buffer);
     } catch (err) {
       throw new Error(`[WAT Compilation Error] ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -428,8 +419,11 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
       }
 
       // Normal WAT → WASM round-trip
-      const binary = watToBinary(watSource, p);
-      await rt.writeFile(out, binary);
+      const wabtModule = await (wabt as unknown as () => Promise<WabtModule>)();
+      const parsed = wabtModule.parseWat(p, watSource, { enable_all: true } as WasmFeatures);
+      const { buffer } = parsed.toBinary({});
+      parsed.destroy();
+      await rt.writeFile(out, new Uint8Array(buffer));
       console.log(`✅ Converted to ${out}`);
 
     } else {
@@ -447,7 +441,10 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
           console.warn(`   This binary embeds the QuickJS runtime and was built with Javy.`);
           console.warn(`   The original source file was not found alongside the WASM.`);
           console.warn(`   The WAT file produced is large due to QuickJS inclusion.`);
-          const wat = wasmToWatText(wasmBytes, { readDebugNames: true, inlineExport: false });
+          const wabtModule = await (wabt as unknown as () => Promise<WabtModule>)();
+          const mod = wabtModule.readWasm(wasmBytes, { readDebugNames: true });
+          const wat = mod.toText({ foldExprs: false, inlineExport: false });
+          mod.destroy();
           await rt.writeTextFile(out, wat);
           console.log(`✅ Converted to ${out}`);
           return;
@@ -487,7 +484,10 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
 
         try {
           const dynBytes = await rt.readFile(tempWasm);
-          const wat = wasmToWatText(dynBytes, { readDebugNames: true, inlineExport: false });
+          const wabtModule = await (wabt as unknown as () => Promise<WabtModule>)();
+          const mod = wabtModule.readWasm(dynBytes, { readDebugNames: true });
+          const wat = mod.toText({ foldExprs: false, inlineExport: false });
+          mod.destroy();
           await rt.writeTextFile(out, wat);
         } finally {
           try { await rt.remove(tempWasm); } catch { /* ignore */ }
@@ -501,7 +501,10 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
 
       } else {
         // Normal WASM → WAT round-trip
-        const wat = wasmToWatText(wasmBytes, { readDebugNames: true, inlineExport: false });
+        const wabtModule = await (wabt as unknown as () => Promise<WabtModule>)();
+        const mod = wabtModule.readWasm(wasmBytes, { readDebugNames: true });
+        const wat = mod.toText({ foldExprs: false, inlineExport: false });
+        mod.destroy();
         await rt.writeTextFile(out, wat);
         console.log(`✅ Converted to ${out}`);
       }

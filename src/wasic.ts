@@ -116,7 +116,7 @@
  *   (none in this area — see Phase 16+ for module system extensions)
  */
 
-import { wat2wasm, wasm2wat, formatErrors, Result } from "wabt";
+import wabt from "wabt";
 import binaryen from "binaryen";
 import { basename, dirname } from "@std/path";
 import { rt } from "./rt.ts";
@@ -145,27 +145,17 @@ import {
 } from "./console_log.ts";
 
 // ---------------------------------------------------------------------------
-// wabt helpers — thin wrappers around jsr:@jrmarcum/wabt-ts that throw on
-// parse/decode errors instead of returning empty buffers.
+// wabt type stubs (same pattern as utils.ts)
 // ---------------------------------------------------------------------------
-
-function watToBinary(source: string, filename: string): Uint8Array {
-  const { binary, errors, result } = wat2wasm(source, { filename });
-  if (result !== Result.Ok) {
-    throw new Error(`wat2wasm failed:\n${formatErrors(errors)}`);
-  }
-  return binary;
+interface WasmFeatures { enable_all?: boolean; [key: string]: boolean | undefined; }
+interface WabtWasmModule {
+  toBinary(opts: object): { buffer: ArrayBuffer };
+  toText(opts?: { foldExprs?: boolean; inlineExport?: boolean }): string;
+  destroy(): void;
 }
-
-function wasmToWatText(
-  bytes: Uint8Array,
-  opts: { readDebugNames?: boolean; inlineExport?: boolean } = {},
-): string {
-  const { text, errors, result } = wasm2wat(bytes, opts);
-  if (result !== Result.Ok) {
-    throw new Error(`wasm2wat failed:\n${formatErrors(errors)}`);
-  }
-  return text;
+interface WabtModule {
+  parseWat(filename: string, source: string, features?: WasmFeatures): WabtWasmModule;
+  readWasm(buffer: ArrayBuffer, opts?: { readDebugNames?: boolean }): WabtWasmModule;
 }
 
 // ---------------------------------------------------------------------------
@@ -193,7 +183,11 @@ async function watToOptimisedWasm(
 ): Promise<WasicResult> {
   try {
     // Step 1: WAT → raw binary via wabt
-    const rawBytes = watToBinary(watSource, sourcePath);
+    const wabtMod = await (wabt as unknown as () => Promise<WabtModule>)();
+    const parsed = wabtMod.parseWat(sourcePath, watSource, { enable_all: true, exceptions: true });
+    const { buffer } = parsed.toBinary({});
+    parsed.destroy();
+    const rawBytes = new Uint8Array(buffer);
 
     // Step 2: Binaryen -Oz (shrinkLevel=2, optimizeLevel=2)
     const binMod = binaryen.readBinary(rawBytes);
@@ -13017,6 +13011,7 @@ class WasicTranspiler {
  * @param wasmBytes    Raw bytes of the .wasm file to merge
  * @param prefix       Module prefix for name mangling (e.g. "math")
  * @param dataOffset   Current end of the main module's static data section
+ * @param wabtMod      Initialised wabt instance (already loaded by caller)
  * @returns            { mergedWat, notices, exportedFuncs }
  */
 function mergeOneWasmImport(
@@ -13024,9 +13019,12 @@ function mergeOneWasmImport(
   wasmBytes: Uint8Array,
   prefix: string,
   dataOffset: number,
+  wabtMod: WabtModule,
 ): { mergedWat: string; notices: string[]; exportedFuncs: ExternalFuncDef[]; hasMutableGlobals: boolean } {
   // Disassemble the binary to WAT text
-  const importedWat = wasmToWatText(wasmBytes, { readDebugNames: true });
+  const importedMod = wabtMod.readWasm(wasmBytes.buffer as ArrayBuffer, { readDebugNames: true });
+  const importedWat = importedMod.toText({ foldExprs: false });
+  importedMod.destroy();
 
   const result = mergeWasmWat(importedWat, prefix, dataOffset);
 
@@ -13086,6 +13084,7 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
 
   // Pre-load external function signatures so the transpiler can type call sites.
   // We disassemble each imported .wasm now (before transpilation) to extract exports.
+  const wabtMod = await (wabt as unknown as () => Promise<WabtModule>)();
   const allExternalFuncs: ExternalFuncDef[] = [];
   const wasmBytesMap = new Map<string, Uint8Array>();
 
@@ -13093,7 +13092,9 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
     try {
       const bytes = await rt.readFile(entry.filePath);
       wasmBytesMap.set(entry.filePath, bytes);
-      const importedWat = wasmToWatText(bytes, { readDebugNames: true });
+      const mod = wabtMod.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: true });
+      const importedWat = mod.toText({ foldExprs: false });
+      mod.destroy();
       const preResult = mergeWasmWat(importedWat, entry.prefix, 0);
       allExternalFuncs.push(...preResult.exportedFuncs);
     } catch (_err) {
@@ -13123,7 +13124,7 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
   for (const entry of wasmImports) {
     const bytes = wasmBytesMap.get(entry.filePath);
     if (!bytes) continue;
-    const { mergedWat, notices, hasMutableGlobals } = mergeOneWasmImport(wat, bytes, entry.prefix, dataOffset);
+    const { mergedWat, notices, hasMutableGlobals } = mergeOneWasmImport(wat, bytes, entry.prefix, dataOffset, wabtMod);
     for (const notice of notices) {
       console.log(`  ⚠️  Imported "${entry.filePath}": ${notice}`);
     }
@@ -13132,7 +13133,9 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
     // Advance dataOffset so the next imported module's data lands above this one.
     // A second pass with mergeWasmWat(dataReloc=0) gives us the imported module's own
     // dataOffset, which we use as the relocation size.
-    const wat2 = wasmToWatText(bytes, { readDebugNames: false });
+    const mod2 = wabtMod.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: false });
+    const wat2 = mod2.toText({ foldExprs: false });
+    mod2.destroy();
     // Advance dataOffset by the imported module's static footprint
     const heapM = wat2.match(/\(global\s+\(;0;\)\s+\(mut i32\)\s+\(i32\.const\s+(\d+)\)\)/);
     dataOffset += heapM ? parseInt(heapM[1]) : 260 /* DATA_BASE fallback */;
@@ -13148,7 +13151,7 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
 
   // Phase 38: auto-merge mathlib.wasm when extended Math.* functions were used
   if (transpiler.needsMathLib) {
-    const { mergedWat } = mergeOneWasmImport(wat, MATHLIB_BYTES, "mathlib", dataOffset);
+    const { mergedWat } = mergeOneWasmImport(wat, MATHLIB_BYTES, "mathlib", dataOffset, wabtMod);
     wat = mergedWat;
   }
 
@@ -13204,6 +13207,7 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
   }
   const { source, wasmImports } = bundleResult2;
 
+  const wabtMod2 = await (wabt as unknown as () => Promise<WabtModule>)();
   const allExternalFuncs2: ExternalFuncDef[] = [];
   const wasmBytesMap2 = new Map<string, Uint8Array>();
 
@@ -13211,7 +13215,9 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
     try {
       const bytes = await rt.readFile(entry.filePath);
       wasmBytesMap2.set(entry.filePath, bytes);
-      const importedWat = wasmToWatText(bytes, { readDebugNames: true });
+      const mod = wabtMod2.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: true });
+      const importedWat = mod.toText({ foldExprs: false });
+      mod.destroy();
       const preResult2 = mergeWasmWat(importedWat, entry.prefix, 0);
       allExternalFuncs2.push(...preResult2.exportedFuncs);
     } catch (_err) {
@@ -13238,19 +13244,21 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
   for (const entry of wasmImports) {
     const bytes = wasmBytesMap2.get(entry.filePath);
     if (!bytes) continue;
-    const { mergedWat, notices } = mergeOneWasmImport(wat, bytes, entry.prefix, dataOffset2);
+    const { mergedWat, notices } = mergeOneWasmImport(wat, bytes, entry.prefix, dataOffset2, wabtMod2);
     for (const notice of notices) {
       console.log(`  ⚠️  Imported "${entry.filePath}": ${notice}`);
     }
     wat = mergedWat;
-    const wat2 = wasmToWatText(bytes, { readDebugNames: false });
+    const mod2 = wabtMod2.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: false });
+    const wat2 = mod2.toText({ foldExprs: false });
+    mod2.destroy();
     const heapM = wat2.match(/\(global\s+\(;0;\)\s+\(mut i32\)\s+\(i32\.const\s+(\d+)\)\)/);
     dataOffset2 += heapM ? parseInt(heapM[1]) : 260;
   }
 
   // Phase 38: auto-merge mathlib.wasm when extended Math.* functions were used
   if (transpiler.needsMathLib) {
-    const { mergedWat } = mergeOneWasmImport(wat, MATHLIB_BYTES, "mathlib", dataOffset2);
+    const { mergedWat } = mergeOneWasmImport(wat, MATHLIB_BYTES, "mathlib", dataOffset2, wabtMod2);
     wat = mergedWat;
   }
 
