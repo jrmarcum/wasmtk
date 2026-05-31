@@ -248,18 +248,17 @@ regressions**.
    data range — is far narrower and could later be made exact with context-sensitive
    load/store-address relocation).
 
-2. **Binaryen miscompiled the doubly-merged module.** After wasmmerge splices the
-   already-`-Oz`'d, stack-form library back into the driver, `compileWasiTs`
-   re-optimizes the combined module with binaryen-ts/compat. On Date's
-   division-heavy `monthFromDays`/`dayFromDays` this produced a binary that
-   **misbehaves at runtime** (returned garbage / out-of-bounds), even though the
-   pre-binaryen merged WAT — assembled by wabt alone — runs correctly, and laundering
-   binaryen's output back through wabt did **not** recover it (so the corruption is in
-   binaryen's optimization, not just its byte encoding). **Fix:** on the merge path
-   only (`wasmImports.length > 0 || needsMathLib`, in both `compileWasiTs` and
-   `compileLibTs`), skip Binaryen and ship wabt's direct assembly of the merged WAT
-   via a new `skipBinaryenOpt` flag on `watToOptimisedWasm`. The library was already
-   `-Oz`'d in `modc` and the driver portion is small, so the size cost is minor;
-   correctness wins. The non-merge single-module path is untouched and keeps the full
-   `-Oz` pass. (File upstream against binaryen-ts/compat; revisit skipping once
-   fixed.)
+2. **Binaryen miscompiled the doubly-merged module — ✅ fixed upstream in
+   binaryen-ts/compat 1.3.2 (2026-05-31).** After wasmmerge splices the already-`-Oz`'d,
+   stack-form library back into the driver, `compileWasiTs` re-optimizes the combined
+   module with binaryen-ts/compat. Under 1.3.1, on Date's division-heavy
+   `monthFromDays`/`dayFromDays`, `optimize()` produced a binary that **misbehaved at
+   runtime** (garbage / out-of-bounds), even though the pre-binaryen merged WAT —
+   assembled by wabt alone — ran correctly, and laundering binaryen's output back
+   through wabt did **not** recover it (so the corruption was in binaryen's
+   optimization, not its byte encoding). It was briefly worked around with a
+   `skipBinaryenOpt` flag on `watToOptimisedWasm` (ship wabt's direct assembly of the
+   merged WAT on the merge path). **1.3.2 fixed the optimizer bug** (deno.json bumped
+   1.3.1 → 1.3.2), so the workaround was removed — the merge path again runs full
+   Binaryen `-Oz`, and the Date pipeline + full suite pass with it re-enabled. (Fix 1
+   above is independent of the binaryen version and stays.)

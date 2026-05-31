@@ -180,7 +180,6 @@ async function watToOptimisedWasm(
   watSource: string,
   sourcePath: string,
   outPath: string,
-  skipBinaryenOpt = false,
 ): Promise<WasicResult> {
   try {
     // Step 1: WAT → raw binary via wabt
@@ -189,20 +188,6 @@ async function watToOptimisedWasm(
     const { buffer } = parsed.toBinary({});
     parsed.destroy();
     const rawBytes = new Uint8Array(buffer);
-
-    // `skipBinaryenOpt` is set on the merge path (wasmbundle / mathlib import), where
-    // wasmmerge splices already-`-Oz`'d, stack-form library code back into the driver. On
-    // that doubly-merged shape, binaryen-ts/compat's optimizer produces a binary that
-    // MISBEHAVES at runtime (e.g. the Date capability's monthFromDays/dayFromDays returned
-    // garbage / out-of-bounds, while leap-year and civil→days were fine). The wabt-only
-    // assembly of the exact same merged WAT runs correctly, so on the merge path we ship
-    // wabt's binary directly and skip Binaryen. The library was already `-Oz`'d in modc and
-    // the driver portion is small, so the size cost is minor; correctness wins. The non-merge
-    // single-module path is unaffected and keeps the full Binaryen `-Oz` pass below.
-    if (skipBinaryenOpt) {
-      await rt.writeFile(outPath, rawBytes);
-      return { success: true, outputPath: outPath, sizeBytes: rawBytes.length };
-    }
 
     // Step 2: Binaryen -Oz (shrinkLevel=2, optimizeLevel=2)
     const binMod = binaryen.readBinary(rawBytes);
@@ -13240,10 +13225,7 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
   // Write WAT alongside the output for inspection / debugging
   await rt.writeTextFile(watPath, wat);
 
-  // On the merge path (a library .wasm was spliced in) skip Binaryen: it miscompiles the
-  // doubly-merged module, whereas wabt's direct assembly of the same WAT runs correctly.
-  const didMerge = wasmImports.length > 0 || transpiler.needsMathLib;
-  const result = await watToOptimisedWasm(wat, watPath, out, didMerge);
+  const result = await watToOptimisedWasm(wat, watPath, out);
   if (result.success) {
     // Phase 41: emit .wit interface file alongside the compiled .wasm
     const witPath = out.replace(/\.wasm$/, ".wit");
@@ -13363,10 +13345,7 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
 
   await rt.writeTextFile(watPath, wat);
 
-  // Skip Binaryen on the merge path — see compileWasiTs for the rationale (binaryen-ts
-  // miscompiles the spliced, doubly-merged module; wabt's direct assembly is correct).
-  const libDidMerge = wasmImports.length > 0 || transpiler.needsMathLib;
-  const result = await watToOptimisedWasm(wat, watPath, out, libDidMerge);
+  const result = await watToOptimisedWasm(wat, watPath, out);
   if (result.success) {
     // Phase 41: emit .wit interface file alongside the compiled .wasm
     const witPath = out.replace(/\.wasm$/, ".wit");

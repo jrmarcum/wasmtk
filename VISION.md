@@ -88,7 +88,7 @@ library) shipped.** Historical baseline under
 npm:wabt + npm:binaryen: 446/446 tests passing (2026-05-25; 270 wasic +
 Go-by-Example + 103 bindgen + 73 jstyper). **Under the current dual JSR /compat
 stack (`jsr:@jrmarcum/wabt-ts@^1.3.0/compat` +
-`jsr:@jrmarcum/binaryen-ts@^1.3.1/compat`):** wabt-ts 1.3.0 fixed a folded
+`jsr:@jrmarcum/binaryen-ts@^1.3.2/compat`):** wabt-ts 1.3.0 fixed a folded
 `(call …)`-before-`(return …)` encoder bug, which recovered two previously-failing
 wasic tests (`15_panic`, `18_Multi-Scope`); the numbered wasic-phase suite is
 **233/240** (7 remaining = pre-existing wasic-codegen issues: nested-if/else
@@ -415,13 +415,14 @@ straight function splice.*
   negative day counts. Exports `isLeapYear`, `daysInMonth`, `daysFromCivil`,
   `weekdayFromDays`, `yearFromDays`, `monthFromDays`, `dayFromDays`. Self-checking
   `@test-pipeline` `18e_DateCapabilityLibrary.ts` (PASSING). As the first merged
-  library that is dense integer arithmetic over large constants, Date surfaced + fixed
+  library that is dense integer arithmetic over large constants, Date surfaced
   **two merge-path codegen bugs**: (1) `wasmmerge`'s blanket `i32.const >= 260`
-  data-pointer relocation corrupted arithmetic literals (`% 400` → `% 668`) — now
-  scoped to the merged module's own `(data …)` address extent; (2) binaryen-ts/compat
-  miscompiles the doubly-merged module — wasmtk now skips Binaryen on the merge path
-  and ships wabt's (correct) direct assembly. Full `tests/wasm_wasi` suite after the
-  fixes: **268/275** (7 pre-existing failures, no regressions).
+  data-pointer relocation corrupted arithmetic literals (`% 400` → `% 668`) — fixed by
+  scoping relocation to the merged module's own `(data …)` address extent; (2)
+  binaryen-ts/compat's optimizer miscompiled the doubly-merged module — **fixed upstream
+  in binaryen-ts/compat 1.3.2** (the temporary skip-Binaryen-on-merge workaround was
+  removed once 1.3.2 landed). Full `tests/wasm_wasi` suite: **268/275** (7 pre-existing
+  failures, no regressions).
 
 Next: **JSON**, then RegExp.
 
