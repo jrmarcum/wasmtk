@@ -5,15 +5,16 @@
 growing class of programs can use stdlib features (JSON, Date, Map, Set, RegExp,
 eventually Promise) **without** embedding QuickJS via `javyc`.
 
-**Status:** §3 allocator-unification pass shipped (2026-05-30). §5/§7-#3 first four
-capabilities shipped: shared-heap `modc` libraries **`Set<i32>`** and **`Map<i32,i32>`**
-(2026-05-30), the **`Date`** leaf library (UTC integer calendar math, 2026-05-31), and
-**`JSON`** (parse + navigate, integer-number v1, 2026-05-31 — the first capability to take
-*string* input across the merge boundary) — see §7-#3/§7c. Remaining Tier-1: RegExp (leaf).
-§6 kernel-scope decision and Promise/async track remain open. Backend bumped to
-`wabt-ts@^1.3.0/compat` (fixes the §7a-adjacent call-before-return encoder bug found during Set
-development). Date development surfaced and fixed two merge-path compiler bugs (§7b); JSON
-development surfaced and fixed four more (§7c).
+**Status:** §3 allocator-unification pass shipped (2026-05-30). §5/§7-#3 **all five Tier-1
+capabilities shipped**: shared-heap `modc` libraries **`Set<i32>`** and **`Map<i32,i32>`**
+(2026-05-30), the **`Date`** leaf library (2026-05-31), **`JSON`** (parse + navigate, integer-
+number v1, 2026-05-31 — first capability to take *string* input across the merge), and the
+**`RegExp`** leaf matcher (backtracking; v1 = literals/`.`/classes/`\d\w\s`/`*+?`/`^$`, 2026-05-31)
+— see §7-#3/§7c/§7d. **No Tier-1 capabilities remain.** Open: §7-#4 feature-level tree-shake
+wiring, §7-#5 Promise/async, §7-#6 hybrid type-routing, §6/§7-#7 kernel-scope decision. Backend
+on `wabt-ts@^1.3.0/compat` + `binaryen-ts@^1.3.2/compat`. Date surfaced+fixed two merge-path bugs
+(§7b); JSON four more (§7c); RegExp surfaced an **open** merge bug (OOB-`charCodeAt` in a
+non-short-circuit `&&`; worked around in the library) — §7d.
 
 ---
 
@@ -206,7 +207,18 @@ this change makes the former a scope decision rather than a technical blocker.
      driver `main_wasic.ts` + `@test-pipeline` `tests/wasm_wasi/18f_JsonCapabilityLibrary.ts`
      (PASS). v1 scope: null/bool/integer-number/string/array/object + basic escapes; floats and
      `\uXXXX` are the v2 gap. **Surfaced + fixed four compiler bugs — see §7c.**
-   - **RegExp next** (leaf).
+   - ✅ **`RegExp` shipped 2026-05-31** (fifth/final Tier-1; leaf) —
+     `tests/wasm_wasi_bundle/regex_bundle/regex_lib_modc.ts`. A classic Kernighan/Pike recursive
+     backtracking matcher, index-based over two `(string, index)` pairs threaded through the
+     recursion (no heap; straight function splice). Exports `reTest(p,t)` / `reSearch(p,t)` (start
+     index, sets `reEnd()`) / `reEnd()`. v1: literals, `.`, classes `[...]` (ranges, negation,
+     `\d \w \s`), escapes `\d \w \s \D \W \S \n \t \r`, quantifiers `* + ?` (greedy + backtrack),
+     anchors `^ $`; v2 gap: `|`, groups/captures, `{n,m}`, lazy, backreferences. Self-checking
+     driver + `@test-pipeline` `tests/wasm_wasi/18g_RegexCapabilityLibrary.ts` (PASS). **Surfaced
+     an OPEN merge bug** (OOB `charCodeAt` in a non-short-circuit `&&` loop condition mis-encoded
+     by the splice; correct standalone, traps merged) — worked around in the library by never
+     calling `charCodeAt` on an unchecked index. See §7d.
+   - **All Tier-1 capabilities complete.**
 4. **Wire** capability selection: bundle only referenced capabilities (tree-shake at the
    feature level; `wasic` already does this for its own helpers via Binaryen `-Oz`).
 5. **(Separate track)** Promise/async: state-machine lowering in `wasic` + microtask
@@ -284,7 +296,7 @@ i32-only; Date is a pure-integer leaf) and the first to build a **dynamic tagged
 That exercised four code paths the earlier capabilities never hit. All four are fixed; the
 JSON pipeline (`18f_JsonCapabilityLibrary.ts`) passes and the full `tests/wasm_wasi` suite is
 **269/276** — same 7 pre-existing wasic-codegen failures, no regressions — plus `bindgen`
-103/103 and `jstyper` 73/73. (Detailed in CLAUDE.md § "Stage 0.7 — JSON capability".)
+103/103 and `jstyper` 73/73. (Detailed in cmem/capabilities.md (JSON).)
 
 1. **String args to a merged import dropped to one stack value.** A modc `func(s: string)`
    compiles its string param to `(i32 i32)` (ptr+len), so `mergeWasmWat` registered the import
@@ -321,3 +333,40 @@ JSON pipeline (`18f_JsonCapabilityLibrary.ts`) passes and the full `tests/wasm_w
    end for depth (now also counting brackets `[]`, matching the sibling depth scanners) and only
    test op matches at valid start positions. High blast radius (all binary-op parsing) —
    re-validated with no regression.
+
+### 7d. Open merge bug uncovered during RegExp development (2026-05-31)
+
+RegExp is the second capability to take string input across the merge and the first whose hot
+loop scans a string char-by-char with backtracking. That surfaced a **merge-only** bug that
+remains **open** (worked around in the library, not yet fixed in the toolchain).
+
+**Symptom.** A modc library that runs correctly **standalone** (verified by loading
+`regex_lib_modc.wasm` directly in Deno) silently halts — WASM trap; the runner exits 0 with no
+stderr — once `wasmbundle`/`wasmmerge` splices it into a host module.
+
+**Isolated trigger.** A `while` loop whose condition is
+`i < len && atomMatches(p, pi, s.charCodeAt(i)) === 1` — i.e. a function call wrapping
+`charCodeAt`, nested in an `i32.and`, in the loop's `br_if`. wasic compiles `&&` to a
+**non-short-circuit** `i32.and`, so `s.charCodeAt(i)` is evaluated even when `i == len` (an
+out-of-bounds index). Bisected from the full matcher down to exactly this construct via a minimal
+two-function probe.
+
+**Ruled out.** Not an infinite loop (a `count < 1000` cap as the first `&&` operand did not stop
+it → a trap, not a runaway). Not Binaryen (halts with Binaryen disabled on both `modc` and the
+`wasic` merge step). Not the bounds check (the merged `$__str_char_code_at` WAT is fully intact:
+`idx<0→-1`, `idx>=len→-1`, else load — so OOB returns -1 and does not load) and not a bad call
+site (the merged call passes the correct `(t_ptr, t_len, idx)`). The corruption is introduced by
+the **splice + wabt-ts reassembly** of the larger module (shifted function/type indices), in the
+same family as the wabt-ts name/index-resolver bugs in the §7-era table — a `call` nested in an
+`i32.and` inside a `loop` `br_if`. JSON did not trip it because its `&&`-with-`charCodeAt` lives
+in `if`s with a single direct `charCodeAt`, not a nested call inside a `while` `br_if`.
+
+**Workaround (shipped).** The RegExp matcher never calls `charCodeAt` on an unchecked index — every
+fetch is guarded by an enclosing `if (i < len)` (helper `atomAt`). This is also the correct
+defensive style; Set/Map/Date/JSON are unaffected.
+
+**Proper fix (future).** Either (a) make wasic emit **short-circuit** `&&`/`||` (an `if`/`select`
+skipping the RHS when the LHS is false) — more correct JS semantics, fixes the whole class, but
+high blast radius (validate against the full suite); or (b) switch `deno.json` to `npm:wabt` and
+re-run `18g` to confirm it is the wabt-ts assembler, then file/fix upstream like the other wabt-ts
+encoder bugs. Tracked in `cmem/compiler-bugs.md` § "merge OOB-charCodeAt".

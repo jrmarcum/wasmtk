@@ -107,8 +107,8 @@ the Canonical ABI (`cabi_realloc`, out-parameter string returns). `wasmtk hybrid
 
 Remaining additions scoped here:
 
-- Author the remaining Tier-1 stdlib capabilities (RegExp next; Set/Map/Date/JSON shipped);
-  see `wasmtk-stdlib-bundling-brief.md`
+- All five Tier-1 stdlib capabilities shipped (Set/Map/Date/JSON/RegExp); next is feature-level
+  tree-shake wiring and the Promise/async track — see `stdlib-bundling-brief.md`
 - Triage the remaining wasi-suite failures (pre-existing wasic-side codegen
   issues: nested-if/else fallthru validation, f64→i32 truncation in mathlib call
   paths)
@@ -363,7 +363,7 @@ post-relocation static data.*
   wabt-ts/compat 1.2.9 + binaryen-ts/compat 1.3.1 + the unification pass.
 
 This unblocks the Tier-1 stdlib capability libraries
-(`wasmtk-stdlib-bundling-brief.md` §3) — delivered first in Stage 0.7 below.
+(`stdlib-bundling-brief.md` §3) — delivered first in Stage 0.7 below.
 
 ---
 
@@ -424,7 +424,7 @@ straight function splice.*
   removed once 1.3.2 landed). Full `tests/wasm_wasi` suite: **268/275** (7 pre-existing
   failures, no regressions).
 
-Next: **JSON**, then RegExp.
+All five Tier-1 capabilities (Set/Map/Date/JSON/RegExp) are shipped.
 
 ---
 
@@ -581,10 +581,10 @@ In order:
 
 1. **Stage 1** — Enhance universalWasmLoader + write SPEC.md — **CURRENT PRIORITY**
    Reference: `wasmtk/src/bindgen.ts` (Phase 50) for all ABI details (Canonical ABI complete)
-2. **wasmtk-stdlib-bundling-brief.md §5–7** — Tier-1 capability libraries as `modc` modules,
+2. **stdlib-bundling-brief.md §5–7** — Tier-1 capability libraries as `modc` modules,
    plus tree-shake wiring in `wasmbundle`; unblocked by Stage 0.6 allocator unification.
-   `Set<i32>` + `Map<i32,i32>` + `Date` + `JSON` (parse+navigate, integer v1) shipped
-   (Stage 0.7, 2026-05-30/31); RegExp next. Parallel track to Stage 1.
+   `Set<i32>` + `Map<i32,i32>` + `Date` + `JSON` (parse+navigate, integer v1) + `RegExp`
+   (backtracking matcher) all shipped (Stage 0.7, 2026-05-30/31). Parallel track to Stage 1.
 3. **Stage 2** — `universalWasmLoader-rs` and `universalWasmLoader-py` — validates the spec
 4. **Stage 3** — Build orchestration — the pixi integration becomes real
 5. **Stage 0** ✅ COMPLETE — Canonical ABI alignment in wasmtk done (2026-05-19); 446/446 pass under npm:wabt baseline (2026-05-25)

@@ -4692,8 +4692,11 @@ class WasicTranspiler {
     }
 
     // Phase 27: str.charCodeAt(i) → i32 char code (promoted to f64 in numeric context)
+    // parenDepthNeverNegative guards the greedy `(.+)`: when the expression as a whole ends in
+    // a `)` belonging to a LATER call (e.g. `p.charCodeAt(i) === t.charCodeAt(i)`), the matched
+    // arg has unbalanced parens — skip so the binary-op loop sees the `===`/`!==`/`<`/… instead.
     const charCodeAtMatch = expr.match(/^(\w+)\.charCodeAt\s*\((.+)\)$/);
-    if (charCodeAtMatch && locals.get(charCodeAtMatch[1]) === "string") {
+    if (charCodeAtMatch && locals.get(charCodeAtMatch[1]) === "string" && parenDepthNeverNegative(charCodeAtMatch[2])) {
       this.needsStringExtHelpers = true;
       const idxWat = this.emitExpr(charCodeAtMatch[2].trim(), locals, "i32");
       const ccaWat = `(call $__str_char_code_at (local.get $${charCodeAtMatch[1]}_ptr) (local.get $${charCodeAtMatch[1]}_len) ${idxWat})`;
@@ -4703,7 +4706,7 @@ class WasicTranspiler {
 
     // Phase 27: str.startsWith(sub) → i32 bool
     const startsWithMatch = expr.match(/^(\w+)\.startsWith\s*\((.+)\)$/);
-    if (startsWithMatch && locals.get(startsWithMatch[1]) === "string") {
+    if (startsWithMatch && locals.get(startsWithMatch[1]) === "string" && parenDepthNeverNegative(startsWithMatch[2])) {
       this.needsStringExtHelpers = true;
       const subPtrLen = this.emitStringPtrLen(startsWithMatch[2].trim(), locals);
       return `(call $__str_starts_with (local.get $${startsWithMatch[1]}_ptr) (local.get $${startsWithMatch[1]}_len) ${subPtrLen})`;
@@ -4711,7 +4714,7 @@ class WasicTranspiler {
 
     // Phase 27: str.endsWith(sub) → i32 bool
     const endsWithMatch = expr.match(/^(\w+)\.endsWith\s*\((.+)\)$/);
-    if (endsWithMatch && locals.get(endsWithMatch[1]) === "string") {
+    if (endsWithMatch && locals.get(endsWithMatch[1]) === "string" && parenDepthNeverNegative(endsWithMatch[2])) {
       this.needsStringExtHelpers = true;
       const subPtrLen = this.emitStringPtrLen(endsWithMatch[2].trim(), locals);
       return `(call $__str_ends_with (local.get $${endsWithMatch[1]}_ptr) (local.get $${endsWithMatch[1]}_len) ${subPtrLen})`;
@@ -4719,7 +4722,7 @@ class WasicTranspiler {
 
     // Phase 27: str.split(delim) → i32 pointer to string array (8-byte elements)
     const splitMatch = expr.match(/^(\w+)\.split\s*\((.+)\)$/);
-    if (splitMatch && locals.get(splitMatch[1]) === "string") {
+    if (splitMatch && locals.get(splitMatch[1]) === "string" && parenDepthNeverNegative(splitMatch[2])) {
       this.needsStringExtHelpers = true;
       this.needsStringOpHelpers = true;
       const delimPtrLen = this.emitStringPtrLen(splitMatch[2].trim(), locals);
