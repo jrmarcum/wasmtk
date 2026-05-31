@@ -271,6 +271,24 @@ function detectBumpAllocator(funcForm: string): { heapPtrGlobalIdx: number } | n
 // ---------------------------------------------------------------------------
 
 /**
+ * Byte length of a WAT data-string literal body (the text between the quotes).
+ * Counts each `\XX` hex byte-escape and each `\c` named escape (`\n`, `\t`, `\"`,
+ * `\\`, …) as one byte, and every other character as one byte. Used to compute a
+ * module's static-data address extent so pointer relocation can be scoped to it.
+ */
+function dataStringByteLength(body: string): number {
+  let len = 0;
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] === "\\") {
+      const hex = body.slice(i + 1, i + 3);
+      i += /^[0-9a-fA-F]{2}$/.test(hex) ? 2 : 1; // \XX byte escape vs. \c named escape
+    }
+    len++;
+  }
+  return len;
+}
+
+/**
  * Parses a WAT module string (from wabt disassembly) and produces a
  * WatMergeResult containing the renamed, relocated fragments ready to be
  * spliced into the parent module.
@@ -513,15 +531,39 @@ export function mergeWasmWat(
       .replace(/\bglobal\.set\s+(\d+)\b/g, (_m, n) => renameOne("set", n));
   }
 
+  // This module's own static-data address extent [dataLo, dataHi), derived from its
+  // (data ...) segments. Only i32.const values that fall inside this range are genuine
+  // static-data pointers that must shift by dataReloc when the data is relocated; every
+  // other i32.const is an arithmetic literal and must be left untouched. A module with no
+  // data segments has an empty range (dataHi === 0), so nothing is relocated. This replaces
+  // the old blanket ">= 260" heuristic, which corrupted arithmetic constants >= 260 in
+  // integer-heavy leaf libraries (e.g. the Date capability's 400 / 365 / 146097 …).
+  let dataLo = Infinity;
+  let dataHi = 0;
+  for (const form of forms) {
+    if (formKind(form) !== "data") continue;
+    const baseM = form.match(/\(i32\.const\s+(-?\d+)\)/);
+    if (!baseM) continue;
+    const base = parseInt(baseM[1]);
+    const strM = form.match(/"((?:\\.|[^"\\])*)"/);
+    const len = strM ? dataStringByteLength(strM[1]) : 0;
+    if (base < dataLo) dataLo = base;
+    if (base + len > dataHi) dataHi = base + len;
+  }
+  // Floor the low end at the data-base threshold so fixed low scratch addresses
+  // (iov/scratch at 0, 128, …) are never mistaken for relocatable pointers.
+  if (dataLo < DATA_PTR_THRESHOLD) dataLo = DATA_PTR_THRESHOLD;
+
   /**
-   * Shift i32.const values >= DATA_PTR_THRESHOLD (260) by dataReloc.
-   * These are assumed to be static-data pointers; small literals are left alone.
+   * Shift i32.const values that lie within this module's own static-data range
+   * [dataLo, dataHi) by dataReloc. These are genuine static-data pointers; arithmetic
+   * literals (which live outside the data range) are left alone.
    */
   function relocateDataPtrs(text: string): string {
-    if (dataReloc === 0) return text;
+    if (dataReloc === 0 || dataHi === 0) return text;
     return text.replace(/\bi32\.const\s+(\d+)\b/g, (match, numStr) => {
       const n = parseInt(numStr);
-      return n >= DATA_PTR_THRESHOLD ? `i32.const ${n + dataReloc}` : match;
+      return n >= dataLo && n < dataHi ? `i32.const ${n + dataReloc}` : match;
     });
   }
 

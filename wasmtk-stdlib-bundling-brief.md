@@ -5,12 +5,13 @@
 growing class of programs can use stdlib features (JSON, Date, Map, Set, RegExp,
 eventually Promise) **without** embedding QuickJS via `javyc`.
 
-**Status:** §3 allocator-unification pass shipped (2026-05-30). §5/§7-#3 first two
-capabilities shipped (2026-05-30) as shared-heap `modc` libraries: **`Set<i32>`** and
-**`Map<i32,i32>`** — see §7-#3. Remaining Tier-1 capabilities (Date / JSON / RegExp) still
-to author. §6 kernel-scope decision and Promise/async track remain open. Backend bumped to
-`wabt-ts@^1.3.0/compat` (fixes the §7a-adjacent call-before-return encoder bug found during
-Set development).
+**Status:** §3 allocator-unification pass shipped (2026-05-30). §5/§7-#3 first three
+capabilities shipped (2026-05-30): shared-heap `modc` libraries **`Set<i32>`** and
+**`Map<i32,i32>`**, plus the **`Date`** leaf library (UTC integer calendar math) — see §7-#3.
+Remaining Tier-1 capabilities (JSON / RegExp) still to author. §6 kernel-scope decision and
+Promise/async track remain open. Backend bumped to `wabt-ts@^1.3.0/compat` (fixes the
+§7a-adjacent call-before-return encoder bug found during Set development). Date development
+surfaced and fixed two merge-path compiler bugs — see §7b.
 
 ---
 
@@ -181,7 +182,17 @@ this change makes the former a scope decision rather than a technical blocker.
      `tests/wasm_wasi/18d_MapCapabilityLibrary.ts` (PASS). Required no new compiler fixes —
      built entirely on the wasic features the Set capability established (TypedArray view
      over pointer, type-erasure casts, inline-param import signature resolution).
-   - **Date next** (pure integer calendar math, leaf), then JSON, RegExp (leaf).
+   - ✅ **`Date` shipped 2026-05-30** (first *leaf* capability) —
+     `tests/wasm_wasi_bundle/date_bundle/date_lib_modc.ts`. Pure UTC integer calendar math,
+     no heap allocation and no mutable state (allocator unification is a no-op here), so the
+     merge is a straight function splice — the "leaf capability merged when used" path from
+     §5. Uses Howard Hinnant's exact-integer civil↔days algorithms (valid across the whole
+     proleptic Gregorian calendar, incl. pre-epoch / negative day counts). Exports
+     `isLeapYear`, `daysInMonth`, `daysFromCivil`, `weekdayFromDays`, `yearFromDays`,
+     `monthFromDays`, `dayFromDays`. Self-checking driver `main_wasic.ts` + `@test-pipeline`
+     `tests/wasm_wasi/18e_DateCapabilityLibrary.ts` (PASS). Surfaced + fixed two merge-path
+     compiler bugs — see §7b.
+   - **JSON next**, then RegExp (leaf).
 4. **Wire** capability selection: bundle only referenced capabilities (tree-shake at the
    feature level; `wasic` already does this for its own helpers via Binaryen `-Oz`).
 5. **(Separate track)** Promise/async: state-machine lowering in `wasic` + microtask
@@ -211,3 +222,44 @@ correct source type. Regression test: `tests/wasm_wasi/22_DoubleCastErasure.ts`
 (i32 + f64 double-cast, `as any` variant, bare `as unknown`; zero TS↔WASM delta).
 The Tier-1 stdlib libraries can now use pointer-typed `as unknown as i32` returns
 directly.
+
+### 7b. Two merge-path codegen bugs uncovered during Date development — ✅ FIXED 2026-05-31
+
+The `Date` capability is the first merged library whose functions are dense
+**integer arithmetic over large constants** (719468, 146097, 365, 153, …). That
+shape exposed two latent bugs in the merge pipeline that the bitwise/small-constant
+Set/Map libraries never tripped. Both are fixed; the Date pipeline
+(`18e_DateCapabilityLibrary.ts`) passes and the full `tests/wasm_wasi` suite is
+**268/275** with the same 7 pre-existing wasic-codegen failures and **no
+regressions**.
+
+1. **`wasmmerge` relocated arithmetic constants as if they were data pointers.**
+   `relocateDataPtrs` (`src/wasmmerge.ts`) blindly shifted **every** `i32.const >=
+   260` by the data-relocation delta — a documented conservative heuristic. Date's
+   `isLeapYear` divides by `400`; after the merge that became `400 + dataOffset`
+   (e.g. `668`), so `year % 668` made `isLeapYear(2000)` return 0. **Fix:** compute
+   the merged module's own static-data extent `[dataLo, dataHi)` from its `(data …)`
+   segments (new `dataStringByteLength` helper counts `\XX`/`\c` escapes) and
+   relocate only constants that fall inside it. Genuine static-data pointers live in
+   that range by construction; arithmetic literals do not. A pure leaf with no data
+   segments (Date, Set, Map) has an empty range → nothing relocated. This is a strict
+   improvement over the blanket threshold (the residual heuristic risk — an
+   arithmetic constant that *coincidentally* lands inside a string-bearing library's
+   data range — is far narrower and could later be made exact with context-sensitive
+   load/store-address relocation).
+
+2. **Binaryen miscompiled the doubly-merged module.** After wasmmerge splices the
+   already-`-Oz`'d, stack-form library back into the driver, `compileWasiTs`
+   re-optimizes the combined module with binaryen-ts/compat. On Date's
+   division-heavy `monthFromDays`/`dayFromDays` this produced a binary that
+   **misbehaves at runtime** (returned garbage / out-of-bounds), even though the
+   pre-binaryen merged WAT — assembled by wabt alone — runs correctly, and laundering
+   binaryen's output back through wabt did **not** recover it (so the corruption is in
+   binaryen's optimization, not just its byte encoding). **Fix:** on the merge path
+   only (`wasmImports.length > 0 || needsMathLib`, in both `compileWasiTs` and
+   `compileLibTs`), skip Binaryen and ship wabt's direct assembly of the merged WAT
+   via a new `skipBinaryenOpt` flag on `watToOptimisedWasm`. The library was already
+   `-Oz`'d in `modc` and the driver portion is small, so the size cost is minor;
+   correctness wins. The non-merge single-module path is untouched and keeps the full
+   `-Oz` pass. (File upstream against binaryen-ts/compat; revisit skipping once
+   fixed.)

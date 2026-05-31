@@ -82,8 +82,9 @@ orchestrator CLI
 
 Current state: **All 50 phases complete; Stage 0 Canonical ABI alignment complete;
 Stage 0.5 (dual JSR /compat backends) substantively complete; Stage 0.6
-(allocator unification in wasmmerge) complete; Stage 0.7 (first two Tier-1 stdlib
-capabilities — `Set<i32>` + `Map<i32,i32>` shared-heap libraries) shipped.** Historical baseline under
+(allocator unification in wasmmerge) complete; Stage 0.7 (first three Tier-1 stdlib
+capabilities — `Set<i32>` + `Map<i32,i32>` shared-heap libraries + the `Date` leaf
+library) shipped.** Historical baseline under
 npm:wabt + npm:binaryen: 446/446 tests passing (2026-05-25; 270 wasic +
 Go-by-Example + 103 bindgen + 73 jstyper). **Under the current dual JSR /compat
 stack (`jsr:@jrmarcum/wabt-ts@^1.3.0/compat` +
@@ -106,8 +107,8 @@ the Canonical ABI (`cabi_realloc`, out-parameter string returns). `wasmtk hybrid
 
 Remaining additions scoped here:
 
-- Author the remaining Tier-1 stdlib capabilities (Date next — pure integer
-  calendar math — then JSON, RegExp); see `wasmtk-stdlib-bundling-brief.md`
+- Author the remaining Tier-1 stdlib capabilities (JSON next, then RegExp);
+  see `wasmtk-stdlib-bundling-brief.md`
 - Triage the remaining wasi-suite failures (pre-existing wasic-side codegen
   issues: nested-if/else fallthru validation, f64→i32 truncation in mathlib call
   paths)
@@ -366,12 +367,14 @@ This unblocks the Tier-1 stdlib capability libraries
 
 ---
 
-### Stage 0.7 — Tier-1 stdlib capabilities: `Set<i32>` + `Map<i32,i32>` (wasmtk, 2026-05-30)
+### Stage 0.7 — Tier-1 stdlib capabilities: `Set<i32>` + `Map<i32,i32>` + `Date` (wasmtk, 2026-05-30/31)
 
-*First two Tier-1 stdlib capabilities and the pattern-setter for the rest (Date,
-JSON, RegExp). Demonstrates the headline shared-heap case the Stage 0.6 allocator
+*First three Tier-1 stdlib capabilities and the pattern-setter for the rest (JSON,
+RegExp). Set/Map demonstrate the headline shared-heap case the Stage 0.6 allocator
 unification was built for: a hash table built inside a separately-compiled `modc`
-library shares ONE live heap with the `wasic` program that imports it.*
+library shares ONE live heap with the `wasic` program that imports it. Date is the
+first **leaf** capability — pure value-in/value-out with no heap, so the merge is a
+straight function splice.*
 
 - ✅ `tests/wasm_wasi_bundle/set_bundle/set_lib_modc.ts` — `Set<i32>` open-addressing
   hash table. Handle = i32 pointer to a 4-slot `Int32Array` header
@@ -406,8 +409,21 @@ library shares ONE live heap with the `wasic` program that imports it.*
   fallback for absent keys; key→value association survives rehash. Self-checking
   `@test-pipeline` `18d_MapCapabilityLibrary.ts` (PASSING). **No new compiler fixes
   required** — built entirely on the wasic features the Set capability established.
+- ✅ `tests/wasm_wasi_bundle/date_bundle/date_lib_modc.ts` — `Date` UTC integer
+  calendar math (first leaf capability). Howard Hinnant's exact-integer civil↔days
+  algorithms, valid across the whole proleptic Gregorian calendar incl. pre-epoch /
+  negative day counts. Exports `isLeapYear`, `daysInMonth`, `daysFromCivil`,
+  `weekdayFromDays`, `yearFromDays`, `monthFromDays`, `dayFromDays`. Self-checking
+  `@test-pipeline` `18e_DateCapabilityLibrary.ts` (PASSING). As the first merged
+  library that is dense integer arithmetic over large constants, Date surfaced + fixed
+  **two merge-path codegen bugs**: (1) `wasmmerge`'s blanket `i32.const >= 260`
+  data-pointer relocation corrupted arithmetic literals (`% 400` → `% 668`) — now
+  scoped to the merged module's own `(data …)` address extent; (2) binaryen-ts/compat
+  miscompiles the doubly-merged module — wasmtk now skips Binaryen on the merge path
+  and ships wabt's (correct) direct assembly. Full `tests/wasm_wasi` suite after the
+  fixes: **268/275** (7 pre-existing failures, no regressions).
 
-Next: **Date** (pure integer calendar math, leaf), then JSON / RegExp.
+Next: **JSON**, then RegExp.
 
 ---
 
@@ -566,8 +582,8 @@ In order:
    Reference: `wasmtk/src/bindgen.ts` (Phase 50) for all ABI details (Canonical ABI complete)
 2. **wasmtk-stdlib-bundling-brief.md §5–7** — Tier-1 capability libraries as `modc` modules,
    plus tree-shake wiring in `wasmbundle`; unblocked by Stage 0.6 allocator unification.
-   `Set<i32>` and `Map<i32,i32>` shipped (Stage 0.7, 2026-05-30); Date next, then JSON, RegExp.
-   Parallel track to Stage 1.
+   `Set<i32>` + `Map<i32,i32>` + `Date` shipped (Stage 0.7, 2026-05-30/31); JSON next, then
+   RegExp. Parallel track to Stage 1.
 3. **Stage 2** — `universalWasmLoader-rs` and `universalWasmLoader-py` — validates the spec
 4. **Stage 3** — Build orchestration — the pixi integration becomes real
 5. **Stage 0** ✅ COMPLETE — Canonical ABI alignment in wasmtk done (2026-05-19); 446/446 pass under npm:wabt baseline (2026-05-25)

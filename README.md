@@ -841,13 +841,14 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 > `jsr:@jrmarcum/binaryen-ts@^1.3.1/compat` (dual JSR-native TS ecosystem). wabt-ts
 > 1.3.0 fixed a folded `(call …)`-before-`(return …)` encoder bug, recovering two
 > previously-failing wasic tests (`15_panic`, `18_Multi-Scope`). Under that
-> toolchain, with the Stage 0.6 allocator-unification pass and the first two Tier-1
-> stdlib capabilities (Stage 0.7, `Set<i32>` + `Map<i32,i32>`) in place, the numbered wasic-phase suite
-> is **233/240** (`core_` 33/33, jstyper 73/73, bindgen **103/103**). 7 remaining
-> phase failures: pre-existing wasic-side codegen issues — nested-if/else fallthru
+> toolchain, with the Stage 0.6 allocator-unification pass and the first three Tier-1
+> stdlib capabilities (Stage 0.7, `Set<i32>` + `Map<i32,i32>` + `Date`) in place, the full
+> `tests/wasm_wasi` suite is **268/275** (`core_` 33/33, jstyper 73/73, bindgen **103/103**).
+> 7 remaining failures: pre-existing wasic-side codegen issues — nested-if/else fallthru
 > validation (`19_*`), f64→i32 truncation in mathlib call paths (`38_*`),
 > `5e_MixedSignatures`. (The earlier `as unknown as i32` stray-f64-convert cast bug
-> and the modc unused-`fd_write`-import bug have since been fixed.) See CLAUDE.md
+> and the modc unused-`fd_write`-import bug have since been fixed; Date development fixed
+> two merge-path codegen bugs — see Stage 0.7 below.) See CLAUDE.md
 > § "Pluggable wabt + binaryen backends" for the encoder-bug table. The per-phase
 > historical counts are preserved as a record of when each phase first reached
 > green; they should not be read as a live-system invariant.**
@@ -968,15 +969,17 @@ Aligns wasic's ABI with the WASM Component Model Canonical ABI. Completed ahead 
 
 Turns `wasmbundle` from a packager into a real on-demand stdlib linker. Each `wasic`/`modc` module ships its own bump allocator (`$__malloc` over a module-local `$__heap_ptr`); after prefix-mangling, a naive merge leaves two independent allocators over one linear memory that hand out overlapping addresses. `wasmmerge` now detects the bump-allocator form semantically, drops it from each merged module, and redirects every call site + heap-ptr reference to the master module's shared `$__malloc`/`$__heap_ptr`; the master heap cursor is reseated past the combined post-relocation static data. Regression test `18b_SharedHeapTwoLibraries.ts` (two modc libraries both allocating via `.push()` over one shared heap). Binaryen bumped to `binaryen-ts/compat 1.3.1`.
 
-#### Stage 0.7 — Tier-1 stdlib capabilities: `Set<i32>` + `Map<i32,i32>` ✅ SHIPPED (2026-05-30)
+#### Stage 0.7 — Tier-1 stdlib capabilities: `Set<i32>` + `Map<i32,i32>` + `Date` ✅ SHIPPED (2026-05-30/31)
 
-First two Tier-1 stdlib capabilities and the pattern for the rest (Date, JSON, RegExp).
+First three Tier-1 stdlib capabilities and the pattern for the rest (JSON, RegExp).
 
 **`Set<i32>`** is an open-addressing hash table authored as a `modc` library (`tests/wasm_wasi_bundle/set_bundle/set_lib_modc.ts`): handle = i32 pointer to a 4-slot `Int32Array` header `[count, cap, keysPtr, usedPtr]`, two `Int32Array(cap)` bucket arrays, linear probing on `key & (cap-1)`, ×2 grow + rehash at load factor 0.5. A `wasic` driver imports it and — via Stage 0.6 unification — the library's allocations land on the host's shared heap. Self-checking `@test-pipeline` `18c_SetCapabilityLibrary.ts` (PASS). Two supporting compiler fixes: TypedArray-view-over-pointer writes (`const v: Int32Array = ptr as unknown as Int32Array; v[i] = x`) and imported-function signature resolution from inline `(param …)` headers. Backend bumped to `wabt-ts@^1.3.0/compat` (fixes the folded call-before-return encoder bug). Also fixed a pre-existing modc bug where string-returning library functions imported an unused `fd_write` (bindgen `99/103 → 103/103`).
 
 **`Map<i32,i32>`** reuses the Set hash core (linear probing + ×2 grow/rehash) and adds a parallel values array (`tests/wasm_wasi_bundle/map_bundle/map_lib_modc.ts`): handle = i32 pointer to a 5-slot `Int32Array` header `[count, cap, keysPtr, valsPtr, usedPtr]` over three `Int32Array(cap)` bucket arrays. Exports `mapNew`/`mapSet`/`mapGet`/`mapHas`/`mapSize`; `mapSet` updates in place on an existing key (count stable), `mapGet(h, key, fallback)` returns the caller's fallback for absent keys. Key→value association is preserved across rehash. Self-checking `@test-pipeline` `18d_MapCapabilityLibrary.ts` (PASS) — required no new compiler fixes (built entirely on the wasic features the Set capability established).
 
-See `wasmtk-stdlib-bundling-brief.md`. **Next: Date** (pure integer calendar math, leaf), then JSON / RegExp.
+**`Date`** (first *leaf* capability — value-in/value-out, no heap allocation) is UTC integer calendar math (`tests/wasm_wasi_bundle/date_bundle/date_lib_modc.ts`), so the merge is a straight function splice (allocator unification is a no-op). Uses Howard Hinnant's exact-integer civil↔days algorithms, valid across the whole proleptic Gregorian calendar including pre-epoch / negative day counts. Exports `isLeapYear`, `daysInMonth`, `daysFromCivil`, `weekdayFromDays`, `yearFromDays`, `monthFromDays`, `dayFromDays`. Self-checking `@test-pipeline` `18e_DateCapabilityLibrary.ts` (PASS). As the first merged library that is dense integer arithmetic over large constants, Date surfaced and fixed **two merge-path codegen bugs**: (1) `wasmmerge`'s blanket `i32.const >= 260` data-pointer relocation corrupted arithmetic literals (e.g. `% 400` became `% 668`) — now scoped to the merged module's own `(data …)` address extent; (2) binaryen-ts/compat miscompiles the doubly-merged module — wasmtk now skips Binaryen on the merge path and ships wabt's (correct) direct assembly. Full `tests/wasm_wasi` suite after the fixes: **268/275** (7 pre-existing failures, no regressions).
+
+See `wasmtk-stdlib-bundling-brief.md`. **Next: JSON**, then RegExp.
 
 ### WASM Compatibility Limitations
 
