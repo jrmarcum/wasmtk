@@ -841,8 +841,8 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 > `jsr:@jrmarcum/binaryen-ts@^1.3.1/compat` (dual JSR-native TS ecosystem). wabt-ts
 > 1.3.0 fixed a folded `(call …)`-before-`(return …)` encoder bug, recovering two
 > previously-failing wasic tests (`15_panic`, `18_Multi-Scope`). Under that
-> toolchain, with the Stage 0.6 allocator-unification pass and the first Tier-1
-> stdlib capability (Stage 0.7, `Set<i32>`) in place, the numbered wasic-phase suite
+> toolchain, with the Stage 0.6 allocator-unification pass and the first two Tier-1
+> stdlib capabilities (Stage 0.7, `Set<i32>` + `Map<i32,i32>`) in place, the numbered wasic-phase suite
 > is **233/240** (`core_` 33/33, jstyper 73/73, bindgen **103/103**). 7 remaining
 > phase failures: pre-existing wasic-side codegen issues — nested-if/else fallthru
 > validation (`19_*`), f64→i32 truncation in mathlib call paths (`38_*`),
@@ -968,9 +968,15 @@ Aligns wasic's ABI with the WASM Component Model Canonical ABI. Completed ahead 
 
 Turns `wasmbundle` from a packager into a real on-demand stdlib linker. Each `wasic`/`modc` module ships its own bump allocator (`$__malloc` over a module-local `$__heap_ptr`); after prefix-mangling, a naive merge leaves two independent allocators over one linear memory that hand out overlapping addresses. `wasmmerge` now detects the bump-allocator form semantically, drops it from each merged module, and redirects every call site + heap-ptr reference to the master module's shared `$__malloc`/`$__heap_ptr`; the master heap cursor is reseated past the combined post-relocation static data. Regression test `18b_SharedHeapTwoLibraries.ts` (two modc libraries both allocating via `.push()` over one shared heap). Binaryen bumped to `binaryen-ts/compat 1.3.1`.
 
-#### Stage 0.7 — Tier-1 stdlib capabilities: `Set<i32>` ✅ SHIPPED (2026-05-30)
+#### Stage 0.7 — Tier-1 stdlib capabilities: `Set<i32>` + `Map<i32,i32>` ✅ SHIPPED (2026-05-30)
 
-First Tier-1 stdlib capability and the pattern for the rest (Map, Date, JSON, RegExp). `Set<i32>` is an open-addressing hash table authored as a `modc` library (`tests/wasm_wasi_bundle/set_bundle/set_lib_modc.ts`): handle = i32 pointer to a 4-slot `Int32Array` header `[count, cap, keysPtr, usedPtr]`, two `Int32Array(cap)` bucket arrays, linear probing on `key & (cap-1)`, ×2 grow + rehash at load factor 0.5. A `wasic` driver imports it and — via Stage 0.6 unification — the library's allocations land on the host's shared heap. Self-checking `@test-pipeline` `18c_SetCapabilityLibrary.ts` (PASS). Two supporting compiler fixes: TypedArray-view-over-pointer writes (`const v: Int32Array = ptr as unknown as Int32Array; v[i] = x`) and imported-function signature resolution from inline `(param …)` headers. Backend bumped to `wabt-ts@^1.3.0/compat` (fixes the folded call-before-return encoder bug). Also fixed a pre-existing modc bug where string-returning library functions imported an unused `fd_write` (bindgen `99/103 → 103/103`). See `wasmtk-stdlib-bundling-brief.md`. **Next: Map** (reuses the Set hash core), then Date / JSON / RegExp.
+First two Tier-1 stdlib capabilities and the pattern for the rest (Date, JSON, RegExp).
+
+**`Set<i32>`** is an open-addressing hash table authored as a `modc` library (`tests/wasm_wasi_bundle/set_bundle/set_lib_modc.ts`): handle = i32 pointer to a 4-slot `Int32Array` header `[count, cap, keysPtr, usedPtr]`, two `Int32Array(cap)` bucket arrays, linear probing on `key & (cap-1)`, ×2 grow + rehash at load factor 0.5. A `wasic` driver imports it and — via Stage 0.6 unification — the library's allocations land on the host's shared heap. Self-checking `@test-pipeline` `18c_SetCapabilityLibrary.ts` (PASS). Two supporting compiler fixes: TypedArray-view-over-pointer writes (`const v: Int32Array = ptr as unknown as Int32Array; v[i] = x`) and imported-function signature resolution from inline `(param …)` headers. Backend bumped to `wabt-ts@^1.3.0/compat` (fixes the folded call-before-return encoder bug). Also fixed a pre-existing modc bug where string-returning library functions imported an unused `fd_write` (bindgen `99/103 → 103/103`).
+
+**`Map<i32,i32>`** reuses the Set hash core (linear probing + ×2 grow/rehash) and adds a parallel values array (`tests/wasm_wasi_bundle/map_bundle/map_lib_modc.ts`): handle = i32 pointer to a 5-slot `Int32Array` header `[count, cap, keysPtr, valsPtr, usedPtr]` over three `Int32Array(cap)` bucket arrays. Exports `mapNew`/`mapSet`/`mapGet`/`mapHas`/`mapSize`; `mapSet` updates in place on an existing key (count stable), `mapGet(h, key, fallback)` returns the caller's fallback for absent keys. Key→value association is preserved across rehash. Self-checking `@test-pipeline` `18d_MapCapabilityLibrary.ts` (PASS) — required no new compiler fixes (built entirely on the wasic features the Set capability established).
+
+See `wasmtk-stdlib-bundling-brief.md`. **Next: Date** (pure integer calendar math, leaf), then JSON / RegExp.
 
 ### WASM Compatibility Limitations
 

@@ -5,11 +5,12 @@
 growing class of programs can use stdlib features (JSON, Date, Map, Set, RegExp,
 eventually Promise) **without** embedding QuickJS via `javyc`.
 
-**Status:** §3 allocator-unification pass shipped (2026-05-30). §5/§7-#3 first capability
-**`Set<i32>` shipped** (2026-05-30) as a shared-heap `modc` library — see §7-#3. Remaining
-Tier-1 capabilities (Map next, then Date / JSON / RegExp) still to author. §6 kernel-scope
-decision and Promise/async track remain open. Backend bumped to `wabt-ts@^1.3.0/compat`
-(fixes the §7a-adjacent call-before-return encoder bug found during Set development).
+**Status:** §3 allocator-unification pass shipped (2026-05-30). §5/§7-#3 first two
+capabilities shipped (2026-05-30) as shared-heap `modc` libraries: **`Set<i32>`** and
+**`Map<i32,i32>`** — see §7-#3. Remaining Tier-1 capabilities (Date / JSON / RegExp) still
+to author. §6 kernel-scope decision and Promise/async track remain open. Backend bumped to
+`wabt-ts@^1.3.0/compat` (fixes the §7a-adjacent call-before-return encoder bug found during
+Set development).
 
 ---
 
@@ -170,8 +171,17 @@ this change makes the former a scope decision rather than a technical blocker.
      inline `(param …)` headers in `wasmmerge`. A pre-existing modc bug (string-returning
      library functions imported an unused `fd_write`) was fixed alongside (bindgen
      99/103 → 103/103).
-   - **Map next** — reuses the Set hash core (same probing + grow), adds a parallel values
-     array. Then Date (pure integer calendar math, leaf), JSON, RegExp (leaf).
+   - ✅ **`Map<i32,i32>` shipped 2026-05-30** —
+     `tests/wasm_wasi_bundle/map_bundle/map_lib_modc.ts`. Reuses the Set hash core (same
+     linear probing + ×2 grow/rehash) and adds a parallel values array; handle = i32 ptr to
+     a 5-slot `Int32Array` header `[count, cap, keysPtr, valsPtr, usedPtr]` + three
+     `Int32Array(cap)` bucket arrays. Exports `mapNew`/`mapSet`/`mapGet`/`mapHas`/`mapSize`;
+     `mapSet` updates in place on an existing key (count stable), `mapGet` takes a caller
+     `fallback` for absent keys. Shared-heap driver `main_wasic.ts` + `@test-pipeline`
+     `tests/wasm_wasi/18d_MapCapabilityLibrary.ts` (PASS). Required no new compiler fixes —
+     built entirely on the wasic features the Set capability established (TypedArray view
+     over pointer, type-erasure casts, inline-param import signature resolution).
+   - **Date next** (pure integer calendar math, leaf), then JSON, RegExp (leaf).
 4. **Wire** capability selection: bundle only referenced capabilities (tree-shake at the
    feature level; `wasic` already does this for its own helpers via Binaryen `-Oz`).
 5. **(Separate track)** Promise/async: state-machine lowering in `wasic` + microtask
