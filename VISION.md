@@ -107,7 +107,7 @@ the Canonical ABI (`cabi_realloc`, out-parameter string returns). `wasmtk hybrid
 
 Remaining additions scoped here:
 
-- Author the remaining Tier-1 stdlib capabilities (JSON next, then RegExp);
+- Author the remaining Tier-1 stdlib capabilities (RegExp next; Set/Map/Date/JSON shipped);
   see `wasmtk-stdlib-bundling-brief.md`
 - Triage the remaining wasi-suite failures (pre-existing wasic-side codegen
   issues: nested-if/else fallthru validation, f64→i32 truncation in mathlib call
@@ -583,8 +583,8 @@ In order:
    Reference: `wasmtk/src/bindgen.ts` (Phase 50) for all ABI details (Canonical ABI complete)
 2. **wasmtk-stdlib-bundling-brief.md §5–7** — Tier-1 capability libraries as `modc` modules,
    plus tree-shake wiring in `wasmbundle`; unblocked by Stage 0.6 allocator unification.
-   `Set<i32>` + `Map<i32,i32>` + `Date` shipped (Stage 0.7, 2026-05-30/31); JSON next, then
-   RegExp. Parallel track to Stage 1.
+   `Set<i32>` + `Map<i32,i32>` + `Date` + `JSON` (parse+navigate, integer v1) shipped
+   (Stage 0.7, 2026-05-30/31); RegExp next. Parallel track to Stage 1.
 3. **Stage 2** — `universalWasmLoader-rs` and `universalWasmLoader-py` — validates the spec
 4. **Stage 3** — Build orchestration — the pixi integration becomes real
 5. **Stage 0** ✅ COMPLETE — Canonical ABI alignment in wasmtk done (2026-05-19); 446/446 pass under npm:wabt baseline (2026-05-25)

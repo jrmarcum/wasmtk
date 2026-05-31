@@ -444,8 +444,7 @@
     (local $__iface_tmp i32)
     (local $__tmpl_num_ptr i32)
     (local $__tmpl_num_len i32)
-    (local.set $s_ptr (i32.const 260))
-      (local.set $s_len (i32.const 0))
+    (;; string assignment from complex expression not yet supported: s = "["; for (let i: number = 0; i < nums.length; i++) { if (i > 0) s += " "; s += `${nums[i]}`; } s += "]";)
     (local.set $total (f64.const 0))
     (local.set $i (f64.const 0))
     (block $break_0
@@ -498,5 +497,4 @@
     (call $sum (global.get $nums))
     (call $proc_exit (i32.const 0))
   )
-  (data (i32.const 260) "")
 )

@@ -5,13 +5,15 @@
 growing class of programs can use stdlib features (JSON, Date, Map, Set, RegExp,
 eventually Promise) **without** embedding QuickJS via `javyc`.
 
-**Status:** §3 allocator-unification pass shipped (2026-05-30). §5/§7-#3 first three
-capabilities shipped (2026-05-30): shared-heap `modc` libraries **`Set<i32>`** and
-**`Map<i32,i32>`**, plus the **`Date`** leaf library (UTC integer calendar math) — see §7-#3.
-Remaining Tier-1 capabilities (JSON / RegExp) still to author. §6 kernel-scope decision and
-Promise/async track remain open. Backend bumped to `wabt-ts@^1.3.0/compat` (fixes the
-§7a-adjacent call-before-return encoder bug found during Set development). Date development
-surfaced and fixed two merge-path compiler bugs — see §7b.
+**Status:** §3 allocator-unification pass shipped (2026-05-30). §5/§7-#3 first four
+capabilities shipped: shared-heap `modc` libraries **`Set<i32>`** and **`Map<i32,i32>`**
+(2026-05-30), the **`Date`** leaf library (UTC integer calendar math, 2026-05-31), and
+**`JSON`** (parse + navigate, integer-number v1, 2026-05-31 — the first capability to take
+*string* input across the merge boundary) — see §7-#3/§7c. Remaining Tier-1: RegExp (leaf).
+§6 kernel-scope decision and Promise/async track remain open. Backend bumped to
+`wabt-ts@^1.3.0/compat` (fixes the §7a-adjacent call-before-return encoder bug found during Set
+development). Date development surfaced and fixed two merge-path compiler bugs (§7b); JSON
+development surfaced and fixed four more (§7c).
 
 ---
 
@@ -192,7 +194,19 @@ this change makes the former a scope decision rather than a technical blocker.
      `monthFromDays`, `dayFromDays`. Self-checking driver `main_wasic.ts` + `@test-pipeline`
      `tests/wasm_wasi/18e_DateCapabilityLibrary.ts` (PASS). Surfaced + fixed two merge-path
      compiler bugs — see §7b.
-   - **JSON next**, then RegExp (leaf).
+   - ✅ **`JSON` shipped 2026-05-31** (parse + navigate; first capability with *string* input
+     across the merge) — `tests/wasm_wasi_bundle/json_bundle/json_lib_modc.ts`. Shared-heap:
+     a wasic program (no native JSON) gains `JSON.parse` + navigation by merging this lib; the
+     value tree lives on the driver's heap. Each handle = base ptr of a 4-slot `Int32Array`
+     node `[tag, a, b, c]` (tag 0=null 1=bool 2=number(int) 3=string 4=array 5=object);
+     containers reuse wasic's native dynamic `i32[]` (stored/reconstructed by ptr), string
+     values are decoded into `Uint8Array` buffers. Recursive-descent parser with a module-level
+     cursor. Exports `jsonParse`/`jsonType`/`jsonInt`/`jsonBool`/`jsonArrayLen`/`jsonArrayGet`/
+     `jsonObjectLen`/`jsonStrLen`/`jsonStrCharAt`/`jsonStrEq`/`jsonGet`/`jsonHas`. Self-checking
+     driver `main_wasic.ts` + `@test-pipeline` `tests/wasm_wasi/18f_JsonCapabilityLibrary.ts`
+     (PASS). v1 scope: null/bool/integer-number/string/array/object + basic escapes; floats and
+     `\uXXXX` are the v2 gap. **Surfaced + fixed four compiler bugs — see §7c.**
+   - **RegExp next** (leaf).
 4. **Wire** capability selection: bundle only referenced capabilities (tree-shake at the
    feature level; `wasic` already does this for its own helpers via Binaryen `-Oz`).
 5. **(Separate track)** Promise/async: state-machine lowering in `wasic` + microtask
@@ -262,3 +276,48 @@ regressions**.
    1.3.1 → 1.3.2), so the workaround was removed — the merge path again runs full
    Binaryen `-Oz`, and the Date pipeline + full suite pass with it re-enabled. (Fix 1
    above is independent of the binaryen version and stays.)
+
+### 7c. Four compiler bugs uncovered during JSON development — ✅ FIXED 2026-05-31
+
+JSON is the first capability to take **string input across the merge boundary** (Set/Map are
+i32-only; Date is a pure-integer leaf) and the first to build a **dynamic tagged value tree**.
+That exercised four code paths the earlier capabilities never hit. All four are fixed; the
+JSON pipeline (`18f_JsonCapabilityLibrary.ts`) passes and the full `tests/wasm_wasi` suite is
+**269/276** — same 7 pre-existing wasic-codegen failures, no regressions — plus `bindgen`
+103/103 and `jstyper` 73/73. (Detailed in CLAUDE.md § "Stage 0.7 — JSON capability".)
+
+1. **String args to a merged import dropped to one stack value.** A modc `func(s: string)`
+   compiles its string param to `(i32 i32)` (ptr+len), so `mergeWasmWat` registered the import
+   with params `[i32, i32]` and the call site couldn't expand a string argument →
+   `not enough arguments on the stack for call (need 2, got 1)`. **Fix:** the sibling `.wit`
+   (Phase 41) preserves `s: string`, so `compileWasiTs`/`compileLibTs` now read it and overlay
+   the **logical** signature onto each `ExternalFuncDef` before transpilation (new helpers
+   `parseWitLogicalSigs`/`readWitLogicalSigs`/`applyWitSig`/`witTypeToWat`/`kebabToCamel`).
+   Numeric-only libs (no `.wit` string params) are unaffected. This is what makes
+   `jsonParse(s)`, `jsonGet(node, key)`, `jsonStrEq(node, t)` callable across the merge.
+
+2. **Allocator-detector false-positive dropped a real function.** `detectBumpAllocator` matched
+   any `(param i32)(result i32)` that touches one global with get+set + `i32.add` and no
+   loads/stores/calls — which also describes a plain `global += param; return global`
+   accumulator (a parser-cursor `advance`). The matched function was silently dropped during the
+   merge → `undefined func`. **Fix:** a real `$__malloc` returns the *old* value (captured into
+   a local before the `global.set`) so it reads the global **once**; the accumulator reads it
+   **twice** (the second to return the new value). Require exactly one `global.get`/`global.set`
+   occurrence — accepts every `-Oz` malloc shape, rejects the accumulator.
+
+3. **Escaped-quote string literals matched as empty.** The literal regexes `"([^"]*)"` stop at
+   the first `\"`, so a literal containing escaped quotes (an embedded JSON document) crossed as
+   length 0 / hit "string assignment from complex expression not yet supported". **Fix:**
+   escape-aware `"((?:[^"\]|\.)*)"` at the three statement/expression sites (`emitStringPtrLen`,
+   `emitStringAssign`, module-const detection); `unescapeString` decodes the rest. (The
+   `console.log`-argument emitter in `console_log.ts` still has the un-escaped form, so
+   escaped-quote literals are passed via the main paths, which the driver does.)
+
+4. **`findBinaryOp` missed operators whose RHS ends in a call.** The scan started at
+   `expr.length - op.length`, never counting the last `op.length-1` chars for paren depth — a
+   trailing `)` (e.g. `v[i] !== t.charCodeAt(i)`) drove depth negative so the operator was never
+   found and the whole expression fell to the always-false comment-stub. (This silently broke
+   the byte-comparison loops in `jsonStrEq`/`jsonGet`.) **Fix:** scan the full string from the
+   end for depth (now also counting brackets `[]`, matching the sibling depth scanners) and only
+   test op matches at valid start positions. High blast radius (all binary-op parsing) —
+   re-validated with no regression.

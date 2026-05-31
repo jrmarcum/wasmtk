@@ -252,6 +252,18 @@ function detectBumpAllocator(funcForm: string): { heapPtrGlobalIdx: number } | n
   const [setIdx] = setRefs;
   if (getIdx !== setIdx) return null;
 
+  // A real bump allocator returns the OLD heap value: it captures `global.get IDX`
+  // into a local BEFORE the `global.set`, so the global is read exactly ONCE. A
+  // garden-variety `global += param; return global` accumulator (e.g. a parser
+  // cursor advance) reads the global a SECOND time to return the post-increment
+  // value. Counting occurrences — not just distinct indices — separates the two,
+  // preventing such accumulators from being mis-dropped as the allocator. Every
+  // observed `-Oz` shape of wasic's `$__malloc` (local.set / local.tee / dead-tee
+  // variants) still reads the heap ptr exactly once.
+  const getOcc = (funcForm.match(new RegExp(`\\bglobal\\.get\\s+${getIdx}\\b`, "g")) ?? []).length;
+  const setOcc = (funcForm.match(new RegExp(`\\bglobal\\.set\\s+${setIdx}\\b`, "g")) ?? []).length;
+  if (getOcc !== 1 || setOcc !== 1) return null;
+
   // Body must use the param (local 0) at least once and contain i32.add —
   // these together prove the bump-cursor arithmetic pattern.
   if (!/\blocal\.get\s+0\b/.test(funcForm)) return null;

@@ -121,7 +121,7 @@ import binaryen from "./binaryen.ts";
 import { basename, dirname } from "@std/path";
 import { rt } from "./rt.ts";
 import { bundleImportsEx } from "./tsbundler.ts";
-import { mergeWasmWat, type ExternalFuncDef } from "./wasmmerge.ts";
+import { mergeWasmWat, type ExternalFuncDef, type WasmWatType } from "./wasmmerge.ts";
 import { MATHLIB_BYTES } from "./wasm/mathlib_bytes.ts";
 import {
   IOV_BASE,
@@ -265,6 +265,94 @@ function toKebabCase(s: string): string {
     .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
     .replace(/_/g, "-")
     .toLowerCase();
+}
+
+/** Converts a WIT kebab-case name back to the original camelCase export name. */
+function kebabToCamel(s: string): string {
+  return s.replace(/-([a-z0-9])/g, (_m, c: string) => c.toUpperCase());
+}
+
+/** Inverse of watTypeToWit: maps a WIT value type back to the WatType used by wasic. */
+function witTypeToWat(t: string): WatType {
+  switch (t) {
+    case "s32": case "u32": return "i32";
+    case "s64": case "u64": return "i64";
+    case "f32":             return "f32";
+    case "f64":             return "f64";
+    case "bool":            return "bool";
+    case "string":          return "string";
+    default:                return "i32";
+  }
+}
+
+/**
+ * Parses an imported module's `.wit` interface to recover the *logical* signatures of its
+ * exports (where wasic's ptr+len string ABI hides a `string` param behind two `i32`s in the
+ * raw `.wasm` signature). Returns a map keyed by the canonical prefixed name
+ * (`${prefix}_${exportName}`) so callers can patch the corresponding ExternalFuncDef.
+ *
+ * Without this, an exported `func(s: string)` reaches the importer as `(param i32 i32)` and a
+ * string argument at the call site cannot be expanded to ptr+len — the call emits one value
+ * for a two-param target ("not enough arguments on the stack"). The `.wit` is the interface
+ * contract (Phase 41), so it is the authoritative source for the pre-ABI-expansion types.
+ */
+function parseWitLogicalSigs(
+  witSrc: string,
+  prefix: string,
+): Map<string, { params: WatType[]; result: WatType | null }> {
+  const out = new Map<string, { params: WatType[]; result: WatType | null }>();
+  const re = /export\s+([\w-]+)\s*:\s*func\s*\(([^)]*)\)(?:\s*->\s*([\w-]+))?\s*;/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(witSrc)) !== null) {
+    const exportName = kebabToCamel(m[1]);
+    const rawParams = m[2].trim();
+    const params: WatType[] = rawParams
+      ? rawParams.split(",").map((p) => {
+          const ci = p.indexOf(":");
+          return witTypeToWat((ci !== -1 ? p.slice(ci + 1) : p).trim());
+        })
+      : [];
+    const result: WatType | null = m[3] ? witTypeToWat(m[3].trim()) : null;
+    out.set(`${prefix}_${exportName}`, { params, result });
+  }
+  return out;
+}
+
+/**
+ * Reads the `.wit` sitting next to an imported `.wasm` (Phase 41 writes them as a pair) and
+ * returns its logical export signatures. Returns an empty map if the file is absent —
+ * callers then keep the raw `.wasm`-derived signature (correct for i32-only libraries).
+ */
+async function readWitLogicalSigs(
+  wasmFilePath: string,
+  prefix: string,
+): Promise<Map<string, { params: WatType[]; result: WatType | null }>> {
+  const witPath = wasmFilePath.replace(/\.wasm$/, ".wit");
+  try {
+    const witSrc = await rt.readTextFile(witPath);
+    return parseWitLogicalSigs(witSrc, prefix);
+  } catch {
+    return new Map();
+  }
+}
+
+/**
+ * Overlays a `.wit`-derived logical signature onto an ExternalFuncDef in place. Only the
+ * param count or any `string` param/result distinguishes the logical form from the raw
+ * `.wasm` signature; for purely-numeric exports the overlay is a no-op. A mismatch in the
+ * *number of raw i32 slots a string expands to* is the whole point — so we trust the `.wit`
+ * when present and the names line up.
+ */
+function applyWitSig(
+  ef: ExternalFuncDef,
+  sigs: Map<string, { params: WatType[]; result: WatType | null }>,
+): void {
+  const sig = sigs.get(ef.name);
+  if (!sig) return;
+  // ExternalFuncDef.params is typed WasmWatType[] (numeric-only) but deliberately carries the
+  // logical "string"/"bool" types via cast — the transpiler constructor re-casts to WatType.
+  ef.params = sig.params as unknown as WasmWatType[];
+  ef.result = sig.result as unknown as (WasmWatType | null);
 }
 
 interface FuncParam {
@@ -2033,7 +2121,9 @@ class WasicTranspiler {
         }
         // Pre-register string literal constants before the numeric/enum guard so
         // functions can reference them via moduleStringConsts.
-        const isStringLit = /^"[^"]*"$/.test(initExpr) || /^'[^']*'$/.test(initExpr);
+        // Escape-aware so a literal containing `\"` / `\\` (e.g. an embedded JSON document)
+        // is recognised and its quotes don't terminate the match early.
+        const isStringLit = /^"(?:[^"\\]|\\.)*"$/.test(initExpr) || /^'(?:[^'\\]|\\.)*'$/.test(initExpr);
         if (isStringLit) {
           const typeHere = (typeStr ? mapType(typeStr) : "string") as WatType;
           if (typeHere === "string") {
@@ -3768,8 +3858,9 @@ class WasicTranspiler {
       }
     }
 
-    // String literal
-    const litMatch = initExpr.match(/^"([^"]*)"$/) ?? initExpr.match(/^'([^']*)'$/);
+    // String literal — escape-aware so `\"` / `\\` inside the literal (e.g. an embedded JSON
+    // document) don't terminate the match early; allocString → unescapeString decodes them.
+    const litMatch = initExpr.match(/^"((?:[^"\\]|\\.)*)"$/) ?? initExpr.match(/^'((?:[^'\\]|\\.)*)'$/);
     if (litMatch) {
       const [offset, len] = this.allocString(litMatch[1]);
       return [
@@ -4299,8 +4390,9 @@ class WasicTranspiler {
     if (dotMsgMatch && locals.get(dotMsgMatch[1]) === "string") {
       return `(local.get $${dotMsgMatch[1]}_ptr) (local.get $${dotMsgMatch[1]}_len)`;
     }
-    // String literal
-    const litMatch = expr.match(/^"([^"]*)"$/) ?? expr.match(/^'([^']*)'$/);
+    // String literal — escape-aware so `\"` / `\\` inside the literal don't terminate the
+    // match early (allocString → unescapeString decodes the captured escapes to bytes).
+    const litMatch = expr.match(/^"((?:[^"\\]|\\.)*)"$/) ?? expr.match(/^'((?:[^'\\]|\\.)*)'$/);
     if (litMatch) {
       const [offset, len] = this.allocString(litMatch[1]);
       return `(i32.const ${offset}) (i32.const ${len})`;
@@ -6057,11 +6149,18 @@ class WasicTranspiler {
    *  Scans right-to-left so repeated left-associative operators (a-b-c) group correctly. */
   private findBinaryOp(expr: string, op: string): number {
     let depth = 0;
-    for (let i = expr.length - op.length; i >= 0; i--) {
+    // Scan the FULL string from the end for depth, but only test for an op match at valid
+    // op-start positions (i <= maxStart). Starting the loop at maxStart — as this used to —
+    // skips the last op.length-1 characters for depth accounting, so a trailing `)` (e.g. a
+    // RHS ending in a call like `x !== f(i)`) was never counted, driving depth negative and
+    // hiding the operator. Brackets are counted too (matching findDepth0LTR/findDepth0Keyword)
+    // so an operator inside `arr[i+1]` is correctly treated as nested, not top-level.
+    const maxStart = expr.length - op.length;
+    for (let i = expr.length - 1; i >= 0; i--) {
       const ch = expr[i];
-      if (ch === ")") depth++;
-      else if (ch === "(") depth--;
-      if (depth === 0 && expr.slice(i, i + op.length) === op) {
+      if (ch === ")" || ch === "]") { depth++; continue; }
+      if (ch === "(" || ch === "[") { depth--; continue; }
+      if (depth === 0 && i <= maxStart && expr.slice(i, i + op.length) === op) {
         const after  = expr[i + op.length] ?? "";
         const before = i > 0 ? expr[i - 1] : "";
         // Guard: don't match a short op that is a prefix/suffix of a longer one
@@ -13143,6 +13242,8 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
       const importedWat = mod.toText({ foldExprs: false, inlineExport: false });
       mod.destroy();
       const preResult = mergeWasmWat(importedWat, entry.prefix, 0);
+      const logicalSigs = await readWitLogicalSigs(entry.filePath, entry.prefix);
+      for (const ef of preResult.exportedFuncs) applyWitSig(ef, logicalSigs);
       allExternalFuncs.push(...preResult.exportedFuncs);
     } catch (_err) {
       console.warn(`  ⚠️  Cannot read imported WASM ${entry.filePath} — skipping`);
@@ -13286,6 +13387,8 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
       const importedWat = mod.toText({ foldExprs: false, inlineExport: false });
       mod.destroy();
       const preResult2 = mergeWasmWat(importedWat, entry.prefix, 0);
+      const logicalSigs2 = await readWitLogicalSigs(entry.filePath, entry.prefix);
+      for (const ef of preResult2.exportedFuncs) applyWitSig(ef, logicalSigs2);
       allExternalFuncs2.push(...preResult2.exportedFuncs);
     } catch (_err) {
       console.warn(`  ⚠️  Cannot read imported WASM ${entry.filePath} — skipping`);
