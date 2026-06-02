@@ -5,7 +5,8 @@ Live record of bugs found + fixed (and one still open). Newest first.
 ## FIXED — the 7 long-standing test failures (2026-06-02)
 
 All 7 of the previously-"known pre-existing" failures are now fixed; full `tests/wasm_wasi`
-is **277/277**. They were two unrelated root causes:
+is **278/278** (the 7 fixes brought it to 277/277; the new `18h` virtual-capability test adds
+the 278th). They were two unrelated root causes:
 
 ### (a) Value-fallthru codegen — `5e_MixedSignatures`, `19_NestedDiscriminantUnions`, `19_VariantMaximumMemoryAlignment` (fixed in wasic)
 
@@ -121,7 +122,7 @@ correct defensive style. Set/Map/Date/JSON are unaffected.
 
 ## The 7 formerly-known test failures — ALL FIXED 2026-06-02
 
-These failed for a long time but are **now all passing** (full suite 277/277). Kept here as a
+These failed for a long time but are **now all passing** (full suite 278/278). Kept here as a
 pointer; full root-cause writeups are in the "FIXED — the 7 long-standing test failures" section at
 the top of this file.
 

@@ -45,7 +45,7 @@ This is the durable contract for this repo. Any agent reading this file is expec
 | --- | --- |
 | [overview.md](overview.md) | What wasmtk is, repo layout, the key source files |
 | [architecture.md](architecture.md) | wasic / modc / bindgen / hybrid; pluggable wabt+binaryen backends; build & merge pipeline |
-| [capabilities.md](capabilities.md) | Stage 0.7 Tier-1 stdlib capability libraries: Set, Map, Date, JSON, RegExp (shared-heap / leaf via wasmbundle) |
+| [capabilities.md](capabilities.md) | Stage 0.7 Tier-1 stdlib capability libraries: Set, Map, Date, JSON, RegExp (shared-heap / leaf via wasmbundle); + virtual `wasmtk:<cap>` imports & feature-level tree-shake (brief §7-#4) |
 | [compiler-bugs.md](compiler-bugs.md) | Live bug log — fixes made (incl. the 7 long-standing failures fixed 2026-06-02: value-fallthru + wabt-ts 1.3.1 hex-float) and the one still-open merge OOB-charCodeAt bug |
 | [design-decisions.md](design-decisions.md) | Load-bearing invariants and codegen rules that must not be silently reverted |
 | [testing.md](testing.md) | How to run the suites, the test populations, current pass counts, naming conventions |

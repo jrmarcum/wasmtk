@@ -15,8 +15,12 @@ wiring, §7-#5 Promise/async, §7-#6 hybrid type-routing, §6/§7-#7 kernel-scop
 on `wabt-ts@^1.3.1/compat` + `binaryen-ts@^1.3.2/compat`. Date surfaced+fixed two merge-path bugs
 (§7b); JSON four more (§7c); RegExp surfaced an **open** merge bug (OOB-`charCodeAt` in a
 non-short-circuit `&&`; worked around in the library) — §7d. **All 7 long-standing test failures
-fixed 2026-06-02** → full `tests/wasm_wasi` **277/277**: value-fallthru codegen in wasic (`5e`,
+fixed 2026-06-02** → full `tests/wasm_wasi` **278/278**: value-fallthru codegen in wasic (`5e`,
 `19×2`) + wabt-ts 1.3.1 hex-float-literal fix (`38×4` mathlib) — see cmem/compiler-bugs.md.
+**Brief §7-#4 (tree-shake) ✅, #6 (hybrid `--auto` routing) ✅, #7 (kernel-scope: build own runtime)
+DECIDED ✅ — all 2026-06-02** (wasmtk 1.6.2). #4 = embedded caps + virtual `wasmtk:<cap>` imports
+(test `18h`); #6 = `wasmtk hybrid --auto`; #7 decision recorded in §6 / roadmap. Remaining large
+tracks: **#5 Promise/async** and the **own dynamic runtime** build.
 
 ---
 

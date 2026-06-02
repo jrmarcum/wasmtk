@@ -82,19 +82,19 @@ orchestrator CLI
 
 Current state: **All 50 phases complete; Stage 0 Canonical ABI alignment complete;
 Stage 0.5 (dual JSR /compat backends) substantively complete; Stage 0.6
-(allocator unification in wasmmerge) complete; Stage 0.7 (first three Tier-1 stdlib
-capabilities — `Set<i32>` + `Map<i32,i32>` shared-heap libraries + the `Date` leaf
-library) shipped.** Historical baseline under
-npm:wabt + npm:binaryen: 446/446 tests passing (2026-05-25; 270 wasic +
+(allocator unification in wasmmerge) complete; Stage 0.7 (all five Tier-1 stdlib
+capabilities — `Set<i32>` + `Map<i32,i32>` + `JSON` shared-heap libraries + the
+`Date` and `RegExp` leaf libraries) shipped, plus feature-level tree-shake (virtual
+`wasmtk:<cap>` imports) and `wasmtk hybrid --auto` type-routing.** Historical baseline
+under npm:wabt + npm:binaryen: 446/446 tests passing (2026-05-25; 270 wasic +
 Go-by-Example + 103 bindgen + 73 jstyper). **Under the current dual JSR /compat
-stack (`jsr:@jrmarcum/wabt-ts@^1.3.0/compat` +
-`jsr:@jrmarcum/binaryen-ts@^1.3.2/compat`):** wabt-ts 1.3.0 fixed a folded
-`(call …)`-before-`(return …)` encoder bug, which recovered two previously-failing
-wasic tests (`15_panic`, `18_Multi-Scope`); the numbered wasic-phase suite is
-**233/240** (7 remaining = pre-existing wasic-codegen issues: nested-if/else
-fallthru validation in `19_*`, f64→i32 truncation in mathlib call paths `38_*`,
-`5e_MixedSignatures`), `core_` 33/33, jstyper 73/73, and **bindgen 103/103**
-(a modc unused-`fd_write`-import bug was fixed alongside Stage 0.7). Compiles
+stack (`jsr:@jrmarcum/wabt-ts@^1.3.1/compat` +
+`jsr:@jrmarcum/binaryen-ts@^1.3.2/compat`, 2026-06-02):** the full `tests/wasm_wasi`
+suite is **278/278** (`core_` 33/33), jstyper 73/73, and **bindgen 103/103**. The 7
+long-standing failures were all fixed 2026-06-02: `5e`/`19_*` via a wasic value-fallthru
+rewrite, and `38_*` via the wabt-ts 1.3.1 hex-float-literal fix (the constants were being
+encoded as 0). wabt-ts 1.3.0 had earlier recovered `15_panic` / `18_Multi-Scope`
+(call-before-return encoder fix). Compiles
 TypeScript to optimized WASM via WAT (assembled by `wabt-ts/compat`, the
 JSR-native TypeScript port of wabt) and Binaryen `-Oz` (via `binaryen-ts/compat`,
 the JSR-native TypeScript port of binaryen). Both compat modules deliberately
@@ -107,11 +107,11 @@ the Canonical ABI (`cabi_realloc`, out-parameter string returns). `wasmtk hybrid
 
 Remaining additions scoped here:
 
-- All five Tier-1 stdlib capabilities shipped (Set/Map/Date/JSON/RegExp); next is feature-level
-  tree-shake wiring and the Promise/async track — see `stdlib-bundling-brief.md`
-- Triage the remaining wasi-suite failures (pre-existing wasic-side codegen
-  issues: nested-if/else fallthru validation, f64→i32 truncation in mathlib call
-  paths)
+- All five Tier-1 stdlib capabilities shipped (Set/Map/Date/JSON/RegExp); feature-level
+  tree-shake (virtual `wasmtk:<cap>` imports), `hybrid --auto` type-routing, and the §7-#7
+  kernel-scope decision (build wasmtk's own dynamic runtime) are all done (2026-06-02). The two
+  remaining large tracks are **#5 Promise/async** and the **own dynamic runtime** build — see
+  `stdlib-bundling-brief.md` / `roadmap.md`
 - `wasmtk build` — polyglot build orchestration command (Stage 3)
 - `wasmtk compose` — component composition wrapper (Stage 3)
 - `wasmtk setup <language>` — language recipe installer (Stage 4)
