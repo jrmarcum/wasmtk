@@ -58,7 +58,7 @@ async function main(): Promise<void> {
       n: "name",
       o: "name",
     },
-    boolean: ["version", "help", "dts-only", "dry-run"],
+    boolean: ["version", "help", "dts-only", "dry-run", "auto"],
     string: ["name", "on-conflict", "alias", "any-policy", "runtime"],
   });
 
@@ -103,6 +103,8 @@ Options:
       --any-policy=skip|warn|default  (jstyper) How to handle 'any' typed params/returns
       --runtime=deno|node|bun  (bindgen) Target runtime for generated binding (default: deno)
       -o, --name <dir>         (hybrid)  Output directory for generated files (default: same as input)
+      --auto                   (hybrid)  Route every statically-typed function to WASM by type
+                                         (no // @wasm needed); dynamic/async/any stay in TS host
     `);
     return;
   }
@@ -186,7 +188,7 @@ Options:
       break;
     }
     case "hybrid": {
-      await runHybrid(target, { outDir: outPath });
+      await runHybrid(target, { outDir: outPath, auto: args.auto === true });
       break;
     }
     default:

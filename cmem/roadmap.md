@@ -35,13 +35,21 @@ detail lives in `README.md` ("Completed Phases") and the legacy `CLAUDE.md`. Sum
 | 1 | Confirm wasmmerge malloc/heap handling | ✅ |
 | 2 | Implement allocator-unification pass | ✅ |
 | 3 | Author Tier-1 caps (Set, Map, Date, JSON, RegExp) | ✅ **all 5 done** |
-| 4 | Wire capability selection (feature-level tree-shake — bundle only referenced caps) | ⬜ |
-| 5 | Promise/async: state-machine lowering + microtask runtime; lift `hybrid` async exclusion | ⬜ |
-| 6 | Evolve `hybrid` from `// @wasm` annotations → TS-type-driven routing | ⬜ |
-| 7 | Decide the §6 kernel scope question (drop `javyc` vs ship own dynamic runtime) | ⬜ open |
+| 4 | Wire capability selection (feature-level tree-shake — bundle only referenced caps) | ✅ 2026-06-02 — embedded caps + virtual `wasmtk:<cap>` import, auto-merge only referenced |
+| 5 | Promise/async: state-machine lowering + microtask runtime; lift `hybrid` async exclusion | ⬜ deferred (major track) |
+| 6 | Evolve `hybrid` from `// @wasm` annotations → TS-type-driven routing | ✅ 2026-06-02 — `--auto` mode routes fully-typed fns to wasic, dynamic to host |
+| 7 | Decide the §6 kernel scope question (drop `javyc` vs ship own dynamic runtime) | ✅ DECIDED 2026-06-02 — **build wasmtk's own dynamic runtime** (see below) |
 
-Next natural step now that all Tier-1 caps exist: **#4 tree-shake wiring** (bundle a capability
-only when the program references it), or the separate **#5 Promise/async** compiler track.
+**§7-#7 decision (2026-06-02, project owner):** wasmtk will **ship its own dynamic-runtime module**
+to cover the irreducible kernel (`eval`/`new Function`, pervasive `any`, open-prototype mutation)
+rather than declaring it out of scope or relying on `javyc` long-term. This is a **major new track**
+on the order of #5 async — a small boxed-value + property-map + interpreter runtime — and is NOT
+implemented yet; `javyc` (QuickJS) remains the interim dynamic fallback until the own-runtime lands.
+`hybrid --auto` (#6) currently routes dynamic-shaped functions to `javyc`; that target will migrate
+to the own-runtime once it exists.
+
+Remaining open tracks: **#5 Promise/async** (state-machine lowering + microtask runtime) and the
+**own dynamic runtime** (#7 decision). Both are large, dedicated efforts.
 
 ## "TypeScript as a DLL" vision
 

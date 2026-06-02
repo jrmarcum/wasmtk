@@ -243,6 +243,86 @@ function watBaseType(t: WatType): "i32" | "i64" | "f32" | "f64" {
   return t as "i32" | "i64" | "f32" | "f64";
 }
 
+// ---------------------------------------------------------------------------
+// Minimal WAT s-expression helpers (used by the terminal-fallthru fix).
+// A node is either a raw atom (string, e.g. "i32.add", "$x", "(result", a "…" data
+// string) or a nested list of nodes. Comments must be stripped by the caller — the
+// tokenizer here only needs to respect "…" data strings.
+// ---------------------------------------------------------------------------
+type WatNode = string | WatNode[];
+
+function tokenizeWat(s: string): string[] {
+  const toks: string[] = [];
+  let i = 0;
+  while (i < s.length) {
+    const ch = s[i];
+    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") { i++; continue; }
+    if (ch === "(" || ch === ")") { toks.push(ch); i++; continue; }
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < s.length) { if (s[j] === "\\") { j += 2; continue; } if (s[j] === '"') { j++; break; } j++; }
+      toks.push(s.slice(i, j)); i = j; continue;
+    }
+    let j = i;
+    while (j < s.length && !" \t\n\r()\"".includes(s[j])) j++;
+    toks.push(s.slice(i, j)); i = j;
+  }
+  return toks;
+}
+
+function parseWatNodes(toks: string[], pos: { i: number }): WatNode[] {
+  const out: WatNode[] = [];
+  while (pos.i < toks.length) {
+    const t = toks[pos.i];
+    if (t === "(") { pos.i++; out.push(parseWatNodes(toks, pos)); }
+    else if (t === ")") { pos.i++; return out; }
+    else { out.push(t); pos.i++; }
+  }
+  return out;
+}
+
+function serializeWat(node: WatNode): string {
+  if (typeof node === "string") return node;
+  return "(" + node.map(serializeWat).join(" ") + ")";
+}
+
+function isWatList(n: WatNode): n is WatNode[] { return Array.isArray(n); }
+
+/** Rewrite a node so it leaves a value of type `rt` on the stack instead of `return`ing.
+ *  Handles exactly two forms (everything else returns null = "can't safely value this"):
+ *    (return X)                       → X
+ *    (if cond (then …A) (else …B))    → (if (result rt) cond (then …A') (else …B'))
+ *  where A'/B' recursively value their own trailing node. Conservative by design: only
+ *  rewrites when every leaf of the construct is a `return` (directly or via nested ifs). */
+function watNodeToValue(node: WatNode, rt: string): WatNode | null {
+  if (!isWatList(node)) return null;
+  const head = node[0];
+  if (head === "return") return node.length === 2 ? node[1] : null;
+  if (head === "if") {
+    const cond = node[1];
+    if (cond === undefined || (isWatList(cond) && cond[0] === "result")) return null;
+    const thenClause = node.find((n, k) => k >= 2 && isWatList(n) && n[0] === "then") as WatNode[] | undefined;
+    const elseClause = node.find((n, k) => k >= 2 && isWatList(n) && n[0] === "else") as WatNode[] | undefined;
+    if (!thenClause || !elseClause) return null;
+    const nt = watBranchToValue(thenClause, rt);
+    const ne = watBranchToValue(elseClause, rt);
+    if (!nt || !ne) return null;
+    return ["if", ["result", rt], cond, nt, ne];
+  }
+  return null;
+}
+
+/** Value the trailing node of a (then …) / (else …) clause; null if it can't be valued. */
+function watBranchToValue(clause: WatNode[], rt: string): WatNode[] | null {
+  const elems = clause.slice(1);
+  if (elems.length === 0) return null;
+  const li = elems.length - 1;
+  const v = watNodeToValue(elems[li], rt);
+  if (v === null) return null;
+  elems[li] = v;
+  return [clause[0], ...elems];
+}
+
 // Phase 41: WIT file generation helpers
 
 /** Converts a WatType to the corresponding WIT value type. Returns null for void/never. */
@@ -1408,6 +1488,63 @@ class WasicTranspiler {
     const trailing = inner.slice(start).trim();
     if (trailing) parts.push(trailing.endsWith(";") ? trailing : trailing + ";");
     return parts;
+  }
+
+  /**
+   * Expands a single-line brace chain — `{ A } [else { B }] [else if (c) { … }] …` —
+   * into the multi-line form `emitBlock`'s if-handler expects (then-body statements,
+   * then a `} else {` / `} else if (c) {` terminator, then the next branch, … , `}`).
+   * Lets `if (cond) { A } else { B }` written entirely on one line reuse the correct
+   * multi-line else / else-if handling instead of the old strip-last-`}` heuristic that
+   * silently swallowed the `else`. `body` must start with `{`.
+   */
+  private static expandInlineBraceChain(body: string): string[] {
+    const out: string[] = [];
+    let s = body.trim();
+    while (s.startsWith("{")) {
+      // Find the matching close brace of the leading "{".
+      let d = 0, close = -1;
+      for (let j = 0; j < s.length; j++) {
+        if (s[j] === "{") d++;
+        else if (s[j] === "}") { if (--d === 0) { close = j; break; } }
+      }
+      if (close === -1) {
+        // Unbalanced (shouldn't happen for a single-line block) — emit what we have.
+        const inner = s.slice(1).trim();
+        out.push(...(inner ? WasicTranspiler.splitStmts(inner) : []));
+        out.push("}");
+        return out;
+      }
+      const inner = s.slice(1, close).trim();
+      out.push(...(inner ? WasicTranspiler.splitStmts(inner) : []));
+      let rest = s.slice(close + 1).trim();
+      if (!rest.startsWith("else")) {
+        out.push("}");
+        return out;
+      }
+      rest = rest.slice(4).trim();
+      if (rest.startsWith("{")) {
+        out.push("} else {");
+        s = rest;          // loop processes the final else block, then closes with "}"
+        continue;
+      }
+      if (rest.startsWith("if")) {
+        const condStart = rest.indexOf("(");
+        let pd = 0, condEnd = -1;
+        for (let j = condStart; j < rest.length; j++) {
+          if (rest[j] === "(") pd++;
+          else if (rest[j] === ")") { if (--pd === 0) { condEnd = j; break; } }
+        }
+        if (condEnd === -1 || condStart === -1) { out.push("}"); return out; }
+        out.push(`} else if (${rest.slice(condStart + 1, condEnd)}) {`);
+        s = rest.slice(condEnd + 1).trim();   // continues with "{ … } …"
+        continue;
+      }
+      // Malformed else — close defensively.
+      out.push("}");
+      return out;
+    }
+    return out;
   }
 
   /**
@@ -8692,10 +8829,14 @@ class WasicTranspiler {
           ifBody = [inlineBody];
           i++;
         } else if (singleLineBlock) {
-          // Single-line brace block: if (cond) { stmt1; stmt2; } — fully on one line
-          const inner = singleLineBlock.replace(/^\s*\{/, "").replace(/\}\s*$/, "").trim();
-          ifBody = inner ? WasicTranspiler.splitStmts(inner) : [];
-          i++;
+          // Single-line brace block, possibly with an inline else / else-if chain:
+          //   if (cond) { A } else { B }   (entirely on one line)
+          // Expand into the multi-line form and re-process so the existing multi-line
+          // else / else-if handling applies. The old strip-last-`}` heuristic grabbed the
+          // else-block's closing brace and silently swallowed the `else`.
+          const expanded = WasicTranspiler.expandInlineBraceChain(singleLineBlock.trim());
+          lines.splice(i, 1, `if (${cond}) {`, ...expanded);
+          continue;
         } else {
           // Multi-line if: collect body lines until matching } or } else {
           const [b, consumed, term] = this.extractBlock(lines, i + 1);
@@ -11683,7 +11824,7 @@ class WasicTranspiler {
                 anonOffset += fsize;
               }
               if (anonFields.length > 0) {
-                this.structDefs.set(synName, { fields: anonFields, totalSize: anonOffset });
+                this.structDefs.set(synName, { name: synName, fields: anonFields, totalSize: anonOffset });
               }
             }
             if (this.structDefs.has(synName)) {
@@ -12056,12 +12197,59 @@ class WasicTranspiler {
     // that control never reaches the end of this function.
     const neverSuffix = fn.result === "never" ? "\n    (unreachable)" : "";
 
+    // Fallthru-stack fix: a value-returning function whose body ends in a STATEMENT-level
+    // (void) if/else where every path returns from inside the construct leaves nothing on
+    // the stack at the implicit function end. wabt/binaryen accept this, but V8's strict
+    // validator rejects it ("expected 1 elements on the stack for fallthru, found 0").
+    // Appending (unreachable) does NOT survive Binaryen -Oz (it strips it as dead code,
+    // re-introducing the invalid void if). Instead, rewrite the terminal void `if` into a
+    // value-producing `(if (result T) cond (then … X) (else … Y))` by turning each branch's
+    // trailing `(return X)` into a bare value `X` (recursing through nested all-returning
+    // ifs). Binaryen preserves a value-if as the function result. Behavior is unchanged.
+    const finalBody = (watResult !== null) ? this.fixTerminalFallthru(body, watResult) : body;
+
     return [
       `  (func $${fn.name} ${exportAttr}${params} ${result}`,
       localDecls ? localDecls : "",
-      body + neverSuffix,
+      finalBody + neverSuffix,
       `  )`,
     ].filter(l => l.trim() !== "").join("\n");
+  }
+
+  /** Index of the opening `(` of the last top-level s-expression in a WAT body string,
+   *  skipping `;;` line comments, `(; … ;)` block comments, and `"…"` data strings.
+   *  Returns -1 if there is no top-level group. */
+  private findLastTopLevelStart(s: string): number {
+    let depth = 0, last = -1, i = 0;
+    while (i < s.length) {
+      const ch = s[i];
+      if (ch === ";" && s[i + 1] === ";") { const nl = s.indexOf("\n", i); i = nl === -1 ? s.length : nl; continue; }
+      if (ch === "(" && s[i + 1] === ";") { const end = s.indexOf(";)", i); i = end === -1 ? s.length : end + 2; continue; }
+      if (ch === '"') { let j = i + 1; while (j < s.length) { if (s[j] === "\\") { j += 2; continue; } if (s[j] === '"') { j++; break; } j++; } i = j; continue; }
+      if (ch === "(") { if (depth === 0) last = i; depth++; i++; continue; }
+      if (ch === ")") { depth--; i++; continue; }
+      i++;
+    }
+    return last;
+  }
+
+  /** If `body` ends in a statement-level (void) `if` where every path returns, rewrite that
+   *  terminal `if` into a value-producing `(if (result rt) …)` so V8 accepts the function's
+   *  fallthru point. Returns `body` unchanged when the last construct already produces a value
+   *  or cannot be safely rewritten. */
+  private fixTerminalFallthru(body: string, rt: string): string {
+    const start = this.findLastTopLevelStart(body);
+    if (start === -1) return body;
+    const group = body.slice(start);
+    const head = group.slice(1).match(/^\s*([\w.$]+)/)?.[1] ?? "";
+    if (head !== "if") return body;  // bare value expr / explicit return / loop / try — leave as-is
+    const afterHead = group.slice(group.indexOf(head) + head.length).trimStart();
+    if (afterHead.startsWith("(result")) return body;  // already value-producing
+    const nodes = parseWatNodes(tokenizeWat(group), { i: 0 });
+    if (nodes.length !== 1) return body;
+    const valued = watNodeToValue(nodes[0], rt);
+    if (valued === null) return body;  // not every branch returns — leave as-is (ill-typed input)
+    return body.slice(0, start) + serializeWat(valued);
   }
 
   // -------------------------------------------------------------------------
@@ -13239,13 +13427,16 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
 
   for (const entry of wasmImports) {
     try {
-      const bytes = await rt.readFile(entry.filePath);
+      // Embedded capability (Brief #4): bytes/wit are carried inline; otherwise read the file.
+      const bytes = entry.bytes ?? await rt.readFile(entry.filePath);
       wasmBytesMap.set(entry.filePath, bytes);
       const mod = wabtMod.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: true });
       const importedWat = mod.toText({ foldExprs: false, inlineExport: false });
       mod.destroy();
       const preResult = mergeWasmWat(importedWat, entry.prefix, 0);
-      const logicalSigs = await readWitLogicalSigs(entry.filePath, entry.prefix);
+      const logicalSigs = entry.witText !== undefined
+        ? parseWitLogicalSigs(entry.witText, entry.prefix)
+        : await readWitLogicalSigs(entry.filePath, entry.prefix);
       for (const ef of preResult.exportedFuncs) applyWitSig(ef, logicalSigs);
       allExternalFuncs.push(...preResult.exportedFuncs);
     } catch (_err) {
@@ -13488,6 +13679,7 @@ export async function compileWasi(path: string, outPath?: string): Promise<void>
 
   const result = await compileWasiTs(path, outPath);
   if (!result.success) {
+    if (result.error) console.error(`❌ wasic: ${result.error}`);
     rt.exit(1);
   }
 }

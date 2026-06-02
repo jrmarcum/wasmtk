@@ -279,14 +279,7 @@
     (i32.sub (local.get $end) (local.get $orig))
   )
   (func $processEvent (export "processEvent") (param $event i32) (result f64)
-    (if (i32.eq (i32.load (local.get $event)) (i32.const 0))
-      (then
-      (return (f64.convert_i32_s (i32.load (i32.add (local.get $event) (i32.const 4)))))
-      )
-      (else
-      (return (f64.add (f64.add (f64.load (i32.add (local.get $event) (i32.const 8))) (f64.load (i32.add (local.get $event) (i32.const 16)))) (f64.convert_i32_s (i32.load (i32.add (local.get $event) (i32.const 24))))))
-      )
-    )
+    (if (result f64) (i32.eq (i32.load (local.get $event)) (i32.const 0)) (then (f64.convert_i32_s (i32.load (i32.add (local.get $event) (i32.const 4))))) (else (f64.add (f64.add (f64.load (i32.add (local.get $event) (i32.const 8))) (f64.load (i32.add (local.get $event) (i32.const 16)))) (f64.convert_i32_s (i32.load (i32.add (local.get $event) (i32.const 24)))))))
   )
 
   (func $testUnionAlignment (export "testUnionAlignment")  

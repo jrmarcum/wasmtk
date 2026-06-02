@@ -718,7 +718,15 @@ Splits a mixed TypeScript file into a wasic-compiled WASM core and a TypeScript 
 wasmtk hybrid myapp.ts          # generates myapp_core.wasm, myapp_core.wit,
                                  # myapp_core.bindings.ts, myapp_runner.ts
 wasmtk hybrid myapp.ts -o dist/ # write generated files to dist/
+wasmtk hybrid myapp.ts --auto   # route by TYPE — no // @wasm annotations needed
 ```
+
+**`--auto` (type-driven routing):** with `--auto`, every module-level named function whose
+parameters and return type are all wasic-compatible (`i32`/`i64`/`f32`/`f64`/`bool`/`string`/
+`number`/typed arrays) is routed to the WASM core automatically — no `// @wasm` needed. Async,
+`any`-typed, or otherwise non-statically-typed functions stay in the TypeScript host. `// @wasm`
+still force-includes a function; `// @js` (or `// @host`) force-excludes one. Without `--auto`,
+the legacy annotation mode is used (only `// @wasm` functions are extracted).
 
 **Annotation syntax:**
 
@@ -837,17 +845,20 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 
 > **Test-count taglines in this table are historical snapshots under `npm:wabt` +
 > `npm:binaryen` (last full-suite validation 2026-05-25: 446/446 PASS). The current
-> wasmtk dependencies are `jsr:@jrmarcum/wabt-ts@^1.3.0/compat` and
+> wasmtk dependencies are `jsr:@jrmarcum/wabt-ts@^1.3.1/compat` and
 > `jsr:@jrmarcum/binaryen-ts@^1.3.2/compat` (dual JSR-native TS ecosystem). wabt-ts
-> 1.3.0 fixed a folded `(call …)`-before-`(return …)` encoder bug, recovering two
-> previously-failing wasic tests (`15_panic`, `18_Multi-Scope`). Under that
-> toolchain, with the Stage 0.6 allocator-unification pass and all five Tier-1
-> stdlib capabilities (Stage 0.7, `Set<i32>` + `Map<i32,i32>` + `Date` + `JSON` + `RegExp`) in place,
-> the full `tests/wasm_wasi` suite is **270/277** (`core_` 33/33, jstyper 73/73, bindgen **103/103**).
-> 7 remaining failures: pre-existing wasic-side codegen issues — nested-if/else fallthru
-> validation (`19_*`), f64→i32 truncation in mathlib call paths (`38_*`),
-> `5e_MixedSignatures`. (The earlier `as unknown as i32` stray-f64-convert cast bug
-> and the modc unused-`fd_write`-import bug have since been fixed; Date development fixed
+> 1.3.0 fixed a folded `(call …)`-before-`(return …)` encoder bug (recovering
+> `15_panic`, `18_Multi-Scope`), and **wabt-ts 1.3.1 fixed hex-float literals being
+> parsed as 0** (every merged-`mathlib` constant was encoded as 0, recovering all four
+> `38_*` Math tests). Under that toolchain, with the Stage 0.6 allocator-unification pass
+> and all five Tier-1 stdlib capabilities (Stage 0.7 — Set/Map/Date/JSON/RegExp)
+> in place, **the full `tests/wasm_wasi` suite is 277/277** (`core_`
+> 33/33, jstyper 73/73, bindgen **103/103**). The 7 long-standing failures were all fixed
+> 2026-06-02: a value-fallthru codegen fix in wasic (`5e_MixedSignatures`, `19_*` — a
+> value-returning function ending in a void `if/else` where all paths `return` is rewritten
+> into a value-producing `if` so V8's strict validator accepts it) and the wabt-ts 1.3.1
+> hex-float fix (`38_*`). (The earlier `as unknown as i32` stray-f64-convert cast bug
+> and the modc unused-`fd_write`-import bug were also fixed; Date development fixed
 > two merge-path codegen bugs; JSON development fixed four more; RegExp surfaced an open merge bug
 > worked around in the library — see Stage 0.7 below.) See CLAUDE.md
 > § "Pluggable wabt + binaryen backends" for the encoder-bug table. The per-phase
@@ -973,6 +984,23 @@ Turns `wasmbundle` from a packager into a real on-demand stdlib linker. Each `wa
 #### Stage 0.7 — Tier-1 stdlib capabilities: `Set<i32>` + `Map<i32,i32>` + `Date` + `JSON` + `RegExp` ✅ ALL SHIPPED (2026-05-30/31)
 
 All five Tier-1 stdlib capabilities are shipped. (Curated summary lives in `cmem/capabilities.md`.)
+
+**Virtual capability imports (feature-level tree-shake, 2026-06-02).** Each capability is embedded
+in the compiler, so a program can pull one in by name with **no fixture `.wasm` on disk** — and only
+the capabilities you import get bundled (tree-shake):
+
+```typescript
+type i32 = number;
+import { setNew, setAdd, setHas } from "wasmtk:set";   // also :map :date :json :regex
+const s: i32 = setNew();
+setAdd(s, 10);
+console.log(setHas(s, 10)); // 1
+```
+
+`wasmtk wasic` resolves the `wasmtk:<cap>` specifier to the embedded library and merges it on demand
+(shared heap for Set/Map/JSON via allocator unification; straight splice for the Date/RegExp leaves).
+No separate `modc` step is needed. The explicit `import { … } from "./lib.wasm"` path still works for
+your own modc libraries. (Capabilities are v1 — integer Set/Map/JSON keys, etc.; see scope notes below.)
 
 **`Set<i32>`** is an open-addressing hash table authored as a `modc` library (`tests/wasm_wasi_bundle/set_bundle/set_lib_modc.ts`): handle = i32 pointer to a 4-slot `Int32Array` header `[count, cap, keysPtr, usedPtr]`, two `Int32Array(cap)` bucket arrays, linear probing on `key & (cap-1)`, ×2 grow + rehash at load factor 0.5. A `wasic` driver imports it and — via Stage 0.6 unification — the library's allocations land on the host's shared heap. Self-checking `@test-pipeline` `18c_SetCapabilityLibrary.ts` (PASS). Two supporting compiler fixes: TypedArray-view-over-pointer writes (`const v: Int32Array = ptr as unknown as Int32Array; v[i] = x`) and imported-function signature resolution from inline `(param …)` headers. Backend bumped to `wabt-ts@^1.3.0/compat` (fixes the folded call-before-return encoder bug). Also fixed a pre-existing modc bug where string-returning library functions imported an unused `fd_write` (bindgen `99/103 → 103/103`).
 

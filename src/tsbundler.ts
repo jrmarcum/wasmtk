@@ -54,6 +54,7 @@
 
 import { basename, dirname, join } from "@std/path";
 import { rt } from "./rt.ts";
+import { CAPABILITIES } from "./wasm/caps_bytes.ts";
 
 // ---------------------------------------------------------------------------
 // Phase 18 — WASM import types
@@ -64,7 +65,9 @@ import { rt } from "./rt.ts";
  * Collected by bundleImportsEx and handed to the wasic compiler for WAT-level merge.
  */
 export interface WasmImportEntry {
-  /** Resolved absolute path to the .wasm file. */
+  /** Resolved absolute path to the .wasm file, or a synthetic `wasmtk:<cap>` id for an
+   *  embedded capability (Brief #4) — in that case `bytes`/`witText` are populated and no
+   *  file is read. */
   filePath: string;
   /** Module prefix derived from the filename, e.g. "math" for "./math.wasm". */
   prefix: string;
@@ -75,6 +78,12 @@ export interface WasmImportEntry {
    * but renames still records "add"→"math_add" for use by the merge step.
    */
   renames: Map<string, string>;
+  /** Embedded module bytes for a virtual `wasmtk:<cap>` import (Brief #4). When set, the
+   *  merge reads these instead of `filePath`. */
+  bytes?: Uint8Array;
+  /** Embedded `.wit` text for a virtual capability — supplies logical (string) signatures
+   *  to the merge in place of a sibling `.wit` file. */
+  witText?: string;
 }
 
 /** Extended return type from bundleImportsEx — includes both the merged TS source
@@ -297,6 +306,33 @@ export async function bundleImportsEx(entryPath: string): Promise<BundleResult> 
     while ((m = importRe.exec(src)) !== null) {
       const binding   = m[1].trim(); // e.g. "{ foo }", "* as math", "foo", "foo, { bar }"
       const specifier = m[2];
+
+      // ── Virtual capability imports: `import { setNew } from "wasmtk:set"` (Brief #4) ──
+      // Resolved to an embedded modc library; merged only because it's imported here
+      // (feature-level tree-shake). No fixture .wasm on disk required.
+      if (specifier.startsWith("wasmtk:")) {
+        const capId = specifier.slice("wasmtk:".length);
+        const cap = CAPABILITIES[capId];
+        if (!cap) {
+          throw new Error(
+            `Unknown capability import "wasmtk:${capId}". Available: ${Object.keys(CAPABILITIES).map((k) => "wasmtk:" + k).join(", ")}`,
+          );
+        }
+        const renames = new Map<string, string>();
+        const namedMatch = binding.match(/\{([^}]*)\}/);
+        if (namedMatch) {
+          for (const [local, original] of parseClauseNames(namedMatch[1])) {
+            const canonical = `${cap.prefix}_${original}`;
+            renames.set(original, canonical);
+            localRewrites.set(local, canonical);
+          }
+        }
+        const virtualId = `wasmtk:${capId}`;
+        if (!wasmImports.some((w) => w.filePath === virtualId)) {
+          wasmImports.push({ filePath: virtualId, prefix: cap.prefix, renames, bytes: cap.bytes, witText: cap.wit });
+        }
+        continue;
+      }
 
       if (!specifier.startsWith(".")) continue; // skip non-relative specifiers
 

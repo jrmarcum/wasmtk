@@ -12,9 +12,11 @@ number v1, 2026-05-31 — first capability to take *string* input across the mer
 **`RegExp`** leaf matcher (backtracking; v1 = literals/`.`/classes/`\d\w\s`/`*+?`/`^$`, 2026-05-31)
 — see §7-#3/§7c/§7d. **No Tier-1 capabilities remain.** Open: §7-#4 feature-level tree-shake
 wiring, §7-#5 Promise/async, §7-#6 hybrid type-routing, §6/§7-#7 kernel-scope decision. Backend
-on `wabt-ts@^1.3.0/compat` + `binaryen-ts@^1.3.2/compat`. Date surfaced+fixed two merge-path bugs
+on `wabt-ts@^1.3.1/compat` + `binaryen-ts@^1.3.2/compat`. Date surfaced+fixed two merge-path bugs
 (§7b); JSON four more (§7c); RegExp surfaced an **open** merge bug (OOB-`charCodeAt` in a
-non-short-circuit `&&`; worked around in the library) — §7d.
+non-short-circuit `&&`; worked around in the library) — §7d. **All 7 long-standing test failures
+fixed 2026-06-02** → full `tests/wasm_wasi` **277/277**: value-fallthru codegen in wasic (`5e`,
+`19×2`) + wabt-ts 1.3.1 hex-float-literal fix (`38×4` mathlib) — see cmem/compiler-bugs.md.
 
 ---
 
@@ -148,6 +150,13 @@ To be genuinely Javy-free, two routes for that kernel:
 
 There is no route where static capability modules cover arbitrary JS.
 
+**DECISION (2026-06-02, project owner): route (b) — build wasmtk's own dynamic-runtime
+module.** wasmtk will ship its own boxed-value + property-map + interpreter runtime to
+cover the dynamic kernel, rather than dropping it (route a) or depending on `javyc`
+long-term. This is a **major new track** (comparable in size to §7-#5 async) and is NOT
+yet implemented; `javyc` (QuickJS) remains the interim dynamic fallback until the
+own-runtime lands. See cmem/roadmap.md "§7-#7 decision".
+
 **Framing for the decision:** per-artifact, `wasic` output is already Javy-free —
 QuickJS only enters through `javyc`. This change does not remove an engine from existing
 binaries; it shrinks the set of programs *forced* through `javyc` down to the kernel
@@ -219,13 +228,20 @@ this change makes the former a scope decision rather than a technical blocker.
      by the splice; correct standalone, traps merged) — worked around in the library by never
      calling `charCodeAt` on an unchecked index. See §7d.
    - **All Tier-1 capabilities complete.**
-4. **Wire** capability selection: bundle only referenced capabilities (tree-shake at the
-   feature level; `wasic` already does this for its own helpers via Binaryen `-Oz`).
-5. **(Separate track)** Promise/async: state-machine lowering in `wasic` + microtask
-   runtime module; lift the `hybrid` async exclusion.
-6. **Evolve** `hybrid` from `// @wasm` annotations to TS-type-driven routing.
-7. **Decide** the §6 scope question (drop the kernel vs own runtime) — determines whether
-   `javyc` is eventually removed or retained as the dynamic-kernel fallback.
+4. ✅ **Wire** capability selection (2026-06-02): the 5 Tier-1 caps are embedded as byte
+   modules (`src/wasm/cap_*_bytes.ts`) and resolved via a virtual `wasmtk:<cap>` import
+   specifier (`wasmtk:set` / `:map` / `:date` / `:json` / `:regex`). Only capabilities a
+   program actually imports get merged → feature-level tree-shake. No fixture `.wasm` on
+   disk needed. See cmem/capabilities.md "Virtual capability imports".
+5. **(Separate track, DEFERRED)** Promise/async: state-machine lowering in `wasic` +
+   microtask runtime module; lift the `hybrid` async exclusion. Large, not in this release.
+6. ✅ **Evolve** `hybrid` to TS-type-driven routing (2026-06-02): `wasmtk hybrid --auto`
+   routes every module-level named function whose params + return are all wasic-typed to the
+   WASM core, and leaves async / `any`-shaped / untyped functions in the TS host. `// @wasm`
+   still force-includes; `// @js` force-excludes. Default (no `--auto`) is the legacy
+   annotation mode.
+7. ✅ **DECIDED** (2026-06-02): route (b) — **build wasmtk's own dynamic runtime** (see §6
+   above). Major new track, not yet implemented; `javyc` stays the interim fallback.
 
 ### 7a. Wasic codegen bug uncovered during §3 development — ✅ FIXED 2026-05-30
 

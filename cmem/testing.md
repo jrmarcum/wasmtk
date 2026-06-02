@@ -23,14 +23,19 @@ deno install -g --allow-read --allow-write --allow-run --allow-env --allow-net \
   --config deno.json --force -n wasmtk main.ts
 ```
 
-## Current pass counts (2026-05-31, wabt-ts 1.3.0 + binaryen-ts 1.3.2)
+## Current pass counts (2026-06-02, wabt-ts 1.3.1 + binaryen-ts 1.3.2)
 
 | Suite | Result |
 | --- | --- |
-| `tests/wasm_wasi` (full) | **270 / 277** (7 known pre-existing failures — see compiler-bugs.md) |
+| `tests/wasm_wasi` (full) | **278 / 278** (the 7 long-standing failures are now fixed — see compiler-bugs.md) |
 | `bindgen_tests.ts` | **103 / 103** |
 | `jstyper_tests.ts` | **73 / 73** |
-| Capability pipelines `18c`–`18g` (Set/Map/Date/JSON/RegExp) | **5 / 5** |
+| Capability pipelines `18c`–`18g` (Set/Map/Date/JSON/RegExp) + `18h` (virtual `wasmtk:` imports) | **6 / 6** |
+
+The 7 previously-failing tests were fixed 2026-06-02: `5e_MixedSignatures`, `19_NestedDiscriminantUnions`,
+`19_VariantMaximumMemoryAlignment` (value-fallthru codegen, fixed in wasic); `38_MathExpLog`,
+`38_MathHyperbolic`, `38_MathTrig`, `38_Phase38Combined` (hex-float literals encoded as 0, fixed in
+wabt-ts 1.3.1). See compiler-bugs.md.
 
 Historical baseline under npm:wabt+npm:binaryen was 446/446 (2026-05-25); the per-phase historical
 counts in README are a record of when each phase first went green, not a live invariant.

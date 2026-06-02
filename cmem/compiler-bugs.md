@@ -2,6 +2,50 @@
 
 Live record of bugs found + fixed (and one still open). Newest first.
 
+## FIXED — the 7 long-standing test failures (2026-06-02)
+
+All 7 of the previously-"known pre-existing" failures are now fixed; full `tests/wasm_wasi`
+is **277/277**. They were two unrelated root causes:
+
+### (a) Value-fallthru codegen — `5e_MixedSignatures`, `19_NestedDiscriminantUnions`, `19_VariantMaximumMemoryAlignment` (fixed in wasic)
+
+A value-returning function whose body **ends in a statement-level (void) `if/else` where every
+path `return`s** left nothing on the stack at the implicit function end. wabt + binaryen accept
+this; **V8's strict validator rejects it** (`expected 1 elements on the stack for fallthru,
+found 0`). Appending `(unreachable)` does NOT survive Binaryen `-Oz` — it strips the trailing
+unreachable as dead code and re-emits the invalid void `if`.
+
+**Fix** (`src/wasic.ts`, `emitFunction` → new `fixTerminalFallthru` + module-level `tokenizeWat`/
+`parseWatNodes`/`serializeWat`/`watNodeToValue`/`watBranchToValue` helpers): when a value-returning
+function's last top-level WAT s-expr is a void `if`, rewrite it into a value-producing
+`(if (result T) cond (then … X) (else … Y))` by turning each branch's trailing `(return X)` into a
+bare value `X` (recursing through nested all-returning ifs). Binaryen preserves a value-if as the
+function result. Conservative: only rewrites when every branch leaf is a `return` (or a nested
+all-returning `if`); otherwise leaves the body unchanged. Behavior is unchanged (the construct
+already returned on all paths).
+
+NOTE (separate, still-open, out of scope): the **single-line** brace form
+`if (c) { return 1; } else { return -1; }` drops the `else` entirely (it becomes a `(;; } else …;)`
+comment stub). That is a pre-existing parser bug unrelated to the fallthru fix; the 7 tests use the
+multi-line form. Not yet fixed.
+
+### (b) Hex-float literals encoded as 0 — `38_MathExpLog`, `38_MathHyperbolic`, `38_MathTrig`, `38_Phase38Combined` (fixed in wabt-ts 1.3.1)
+
+The mathlib functions are merged from `mathlib.wasm`, whose f64 constants are in **hex-float**
+notation (`0x1.921fb54442d18p+2`) after wabt disassembly. `wabt-ts@1.3.0`'s parser
+(`parseF32/F64LiteralBits`) handled `LiteralType.Hexfloat` with JavaScript's `parseFloat()`, which
+**cannot parse hex-float notation** — it reads the leading `0`, stops at `x`, returns `0`. So every
+mathlib polynomial coefficient / π / e / ln2 was encoded as `0`, making merged `Math.*` return
+garbage (and trapping `$__f64_to_str`'s `i64.trunc_f64_s` on the resulting NaN/Inf). The main
+module's own constants (decimal) were unaffected — that's why only func-13-onward (the spliced
+mathlib) was corrupt.
+
+Bisected with a minimal repro (`f64.const 0x1.921fb54442d18p+2` → npm:wabt gives 6.283, wabt-ts gave
+0) and confirmed by swapping `deno.json` to `npm:wabt` (all 4 tests pass). **Fixed upstream in
+`@jrmarcum/wabt-ts@1.3.1`** (`src/parser/wast-parser.ts`: new `parseHexFloatValue` reconstructor;
+both f32 and f64 Hexfloat cases route through it; decimal `Float` still uses `parseFloat`). `deno.json`
+bumped `^1.3.0` → `^1.3.1`. Regression test in wabt-ts `tests/tools/wat2wasm.test.ts`.
+
 ## OPEN — merge mis-encodes an OOB `charCodeAt` in a non-short-circuit `&&` loop condition (2026-05-31)
 
 **Symptom:** A modc library that runs **correctly standalone** silently halts (WASM trap; runner
@@ -75,17 +119,16 @@ correct defensive style. Set/Map/Date/JSON are unaffected.
    (matching `findDepth0LTR`/`findDepth0Keyword`). Fix: scan the full string for depth, match only
    at valid start positions. High blast radius; re-validated with no regression.
 
-## The 7 known pre-existing test failures (wasic-side codegen, predate this work)
+## The 7 formerly-known test failures — ALL FIXED 2026-06-02
 
-These have failed for a while and are **not** regressions. Do not be alarmed when the suite shows
-"7 failed."
+These failed for a long time but are **now all passing** (full suite 277/277). Kept here as a
+pointer; full root-cause writeups are in the "FIXED — the 7 long-standing test failures" section at
+the top of this file.
 
-| Test | Cause |
-| --- | --- |
-| `19_NestedDiscriminantUnions` | V8 strict-validation fallthru on nested-if/else DU structures |
-| `19_VariantMaximumMemoryAlignment` | same DU nested-if/else fallthru family |
-| `38_MathExpLog` / `38_MathHyperbolic` / `38_MathTrig` / `38_Phase38Combined` | f64→i32 truncation in mathlib call paths → "float unrepresentable in integer range" traps |
-| `5e_MixedSignatures` | fallthru-stack issue (same family as the 19_* fallthru) |
+| Test | Was | Fix |
+| --- | --- | --- |
+| `19_NestedDiscriminantUnions`, `19_VariantMaximumMemoryAlignment`, `5e_MixedSignatures` | V8 strict-validation fallthru on terminal void-if/else where all paths return | value-fallthru rewrite in wasic (`fixTerminalFallthru`) |
+| `38_MathExpLog` / `38_MathHyperbolic` / `38_MathTrig` / `38_Phase38Combined` | merged mathlib returned garbage — hex-float consts encoded as 0; the original "f64→i32 truncation" framing was a downstream symptom (NaN/Inf → `i64.trunc_f64_s` trap) | wabt-ts 1.3.1 hex-float parse fix |
 
 ## Regenerated `.wat`/`.wasm` artifact churn
 

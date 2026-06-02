@@ -66,6 +66,31 @@ export function isWasicType(t: string): boolean {
   return false;
 }
 
+/**
+ * Static-routability analysis of a function declaration line for `--auto` mode (Brief #6).
+ * A function is WASM-routable iff it is NOT async, every parameter carries a wasic-compatible
+ * type annotation, and the return type (if present) is wasic-compatible. Untyped params or
+ * `any`/object/dynamic types make it non-routable → it stays in the TypeScript host.
+ */
+export function analyzeSignature(
+  decl: string,
+): { isAsync: boolean; routable: boolean; reason?: string } {
+  const isAsync = /^\s*(?:export\s+)?async\s+function\b/.test(decl);
+  if (isAsync) return { isAsync, routable: false, reason: "async" };
+  const paramSection = decl.match(/\(([^)]*)\)/)?.[1] ?? "";
+  const returnType = decl.match(/\)\s*:\s*([\w[\]|]+)/)?.[1];
+  const params = paramSection.split(",").map((p) => p.trim()).filter(Boolean);
+  for (const p of params) {
+    const t = p.split(":")[1]?.trim();
+    if (!t) return { isAsync, routable: false, reason: `untyped parameter '${p}'` };
+    if (!isWasicType(t)) return { isAsync, routable: false, reason: `parameter type '${t}'` };
+  }
+  if (returnType && !isWasicType(returnType)) {
+    return { isAsync, routable: false, reason: `return type '${returnType}'` };
+  }
+  return { isAsync, routable: true };
+}
+
 // ── parser ───────────────────────────────────────────────────────────────────
 
 /** Walk forward from openLine until the opening brace's matching close brace. */
@@ -87,60 +112,60 @@ function findCloseBrace(lines: string[], openLine: number): number {
  * Parse a TypeScript source file and extract all `// @wasm`-annotated functions.
  * Returns the extracted functions and the remaining source with those functions removed.
  */
-export function parseHybridFile(src: string): ParseResult {
+export function parseHybridFile(
+  src: string,
+  opts: { auto?: boolean } = {},
+): ParseResult {
+  const auto = opts.auto === true;
   const lines = src.split("\n");
   const wasmFuncs: WasmFunc[] = [];
   const warnings: string[] = [];
   const skipLines = new Set<number>();
 
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim() !== "// @wasm") continue;
-
-    // Advance past blank lines between annotation and the function declaration
-    let fnLine = i + 1;
-    while (fnLine < lines.length && lines[fnLine].trim() === "") fnLine++;
-    if (fnLine >= lines.length) {
-      warnings.push(`⚠  hybrid: // @wasm on line ${i + 1} has no following function — skipping`);
-      continue;
-    }
-
-    const decl = lines[fnLine];
-
-    // Async functions can't be compiled by wasic
-    if (/^\s*(?:export\s+)?async\s+function\s+(\w+)/.test(decl)) {
-      const m = decl.match(/async\s+function\s+(\w+)/);
-      warnings.push(`⚠  hybrid: skipping '${m?.[1] ?? "?"}' — async functions cannot be compiled by wasic`);
-      continue;
-    }
-
-    const fnMatch = decl.match(/^\s*(?:export\s+)?function\s+(\w+)/);
-    if (!fnMatch) {
-      warnings.push(`⚠  hybrid: // @wasm on line ${i + 1} is not followed by a function declaration — skipping`);
-      continue;
-    }
-
+    // Only consider MODULE-LEVEL function declarations (column 0) so nested/indented
+    // helpers inside other functions are never extracted independently.
+    const fnMatch = lines[i].match(/^(?:export\s+)?(?:async\s+)?function\s+(\w+)/);
+    if (!fnMatch) continue;
     const name = fnMatch[1];
-    const endLine = findCloseBrace(lines, fnLine);
 
-    // Build the function text, ensuring the export keyword is present
-    let text = lines.slice(fnLine, endLine + 1).join("\n");
-    if (!text.trimStart().startsWith("export ")) {
-      text = "export " + text.trimStart();
+    // Directive on the nearest preceding non-blank line: // @wasm force-includes,
+    // // @js / // @host / // @ts force-excludes.
+    let p = i - 1;
+    while (p >= 0 && lines[p].trim() === "") p--;
+    const prev = p >= 0 ? lines[p].trim() : "";
+    const forceWasm = prev === "// @wasm";
+    const forceHost = prev === "// @js" || prev === "// @host" || prev === "// @ts";
+
+    const sig = analyzeSignature(lines[i]);
+
+    // Decide routing. Annotation mode: only // @wasm functions. Auto mode: every
+    // statically-routable function, unless force-excluded; // @wasm still forces include.
+    let route: boolean;
+    if (auto) route = forceWasm || (sig.routable && !forceHost);
+    else route = forceWasm;
+
+    if (!route) continue;
+
+    // Async can never be compiled by wasic — even an explicit // @wasm cannot override that.
+    if (sig.isAsync) {
+      warnings.push(`⚠  hybrid: skipping '${name}' — async functions cannot be compiled by wasic`);
+      continue;
+    }
+    // A force-included function with non-wasic types: keep it (wasic reports the real error)
+    // but surface why it looked non-routable.
+    if (forceWasm && !sig.routable && sig.reason) {
+      warnings.push(`⚠  hybrid: '${name}' forced // @wasm but ${sig.reason} may not be wasic-compatible`);
     }
 
-    // Warn about non-wasic param/return types (heuristic: scan the signature line)
-    const sigLine = decl;
-    const paramSection = sigLine.match(/\(([^)]*)\)/)?.[1] ?? "";
-    const returnType = sigLine.match(/\)\s*:\s*([\w\[\]|]+)/)?.[1];
-    const paramTypes = paramSection.split(",").map((p) => p.split(":")[1]?.trim() ?? "").filter(Boolean);
-    for (const t of [...paramTypes, ...(returnType ? [returnType] : [])]) {
-      if (t && !isWasicType(t)) {
-        warnings.push(`⚠  hybrid: function '${name}' uses type '${t}' which may not be wasic-compatible`);
-      }
-    }
+    const endLine = findCloseBrace(lines, i);
+    let text = lines.slice(i, endLine + 1).join("\n");
+    if (!text.trimStart().startsWith("export ")) text = "export " + text.trimStart();
 
     wasmFuncs.push({ name, text, lineStart: i, lineEnd: endLine });
-    for (let j = i; j <= endLine; j++) skipLines.add(j);
+    // Remove the function body and, when present, its directive comment line.
+    const startSkip = (forceWasm || forceHost) ? p : i;
+    for (let j = startSkip; j <= endLine; j++) skipLines.add(j);
   }
 
   const remainingSrc = lines.filter((_, idx) => !skipLines.has(idx)).join("\n");
@@ -219,28 +244,33 @@ export function generateRunner(
  */
 export async function runHybrid(
   inputPath: string,
-  opts: { outDir?: string } = {},
+  opts: { outDir?: string; auto?: boolean } = {},
 ): Promise<void> {
   const src = await rt.readTextFile(inputPath);
   const dir = dirname(inputPath);
   const base = basename(inputPath, ".ts");
   const outDir = opts.outDir ?? dir;
 
-  const { wasmFuncs, remainingSrc, warnings } = parseHybridFile(src);
+  const { wasmFuncs, remainingSrc, warnings } = parseHybridFile(src, { auto: opts.auto });
 
   for (const w of warnings) console.warn(w);
 
   if (wasmFuncs.length === 0) {
-    console.warn(`⚠  hybrid: no // @wasm functions found in ${inputPath}`);
-    console.warn(`   Annotate functions with // @wasm to route them through the WASM module.`);
-    console.warn(`   Example:`);
-    console.warn(`     // @wasm`);
-    console.warn(`     export function add(a: i32, b: i32): i32 { return a + b; }`);
+    if (opts.auto) {
+      console.warn(`⚠  hybrid --auto: no statically-typed functions to route to WASM in ${inputPath}`);
+      console.warn(`   A function is routed to WASM when it is non-async and every parameter +`);
+      console.warn(`   return type is wasic-compatible (i32/i64/f32/f64/bool/string/number/…).`);
+    } else {
+      console.warn(`⚠  hybrid: no // @wasm functions found in ${inputPath}`);
+      console.warn(`   Annotate functions with // @wasm, or use --auto to route by type:`);
+      console.warn(`     // @wasm`);
+      console.warn(`     export function add(a: i32, b: i32): i32 { return a + b; }`);
+    }
     return;
   }
 
   const funcNames = wasmFuncs.map((f) => f.name);
-  console.log(`   hybrid: ${funcNames.length} @wasm function(s): ${funcNames.join(", ")}`);
+  console.log(`   hybrid${opts.auto ? " --auto" : ""}: ${funcNames.length} WASM function(s): ${funcNames.join(", ")}`);
 
   // Step 1 — write generated core module
   const coreTsPath = join(outDir, `${base}_core.ts`);

@@ -17,6 +17,18 @@ high-value subset.
 - **`findBinaryOp`** scans the FULL string for paren/bracket depth and only matches at valid op
   positions (`i <= maxStart`). Reverting to start-at-`maxStart` re-hides operators whose RHS ends
   in `)`. Counts `()` and `[]`.
+- **Value-fallthru rewrite** (`emitFunction` → `fixTerminalFallthru`): a value-returning function
+  whose body ends in a STATEMENT-level (void) `if/else` where every path `return`s leaves an empty
+  stack at the implicit function end — wabt/binaryen accept it, **V8 strict-validation rejects it**
+  (`expected 1 elements on the stack for fallthru, found 0`). The terminal void `if` is rewritten
+  into a value-producing `(if (result T) cond (then … X) (else … Y))` by turning each branch's
+  trailing `(return X)` into a bare value `X` (recursing through nested all-returning ifs), via the
+  module-level `tokenizeWat`/`parseWatNodes`/`serializeWat`/`watNodeToValue`/`watBranchToValue`
+  helpers. Do NOT instead append `(unreachable)` — Binaryen `-Oz` strips it as dead code and
+  re-emits the invalid void `if`. The rewrite is conservative (only when every leaf is a `return`
+  or nested all-returning `if`; else body unchanged). Fixed `5e_MixedSignatures`, `19_NestedDU`,
+  `19_VariantMax`. (Separate, still-open: the single-line `if (c) { return 1 } else { return -1 }`
+  brace form drops the `else` to a comment — a parser bug, not this one.)
 - **Greedy single-call handlers** (`charCodeAt`/`startsWith`/`endsWith`/`split`, and the `.slice`
   family) must guard their greedy `(.+)` arg with `parenDepthNeverNegative(arg)` so a following
   binary operator isn't swallowed. Reserve `[^)]+` only when nesting is provably impossible.

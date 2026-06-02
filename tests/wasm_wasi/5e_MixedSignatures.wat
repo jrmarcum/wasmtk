@@ -283,16 +283,7 @@
   (func $testMixedTable (export "testMixedTable") (param $op i32) (result i32)
     (local $add i32)
     (local $negate i32)
-    (if (i32.eq (local.get $op) (i32.const 1))
-      (then
-      (local.set $add (i32.const 0))
-      (return (call_indirect (type $ftype_i32_i32_r_i32) (i32.const 10) (i32.const 5) (local.get $add)))
-      )
-      (else
-      (local.set $negate (i32.const 1))
-      (return (call_indirect (type $ftype_i32_r_i32) (i32.const 10) (local.get $negate)))
-      )
-    )
+    (if (result i32) (i32.eq (local.get $op) (i32.const 1)) (then (local.set $add (i32.const 0)) (call_indirect (type $ftype_i32_i32_r_i32) (i32.const 10) (i32.const 5) (local.get $add))) (else (local.set $negate (i32.const 1)) (call_indirect (type $ftype_i32_r_i32) (i32.const 10) (local.get $negate))))
   )
 
   (func $__anon_0 (param $a i32) (param $b i32) (result i32)

@@ -280,22 +280,7 @@
   )
   (func $evaluateResult (export "evaluateResult") (param $res i32) (param $base i32) (result i32)
     (local $op i32)
-    (if (i32.eq (i32.load (local.get $res)) (i32.const 0))
-      (then
-      (local.set $op (i32.load (i32.add (local.get $res) (i32.const 4))))
-      (if (i32.eq (i32.load (local.get $op)) (i32.const 0))
-        (then
-        (return (i32.add (local.get $base) (i32.load (i32.add (local.get $op) (i32.const 4)))))
-        )
-        (else
-        (return (i32.mul (local.get $base) (i32.load (i32.add (local.get $op) (i32.const 4)))))
-        )
-      )
-      )
-      (else
-      (return (i32.mul (i32.load (i32.add (local.get $res) (i32.const 8))) (i32.const -1)))
-      )
-    )
+    (if (result i32) (i32.eq (i32.load (local.get $res)) (i32.const 0)) (then (local.set $op (i32.load (i32.add (local.get $res) (i32.const 4)))) (if (result i32) (i32.eq (i32.load (local.get $op)) (i32.const 0)) (then (i32.add (local.get $base) (i32.load (i32.add (local.get $op) (i32.const 4))))) (else (i32.mul (local.get $base) (i32.load (i32.add (local.get $op) (i32.const 4))))))) (else (i32.mul (i32.load (i32.add (local.get $res) (i32.const 8))) (i32.const -1))))
   )
 
   (func $testNestedUnions (export "testNestedUnions")  
