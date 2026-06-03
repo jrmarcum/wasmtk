@@ -81,12 +81,22 @@ For servers doing many string-param calls, the planned mitigation is an instance
 (`createPool`) in the universalWasmLoader, cycling fresh instances. `cabi_post_return` (full
 Component Model) would remove the need but is deferred.
 
-## Canonical ABI (Stage 0, complete)
+## Canonical ABI (Stage 0 — partial alignment)
+
+**Accuracy note (2026-06-03):** this is *partial* alignment, NOT full Canonical ABI compliance. The
+realloc/param side is canonical-adjacent; the **return side is NOT canonical** (caller-allocated
+out-param, no `cabi_post_return`), and the artifact is a P1 **core module** with a **sidecar** `.wit`
+(not embedded) — boundary marshalling is done **host-side** in bindgen, not by the binary. Do not
+describe this as "aligned with the Component Model Canonical ABI" without that qualifier. Full
+forward-alignment (canonicalize the memory image + switch to callee-allocated i32-ptr returns +
+`cabi_post_*`, while staying P1) is **decided but not yet implemented** — see
+[polyglot-producers.md](polyglot-producers.md).
 
 - Exports `cabi_realloc(ptr,old,align,new)` (a `select`-based wrapper over `$__malloc`) instead
   of `__malloc`, when any export has a string param/return.
-- String returns use an out-parameter: a `$fn__cabi` shim (exported as `"fn"`) calls the internal
-  void `$fn` (which sets `$__str_ret_ptr`/`$__str_ret_len` globals) and writes ptr+len into a
-  caller-provided 8-byte return area. The globals are **not** exported.
+- String returns currently use a **non-canonical** out-parameter: a `$fn__cabi` shim (exported as
+  `"fn"`) calls the internal void `$fn` (which sets `$__str_ret_ptr`/`$__str_ret_len` globals) and
+  writes ptr+len into a **caller-provided** 8-byte return area. The globals are **not** exported.
+  (Canonical form would be callee-allocated, callee-returns-pointer, + `cabi_post_<name>`.)
 - bindgen host: numerics direct; bool `x?1:0` / `r!==0`; string params `TextEncoder`+`cabi_realloc`;
   string returns `cabi_realloc(0,0,4,8)` area + `DataView.getInt32` at 0/4.
