@@ -1719,6 +1719,17 @@ class WasicTranspiler {
     let depth = 0, start = 0;
     for (let i = 0; i < inner.length; i++) {
       const ch = inner[i];
+      // Skip over string / char / template literals so a `;`, `{`, or `}` inside
+      // them is never treated as a statement boundary.
+      if (ch === '"' || ch === "'" || ch === "`") {
+        const quote = ch;
+        i++;
+        while (i < inner.length && inner[i] !== quote) {
+          if (inner[i] === "\\") i++; // skip escaped char
+          i++;
+        }
+        continue;
+      }
       if (ch === "(" || ch === "{") depth++;
       else if (ch === ")" || ch === "}") {
         depth--;
@@ -1778,7 +1789,11 @@ class WasicTranspiler {
       out.push(...(inner ? WasicTranspiler.splitStmts(inner) : []));
       let rest = s.slice(close + 1).trim();
       if (!rest.startsWith("else")) {
+        // Brace chain complete. Close it, then re-emit any trailing statements
+        // (e.g. `if (c) { return 1; } return 2;`) as siblings after the if-block
+        // so they are not silently dropped.
         out.push("}");
+        if (rest) out.push(...WasicTranspiler.splitStmts(rest));
         return out;
       }
       rest = rest.slice(4).trim();
@@ -1991,10 +2006,18 @@ class WasicTranspiler {
         i++;
       }
       const rawBody = src.slice(bodyStart, i - 1);
-      const rawLines = rawBody
+      let rawLines = rawBody
         .split("\n")
         .map((l) => l.trim())
         .filter((l) => l.length > 0);
+      // Single-physical-line body — the whole function is `{ stmt; stmt; … }` on one
+      // line. Split it into statements so multi-statement single-line bodies (e.g.
+      // `if (c) { return 1; } return 2;`) are processed correctly instead of being
+      // emitted as one mangled statement. splitStmts is string-aware and keeps
+      // if/else chains intact; single-statement bodies are returned unchanged.
+      if (rawLines.length === 1) {
+        rawLines = WasicTranspiler.splitStmts(rawLines[0]);
+      }
       // Join multi-line `return { ... }` object literals into one line so substituteOneArrow
       // and emitStatement can process them as a unit.
       const bodyLines: string[] = [];

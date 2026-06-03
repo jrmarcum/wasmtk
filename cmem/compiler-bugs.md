@@ -1,7 +1,45 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. (No open bugs — the last one, the merge
-OOB-`charCodeAt` trap, was fixed 2026-06-02 by short-circuiting `&&`/`||`.)
+Live record of bugs found + fixed. Newest first. **No open bugs.** The last one — the single-line
+brace `if {…}` form — was fixed 2026-06-03 (see directly below); the full suite is now **279/279**
+(the new regression test `48_SingleLineBraceIf` adds the 279th).
+
+## FIXED — single-physical-line function bodies were mangled (2026-06-03)
+
+When a whole function body lived on ONE physical line, multi-statement bodies were mis-emitted and
+trailing statements after a brace `if` block were silently dropped. Two root causes:
+
+1. **Function bodies were only split on `\n`.** A single-physical-line body
+   (`{ let x = 0; if (c) { x = 1; } x += 100; return x; }`) was never split into statements — the
+   whole thing was emitted as one mangled statement (e.g. jammed into the first `let`'s initializer).
+2. **`expandInlineBraceChain` dropped trailing statements.** For `if (c) { return 1; } return 2;`
+   it discarded everything after the brace chain that wasn't `else`, leaving a value-returning fn
+   whose body is just a void `if` → V8 `expected 1 elements on the stack for fallthru, found 0`.
+
+**Fix** (`src/wasic.ts`):
+- In `parseFunctions`, when `rawLines.length === 1` (single-physical-line body), split it into
+  statements up front via `splitStmts` before the existing per-line processing. Multi-line bodies
+  (the norm — virtually every shipped test) are untouched, so blast radius is minimal.
+- Made `splitStmts` **string-aware** (skips `"`/`'`/`` ` `` literals with `\` escapes) so a `;`,
+  `{`, or `}` inside a string at depth 0 is never a false statement boundary. Its only prior caller
+  (`expandInlineBraceChain`) benefits too; single-statement input is returned unchanged (idempotent).
+- In `expandInlineBraceChain`, when the trailing content after the brace chain isn't `else`, close
+  the block with `}` then re-emit the trailing statements (via `splitStmts`) as siblings instead of
+  dropping them.
+
+After splitting, each resulting statement is the idiomatic single-line form the existing if-handler
+already handles (`expandInlineBraceChain` for the brace case, `fixTerminalFallthru` for terminal
+void-if). The earlier repros now pass: `if (c) { return 1; } else { return -1; }` → `1 / -1`,
+`if (c) { return 1; } return 2;` → `1 / 2`, plus else-if chains, brace-less inline-if + trailing
+return, non-if-first single-line bodies, and string-literal `;`/`{`/`}` guards. Regression test:
+`tests/wasm_wasi/48_SingleLineBraceIf.ts` (carries `// deno-fmt-ignore-file` so `deno fmt` can't
+expand the single-physical-line forms under test). Validated: `wasm_wasi` **279/279**, `bindgen`
+**103/103**, `jstyper` **73/73** (wabt-ts 1.3.2 + binaryen-ts 1.3.3), zero regressions.
+
+(Note: bug1 — `if (c) { return 1; } else { return -1; }` — had already started passing by 2026-06-03
+via the earlier value-fallthru/short-circuit work; the remaining live failure was the trailing-drop
+and the non-if-first single-line body, both fixed here. The legacy machine-local `CLAUDE.md`'s claim
+that `expandInlineBraceChain` alone fixed this was inaccurate; `cmem/` is authoritative.)
 
 ## FIXED — the 7 long-standing test failures (2026-06-02)
 
@@ -26,10 +64,9 @@ function result. Conservative: only rewrites when every branch leaf is a `return
 all-returning `if`); otherwise leaves the body unchanged. Behavior is unchanged (the construct
 already returned on all paths).
 
-NOTE (separate, still-open, out of scope): the **single-line** brace form
-`if (c) { return 1; } else { return -1; }` drops the `else` entirely (it becomes a `(;; } else …;)`
-comment stub). That is a pre-existing parser bug unrelated to the fallthru fix; the 7 tests use the
-multi-line form. Not yet fixed.
+NOTE: the **single-physical-line** brace form (`if (c) { return 1; } else { return -1; }`) was a
+SEPARATE bug, now **fixed 2026-06-03** — see the "FIXED — single-physical-line function bodies"
+section at the top of this file. The 7 fixes here all use the multi-line form.
 
 ### (b) Hex-float literals encoded as 0 — `38_MathExpLog`, `38_MathHyperbolic`, `38_MathTrig`, `38_Phase38Combined` (fixed in wabt-ts 1.3.1)
 

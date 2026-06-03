@@ -27,8 +27,18 @@ high-value subset.
   helpers. Do NOT instead append `(unreachable)` — Binaryen `-Oz` strips it as dead code and
   re-emits the invalid void `if`. The rewrite is conservative (only when every leaf is a `return`
   or nested all-returning `if`; else body unchanged). Fixed `5e_MixedSignatures`, `19_NestedDU`,
-  `19_VariantMax`. (Separate, still-open: the single-line `if (c) { return 1 } else { return -1 }`
-  brace form drops the `else` to a comment — a parser bug, not this one.)
+  `19_VariantMax`. (The single-*physical-line* brace form `if (c) { return 1; } else { return -1; }`
+  was a separate bug, now **fixed 2026-06-03** — see the single-line-body decision below.)
+- **Single-physical-line function bodies are split into statements up front** (`parseFunctions`):
+  when the whole body is one physical line (`rawLines.length === 1`), it is split via the
+  **string-aware** `splitStmts` before per-line processing. Do not remove this — without it, a
+  single-line body with multiple statements, or a trailing statement after a brace `if`
+  (`if (c) { return 1; } return 2;`), is mangled (dropped trailing statement → V8 fallthru error; or
+  jammed into one statement). `splitStmts` must stay string-aware (skip `"`/`'`/`` ` `` literals with
+  `\` escapes) so a `;`/`{`/`}` inside a string is never a false statement boundary; and
+  `expandInlineBraceChain` must re-emit trailing statements after the brace chain as siblings rather
+  than dropping them. Multi-line bodies (single statement per line) are unaffected. Regression:
+  `tests/wasm_wasi/48_SingleLineBraceIf.ts` (`// deno-fmt-ignore-file` keeps the single-line forms).
 - **Greedy single-call handlers** (`charCodeAt`/`startsWith`/`endsWith`/`split`, and the `.slice`
   family) must guard their greedy `(.+)` arg with `parenDepthNeverNegative(arg)` so a following
   binary operator isn't swallowed. Reserve `[^)]+` only when nesting is provably impossible.

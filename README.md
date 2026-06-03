@@ -853,8 +853,9 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 > parsed as 0** (every merged-`mathlib` constant was encoded as 0, recovering all four
 > `38_*` Math tests). Under that toolchain, with the Stage 0.6 allocator-unification pass
 > and all five Tier-1 stdlib capabilities (Stage 0.7 — Set/Map/Date/JSON/RegExp)
-> in place, **the full `tests/wasm_wasi` suite is 278/278** (`core_`
-> 33/33, jstyper 73/73, bindgen **103/103**). The 7 long-standing failures were all fixed
+> in place, **the full `tests/wasm_wasi` suite is 279/279** (`core_`
+> 33/33, jstyper 73/73, bindgen **103/103**; the 279th is `48_SingleLineBraceIf`, the
+> regression test for the single-physical-line brace `if` fix landed 2026-06-03). The 7 long-standing failures were all fixed
 > 2026-06-02: a value-fallthru codegen fix in wasic (`5e_MixedSignatures`, `19_*` — a
 > value-returning function ending in a void `if/else` where all paths `return` is rewritten
 > into a value-producing `if` so V8's strict validator accepts it) and the wabt-ts 1.3.1

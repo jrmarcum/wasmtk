@@ -278,7 +278,7 @@ shape exposed two latent bugs in the merge pipeline that the bitwise/small-const
 Set/Map libraries never tripped. Both are fixed; the Date pipeline
 (`18e_DateCapabilityLibrary.ts`) passes and the full `tests/wasm_wasi` suite is
 **268/275** with the same 7 pre-existing wasic-codegen failures and **no
-regressions**.
+regressions** (historical snapshot — those 7 were all fixed 2026-06-02; suite is now 278/278).
 
 1. **`wasmmerge` relocated arithmetic constants as if they were data pointers.**
    `relocateDataPtrs` (`src/wasmmerge.ts`) blindly shifted **every** `i32.const >=
@@ -317,7 +317,8 @@ i32-only; Date is a pure-integer leaf) and the first to build a **dynamic tagged
 That exercised four code paths the earlier capabilities never hit. All four are fixed; the
 JSON pipeline (`18f_JsonCapabilityLibrary.ts`) passes and the full `tests/wasm_wasi` suite is
 **269/276** — same 7 pre-existing wasic-codegen failures, no regressions — plus `bindgen`
-103/103 and `jstyper` 73/73. (Detailed in cmem/capabilities.md (JSON).)
+103/103 and `jstyper` 73/73 (historical snapshot — those 7 were all fixed 2026-06-02; suite is now
+278/278). (Detailed in cmem/capabilities.md (JSON).)
 
 1. **String args to a merged import dropped to one stack value.** A modc `func(s: string)`
    compiles its string param to `(i32 i32)` (ptr+len), so `mergeWasmWat` registered the import

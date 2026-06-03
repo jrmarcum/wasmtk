@@ -320,7 +320,7 @@ wrapper) — were all filed and fixed upstream by 1.2.9. See CLAUDE.md §
 - ✅ `src/binaryen.ts` wrapper handles CJS-default vs ES-namespace asymmetry
 - ✅ Call-site shape preserved (upstream-npm-shaped API works against both backends)
 - ✅ Wasic-side patch: explicit `inlineExport: false` on `.toText(...)` calls (wabt-ts/compat's default differs from npm:wabt's)
-- ✅ Full wasic suite: **260/270 PASS (96.3%)** under dual /compat 1.2.9 (10 known remaining failures — 9 wasic-side codegen issues that predate the migration + 1 binaryen-ts `-Oz` pass interaction)
+- ✅ Full wasic suite: **260/270 PASS (96.3%)** under dual /compat 1.2.9 — historical snapshot; the 10 then-failing tests (9 wasic-side codegen + 1 binaryen-ts `-Oz` interaction) have all since been fixed (suite is now **278/278**; see compiler-bugs.md / testing.md)
 - ✅ Switching back to `npm:wabt` / `npm:binaryen` is a one-line deno.json change — both backends remain supported as fallbacks
 
 ---
