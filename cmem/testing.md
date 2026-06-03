@@ -59,10 +59,11 @@ deno run -A tests/bindgen_tests.ts     # 103/103
 deno run -A tests/jstyper_tests.ts     # 73/73
 ```
 
-Publish flow: bump `version` in `deno.json` (JSR rejects re-publishing the same version — `1.6.2`
-is the last published), then `deno task publish` → `scripts/publish.ts` syncs the version into
-`package.json` + `src/utils.ts VERSION`, commits `bump version to vX.Y.Z`, tags it, and pushes;
-the tag triggers `publish.yml`.
+Publish flow: **`deno task bump`** (`scripts/bump.ts`; patch default, or `bump minor`/`major`) raises
+the `deno.json` version and propagates it to `package.json` + `src/utils.ts` — JSR rejects
+re-publishing the same version (`1.6.2` was the last published; `bump` took it to `1.6.3`). Then
+`deno task publish` → `scripts/publish.ts` re-syncs the version, commits `bump version to vX.Y.Z`,
+tags it, and pushes; the tag triggers `publish.yml`.
 
 ## Test populations in `tests/wasm_wasi/`
 

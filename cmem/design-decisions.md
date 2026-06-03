@@ -85,9 +85,12 @@ string-array element, and `Math.*`/`Number.*` handling all have such twins.
 
 - `tsbundle` outputs **`.ts`** (`.bundled.ts`), an import inliner — NOT `deno bundle`/JavaScript.
 - `.wasm` import detection matches **single-line** `import { … } from "./x.wasm"` only.
-- Bump version in `deno.json` only, then `deno task update-version` (propagates to `package.json`
-  + `src/utils.ts VERSION`). Don't add `dependencies` to `package.json`; don't use
-  `nodeModulesDir: "auto"` (Windows junction failures).
+- Bump the version with **`deno task bump`** (`scripts/bump.ts`): raises the semver in `deno.json`
+  (`patch` default; `deno task bump minor` / `major`) and then propagates to `package.json` +
+  `src/utils.ts VERSION` via `sync-version.ts`. `deno task update-version` only *propagates* an
+  already-edited `deno.json` version (no increment); `bump` is the increment counterpart. `bump` is
+  intentionally NOT wired into `deno task publish` (bumping stays a deliberate step). Don't add
+  `dependencies` to `package.json`; don't use `nodeModulesDir: "auto"` (Windows junction failures).
 - **Keep the published TypeScript (`main.ts` + `src/`) `deno fmt`-clean.** As of 2026-06-02 it
   passes `deno fmt --check main.ts src/` (one-time reflow to the deno.json fmt config: lineWidth
   100, arrow parens, semicolons). Format with the **scoped** `deno fmt main.ts src/` — do **NOT**
