@@ -48,7 +48,7 @@ This is the durable contract for this repo. Any agent reading this file is expec
 | [capabilities.md](capabilities.md) | Stage 0.7 Tier-1 stdlib capability libraries: Set, Map, Date, JSON, RegExp (shared-heap / leaf via wasmbundle); + virtual `wasmtk:<cap>` imports & feature-level tree-shake (brief §7-#4) |
 | [compiler-bugs.md](compiler-bugs.md) | Live bug log — all fixed, no open bugs (the 7 long-standing failures fixed 2026-06-02: value-fallthru + wabt-ts 1.3.1 hex-float; the merge OOB-charCodeAt trap fixed 2026-06-02 by short-circuiting `&&`/`||`) |
 | [design-decisions.md](design-decisions.md) | Load-bearing invariants and codegen rules that must not be silently reverted |
-| [testing.md](testing.md) | How to run the suites, the test populations, current pass counts, naming conventions |
+| [testing.md](testing.md) | How to run the suites, the test populations, current pass counts, the CI / pre-publish gate (`deno publish` + fmt/lint/tests), naming conventions |
 | [roadmap.md](roadmap.md) | Phase status summary + what remains in the stdlib-bundling brief (links to the two long-form docs below) |
 | [vision.md](vision.md) | **Full** polyglot ecosystem vision + "TypeScript as a DLL" vision: guiding decisions, layer diagram, language-support matrix, staged roadmap, repo map (moved from root `VISION.md`, 2026-05-31) |
 | [stdlib-bundling-brief.md](stdlib-bundling-brief.md) | **Full** on-demand stdlib bundling design brief (§1–§7d): rationale, allocator unification, the two linking regimes, feature tiering, Javy-independence verdict, work items, per-capability + merge-bug post-mortems (moved from root, 2026-05-31) |

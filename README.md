@@ -156,6 +156,7 @@ wasmtk/
 | Task | Command | Notes |
 | --- | --- | --- |
 | Local install | `deno task install` | Syncs version, caches deps, installs global `wasmtk` binary |
+| Verify before publish | `deno publish --dry-run` · `deno lint main.ts src/` · `deno fmt --check main.ts src/` · `deno run -A tests/wasi_tests.ts` (+ `bindgen_tests.ts`, `jstyper_tests.ts`) | The CI gate is `deno publish` (type-check + JSR slow-types). Published source is kept `deno fmt`-clean — format with the scoped `deno fmt main.ts src/`, never bare `deno fmt` (it would reflow the README/docs and tests) |
 | Publish to JSR | `deno task publish` | Syncs version, then runs `deno publish` |
 | Bump version | Edit `version` in `deno.json`, then `deno task update-version` | Propagates to `package.json` and `src/utils.ts` automatically; `install` and `publish` call this automatically |
 | Dev watch | `deno task dev` | Runs `main.ts` with `--watch` |

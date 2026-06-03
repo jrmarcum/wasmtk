@@ -88,3 +88,12 @@ string-array element, and `Math.*`/`Number.*` handling all have such twins.
 - Bump version in `deno.json` only, then `deno task update-version` (propagates to `package.json`
   + `src/utils.ts VERSION`). Don't add `dependencies` to `package.json`; don't use
   `nodeModulesDir: "auto"` (Windows junction failures).
+- **Keep the published TypeScript (`main.ts` + `src/`) `deno fmt`-clean.** As of 2026-06-02 it
+  passes `deno fmt --check main.ts src/` (one-time reflow to the deno.json fmt config: lineWidth
+  100, arrow parens, semicolons). Format with the **scoped** `deno fmt main.ts src/` — do **NOT**
+  run bare `deno fmt`: with no `include`/`exclude` in deno.json it would reflow the 176 KB README
+  and all `cmem/*.md` markdown (mangling tables/code-fences) plus every test. `deno fmt` preserves
+  template-literal contents, so reformatting `wasic.ts`/`console_log.ts` leaves emitted WAT
+  byte-identical — but it IS the compiler, so reinstall (`deno install -g … -n wasmtk`) and re-run
+  the three suites after any reformat. fmt is not CI-gated (see testing.md), but staying clean keeps
+  the pre-publish checklist green.

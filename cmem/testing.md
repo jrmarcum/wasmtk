@@ -40,6 +40,30 @@ wabt-ts 1.3.1). See compiler-bugs.md.
 Historical baseline under npm:wabt+npm:binaryen was 446/446 (2026-05-25); the per-phase historical
 counts in README are a record of when each phase first went green, not a live invariant.
 
+## CI / pre-publish gate
+
+The only GitHub workflow is `.github/workflows/publish.yml`: it fires on a `v*` tag and runs
+**`deno publish`** (with OIDC provenance), then creates a `release/<tag>` branch + GitHub release.
+So the *enforced* CI gate is exactly what `deno publish` validates: **type-check of all 14
+`deno.json` exports + JSR "slow-types" check + package validation**. `deno fmt` / `deno lint` /
+the test suites are **not** gated by CI.
+
+The full green pre-publish checklist actually run (2026-06-02):
+
+```bash
+deno publish --dry-run --allow-dirty   # THE gate: type-check + slow-types + package — must pass
+deno lint main.ts src/                 # clean (18 files)
+deno fmt  --check main.ts src/         # clean as of 2026-06-02 (see design-decisions.md)
+deno run -A tests/wasi_tests.ts        # 278/278
+deno run -A tests/bindgen_tests.ts     # 103/103
+deno run -A tests/jstyper_tests.ts     # 73/73
+```
+
+Publish flow: bump `version` in `deno.json` (JSR rejects re-publishing the same version — `1.6.2`
+is the last published), then `deno task publish` → `scripts/publish.ts` syncs the version into
+`package.json` + `src/utils.ts VERSION`, commits `bump version to vX.Y.Z`, tags it, and pushes;
+the tag triggers `publish.yml`.
+
 ## Test populations in `tests/wasm_wasi/`
 
 | Population | Runner |
