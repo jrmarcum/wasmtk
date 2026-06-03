@@ -13,14 +13,22 @@ let wasiInstance: WebAssembly.Instance | undefined;
  * @param _env Unused environment variables (WASI interface compatibility).
  * @returns An object compatible with WebAssembly.instantiate imports.
  */
-export function createWasiImports(_args: string[], _env: Record<string, string>): WebAssembly.Imports {
+export function createWasiImports(
+  _args: string[],
+  _env: Record<string, string>,
+): WebAssembly.Imports {
   return {
     wasi_snapshot_preview1: {
       proc_exit: (code: number | bigint): void => {
         if (Number(code) === 0) rt.exit(0);
         throw new WebAssembly.RuntimeError(`exit:${code}`);
       },
-      fd_write: (fd: number | bigint, iovs: number | bigint, iovsLen: number | bigint, nwrittenPtr: number | bigint): number => {
+      fd_write: (
+        fd: number | bigint,
+        iovs: number | bigint,
+        iovsLen: number | bigint,
+        nwrittenPtr: number | bigint,
+      ): number => {
         const memory = wasiInstance?.exports.memory as WebAssembly.Memory;
         const view = new DataView(memory.buffer);
         let nwritten = 0;
@@ -28,13 +36,19 @@ export function createWasiImports(_args: string[], _env: Record<string, string>)
           const ptr = view.getUint32(Number(iovs) + i * 8, true);
           const len = view.getUint32(Number(iovs) + i * 8 + 4, true);
           const buf = new Uint8Array(memory.buffer, ptr, len);
-          if (Number(fd) === 1) rt.stdout.writeSync(buf); else rt.stderr.writeSync(buf);
+          if (Number(fd) === 1) rt.stdout.writeSync(buf);
+          else rt.stderr.writeSync(buf);
           nwritten += len;
         }
         view.setUint32(Number(nwrittenPtr), nwritten, true);
         return 0;
       },
-      fd_read: (fd: number | bigint, iovs: number | bigint, iovsLen: number | bigint, nreadPtr: number | bigint): number => {
+      fd_read: (
+        fd: number | bigint,
+        iovs: number | bigint,
+        iovsLen: number | bigint,
+        nreadPtr: number | bigint,
+      ): number => {
         if (Number(fd) !== 0) return 28;
         const memory = wasiInstance?.exports.memory as WebAssembly.Memory;
         const view = new DataView(memory.buffer);
@@ -51,7 +65,11 @@ export function createWasiImports(_args: string[], _env: Record<string, string>)
         view.setUint32(Number(nreadPtr), totalRead, true);
         return 0;
       },
-      clock_time_get: (_id: number | bigint, _prec: bigint | number, resPtr: number | bigint): number => {
+      clock_time_get: (
+        _id: number | bigint,
+        _prec: bigint | number,
+        resPtr: number | bigint,
+      ): number => {
         const view = new DataView((wasiInstance?.exports.memory as WebAssembly.Memory).buffer);
         view.setBigUint64(Number(resPtr), BigInt(Date.now()) * 1000000n, true);
         return 0;
@@ -88,7 +106,7 @@ export function createWasiImports(_args: string[], _env: Record<string, string>)
       fd_seek: (): number => 0,
       fd_prestat_get: (): number => 8,
       fd_prestat_dir_name: (): number => 8,
-    }
+    },
   };
 }
 

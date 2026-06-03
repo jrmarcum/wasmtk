@@ -253,7 +253,7 @@ export async function bundleImportsEx(entryPath: string): Promise<BundleResult> 
       /^[ \t]*export\s+(?:type\s+)?\{([^}]*)\}\s+from\s+['"]([^'"]+)['"]\s*;?[ \t]*\r?\n?/gm;
     let rm: RegExpExecArray | null;
     while ((rm = reExportNamedRe.exec(src)) !== null) {
-      const clause    = rm[1];
+      const clause = rm[1];
       const specifier = rm[2];
       if (!specifier.startsWith(".")) continue;
       const resolved = join(
@@ -268,15 +268,13 @@ export async function bundleImportsEx(entryPath: string): Promise<BundleResult> 
       // Map alias/name → originalName from the clause
       const clauseMap = parseClauseNames(clause);
       for (const [exported, original] of clauseMap) {
-        const canonical =
-          childResult.exportRenames.get(original) ?? `${childPrefix}_${original}`;
+        const canonical = childResult.exportRenames.get(original) ?? `${childPrefix}_${original}`;
         exportRenames.set(exported, canonical);
       }
     }
 
     //   export * from "./lib.ts"
-    const reExportStarRe =
-      /^[ \t]*export\s+\*\s+from\s+['"]([^'"]+)['"]\s*;?[ \t]*\r?\n?/gm;
+    const reExportStarRe = /^[ \t]*export\s+\*\s+from\s+['"]([^'"]+)['"]\s*;?[ \t]*\r?\n?/gm;
     let rs: RegExpExecArray | null;
     while ((rs = reExportStarRe.exec(src)) !== null) {
       const specifier = rs[1];
@@ -304,7 +302,7 @@ export async function bundleImportsEx(entryPath: string): Promise<BundleResult> 
 
     let m: RegExpExecArray | null;
     while ((m = importRe.exec(src)) !== null) {
-      const binding   = m[1].trim(); // e.g. "{ foo }", "* as math", "foo", "foo, { bar }"
+      const binding = m[1].trim(); // e.g. "{ foo }", "* as math", "foo", "foo, { bar }"
       const specifier = m[2];
 
       // ── Virtual capability imports: `import { setNew } from "wasmtk:set"` (Brief #4) ──
@@ -315,7 +313,9 @@ export async function bundleImportsEx(entryPath: string): Promise<BundleResult> 
         const cap = CAPABILITIES[capId];
         if (!cap) {
           throw new Error(
-            `Unknown capability import "wasmtk:${capId}". Available: ${Object.keys(CAPABILITIES).map((k) => "wasmtk:" + k).join(", ")}`,
+            `Unknown capability import "wasmtk:${capId}". Available: ${
+              Object.keys(CAPABILITIES).map((k) => "wasmtk:" + k).join(", ")
+            }`,
           );
         }
         const renames = new Map<string, string>();
@@ -329,7 +329,13 @@ export async function bundleImportsEx(entryPath: string): Promise<BundleResult> 
         }
         const virtualId = `wasmtk:${capId}`;
         if (!wasmImports.some((w) => w.filePath === virtualId)) {
-          wasmImports.push({ filePath: virtualId, prefix: cap.prefix, renames, bytes: cap.bytes, witText: cap.wit });
+          wasmImports.push({
+            filePath: virtualId,
+            prefix: cap.prefix,
+            renames,
+            bytes: cap.bytes,
+            witText: cap.wit,
+          });
         }
         continue;
       }
@@ -352,7 +358,7 @@ export async function bundleImportsEx(entryPath: string): Promise<BundleResult> 
           }
         }
 
-        if (!wasmImports.some(w => w.filePath === resolvedWasm)) {
+        if (!wasmImports.some((w) => w.filePath === resolvedWasm)) {
           wasmImports.push({ filePath: resolvedWasm, prefix: wasmPrefix, renames });
         }
         continue; // do not attempt to load .wasm as TypeScript
@@ -387,8 +393,7 @@ export async function bundleImportsEx(entryPath: string): Promise<BundleResult> 
       const defaultMatch = remaining.match(/^(\w+)\s*(?:,|$)/);
       if (defaultMatch && !remaining.startsWith("{") && !remaining.startsWith("*")) {
         const localDefault = defaultMatch[1];
-        const canonical =
-          childResult.exportRenames.get("default") ?? `${childPrefix}_default`;
+        const canonical = childResult.exportRenames.get("default") ?? `${childPrefix}_default`;
         localRewrites.set(localDefault, canonical);
         // Strip the default part; remaining may still have `{ named }`
         remaining = remaining.slice(defaultMatch[0].length).trim();
@@ -399,8 +404,7 @@ export async function bundleImportsEx(entryPath: string): Promise<BundleResult> 
       if (namedMatch) {
         const clauseMap = parseClauseNames(namedMatch[1]);
         for (const [local, original] of clauseMap) {
-          const canonical =
-            childResult.exportRenames.get(original) ?? `${childPrefix}_${original}`;
+          const canonical = childResult.exportRenames.get(original) ?? `${childPrefix}_${original}`;
           localRewrites.set(local, canonical);
         }
       }
@@ -427,7 +431,7 @@ export async function bundleImportsEx(entryPath: string): Promise<BundleResult> 
         const colonIdx = spec2.indexOf(":");
         if (colonIdx !== -1) {
           const original = spec2.slice(0, colonIdx).trim();
-          const alias    = spec2.slice(colonIdx + 1).trim();
+          const alias = spec2.slice(colonIdx + 1).trim();
           const canonical = `${wasmPrefix}_${original}`;
           renames.set(original, canonical);
           localRewrites.set(alias, canonical);
@@ -437,7 +441,7 @@ export async function bundleImportsEx(entryPath: string): Promise<BundleResult> 
           localRewrites.set(spec2, canonical);
         }
       }
-      if (!wasmImports.some(w => w.filePath === resolvedWasm)) {
+      if (!wasmImports.some((w) => w.filePath === resolvedWasm)) {
         wasmImports.push({ filePath: resolvedWasm, prefix: wasmPrefix, renames });
       }
     }

@@ -70,7 +70,8 @@ export async function ensureJavy(): Promise<void> {
   } catch { /* not yet installed */ }
 
   const assetName = getJavyAssetName();
-  const url = `https://github.com/bytecodealliance/javy/releases/download/${JAVY_VERSION}/${assetName}`;
+  const url =
+    `https://github.com/bytecodealliance/javy/releases/download/${JAVY_VERSION}/${assetName}`;
 
   console.log(`✅ Javy not found. Downloading ${assetName} from Bytecode Alliance...`);
 
@@ -81,12 +82,12 @@ export async function ensureJavy(): Promise<void> {
 
   const compressed = new Uint8Array(await response.arrayBuffer());
   const decompressed = await new Response(
-    new Blob([compressed]).stream().pipeThrough(new DecompressionStream("gzip"))
+    new Blob([compressed]).stream().pipeThrough(new DecompressionStream("gzip")),
   ).arrayBuffer();
 
   await rt.mkdir(
     `${rt.env.get("HOME") ?? rt.env.get("USERPROFILE") ?? "."}/.deno/bin`,
-    { recursive: true }
+    { recursive: true },
   );
   await rt.writeFile(installPath, new Uint8Array(decompressed));
 
@@ -129,7 +130,8 @@ export function detectJavyProvider(buf: Uint8Array): string | null {
     if (sectionId !== 0) continue;
 
     let p = bodyPos;
-    const [nameLen, afterName] = readULEB128(p); p = afterName;
+    const [nameLen, afterName] = readULEB128(p);
+    p = afterName;
     const sectionName = decoder.decode(buf.slice(p, p + nameLen));
 
     if (
@@ -165,7 +167,8 @@ export async function compileJavy(path: string, outPath?: string): Promise<void>
     stdout: "piped",
   });
   const output = await bundle.output();
-  const preamble = `const prompt = function(message) { if (message) { Javy.IO.writeSync(1, new TextEncoder().encode(message + " ")); } let input = ""; const buffer = new Uint8Array(1); while (true) { const n = Javy.IO.readSync(0, buffer); if (n > 0) { const char = new TextDecoder().decode(buffer); if (char === "\\n" || char === "\\r") break; input += char; } else if (n === 0) { continue; } else { break; } } return input.trim(); };`;
+  const preamble =
+    `const prompt = function(message) { if (message) { Javy.IO.writeSync(1, new TextEncoder().encode(message + " ")); } let input = ""; const buffer = new Uint8Array(1); while (true) { const n = Javy.IO.readSync(0, buffer); if (n > 0) { const char = new TextDecoder().decode(buffer); if (char === "\\n" || char === "\\r") break; input += char; } else if (n === 0) { continue; } else { break; } } return input.trim(); };`;
   await rt.writeTextFile(jsOut, preamble + new TextDecoder().decode(output.stdout));
   const javyCmd = (await isJavyAvailable()) ? "javy" : getJavyInstallPath();
   const javy = new rt.Command(javyCmd, {

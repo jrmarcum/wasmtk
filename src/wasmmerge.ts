@@ -189,7 +189,9 @@ export function extractExportNames(wat: string): string[] {
 // ---------------------------------------------------------------------------
 
 /** Parse type declarations: index → { params, result } */
-function parseTypeTable(forms: string[]): Map<number, { params: WasmWatType[]; result: WasmWatType | null }> {
+function parseTypeTable(
+  forms: string[],
+): Map<number, { params: WasmWatType[]; result: WasmWatType | null }> {
   const table = new Map<number, { params: WasmWatType[]; result: WasmWatType | null }>();
   for (const form of forms) {
     if (formKind(form) !== "type") continue;
@@ -273,7 +275,11 @@ function detectBumpAllocator(funcForm: string): { heapPtrGlobalIdx: number } | n
   if (/\bcall(?:_indirect)?\b/.test(funcForm)) return null;
 
   // No memory ops — $__malloc never touches linear memory directly.
-  if (/\bi32\.(load|store)|\bi64\.(load|store)|\bf32\.(load|store)|\bf64\.(load|store)\b/.test(funcForm)) return null;
+  if (
+    /\bi32\.(load|store)|\bi64\.(load|store)|\bf32\.(load|store)|\bf64\.(load|store)\b/.test(
+      funcForm,
+    )
+  ) return null;
 
   return { heapPtrGlobalIdx: getIdx };
 }
@@ -376,11 +382,16 @@ export function mergeWasmWat(
         const params: WasmWatType[] = [];
         for (const pm of (headerLine.match(/\(param([^)]*)\)/g) ?? [])) {
           for (const t of pm.replace("(param", "").replace(")", "").trim().split(/\s+/)) {
-            if (t === "i32" || t === "i64" || t === "f32" || t === "f64") params.push(t as WasmWatType);
+            if (t === "i32" || t === "i64" || t === "f32" || t === "f64") {
+              params.push(t as WasmWatType);
+            }
           }
         }
         const resM = headerLine.match(/\(result\s+(i32|i64|f32|f64)\)/);
-        funcInlineSig.set(parseInt(idxM[1]), { params, result: resM ? (resM[1] as WasmWatType) : null });
+        funcInlineSig.set(parseInt(idxM[1]), {
+          params,
+          result: resM ? (resM[1] as WasmWatType) : null,
+        });
       }
       // Bump-allocator detection. Each wasic-emitted library carries the same
       // tiny $__malloc body; we keep only the main module's copy and route
@@ -425,12 +436,16 @@ export function mergeWasmWat(
   }
 
   if (strippedNames.length > 0) {
-    const unique = [...new Set(strippedNames.map(n => n.replace(" (import)", "")))];
-    notices.push(`entry-only features excluded: ${unique.join(", ")}. Module converted to library mode.`);
+    const unique = [...new Set(strippedNames.map((n) => n.replace(" (import)", "")))];
+    notices.push(
+      `entry-only features excluded: ${unique.join(", ")}. Module converted to library mode.`,
+    );
   }
 
   if (droppedMallocIdx !== null) {
-    notices.push(`allocator unified: dropped $__malloc + heap-ptr global; call sites redirected to main module's $__malloc / $__heap_ptr.`);
+    notices.push(
+      `allocator unified: dropped $__malloc + heap-ptr global; call sites redirected to main module's $__malloc / $__heap_ptr.`,
+    );
   }
 
   // ── Build funcIdx → canonical WAT $name ──────────────────────────────────
@@ -595,8 +610,8 @@ export function mergeWasmWat(
       if (!idxM) continue;
       const idx = parseInt(idxM[1]);
       const info = importMap.get(idx);
-      if (!info) continue;                         // was entry-only, already deleted
-      if (info.module === WASI_MODULE) continue;   // deduplicated — main module declares these
+      if (!info) continue; // was entry-only, already deleted
+      if (info.module === WASI_MODULE) continue; // deduplicated — main module declares these
       // Non-WASI external import: include with mangled name
       const newName = funcName.get(idx) ?? `$${prefix}__fn${idx}`;
       // Use a function callback to avoid JavaScript's $1/$2 backreference substitution
@@ -628,7 +643,10 @@ export function mergeWasmWat(
 
       const newName = funcName.get(idx) ?? `$${prefix}__fn${idx}`;
       // Use a function callback to prevent $1 backreference substitution in newName.
-      let body = form.replace(/\(func\s+\(;(\d+);\)(?:\s+\(type\s+\d+\))?/, () => `(func ${newName}`);
+      let body = form.replace(
+        /\(func\s+\(;(\d+);\)(?:\s+\(type\s+\d+\))?/,
+        () => `(func ${newName}`,
+      );
       body = renameCallSites(body);
       body = renameGlobalRefs(body);
       body = relocateDataPtrs(body);

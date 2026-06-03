@@ -9,12 +9,7 @@ import { rt } from "./rt.ts";
 import wasm2js_compiler from "wasm2js";
 import binaryen from "./binaryen.ts";
 import wabt from "wabt";
-import {
-  detectJavyProvider,
-  ensureJavy,
-  isJavyAvailable,
-  getJavyInstallPath,
-} from "./javyc.ts";
+import { detectJavyProvider, ensureJavy, getJavyInstallPath, isJavyAvailable } from "./javyc.ts";
 import { bundleImports } from "./tsbundler.ts";
 
 export { compileJavy } from "./javyc.ts";
@@ -22,8 +17,16 @@ export { compileWasi } from "./wasic.ts";
 export { compileModule } from "./modc.ts";
 
 // Minimal type stubs for the wabt npm package API
-interface WasmFeatures { enable_all?: boolean; [key: string]: boolean | undefined; }
-interface WabtWasmModule { toBinary(opts: object): { buffer: ArrayBuffer }; toText(opts: object): string; destroy(): void; applyNames(): void; }
+interface WasmFeatures {
+  enable_all?: boolean;
+  [key: string]: boolean | undefined;
+}
+interface WabtWasmModule {
+  toBinary(opts: object): { buffer: ArrayBuffer };
+  toText(opts: object): string;
+  destroy(): void;
+  applyNames(): void;
+}
 interface WabtModule {
   parseWat(filename: string, source: string, features?: WasmFeatures): WabtWasmModule;
   readWasm(buffer: Uint8Array, opts: { readDebugNames: boolean }): WabtWasmModule;
@@ -37,11 +40,16 @@ let wasiInstance: WebAssembly.Instance | undefined;
 type WasmCallable = (...args: (number | bigint)[]) => number | bigint | void;
 type WasiImports = Record<string, Record<string, WasmCallable | WebAssembly.Memory>>;
 
-
 interface BinaryenLibExt {
   getImportInfo(importRef: number): { module: string; name: string; kind: number };
-  i32: number; i64: number; f32: number; f64: number;
-  v128: number; funcref: number; externref: number; none: number;
+  i32: number;
+  i64: number;
+  f32: number;
+  f64: number;
+  v128: number;
+  funcref: number;
+  externref: number;
+  none: number;
 }
 
 function getTypeName(typeId: number): string {
@@ -64,7 +72,12 @@ const wasiImports: WasiImports = {
       if (Number(code) === 0) rt.exit(0);
       throw new WebAssembly.RuntimeError(`exit:${code}`);
     },
-    fd_write: (fd: number | bigint, iovs: number | bigint, iovsLen: number | bigint, nwrittenPtr: number | bigint): number => {
+    fd_write: (
+      fd: number | bigint,
+      iovs: number | bigint,
+      iovsLen: number | bigint,
+      nwrittenPtr: number | bigint,
+    ): number => {
       const memory = wasiInstance?.exports.memory as WebAssembly.Memory;
       const view = new DataView(memory.buffer);
       let nwritten = 0;
@@ -72,14 +85,20 @@ const wasiImports: WasiImports = {
         const ptr = view.getUint32(Number(iovs) + i * 8, true);
         const len = view.getUint32(Number(iovs) + i * 8 + 4, true);
         const buf = new Uint8Array(memory.buffer, ptr, len);
-        if (Number(fd) === 1) rt.stdout.writeSync(buf); else rt.stderr.writeSync(buf);
+        if (Number(fd) === 1) rt.stdout.writeSync(buf);
+        else rt.stderr.writeSync(buf);
         nwritten += len;
       }
       view.setUint32(Number(nwrittenPtr), nwritten, true);
       return 0;
     },
     fd_pwrite: (): number => 0,
-    fd_read: (fd: number | bigint, iovs: number | bigint, iovsLen: number | bigint, nreadPtr: number | bigint): number => {
+    fd_read: (
+      fd: number | bigint,
+      iovs: number | bigint,
+      iovsLen: number | bigint,
+      nreadPtr: number | bigint,
+    ): number => {
       if (Number(fd) !== 0) return 28;
       const memory = wasiInstance?.exports.memory as WebAssembly.Memory;
       const view = new DataView(memory.buffer);
@@ -96,7 +115,11 @@ const wasiImports: WasiImports = {
       view.setUint32(Number(nreadPtr), totalRead, true);
       return 0;
     },
-    clock_time_get: (_id: number | bigint, _prec: bigint | number, resPtr: number | bigint): number => {
+    clock_time_get: (
+      _id: number | bigint,
+      _prec: bigint | number,
+      resPtr: number | bigint,
+    ): number => {
       const view = new DataView((wasiInstance?.exports.memory as WebAssembly.Memory).buffer);
       view.setBigUint64(Number(resPtr), BigInt(Date.now()) * 1000000n, true);
       return 0;
@@ -142,7 +165,7 @@ const wasiImports: WasiImports = {
     poll_oneoff: (): number => 28,
     sched_yield: (): number => 0,
     fd_fdstat_set_flags: (_fd: number | bigint, _flags: number | bigint): number => 0,
-  }
+  },
 };
 
 async function getWasmBytes(path: string): Promise<Uint8Array> {
@@ -155,7 +178,9 @@ async function getWasmBytes(path: string): Promise<Uint8Array> {
       parsed.destroy();
       return new Uint8Array(buffer);
     } catch (err) {
-      throw new Error(`[WAT Compilation Error] ${err instanceof Error ? err.message : String(err)}`);
+      throw new Error(
+        `[WAT Compilation Error] ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
   return await rt.readFile(path);
@@ -180,11 +205,15 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
   if (path.endsWith(".wat")) {
     try {
       const watSource = await rt.readTextFile(path);
-      if (watSource.includes("javy_quickjs_provider") || watSource.includes("javy-default-plugin")) {
+      if (
+        watSource.includes("javy_quickjs_provider") || watSource.includes("javy-default-plugin")
+      ) {
         const inferredTs = path.replace(/\.wat$/, ".ts");
         console.error(`❌ Cannot run Javy WAT: "${path}"`);
         console.error(`   This WAT is the app layer only — the QuickJS engine is not embedded.`);
-        console.error(`   To run, use the original WASM: wasmtk run ${path.replace(/\.wat$/, ".wasm")}`);
+        console.error(
+          `   To run, use the original WASM: wasmtk run ${path.replace(/\.wat$/, ".wasm")}`,
+        );
         console.error(`   To rebuild after edits: wasmtk wasic ${inferredTs}`);
         rt.exit(1);
       }
@@ -205,7 +234,9 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
         const strBuf = new Uint16Array(memory.buffer, ptr, len / 2);
         console.log(String.fromCharCode(...strBuf));
       },
-      abort: (): void => { throw new WebAssembly.RuntimeError("abort"); },
+      abort: (): void => {
+        throw new WebAssembly.RuntimeError("abort");
+      },
     };
     const envProxy = new Proxy(envBase, {
       get(target, prop) {
@@ -215,16 +246,19 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
       },
     });
     const extendedImports = { ...wasiImports, env: envProxy };
-    const result = await WebAssembly.instantiate(wasmBytes as BufferSource, extendedImports as unknown as WebAssembly.Imports);
+    const result = await WebAssembly.instantiate(
+      wasmBytes as BufferSource,
+      extendedImports as unknown as WebAssembly.Imports,
+    );
     wasiInstance = result.instance;
-    
+
     if (args.length > 0 && !wasiInstance.exports._start) {
       const [name, ...params] = args;
       const fn = wasiInstance.exports[name];
       if (typeof fn === "function") {
-        const parsedArgs = params.map(p => {
-            const n = Number(p);
-            return isNaN(n) ? 0 : n;
+        const parsedArgs = params.map((p) => {
+          const n = Number(p);
+          return isNaN(n) ? 0 : n;
         }) as (number | bigint)[];
         const res = (fn as WasmCallable)(...parsedArgs);
         if (res !== undefined) console.log(`${res}`);
@@ -238,16 +272,34 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
         (init as WasmCallable)();
       } catch (err) {
         if (err instanceof WebAssembly.RuntimeError && err.message.includes("exit:0")) return;
-        if (err instanceof ((WebAssembly as Record<string, unknown>)["Exception"] as new (...args: unknown[]) => unknown)) {
+        if (
+          err instanceof
+            ((WebAssembly as Record<string, unknown>)["Exception"] as new (
+              ...args: unknown[]
+            ) => unknown)
+        ) {
           // Unhandled WASM throw — print message to stderr (mirrors TypeScript uncaught error), then exit cleanly.
           try {
-            const tag = wasiInstance?.exports.__exn_tag as unknown as Record<string, unknown> | undefined;
-            if (tag && (err as Record<string, unknown>)["is"] && (err as Record<string, (...a: unknown[]) => unknown>)["is"](tag)) {
-              const ptr = (err as Record<string, (...a: unknown[]) => unknown>)["getArg"](tag, 0) as number;
-              const len = (err as Record<string, (...a: unknown[]) => unknown>)["getArg"](tag, 1) as number;
+            const tag = wasiInstance?.exports.__exn_tag as unknown as
+              | Record<string, unknown>
+              | undefined;
+            if (
+              tag && (err as Record<string, unknown>)["is"] &&
+              (err as Record<string, (...a: unknown[]) => unknown>)["is"](tag)
+            ) {
+              const ptr = (err as Record<string, (...a: unknown[]) => unknown>)["getArg"](
+                tag,
+                0,
+              ) as number;
+              const len = (err as Record<string, (...a: unknown[]) => unknown>)["getArg"](
+                tag,
+                1,
+              ) as number;
               const memory = wasiInstance?.exports.memory as WebAssembly.Memory;
               const msg = new TextDecoder().decode(new Uint8Array(memory.buffer, ptr, len));
-              rt.stderr.writeSync(new TextEncoder().encode(`error: Uncaught (in Wasm) Error: ${msg}\n`));
+              rt.stderr.writeSync(
+                new TextEncoder().encode(`error: Uncaught (in Wasm) Error: ${msg}\n`),
+              );
             }
           } catch { /* ignore tag extraction errors */ }
           return;
@@ -255,7 +307,10 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
         throw err;
       }
     }
-  } catch (err) { console.error(`❌ Run error: ${err}`); rt.exit(1); }
+  } catch (err) {
+    console.error(`❌ Run error: ${err}`);
+    rt.exit(1);
+  }
 }
 
 /**
@@ -272,11 +327,15 @@ export async function callExport(path: string, fnName: string, params: string[])
     const wasmBytes = await getWasmBytes(path);
     const extendedImports = {
       ...wasiImports,
-      env: { abort: (): void => { throw new WebAssembly.RuntimeError("abort"); } },
+      env: {
+        abort: (): void => {
+          throw new WebAssembly.RuntimeError("abort");
+        },
+      },
     };
     const result = await WebAssembly.instantiate(
       wasmBytes as BufferSource,
-      extendedImports as unknown as WebAssembly.Imports
+      extendedImports as unknown as WebAssembly.Imports,
     );
     wasiInstance = result.instance;
 
@@ -287,7 +346,7 @@ export async function callExport(path: string, fnName: string, params: string[])
       rt.exit(1);
     }
 
-    const parsedArgs = params.map(p => {
+    const parsedArgs = params.map((p) => {
       const n = Number(p);
       return isNaN(n) ? 0 : n;
     }) as (number | bigint)[];
@@ -315,9 +374,10 @@ export async function showInfo(path: string): Promise<void> {
     let found = 0;
     for (let i = 0; i < numExports; i++) {
       const exp = binaryen.getExportInfo(module.getExportByIndex(i));
-      if (exp.kind !== 0) continue; 
+      if (exp.kind !== 0) continue;
       const name = exp.name;
-      const isInternal = name === "_initialize" || name === "abort" || name.startsWith("__") || name.startsWith("cabi_") || name.includes("config-schema");
+      const isInternal = name === "_initialize" || name === "abort" || name.startsWith("__") ||
+        name.startsWith("cabi_") || name.includes("config-schema");
       if (!isInternal) {
         const func = module.getFunction(exp.value);
         const info = binaryen.getFunctionInfo(func);
@@ -337,10 +397,16 @@ export async function showInfo(path: string): Promise<void> {
     } catch { /* fall through — isWasi stays false */ }
     // Detect Javy binary for informational note (Wizer fuses WASI imports so isWasi may be false)
     const isJavy = path.endsWith(".wasm") && detectJavyProvider(bytes) !== null;
-    console.log(`\n🛠️  WASI Support: ${isWasi || isJavy ? "Yes" : "No"}${isJavy ? " (Javy/QuickJS — WASI internalized by Wizer)" : ""}`);
+    console.log(
+      `\n🛠️  WASI Support: ${isWasi || isJavy ? "Yes" : "No"}${
+        isJavy ? " (Javy/QuickJS — WASI internalized by Wizer)" : ""
+      }`,
+    );
     console.log("─".repeat(40));
     module.dispose();
-  } catch (err) { console.error("❌ Info error: " + err); }
+  } catch (err) {
+    console.error("❌ Info error: " + err);
+  }
 }
 
 /**
@@ -351,8 +417,10 @@ export async function checkIsLibrary(path: string): Promise<boolean> {
   try {
     const bytes = await getWasmBytes(path);
     const mod = await WebAssembly.compile(bytes as BufferSource);
-    return !WebAssembly.Module.exports(mod).some(e => e.name === "_start");
-  } catch { return false; }
+    return !WebAssembly.Module.exports(mod).some((e) => e.name === "_start");
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -365,11 +433,15 @@ export async function wasm2js(path: string, outPath?: string): Promise<void> {
     if (outPath) await rt.mkdir(dirname(outPath), { recursive: true });
     const wasmBuffer = await getWasmBytes(path);
     const result = wasm2js_compiler(wasmBuffer as BufferSource);
-    await rt.writeTextFile(out, typeof result === "string" ? result : new TextDecoder().decode(result));
+    await rt.writeTextFile(
+      out,
+      typeof result === "string" ? result : new TextDecoder().decode(result),
+    );
     console.log(`✅ Success: ${out}`);
-  } catch (err) { console.error(`❌ Conversion failed: ${err}`); }
+  } catch (err) {
+    console.error(`❌ Conversion failed: ${err}`);
+  }
 }
-
 
 /**
  * Finds the original JS/TS source file alongside a WASM file.
@@ -407,12 +479,16 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
       const watSource = await rt.readTextFile(p);
 
       // Detect Javy dynamic module by checking for javy_quickjs_provider imports in the WAT text
-      if (watSource.includes("javy_quickjs_provider") || watSource.includes("javy-default-plugin")) {
+      if (
+        watSource.includes("javy_quickjs_provider") || watSource.includes("javy-default-plugin")
+      ) {
         const inferredTs = p.replace(/\.wat$/, ".ts");
         console.warn(`⚠️  Javy WAT detected: "${p}"`);
         console.warn(`   This WAT represents the app layer of a Javy dynamic module.`);
         console.warn(`   The QuickJS engine is not embedded — this WAT cannot be merged`);
-        console.warn(`   back into a standalone WASM compatible with wasmtk/wasmtime/wasmer/wazero.`);
+        console.warn(
+          `   back into a standalone WASM compatible with wasmtk/wasmtime/wasmer/wazero.`,
+        );
         console.warn(`   To produce a runnable binary, recompile the original source:`);
         console.warn(`     wasmtk wasic ${inferredTs}`);
         return;
@@ -425,7 +501,6 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
       parsed.destroy();
       await rt.writeFile(out, new Uint8Array(buffer));
       console.log(`✅ Converted to ${out}`);
-
     } else {
       // --- WASM → WAT ---
       const wasmBytes = await rt.readFile(p);
@@ -471,10 +546,21 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
 
         // Step 2: build the dynamic app module against the emitted plugin
         const javy = new rt.Command(javyCmd, {
-          args: ["build", "-C", "dynamic", "-C", `plugin=${tempPlugin}`, sourcePath, "-o", tempWasm],
+          args: [
+            "build",
+            "-C",
+            "dynamic",
+            "-C",
+            `plugin=${tempPlugin}`,
+            sourcePath,
+            "-o",
+            tempWasm,
+          ],
         });
         const javyResult = await javy.output();
-        try { await rt.remove(tempPlugin); } catch { /* ignore */ }
+        try {
+          await rt.remove(tempPlugin);
+        } catch { /* ignore */ }
 
         if (!javyResult.success) {
           const errText = new TextDecoder().decode(javyResult.stderr);
@@ -490,15 +576,18 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
           mod.destroy();
           await rt.writeTextFile(out, wat);
         } finally {
-          try { await rt.remove(tempWasm); } catch { /* ignore */ }
+          try {
+            await rt.remove(tempWasm);
+          } catch { /* ignore */ }
         }
 
         console.log(`✅ Converted to ${out}`);
         console.warn(`⚠️  One-way conversion: this WAT represents the app layer only.`);
         console.warn(`   The QuickJS engine is excluded.`);
         console.warn(`   This WAT cannot be converted back into a standalone WASM.`);
-        console.warn(`   To modify and rebuild, edit the source and run: wasmtk wasic ${sourcePath}`);
-
+        console.warn(
+          `   To modify and rebuild, edit the source and run: wasmtk wasic ${sourcePath}`,
+        );
       } else {
         // Normal WASM → WAT round-trip
         const wabtModule = await (wabt as unknown as () => Promise<WabtModule>)();
@@ -509,9 +598,10 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
         console.log(`✅ Converted to ${out}`);
       }
     }
-  } catch (err) { console.error(`❌ Conversion failed: ${err}`); }
+  } catch (err) {
+    console.error(`❌ Conversion failed: ${err}`);
+  }
 }
-
 
 /**
  * Bundles a TypeScript project into a single TypeScript file by inlining all imports.

@@ -16,16 +16,16 @@
 
 import { parseArgs } from "@std/cli/parse-args";
 import {
-  VERSION,
-  compileModule,
-  runWasi,
+  bundleTs,
   callExport,
-  showInfo,
-  wasm2js,
   compileJavy,
+  compileModule,
   compileWasi,
   convertFile,
-  bundleTs
+  runWasi,
+  showInfo,
+  VERSION,
+  wasm2js,
 } from "./src/utils.ts";
 import { runJstyper } from "./src/jstyper.ts";
 import { runBindgen } from "./src/bindgen.ts";
@@ -127,7 +127,9 @@ Options:
       if (fn) {
         await callExport(target, fn, args._.slice(3).map(String));
       } else {
-        console.log(`✅ Module loaded. To call a function, use: wasmtk mod ${target} <function> [args...]`);
+        console.log(
+          `✅ Module loaded. To call a function, use: wasmtk mod ${target} <function> [args...]`,
+        );
         await showInfo(target);
       }
       break;
@@ -180,10 +182,9 @@ Options:
     }
     case "bindgen": {
       const runtimeRaw = args["runtime"] as string | undefined;
-      const runtime =
-        runtimeRaw === "deno" || runtimeRaw === "node" || runtimeRaw === "bun"
-          ? (runtimeRaw as "deno" | "node" | "bun")
-          : "deno";
+      const runtime = runtimeRaw === "deno" || runtimeRaw === "node" || runtimeRaw === "bun"
+        ? (runtimeRaw as "deno" | "node" | "bun")
+        : "deno";
       await runBindgen(target, { outPath, runtime });
       break;
     }

@@ -55,19 +55,19 @@ const WASI_MODULE = "wasi_snapshot_preview1";
  * Used when building WASI import declarations in the master WAT.
  */
 const WASI_SIGNATURES: Record<string, string> = {
-  fd_write:          "(param i32 i32 i32 i32) (result i32)",
-  fd_read:           "(param i32 i32 i32 i32) (result i32)",
-  fd_seek:           "(param i32 i64 i32 i32) (result i32)",
-  fd_close:          "(param i32) (result i32)",
-  fd_fdstat_get:     "(param i32 i32) (result i32)",
-  proc_exit:         "(param i32)",
-  args_get:          "(param i32 i32) (result i32)",
-  args_sizes_get:    "(param i32 i32) (result i32)",
-  environ_get:       "(param i32 i32) (result i32)",
+  fd_write: "(param i32 i32 i32 i32) (result i32)",
+  fd_read: "(param i32 i32 i32 i32) (result i32)",
+  fd_seek: "(param i32 i64 i32 i32) (result i32)",
+  fd_close: "(param i32) (result i32)",
+  fd_fdstat_get: "(param i32 i32) (result i32)",
+  proc_exit: "(param i32)",
+  args_get: "(param i32 i32) (result i32)",
+  args_sizes_get: "(param i32 i32) (result i32)",
+  environ_get: "(param i32 i32) (result i32)",
   environ_sizes_get: "(param i32 i32) (result i32)",
-  random_get:        "(param i32 i32) (result i32)",
-  clock_time_get:    "(param i32 i64 i32) (result i32)",
-  path_open:         "(param i32 i32 i32 i32 i64 i64 i32 i32) (result i32)",
+  random_get: "(param i32 i32) (result i32)",
+  clock_time_get: "(param i32 i64 i32) (result i32)",
+  path_open: "(param i32 i32 i32 i32 i64 i64 i32 i32) (result i32)",
   path_filestat_get: "(param i32 i32 i32 i32 i32) (result i32)",
 };
 
@@ -98,7 +98,9 @@ async function promptConflict(
   const allHaveAliases = fileAliases.every((a) => a !== undefined);
   const aliasLine = allHaveAliases
     ? `  [2]  Prefix with alias         →  ${fileAliases.map((a) => `${a}_${name}`).join(", ")}\n`
-    : `  [2]  Prefix with alias         →  (use --alias ${fileNames.map((f) => `${f}=<name>`).join(",")})\n`;
+    : `  [2]  Prefix with alias         →  (use --alias ${
+      fileNames.map((f) => `${f}=<name>`).join(",")
+    })\n`;
 
   const encoder = new TextEncoder();
   await rt.stdout.write(
@@ -332,8 +334,7 @@ export async function runWasmBundle(
   const wasiDecls = [...allWasiNames]
     .filter((name) => WASI_SIGNATURES[name])
     .map(
-      (name) =>
-        `  (import "${WASI_MODULE}" "${name}" (func $${name} ${WASI_SIGNATURES[name]}))`,
+      (name) => `  (import "${WASI_MODULE}" "${name}" (func $${name} ${WASI_SIGNATURES[name]}))`,
     );
 
   // Phase 18.5: when any merged library dropped its bump allocator, synthesise

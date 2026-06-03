@@ -71,29 +71,69 @@ export function unescapeString(raw: string): string {
   let result = "";
   let i = 0;
   while (i < raw.length) {
-    if (raw[i] !== "\\") { result += raw[i++]; continue; }
+    if (raw[i] !== "\\") {
+      result += raw[i++];
+      continue;
+    }
     i++; // skip the backslash
-    if (i >= raw.length) { result += "\\"; break; }
+    if (i >= raw.length) {
+      result += "\\";
+      break;
+    }
     const ch = raw[i];
     switch (ch) {
-      case "n":  result += "\n"; i++; break;
-      case "r":  result += "\r"; i++; break;
-      case "t":  result += "\t"; i++; break;
-      case "b":  result += "\b"; i++; break;
-      case "f":  result += "\f"; i++; break;
-      case "v":  result += "\v"; i++; break;
-      case "0":  result += "\0"; i++; break;
-      case "\\":  result += "\\"; i++; break;
-      case "'":  result += "'";  i++; break;
-      case '"':  result += '"';  i++; break;
-      case "`":  result += "`";  i++; break;
+      case "n":
+        result += "\n";
+        i++;
+        break;
+      case "r":
+        result += "\r";
+        i++;
+        break;
+      case "t":
+        result += "\t";
+        i++;
+        break;
+      case "b":
+        result += "\b";
+        i++;
+        break;
+      case "f":
+        result += "\f";
+        i++;
+        break;
+      case "v":
+        result += "\v";
+        i++;
+        break;
+      case "0":
+        result += "\0";
+        i++;
+        break;
+      case "\\":
+        result += "\\";
+        i++;
+        break;
+      case "'":
+        result += "'";
+        i++;
+        break;
+      case '"':
+        result += '"';
+        i++;
+        break;
+      case "`":
+        result += "`";
+        i++;
+        break;
       case "x": {
         const hex = raw.slice(i + 1, i + 3);
         if (/^[0-9a-fA-F]{2}$/.test(hex)) {
           result += String.fromCharCode(parseInt(hex, 16));
           i += 3; // skip 'x' + 2 hex digits
         } else {
-          result += "\\x"; i++; // malformed — pass through
+          result += "\\x";
+          i++; // malformed — pass through
         }
         break;
       }
@@ -106,20 +146,30 @@ export function unescapeString(raw: string): string {
             if (/^[0-9a-fA-F]+$/.test(hex)) {
               result += String.fromCodePoint(parseInt(hex, 16));
               i = end + 1;
-            } else { result += "\\u{"; i++; }
-          } else { result += "\\u{"; i++; }
+            } else {
+              result += "\\u{";
+              i++;
+            }
+          } else {
+            result += "\\u{";
+            i++;
+          }
         } else {
           // \uHHHH exactly 4 hex digits
           const hex = raw.slice(i + 1, i + 5);
           if (/^[0-9a-fA-F]{4}$/.test(hex)) {
             result += String.fromCodePoint(parseInt(hex, 16));
             i += 5; // skip 'u' + 4 hex digits
-          } else { result += "\\u"; i++; }
+          } else {
+            result += "\\u";
+            i++;
+          }
         }
         break;
       }
       default:
-        result += ch; i++; // unknown escape → pass the character through
+        result += ch;
+        i++; // unknown escape → pass the character through
         break;
     }
   }
@@ -159,8 +209,12 @@ export function setStringArrayAllocator(fn: ((elements: string[]) => number) | u
   _strArrAlloc = fn;
 }
 
-let _structLiteralAlloc: ((structName: string, initFields: Record<string, string>) => number) | undefined = undefined;
-export function setStructLiteralAllocator(fn: ((structName: string, initFields: Record<string, string>) => number) | undefined): void {
+let _structLiteralAlloc:
+  | ((structName: string, initFields: Record<string, string>) => number)
+  | undefined = undefined;
+export function setStructLiteralAllocator(
+  fn: ((structName: string, initFields: Record<string, string>) => number) | undefined,
+): void {
   _structLiteralAlloc = fn;
 }
 
@@ -180,7 +234,10 @@ export function setFuncTableLookup(fn: ((name: string) => number | undefined) | 
  *  ptr=-1 means runtime local (param). ptr=-2 means dynamic heap array (local with 8-byte header).
  *  dynamic=true means the array has a [length, capacity] header at its pointer. */
 export type ArrayLookup = (name: string) => {
-  elemType: string; ptr: number; length: number; dynamic?: boolean;
+  elemType: string;
+  ptr: number;
+  length: number;
+  dynamic?: boolean;
   /** Phase 31: override shift for sub-word TypedArrays (0=byte, 1=halfword, 2=word, 3=dword) */
   shift?: number;
   /** Phase 31: override load instruction for sub-word TypedArrays */
@@ -195,7 +252,10 @@ export type ArrayLookup = (name: string) => {
  * Callback to resolve a struct field access `varName.fieldName`.
  * Returns the field's WAT type string and the WAT load expression, or undefined if not a struct field.
  */
-export type StructFieldLookup = (varName: string, fieldName: string) => { type: string; watLoad: string; watLoadLen?: string } | undefined;
+export type StructFieldLookup = (
+  varName: string,
+  fieldName: string,
+) => { type: string; watLoad: string; watLoadLen?: string } | undefined;
 
 /**
  * Callback to resolve a dot-call expression like `receiver.method(args)`.
@@ -216,20 +276,20 @@ export type ClosureVarLookup = (name: string) => {
 
 /** A parsed fragment of a console.log argument list. */
 export type LogSegment =
-  | { kind: "literal"; text: string }                        // static string (embedded in data section)
-  | { kind: "i32var"; name: string }                         // local i32 variable
-  | { kind: "i64var"; name: string }                         // local i64 variable
-  | { kind: "f64var"; name: string }                         // local f64 variable
-  | { kind: "i32expr"; wat: string }                         // arbitrary WAT expression yielding i32
-  | { kind: "i64expr"; wat: string }                         // arbitrary WAT expression yielding i64
-  | { kind: "f64expr"; wat: string }                         // arbitrary WAT expression yielding f64
-  | { kind: "strvar"; ptrLocal: string; lenLocal: string }   // string variable (ptr + len i32 locals)
-  | { kind: "boolvar"; name: string }                        // bool-typed local (i32, 0=false 1=true)
-  | { kind: "boolexpr"; wat: string }                        // arbitrary WAT expression yielding bool i32
-  | { kind: "arrptr"; wat: string; elemType: string }        // WAT expression yielding a dynamic array ptr
+  | { kind: "literal"; text: string } // static string (embedded in data section)
+  | { kind: "i32var"; name: string } // local i32 variable
+  | { kind: "i64var"; name: string } // local i64 variable
+  | { kind: "f64var"; name: string } // local f64 variable
+  | { kind: "i32expr"; wat: string } // arbitrary WAT expression yielding i32
+  | { kind: "i64expr"; wat: string } // arbitrary WAT expression yielding i64
+  | { kind: "f64expr"; wat: string } // arbitrary WAT expression yielding f64
+  | { kind: "strvar"; ptrLocal: string; lenLocal: string } // string variable (ptr + len i32 locals)
+  | { kind: "boolvar"; name: string } // bool-typed local (i32, 0=false 1=true)
+  | { kind: "boolexpr"; wat: string } // arbitrary WAT expression yielding bool i32
+  | { kind: "arrptr"; wat: string; elemType: string } // WAT expression yielding a dynamic array ptr
   | { kind: "joinarr"; arrWat: string; sepPtr: number; sepLen: number; elemType: string } // arr.join(sep)
-  | { kind: "strcall"; callWat: string }                    // void WAT call that sets $__str_ret_ptr/$__str_ret_len
-  | { kind: "strexpr"; ptrWat: string; lenWat: string };   // arbitrary WAT expressions yielding string ptr+len
+  | { kind: "strcall"; callWat: string } // void WAT call that sets $__str_ret_ptr/$__str_ret_len
+  | { kind: "strexpr"; ptrWat: string; lenWat: string }; // arbitrary WAT expressions yielding string ptr+len
 
 // ---------------------------------------------------------------------------
 // Argument parser
@@ -242,10 +302,22 @@ function splitTopLevelArgs(raw: string): string[] {
   for (let i = 0; i < raw.length; i++) {
     const ch = raw[i];
     // Skip escaped characters inside strings
-    if ((inDouble || inSingle || inTemplate) && ch === "\\") { i++; continue; }
-    if (ch === "`"  && !inDouble && !inSingle) { inTemplate = !inTemplate; continue; }
-    if (ch === '"'  && !inTemplate && !inSingle) { inDouble = !inDouble; continue; }
-    if (ch === "'"  && !inTemplate && !inDouble) { inSingle = !inSingle; continue; }
+    if ((inDouble || inSingle || inTemplate) && ch === "\\") {
+      i++;
+      continue;
+    }
+    if (ch === "`" && !inDouble && !inSingle) {
+      inTemplate = !inTemplate;
+      continue;
+    }
+    if (ch === '"' && !inTemplate && !inSingle) {
+      inDouble = !inDouble;
+      continue;
+    }
+    if (ch === "'" && !inTemplate && !inDouble) {
+      inSingle = !inSingle;
+      continue;
+    }
     if (!inTemplate && !inDouble && !inSingle) {
       if (ch === "(" || ch === "[" || ch === "{") depth++;
       else if (ch === ")" || ch === "]" || ch === "}") depth--;
@@ -256,7 +328,7 @@ function splitTopLevelArgs(raw: string): string[] {
     }
   }
   args.push(raw.slice(start).trim());
-  return args.filter(a => a.length > 0);
+  return args.filter((a) => a.length > 0);
 }
 
 /**
@@ -269,7 +341,10 @@ function extractChainedCallParts(expr: string): { outerRaw: string; innerRaw: st
   let depth = 0, i = firstParen;
   while (i < expr.length) {
     if (expr[i] === "(") depth++;
-    else if (expr[i] === ")") { depth--; if (depth === 0) break; }
+    else if (expr[i] === ")") {
+      depth--;
+      if (depth === 0) break;
+    }
     i++;
   }
   const outerRaw = expr.slice(firstParen + 1, i);
@@ -278,7 +353,10 @@ function extractChainedCallParts(expr: string): { outerRaw: string; innerRaw: st
   let depth2 = 0, j = 0;
   while (j < rest.length) {
     if (rest[j] === "(") depth2++;
-    else if (rest[j] === ")") { depth2--; if (depth2 === 0) break; }
+    else if (rest[j] === ")") {
+      depth2--;
+      if (depth2 === 0) break;
+    }
     j++;
   }
   return { outerRaw, innerRaw: rest.slice(1, j) };
@@ -288,15 +366,15 @@ function extractChainedCallParts(expr: string): { outerRaw: string; innerRaw: st
 function looksLikeString(
   expr: string,
   locals: Map<string, string>,
-  arrayLookup?: ArrayLookup
+  arrayLookup?: ArrayLookup,
 ): boolean {
   const t = expr.trim();
-  if (/^["']/.test(t)) return true;                        // string literal
-  if (/^\w+$/.test(t) && locals.get(t) === "string") return true;  // string variable
+  if (/^["']/.test(t)) return true; // string literal
+  if (/^\w+$/.test(t) && locals.get(t) === "string") return true; // string variable
   const bm = t.match(/^(\w+)\[/);
   if (bm && arrayLookup) {
     const ai = arrayLookup(bm[1]);
-    if (ai?.elemType === "string") return true;            // string array element
+    if (ai?.elemType === "string") return true; // string array element
   }
   return false;
 }
@@ -313,13 +391,25 @@ function parseSingleArg(
   dotCallLookup?: DotCallLookup,
   globals?: Map<string, string>,
   enumStringLookup?: (key: string) => string | undefined,
-  closureVarLookup?: ClosureVarLookup
+  closureVarLookup?: ClosureVarLookup,
 ): LogSegment[] {
   token = token.trim();
 
   // ── Template literal: `text ${expr} text ...`
   if (token.startsWith("`") && token.endsWith("`")) {
-    return parseTemplateLiteral(token.slice(1, -1), locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup, closureVarLookup);
+    return parseTemplateLiteral(
+      token.slice(1, -1),
+      locals,
+      funcLookup,
+      allocString,
+      enumLookup,
+      arrayLookup,
+      structLookup,
+      dotCallLookup,
+      globals,
+      enumStringLookup,
+      closureVarLookup,
+    );
   }
 
   // ── Double-quoted string literal
@@ -338,7 +428,7 @@ function parseSingleArg(
   }
 
   // ── Phase 24: null / undefined literals
-  if (token === "null")      return [{ kind: "literal", text: "null" }];
+  if (token === "null") return [{ kind: "literal", text: "null" }];
   if (token === "undefined") return [{ kind: "literal", text: "undefined" }];
 
   // ── String concatenation: only split on + when at least one side is a string literal
@@ -352,15 +442,39 @@ function parseSingleArg(
     const rhsIsStr = /^["'`]/.test(rhs) || locals.get(rhs) === "string";
     if (lhsIsStr || rhsIsStr) {
       return [
-        ...parseSingleArg(lhs, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup, closureVarLookup),
-        ...parseSingleArg(rhs, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup, closureVarLookup),
+        ...parseSingleArg(
+          lhs,
+          locals,
+          funcLookup,
+          allocString,
+          enumLookup,
+          arrayLookup,
+          structLookup,
+          dotCallLookup,
+          globals,
+          enumStringLookup,
+          closureVarLookup,
+        ),
+        ...parseSingleArg(
+          rhs,
+          locals,
+          funcLookup,
+          allocString,
+          enumLookup,
+          arrayLookup,
+          structLookup,
+          dotCallLookup,
+          globals,
+          enumStringLookup,
+          closureVarLookup,
+        ),
       ];
     }
     // Arithmetic + — fall through to the expression handler below
   }
 
   // ── Boolean literals
-  if (token === "true")  return [{ kind: "boolexpr", wat: "(i32.const 1)" }];
+  if (token === "true") return [{ kind: "boolexpr", wat: "(i32.const 1)" }];
   if (token === "false") return [{ kind: "boolexpr", wat: "(i32.const 0)" }];
 
   // ── Bigint literal: 42n → i64 constant (must come before identifier check since /^\w+$/ matches "1n")
@@ -379,7 +493,11 @@ function parseSingleArg(
         const parts = gType.split(":");
         const offset = Number(parts[1]);
         const len = Number(parts[2]);
-        return [{ kind: "strvar" as const, ptrLocal: `__strconst_ptr_${offset}`, lenLocal: `__strconst_len_${len}` }];
+        return [{
+          kind: "strvar" as const,
+          ptrLocal: `__strconst_ptr_${offset}`,
+          lenLocal: `__strconst_len_${len}`,
+        }];
       }
       const wat = `(global.get $${token})`;
       if (gType === "i64") return [{ kind: "i64expr", wat }];
@@ -387,7 +505,9 @@ function parseSingleArg(
       return [{ kind: "i32expr", wat }];
     }
     const wtype = locals.get(token);
-    if (wtype === "string") return [{ kind: "strvar", ptrLocal: `${token}_ptr`, lenLocal: `${token}_len` }];
+    if (wtype === "string") {
+      return [{ kind: "strvar", ptrLocal: `${token}_ptr`, lenLocal: `${token}_len` }];
+    }
     if (wtype === "i64") return [{ kind: "i64var", name: token }];
     if (wtype === "i32") return [{ kind: "i32var", name: token }];
     if (wtype === "bool") return [{ kind: "boolvar", name: token }];
@@ -399,7 +519,11 @@ function parseSingleArg(
   // ── varName.message — Error catch variable; .message is the string itself
   const errMsgMatch = token.match(/^(\w+)\.message$/);
   if (errMsgMatch && locals.get(errMsgMatch[1]) === "string") {
-    return [{ kind: "strvar", ptrLocal: `${errMsgMatch[1]}_ptr`, lenLocal: `${errMsgMatch[1]}_len` }];
+    return [{
+      kind: "strvar",
+      ptrLocal: `${errMsgMatch[1]}_ptr`,
+      lenLocal: `${errMsgMatch[1]}_len`,
+    }];
   }
 
   // ── Enum member access: EnumName.MemberName → i32 constant or string literal
@@ -427,10 +551,13 @@ function parseSingleArg(
       if (fi.type === "string" && fi.watLoadLen) {
         return [{ kind: "strexpr" as const, ptrWat: fi.watLoad, lenWat: fi.watLoadLen }];
       }
-      const kind = fi.type === "f64" || fi.type === "f32" ? "f64expr" as const
-                 : fi.type === "i64" ? "i64expr" as const
-                 : fi.type === "bool" ? "boolexpr" as const
-                 : "i32expr" as const;
+      const kind = fi.type === "f64" || fi.type === "f32"
+        ? "f64expr" as const
+        : fi.type === "i64"
+        ? "i64expr" as const
+        : fi.type === "bool"
+        ? "boolexpr" as const
+        : "i32expr" as const;
       return [{ kind, wat: fi.watLoad }];
     }
   }
@@ -444,10 +571,13 @@ function parseSingleArg(
       if (fi.type === "string" && fi.watLoadLen) {
         return [{ kind: "strexpr" as const, ptrWat: fi.watLoad, lenWat: fi.watLoadLen }];
       }
-      const kind = fi.type === "f64" || fi.type === "f32" ? "f64expr" as const
-                 : fi.type === "i64" ? "i64expr" as const
-                 : fi.type === "bool" ? "boolexpr" as const
-                 : "i32expr" as const;
+      const kind = fi.type === "f64" || fi.type === "f32"
+        ? "f64expr" as const
+        : fi.type === "i64"
+        ? "i64expr" as const
+        : fi.type === "bool"
+        ? "boolexpr" as const
+        : "i32expr" as const;
       return [{ kind, wat: fi.watLoad }];
     }
   }
@@ -456,28 +586,40 @@ function parseSingleArg(
   // Pass "a.b" as virtual varName to structLookup so it resolves nested struct pointer
   const sfChainedDotMatch = token.match(/^(\w+)\.(\w+)\.(\w+)$/);
   if (sfChainedDotMatch && structLookup) {
-    const fi = structLookup(`${sfChainedDotMatch[1]}.${sfChainedDotMatch[2]}`, sfChainedDotMatch[3]);
+    const fi = structLookup(
+      `${sfChainedDotMatch[1]}.${sfChainedDotMatch[2]}`,
+      sfChainedDotMatch[3],
+    );
     if (fi) {
       if (fi.type === "string" && fi.watLoadLen) {
         return [{ kind: "strexpr" as const, ptrWat: fi.watLoad, lenWat: fi.watLoadLen }];
       }
-      const kind = fi.type === "f64" || fi.type === "f32" ? "f64expr" as const
-                 : fi.type === "i64" ? "i64expr" as const
-                 : fi.type === "bool" ? "boolexpr" as const
-                 : "i32expr" as const;
+      const kind = fi.type === "f64" || fi.type === "f32"
+        ? "f64expr" as const
+        : fi.type === "i64"
+        ? "i64expr" as const
+        : fi.type === "bool"
+        ? "boolexpr" as const
+        : "i32expr" as const;
       return [{ kind, wat: fi.watLoad }];
     }
   }
 
   // ── Dot-call expression: receiver.method(args) or this.method(args) — class/static calls
   // Skip Math.* and Number.* tokens — they have their own dedicated handlers below.
-  if (dotCallLookup && !token.startsWith("Math.") && !token.startsWith("Number.") && /^(?:this|\w+)\.(\w+)\s*\(/.test(token)) {
+  if (
+    dotCallLookup && !token.startsWith("Math.") && !token.startsWith("Number.") &&
+    /^(?:this|\w+)\.(\w+)\s*\(/.test(token)
+  ) {
     const result = dotCallLookup(token);
     if (result) {
-      const kind = result.type === "f64" || result.type === "f32" ? "f64expr" as const
-                 : result.type === "i64" ? "i64expr" as const
-                 : result.type === "bool" ? "boolexpr" as const
-                 : "i32expr" as const;
+      const kind = result.type === "f64" || result.type === "f32"
+        ? "f64expr" as const
+        : result.type === "i64"
+        ? "i64expr" as const
+        : result.type === "bool"
+        ? "boolexpr" as const
+        : "i32expr" as const;
       return [{ kind, wat: result.wat }];
     }
   }
@@ -493,20 +635,45 @@ function parseSingleArg(
           const outerArgList = parts.outerRaw ? splitTopLevelArgs(parts.outerRaw) : [];
           const outerWat = outerArgList.map((a, i) => {
             const ptype = factorySig.params[i]?.type ?? "i32";
-            return exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup, globals);
+            return exprToWat(
+              a.trim(),
+              locals,
+              ptype,
+              funcLookup,
+              allocString,
+              arrayLookup,
+              structLookup,
+              globals,
+            );
           }).join(" ");
           const innerSig = funcLookup?.(`${factoryHead}__inner`);
           const captureCount = innerSig?.closureCaptures?.length ?? 0;
-          const innerCallParams = innerSig ? innerSig.params.slice(0, innerSig.params.length - captureCount) : [];
+          const innerCallParams = innerSig
+            ? innerSig.params.slice(0, innerSig.params.length - captureCount)
+            : [];
           const innerArgList = parts.innerRaw ? splitTopLevelArgs(parts.innerRaw) : [];
           const innerWat = innerArgList.map((a, i) => {
             const ptype = innerCallParams[i]?.type ?? "i32";
-            return exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup, globals);
+            return exprToWat(
+              a.trim(),
+              locals,
+              ptype,
+              funcLookup,
+              allocString,
+              arrayLookup,
+              structLookup,
+              globals,
+            );
           }).join(" ");
-          const wat = `(call $${factoryHead}__trampoline (call $${factoryHead} ${outerWat}) ${innerWat})`.trim();
+          const wat =
+            `(call $${factoryHead}__trampoline (call $${factoryHead} ${outerWat}) ${innerWat})`
+              .trim();
           const innerResult = innerSig?.result;
-          const kind = innerResult === "f64" || innerResult === "f32" ? "f64expr" as const
-                     : innerResult === "i64" ? "i64expr" as const : "i32expr" as const;
+          const kind = innerResult === "f64" || innerResult === "f32"
+            ? "f64expr" as const
+            : innerResult === "i64"
+            ? "i64expr" as const
+            : "i32expr" as const;
           return [{ kind, wat }];
         }
       }
@@ -521,7 +688,9 @@ function parseSingleArg(
   }
 
   // ── VAR instanceof Error ? VAR.message : String(VAR) — caught exception is always a string
-  const instanceofTernaryMatch = token.match(/^(\w+)\s+instanceof\s+Error\s*\?\s*\1\.message\s*:\s*String\s*\(\s*\1\s*\)$/);
+  const instanceofTernaryMatch = token.match(
+    /^(\w+)\s+instanceof\s+Error\s*\?\s*\1\.message\s*:\s*String\s*\(\s*\1\s*\)$/,
+  );
   if (instanceofTernaryMatch && locals.get(instanceofTernaryMatch[1]) === "string") {
     const v = instanceofTernaryMatch[1];
     return [{ kind: "strvar", ptrLocal: `${v}_ptr`, lenLocal: `${v}_len` }];
@@ -533,10 +702,13 @@ function parseSingleArg(
     const strName = strAtConsoleM[1];
     const rawN = strAtConsoleM[2].trim();
     const nNum = /^-?\d+$/.test(rawN) ? parseInt(rawN, 10) : null;
-    const nWat = nNum !== null ? "(i32.const " + nNum + ")" : exprToWat(rawN, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+    const nWat = nNum !== null
+      ? "(i32.const " + nNum + ")"
+      : exprToWat(rawN, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
     const ptrW = "(local.get $" + strName + "_ptr)";
     const lenW = "(local.get $" + strName + "_len)";
-    const normIdx = "(select " + nWat + " (i32.add " + lenW + " " + nWat + ") (i32.ge_s " + nWat + " (i32.const 0)))";
+    const normIdx = "(select " + nWat + " (i32.add " + lenW + " " + nWat + ") (i32.ge_s " + nWat +
+      " (i32.const 0)))";
     const ptrWat = "(i32.add " + ptrW + " " + normIdx + ")";
     return [{ kind: "strexpr" as const, ptrWat, lenWat: "(i32.const 1)" }];
   }
@@ -550,7 +722,9 @@ function parseSingleArg(
   }
 
   // ── Phase 28: arr.join(sep) — write joined string to gather scratch
-  const joinMatch = token.match(/^(\w+)\.join\(("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)?\)$/);
+  const joinMatch = token.match(
+    /^(\w+)\.join\(("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)?\)$/,
+  );
   if (joinMatch && allocString) {
     const arrName = joinMatch[1];
     const arrInfo = arrayLookup?.(arrName);
@@ -581,9 +755,19 @@ function parseSingleArg(
   }
 
   // ── Global isNaN(x) — must precede callMatch to avoid (call $isNaN ...)
-  { const gIsNaNM = token.match(/^isNaN\s*\((.+)\)$/);
+  {
+    const gIsNaNM = token.match(/^isNaN\s*\((.+)\)$/);
     if (gIsNaNM) {
-      const aW = exprToWat(gIsNaNM[1].trim(), locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals);
+      const aW = exprToWat(
+        gIsNaNM[1].trim(),
+        locals,
+        "f64",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      );
       return [{ kind: "boolexpr", wat: `(f64.ne ${aW} ${aW})` }];
     }
   }
@@ -599,15 +783,25 @@ function parseSingleArg(
     const closureSig = closureVarLookup?.(callee);
     if (closureSig) {
       const watArgsList = argList.map((a, idx) =>
-        exprToWat(a.trim(), locals, (closureSig.params[idx] ?? "i32") as string, funcLookup, allocString, arrayLookup, structLookup, globals)
+        exprToWat(
+          a.trim(),
+          locals,
+          (closureSig.params[idx] ?? "i32") as string,
+          funcLookup,
+          allocString,
+          arrayLookup,
+          structLookup,
+          globals,
+        )
       );
       const argsPart = watArgsList.length > 0 ? ` ${watArgsList.join(" ")}` : "";
-      const wat = `(call_indirect (type ${closureSig.funcType}) (local.get $${callee})${argsPart} (i32.load (local.get $${callee})))`;
+      const wat =
+        `(call_indirect (type ${closureSig.funcType}) (local.get $${callee})${argsPart} (i32.load (local.get $${callee})))`;
       const result = closureSig.result;
       if (result === "f64" || result === "f32") return [{ kind: "f64expr", wat }];
-      if (result === "i64")                     return [{ kind: "i64expr",  wat }];
-      if (result === "bool")                    return [{ kind: "boolexpr", wat }];
-      if (result === "string")                  return [{ kind: "strcall" as const, callWat: wat }];
+      if (result === "i64") return [{ kind: "i64expr", wat }];
+      if (result === "bool") return [{ kind: "boolexpr", wat }];
+      if (result === "string") return [{ kind: "strcall" as const, callWat: wat }];
       return [{ kind: "i32expr", wat }];
     }
     const sig = funcLookup?.(callee);
@@ -615,11 +809,25 @@ function parseSingleArg(
     const watArgsList = argList.flatMap((a, i) => {
       const ptype = sig?.params[i]?.type ?? "i32";
       if (ptype === "string") {
-        return [exprToWat(a.trim(), locals, "string", funcLookup, allocString, arrayLookup, structLookup, globals)];
+        return [
+          exprToWat(
+            a.trim(),
+            locals,
+            "string",
+            funcLookup,
+            allocString,
+            arrayLookup,
+            structLookup,
+            globals,
+          ),
+        ];
       }
       // Inline struct literal arg: { key: val } for a struct param
       const aTrimmed = a.trim();
-      if (ptype === "i32" && aTrimmed.startsWith("{") && _structLiteralAlloc && sig?.params[i]?.structType) {
+      if (
+        ptype === "i32" && aTrimmed.startsWith("{") && _structLiteralAlloc &&
+        sig?.params[i]?.structType
+      ) {
         const structName = sig.params[i].structType!;
         const braceContent = aTrimmed.slice(1, aTrimmed.lastIndexOf("}")).trim();
         const initFields: Record<string, string> = {};
@@ -632,7 +840,18 @@ function parseSingleArg(
         }
         return [`(i32.const ${_structLiteralAlloc(structName, initFields)})`];
       }
-      return [exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup, globals)];
+      return [
+        exprToWat(
+          a.trim(),
+          locals,
+          ptype,
+          funcLookup,
+          allocString,
+          arrayLookup,
+          structLookup,
+          globals,
+        ),
+      ];
     });
     // Fill in default values for omitted trailing params
     if (sig) {
@@ -640,11 +859,24 @@ function parseSingleArg(
       for (let i = argList.length; i < baseParamCount; i++) {
         const param = sig.params[i];
         if (param.defaultValue !== undefined) {
-          watArgsList.push(exprToWat(param.defaultValue, locals, param.type, funcLookup, allocString, arrayLookup, structLookup, globals));
+          watArgsList.push(
+            exprToWat(
+              param.defaultValue,
+              locals,
+              param.type,
+              funcLookup,
+              allocString,
+              arrayLookup,
+              structLookup,
+              globals,
+            ),
+          );
         }
       }
     }
-    const wat = watArgsList.length > 0 ? `(call $${callee} ${watArgsList.join(" ")})` : `(call $${callee})`;
+    const wat = watArgsList.length > 0
+      ? `(call $${callee} ${watArgsList.join(" ")})`
+      : `(call $${callee})`;
     // Return type of the call: check resultTsName first (preserves array/interface annotation),
     // then fall back to the normalized WatType.
     const retTsName = sig?.resultTsName;
@@ -653,10 +885,10 @@ function parseSingleArg(
       return [{ kind: "arrptr" as const, wat, elemType }];
     }
     const retType = (sig as { result?: string } | undefined)?.result;
-    if (retType === "bool")                     return [{ kind: "boolexpr", wat }];
-    if (retType === "i64")                      return [{ kind: "i64expr",  wat }];
-    if (retType === "f64" || retType === "f32") return [{ kind: "f64expr",  wat }];
-    if (retType === "string")                   return [{ kind: "strcall" as const, callWat: wat }];
+    if (retType === "bool") return [{ kind: "boolexpr", wat }];
+    if (retType === "i64") return [{ kind: "i64expr", wat }];
+    if (retType === "f64" || retType === "f32") return [{ kind: "f64expr", wat }];
+    if (retType === "string") return [{ kind: "strcall" as const, callWat: wat }];
     return [{ kind: "i32expr", wat }];
   }
 
@@ -666,8 +898,11 @@ function parseSingleArg(
   if (bracketMatch && structLookup && /^\d+$/.test(bracketMatch[2])) {
     const fi = structLookup(bracketMatch[1], `_${bracketMatch[2]}`);
     if (fi) {
-      const kind = fi.type === "f64" || fi.type === "f32" ? "f64expr" as const
-                 : fi.type === "i64" ? "i64expr" as const : "i32expr" as const;
+      const kind = fi.type === "f64" || fi.type === "f32"
+        ? "f64expr" as const
+        : fi.type === "i64"
+        ? "i64expr" as const
+        : "i32expr" as const;
       return [{ kind, wat: fi.watLoad }];
     }
   }
@@ -676,48 +911,102 @@ function parseSingleArg(
     if (arrInfo) {
       // String array element access: arr[idx] — load ptr+len pair (8-byte elements)
       if ((arrInfo as { isStringArr?: boolean }).isStringArr || arrInfo.elemType === "string") {
-        let idxWat = exprToWat(bracketMatch[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+        let idxWat = exprToWat(
+          bracketMatch[2],
+          locals,
+          "i32",
+          funcLookup,
+          allocString,
+          arrayLookup,
+          structLookup,
+          globals,
+        );
         if (/^\w+$/.test(bracketMatch[2].trim())) {
           const idxT = locals.get(bracketMatch[2].trim()) ?? globals?.get(bracketMatch[2].trim());
           if (idxT === "f64" || idxT === "f32") idxWat = `(i32.trunc_f64_s ${idxWat})`;
         }
-        const getOp = arrInfo.isGlobal ? `(global.get $${bracketMatch[1]})` : `(local.get $${bracketMatch[1]})`;
-        const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic) ? getOp : `(i32.const ${arrInfo.ptr})`;
-        const elemAddrWat = `(i32.add (i32.add ${baseWat} (i32.const 8)) (i32.shl ${idxWat} (i32.const 3)))`;
-        return [{ kind: "strexpr" as const, ptrWat: `(i32.load ${elemAddrWat})`, lenWat: `(i32.load offset=4 ${elemAddrWat})` }];
+        const getOp = arrInfo.isGlobal
+          ? `(global.get $${bracketMatch[1]})`
+          : `(local.get $${bracketMatch[1]})`;
+        const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
+          ? getOp
+          : `(i32.const ${arrInfo.ptr})`;
+        const elemAddrWat =
+          `(i32.add (i32.add ${baseWat} (i32.const 8)) (i32.shl ${idxWat} (i32.const 3)))`;
+        return [{
+          kind: "strexpr" as const,
+          ptrWat: `(i32.load ${elemAddrWat})`,
+          lenWat: `(i32.load offset=4 ${elemAddrWat})`,
+        }];
       }
       // Phase 31: respect custom shift/loadOp for sub-word TypedArrays (Uint8Array, Int16Array, etc.)
-      const loadOp  = arrInfo.customLoadOp
-                    ?? (arrInfo.elemType === "f64" ? "f64.load"
-                    : arrInfo.elemType === "i64" ? "i64.load" : "i32.load");
-      const shift   = arrInfo.shift !== undefined ? arrInfo.shift
-                    : (arrInfo.elemType === "f64" || arrInfo.elemType === "i64") ? 3 : 2;
-      let idxWat = exprToWat(bracketMatch[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+      const loadOp = arrInfo.customLoadOp ??
+        (arrInfo.elemType === "f64"
+          ? "f64.load"
+          : arrInfo.elemType === "i64"
+          ? "i64.load"
+          : "i32.load");
+      const shift = arrInfo.shift !== undefined
+        ? arrInfo.shift
+        : (arrInfo.elemType === "f64" || arrInfo.elemType === "i64")
+        ? 3
+        : 2;
+      let idxWat = exprToWat(
+        bracketMatch[2],
+        locals,
+        "i32",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      );
       if (/^\w+$/.test(bracketMatch[2].trim())) {
         const idxT = locals.get(bracketMatch[2].trim()) ?? globals?.get(bracketMatch[2].trim());
         if (idxT === "f64" || idxT === "f32") idxWat = `(i32.trunc_f64_s ${idxWat})`;
       }
       // All arrays use an 8-byte [length, capacity] header; data starts at +8.
-      const getOp2 = arrInfo.isGlobal ? `(global.get $${bracketMatch[1]})` : `(local.get $${bracketMatch[1]})`;
-      const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic) ? getOp2 : `(i32.const ${arrInfo.ptr})`;
+      const getOp2 = arrInfo.isGlobal
+        ? `(global.get $${bracketMatch[1]})`
+        : `(local.get $${bracketMatch[1]})`;
+      const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
+        ? getOp2
+        : `(i32.const ${arrInfo.ptr})`;
       const dataBase = `(i32.add ${baseWat} (i32.const 8))`;
       const addrWat = shift === 0
         ? `(i32.add ${dataBase} ${idxWat})`
         : `(i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift})))`;
-      const wat     = `(${loadOp} ${addrWat})`;
-      const kind    = arrInfo.elemType === "f64" ? "f64expr" as const
-                    : arrInfo.elemType === "i64" ? "i64expr" as const : "i32expr" as const;
+      const wat = `(${loadOp} ${addrWat})`;
+      const kind = arrInfo.elemType === "f64"
+        ? "f64expr" as const
+        : arrInfo.elemType === "i64"
+        ? "i64expr" as const
+        : "i32expr" as const;
       return [{ kind, wat }];
     }
   }
   // Phase 12/5h: fallback — i32 local holding a dynamic i32[] array pointer (captured or method-returned)
   if (bracketMatch && locals.get(bracketMatch[1]) === "i32") {
-    let idxWat = exprToWat(bracketMatch[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+    let idxWat = exprToWat(
+      bracketMatch[2],
+      locals,
+      "i32",
+      funcLookup,
+      allocString,
+      arrayLookup,
+      structLookup,
+      globals,
+    );
     if (/^\w+$/.test(bracketMatch[2].trim())) {
       const idxT = locals.get(bracketMatch[2].trim()) ?? globals?.get(bracketMatch[2].trim());
       if (idxT === "f64" || idxT === "f32") idxWat = `(i32.trunc_f64_s ${idxWat})`;
     }
-    return [{ kind: "i32expr" as const, wat: `(i32.load (i32.add (i32.add (local.get $${bracketMatch[1]}) (i32.const 8)) (i32.shl ${idxWat} (i32.const 2))))` }];
+    return [{
+      kind: "i32expr" as const,
+      wat: `(i32.load (i32.add (i32.add (local.get $${
+        bracketMatch[1]
+      }) (i32.const 8)) (i32.shl ${idxWat} (i32.const 2))))`,
+    }];
   }
 
   // ── Array .length: dynamic → runtime i32 load from header; static → compile-time constant
@@ -725,10 +1014,10 @@ function parseSingleArg(
   if (dotLenMatch) {
     const arrInfo = arrayLookup?.(dotLenMatch[1]);
     if (arrInfo) {
-      const getOp = arrInfo.isGlobal ? `(global.get $${dotLenMatch[1]})` : `(local.get $${dotLenMatch[1]})`;
-      const wat = arrInfo.dynamic
-        ? `(i32.load ${getOp})`
-        : `(i32.const ${arrInfo.length})`;
+      const getOp = arrInfo.isGlobal
+        ? `(global.get $${dotLenMatch[1]})`
+        : `(local.get $${dotLenMatch[1]})`;
+      const wat = arrInfo.dynamic ? `(i32.load ${getOp})` : `(i32.const ${arrInfo.length})`;
       return [{ kind: "i32expr", wat }];
     }
     // Phase 12: i32 local holding a dynamic array pointer — load length from header
@@ -742,25 +1031,63 @@ function parseSingleArg(
   // not misidentified as an f64 constant by the Number.* handler.
   // BUT: if there's a top-level ternary ? the whole expr is a ternary, not a bool.
   const _hasTernary = findTopLevelOp(token, "?") !== -1;
-  if (!_hasTernary && (token.startsWith("!")
-      || findTopLevelOp(token, "&&") !== -1
-      || findTopLevelOp(token, "||") !== -1
-      || /===|!==/.test(token)
-      || findTopLevelOp(token, ">=") !== -1
-      || findTopLevelOp(token, "<=") !== -1
-      || findTopLevelOp(token, ">") !== -1
-      || findTopLevelOp(token, "<") !== -1)) {
-    return [{ kind: "boolexpr", wat: exprToWat(token, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals) }];
+  if (
+    !_hasTernary && (token.startsWith("!") ||
+      findTopLevelOp(token, "&&") !== -1 ||
+      findTopLevelOp(token, "||") !== -1 ||
+      /===|!==/.test(token) ||
+      findTopLevelOp(token, ">=") !== -1 ||
+      findTopLevelOp(token, "<=") !== -1 ||
+      findTopLevelOp(token, ">") !== -1 ||
+      findTopLevelOp(token, "<") !== -1)
+  ) {
+    return [{
+      kind: "boolexpr",
+      wat: exprToWat(
+        token,
+        locals,
+        "i32",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      ),
+    }];
   }
 
   // ── Phase 48: Number.* — constants produce f64, predicates produce boolexpr
   if (token.startsWith("Number.")) {
     const numPredCallM = token.match(/^Number\.(isNaN|isFinite|isInteger)\(/);
     if (numPredCallM) {
-      return [{ kind: "boolexpr", wat: exprToWat(token, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals) }];
+      return [{
+        kind: "boolexpr",
+        wat: exprToWat(
+          token,
+          locals,
+          "i32",
+          funcLookup,
+          allocString,
+          arrayLookup,
+          structLookup,
+          globals,
+        ),
+      }];
     }
     // Constants (Number.NaN, Number.POSITIVE_INFINITY, etc.) → f64
-    return [{ kind: "f64expr", wat: exprToWat(token, locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals) }];
+    return [{
+      kind: "f64expr",
+      wat: exprToWat(
+        token,
+        locals,
+        "f64",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      ),
+    }];
   }
 
   // ── Math.* — route to correct kind based on return type
@@ -768,10 +1095,34 @@ function parseSingleArg(
     const mathCallM = token.match(/^Math\.(\w+)\(/);
     const mathFn = mathCallM?.[1];
     if (mathFn === "clz32" || mathFn === "imul") {
-      return [{ kind: "i32expr", wat: exprToWat(token, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals) }];
+      return [{
+        kind: "i32expr",
+        wat: exprToWat(
+          token,
+          locals,
+          "i32",
+          funcLookup,
+          allocString,
+          arrayLookup,
+          structLookup,
+          globals,
+        ),
+      }];
     }
     // All other Math functions produce f64
-    return [{ kind: "f64expr", wat: exprToWat(token, locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals) }];
+    return [{
+      kind: "f64expr",
+      wat: exprToWat(
+        token,
+        locals,
+        "f64",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      ),
+    }];
   }
 
   // ── String ternary: cond ? strExpr : strExpr → strexpr using select for ptr and len
@@ -783,14 +1134,40 @@ function parseSingleArg(
       if (ternCIdx !== -1) {
         const thenPart = afterQ.slice(0, ternCIdx).trim();
         const elsePart = afterQ.slice(ternCIdx + 1).trim();
-        if (looksLikeString(thenPart, locals, arrayLookup) || looksLikeString(elsePart, locals, arrayLookup)) {
-          const condWat = exprToWat(token.slice(0, ternQIdx).trim(), locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+        if (
+          looksLikeString(thenPart, locals, arrayLookup) ||
+          looksLikeString(elsePart, locals, arrayLookup)
+        ) {
+          const condWat = exprToWat(
+            token.slice(0, ternQIdx).trim(),
+            locals,
+            "i32",
+            funcLookup,
+            allocString,
+            arrayLookup,
+            structLookup,
+            globals,
+          );
           // Recursively parse branches to get strvar/strexpr segments for ptr+len
           const getStrPtrLen = (part: string): [string, string] => {
-            const segs = parseSingleArg(part, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup, closureVarLookup);
+            const segs = parseSingleArg(
+              part,
+              locals,
+              funcLookup,
+              allocString,
+              enumLookup,
+              arrayLookup,
+              structLookup,
+              dotCallLookup,
+              globals,
+              enumStringLookup,
+              closureVarLookup,
+            );
             const s = segs[0];
             if (!s) return ["(i32.const 0)", "(i32.const 0)"];
-            if (s.kind === "strvar") return [`(local.get $${s.ptrLocal})`, `(local.get $${s.lenLocal})`];
+            if (s.kind === "strvar") {
+              return [`(local.get $${s.ptrLocal})`, `(local.get $${s.lenLocal})`];
+            }
             if (s.kind === "strexpr") return [s.ptrWat, s.lenWat];
             if (s.kind === "literal" && allocString) {
               const [p, l] = allocString(s.text);
@@ -800,9 +1177,11 @@ function parseSingleArg(
           };
           const [thenPtr, thenLen] = getStrPtrLen(thenPart);
           const [elsePtr, elseLen] = getStrPtrLen(elsePart);
-          return [{ kind: "strexpr" as const,
+          return [{
+            kind: "strexpr" as const,
             ptrWat: `(select ${thenPtr} ${elsePtr} ${condWat})`,
-            lenWat: `(select ${thenLen} ${elseLen} ${condWat})` }];
+            lenWat: `(select ${thenLen} ${elseLen} ${condWat})`,
+          }];
         }
       }
     }
@@ -816,22 +1195,82 @@ function parseSingleArg(
     const leadFi = structLookup(leadDotM[1], leadDotM[2]);
     if (leadFi) {
       if (leadFi.type === "f64" || leadFi.type === "f32") {
-        return [{ kind: "f64expr", wat: exprToWat(token, locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals) }];
+        return [{
+          kind: "f64expr",
+          wat: exprToWat(
+            token,
+            locals,
+            "f64",
+            funcLookup,
+            allocString,
+            arrayLookup,
+            structLookup,
+            globals,
+          ),
+        }];
       }
       if (leadFi.type === "i64") {
-        return [{ kind: "i64expr", wat: exprToWat(token, locals, "i64", funcLookup, allocString, arrayLookup, structLookup, globals) }];
+        return [{
+          kind: "i64expr",
+          wat: exprToWat(
+            token,
+            locals,
+            "i64",
+            funcLookup,
+            allocString,
+            arrayLookup,
+            structLookup,
+            globals,
+          ),
+        }];
       }
     }
   }
   // Infer i64 / i32 / f64 from the leading identifier's declared type
   const leadId = token.match(/^(\w+)/)?.[1];
   if (leadId && locals.get(leadId) === "i64") {
-    return [{ kind: "i64expr", wat: exprToWat(token, locals, "i64", funcLookup, allocString, arrayLookup, structLookup, globals) }];
+    return [{
+      kind: "i64expr",
+      wat: exprToWat(
+        token,
+        locals,
+        "i64",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      ),
+    }];
   }
   if (leadId && (locals.get(leadId) === "i32" || locals.get(leadId) === "bool")) {
-    return [{ kind: "i32expr", wat: exprToWat(token, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals) }];
+    return [{
+      kind: "i32expr",
+      wat: exprToWat(
+        token,
+        locals,
+        "i32",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      ),
+    }];
   }
-  return [{ kind: "f64expr", wat: exprToWat(token, locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals) }];
+  return [{
+    kind: "f64expr",
+    wat: exprToWat(
+      token,
+      locals,
+      "f64",
+      funcLookup,
+      allocString,
+      arrayLookup,
+      structLookup,
+      globals,
+    ),
+  }];
 }
 
 /** Parses a template literal body (contents between backticks) into segments. */
@@ -846,7 +1285,7 @@ function parseTemplateLiteral(
   dotCallLookup?: DotCallLookup,
   globals?: Map<string, string>,
   enumStringLookup?: (key: string) => string | undefined,
-  closureVarLookup?: ClosureVarLookup
+  closureVarLookup?: ClosureVarLookup,
 ): LogSegment[] {
   const segments: LogSegment[] = [];
   let i = 0;
@@ -855,7 +1294,9 @@ function parseTemplateLiteral(
   while (i < body.length) {
     if (body[i] === "$" && body[i + 1] === "{") {
       // Flush preceding text (unescape escape sequences in the static text)
-      if (i > textStart) segments.push({ kind: "literal", text: unescapeString(body.slice(textStart, i)) });
+      if (i > textStart) {
+        segments.push({ kind: "literal", text: unescapeString(body.slice(textStart, i)) });
+      }
       // Find closing }
       let depth = 1;
       let j = i + 2;
@@ -865,14 +1306,30 @@ function parseTemplateLiteral(
         j++;
       }
       const expr = body.slice(i + 2, j - 1).trim();
-      segments.push(...parseSingleArg(expr, locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup, closureVarLookup));
+      segments.push(
+        ...parseSingleArg(
+          expr,
+          locals,
+          funcLookup,
+          allocString,
+          enumLookup,
+          arrayLookup,
+          structLookup,
+          dotCallLookup,
+          globals,
+          enumStringLookup,
+          closureVarLookup,
+        ),
+      );
       i = j;
       textStart = j;
     } else {
       i++;
     }
   }
-  if (textStart < body.length) segments.push({ kind: "literal", text: unescapeString(body.slice(textStart)) });
+  if (textStart < body.length) {
+    segments.push({ kind: "literal", text: unescapeString(body.slice(textStart)) });
+  }
   return segments;
 }
 
@@ -890,7 +1347,7 @@ function exprToWat(
   allocString?: DataAllocator,
   arrayLookup?: ArrayLookup,
   structLookup?: StructFieldLookup,
-  globals?: Map<string, string>
+  globals?: Map<string, string>,
 ): string {
   expr = expr.trim();
 
@@ -912,13 +1369,18 @@ function exprToWat(
 
   // Float literal — always use the expected type's const
   if (/^-?\d+\.\d+$/.test(expr)) {
-    return `(${expectedType === "i32" || expectedType === "i64" ? "f64" : expectedType}.const ${expr})`;
+    return `(${
+      expectedType === "i32" || expectedType === "i64" ? "f64" : expectedType
+    }.const ${expr})`;
   }
 
   // Integer literal — emit const for the expected type
   if (/^-?\d+$/.test(expr)) {
-    const t = (expectedType === "f32" || expectedType === "f64") ? expectedType
-            : expectedType === "i64" ? "i64" : "i32";
+    const t = (expectedType === "f32" || expectedType === "f64")
+      ? expectedType
+      : expectedType === "i64"
+      ? "i64"
+      : "i32";
     return `(${t}.const ${expr})`;
   }
 
@@ -929,11 +1391,11 @@ function exprToWat(
 
   // Special constants — must be checked before the identifier fallback
   const CONSTANTS: Record<string, string> = {
-    NaN:       "(f64.const nan)",
-    Infinity:  "(f64.const inf)",
-    true:      "(i32.const 1)",
-    false:     "(i32.const 0)",
-    null:      "(i32.const 0)",
+    NaN: "(f64.const nan)",
+    Infinity: "(f64.const inf)",
+    true: "(i32.const 1)",
+    false: "(i32.const 0)",
+    null: "(i32.const 0)",
     undefined: "(i32.const 0)",
   };
   if (Object.prototype.hasOwnProperty.call(CONSTANTS, expr)) return CONSTANTS[expr];
@@ -945,7 +1407,7 @@ function exprToWat(
   if (expr.startsWith("[") && expr.endsWith("]") && _strArrAlloc) {
     const inner = expr.slice(1, -1).trim();
     const elems = inner ? splitTopLevelArgs(inner) : [];
-    const allStrLits = elems.length > 0 && elems.every(e => {
+    const allStrLits = elems.length > 0 && elems.every((e) => {
       const t = e.trim();
       return (t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"));
     });
@@ -978,24 +1440,49 @@ function exprToWat(
     if (ai) {
       // String arrays: each element is 8 bytes [ptr i32, len i32]; load the ptr here.
       if (ai.isStringArr || ai.elemType === "string") {
-        const base = (ai.ptr === -1 || ai.dynamic) ? `(local.get $${bracketM[1]})` : `(i32.const ${ai.ptr})`;
-        const idxW = exprToWat(bracketM[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+        const base = (ai.ptr === -1 || ai.dynamic)
+          ? `(local.get $${bracketM[1]})`
+          : `(i32.const ${ai.ptr})`;
+        const idxW = exprToWat(
+          bracketM[2],
+          locals,
+          "i32",
+          funcLookup,
+          allocString,
+          arrayLookup,
+          structLookup,
+          globals,
+        );
         const addr = `(i32.add (i32.add ${base} (i32.const 8)) (i32.shl ${idxW} (i32.const 3)))`;
         return `(i32.load ${addr})`;
       }
       // Phase 31: respect custom shift/loadOp for sub-word TypedArrays
-      const loadOp  = ai.customLoadOp
-                    ?? (ai.elemType === "f64" ? "f64.load" : ai.elemType === "i64" ? "i64.load" : "i32.load");
-      const shift   = ai.shift !== undefined ? ai.shift
-                    : (ai.elemType === "f64" || ai.elemType === "i64") ? 3 : 2;
-      let idxWat = exprToWat(bracketM[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+      const loadOp = ai.customLoadOp ??
+        (ai.elemType === "f64" ? "f64.load" : ai.elemType === "i64" ? "i64.load" : "i32.load");
+      const shift = ai.shift !== undefined
+        ? ai.shift
+        : (ai.elemType === "f64" || ai.elemType === "i64")
+        ? 3
+        : 2;
+      let idxWat = exprToWat(
+        bracketM[2],
+        locals,
+        "i32",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      );
       // If index is an f64 local/global, wrap with trunc to get i32
       if (/^\w+$/.test(bracketM[2].trim())) {
         const idxT = locals.get(bracketM[2].trim()) ?? globals?.get(bracketM[2].trim());
         if (idxT === "f64" || idxT === "f32") idxWat = `(i32.trunc_f64_s ${idxWat})`;
       }
       // All arrays use an 8-byte [length, capacity] header; data starts at ptr+8.
-      const baseWat = (ai.ptr === -1 || ai.dynamic) ? `(local.get $${bracketM[1]})` : `(i32.const ${ai.ptr})`;
+      const baseWat = (ai.ptr === -1 || ai.dynamic)
+        ? `(local.get $${bracketM[1]})`
+        : `(i32.const ${ai.ptr})`;
       const dataBase = `(i32.add ${baseWat} (i32.const 8))`;
       const addrWat = shift === 0
         ? `(i32.add ${dataBase} ${idxWat})`
@@ -1019,9 +1506,19 @@ function exprToWat(
   }
 
   // Global isNaN(x) → f64.ne x x
-  { const globalIsNaNEWat = expr.match(/^isNaN\s*\((.+)\)$/);
+  {
+    const globalIsNaNEWat = expr.match(/^isNaN\s*\((.+)\)$/);
     if (globalIsNaNEWat) {
-      const argWat = exprToWat(globalIsNaNEWat[1].trim(), locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals);
+      const argWat = exprToWat(
+        globalIsNaNEWat[1].trim(),
+        locals,
+        "f64",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      );
       return `(f64.ne ${argWat} ${argWat})`;
     }
   }
@@ -1029,14 +1526,14 @@ function exprToWat(
   // Phase 48: Number.* constants and predicates
   if (expr.startsWith("Number.")) {
     const NUMBER_CONSTS: Record<string, string> = {
-      NaN:               "nan",
+      NaN: "nan",
       POSITIVE_INFINITY: "inf",
       NEGATIVE_INFINITY: "-inf",
-      EPSILON:           "2.220446049250313e-16",
-      MAX_SAFE_INTEGER:  "9007199254740991",
-      MIN_SAFE_INTEGER:  "-9007199254740991",
-      MAX_VALUE:         "1.7976931348623157e+308",
-      MIN_VALUE:         "5e-324",
+      EPSILON: "2.220446049250313e-16",
+      MAX_SAFE_INTEGER: "9007199254740991",
+      MIN_SAFE_INTEGER: "-9007199254740991",
+      MAX_VALUE: "1.7976931348623157e+308",
+      MIN_VALUE: "5e-324",
     };
     const numConstM = expr.match(/^Number\.(\w+)$/);
     if (numConstM && NUMBER_CONSTS[numConstM[1]] !== undefined) {
@@ -1045,18 +1542,36 @@ function exprToWat(
     const numPredM = expr.match(/^Number\.(isNaN|isFinite|isInteger)\(([\s\S]*)\)$/);
     let _numPredCLOk = false;
     if (numPredM) {
-      let _d = 0; _numPredCLOk = true;
+      let _d = 0;
+      _numPredCLOk = true;
       for (const _c of numPredM[2]) {
-        if (_c === '(') _d++;
-        else if (_c === ')') { if (_d === 0) { _numPredCLOk = false; break; } _d--; }
+        if (_c === "(") _d++;
+        else if (_c === ")") {
+          if (_d === 0) {
+            _numPredCLOk = false;
+            break;
+          }
+          _d--;
+        }
       }
     }
     if (numPredM && _numPredCLOk) {
-      const predFn  = numPredM[1];
+      const predFn = numPredM[1];
       const argExpr = numPredM[2].trim();
-      const argWat  = exprToWat(argExpr, locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals);
-      if (predFn === "isNaN")     return `(f64.ne ${argWat} ${argWat})`;
-      if (predFn === "isFinite")  return `(i32.and (f64.lt ${argWat} (f64.const inf)) (f64.gt ${argWat} (f64.const -inf)))`;
+      const argWat = exprToWat(
+        argExpr,
+        locals,
+        "f64",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      );
+      if (predFn === "isNaN") return `(f64.ne ${argWat} ${argWat})`;
+      if (predFn === "isFinite") {
+        return `(i32.and (f64.lt ${argWat} (f64.const inf)) (f64.gt ${argWat} (f64.const -inf)))`;
+      }
       if (predFn === "isInteger") return `(f64.eq (f64.floor ${argWat}) ${argWat})`;
     }
   }
@@ -1064,13 +1579,13 @@ function exprToWat(
   // Math.* constants and functions
   if (expr.startsWith("Math.")) {
     const MATH_CONSTS: Record<string, string> = {
-      PI:      "3.141592653589793",
-      E:       "2.718281828459045",
-      LN2:     "0.6931471805599453",
-      LN10:    "2.302585092994046",
-      LOG2E:   "1.4426950408889634",
-      LOG10E:  "0.4342944819032518",
-      SQRT2:   "1.4142135623730951",
+      PI: "3.141592653589793",
+      E: "2.718281828459045",
+      LN2: "0.6931471805599453",
+      LN10: "2.302585092994046",
+      LOG2E: "1.4426950408889634",
+      LOG10E: "0.4342944819032518",
+      SQRT2: "1.4142135623730951",
       SQRT1_2: "0.7071067811865476",
     };
     const mathConstM = expr.match(/^Math\.(\w+)$/);
@@ -1080,38 +1595,189 @@ function exprToWat(
     const mathCallM = expr.match(/^Math\.(\w+)\(([\s\S]*)\)$/);
     let _mathCLOk = false;
     if (mathCallM) {
-      let _d = 0; _mathCLOk = true;
+      let _d = 0;
+      _mathCLOk = true;
       for (const _c of mathCallM[2]) {
-        if (_c === '(') _d++;
-        else if (_c === ')') { if (_d === 0) { _mathCLOk = false; break; } _d--; }
+        if (_c === "(") _d++;
+        else if (_c === ")") {
+          if (_d === 0) {
+            _mathCLOk = false;
+            break;
+          }
+          _d--;
+        }
       }
     }
     if (mathCallM && _mathCLOk) {
-      const fn   = mathCallM[1];
+      const fn = mathCallM[1];
       const aStr = mathCallM[2].trim();
-      const a    = aStr ? splitTopLevelArgs(aStr) : [];
-      const arg0 = exprToWat(a[0] ?? "0", locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals);
-      const arg1 = exprToWat(a[1] ?? "0", locals, "f64", funcLookup, allocString, arrayLookup, structLookup, globals);
-      if (fn === "clz32")  return `(i32.clz ${exprToWat(a[0] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)})`;
-      if (fn === "imul")   return `(i32.mul ${exprToWat(a[0] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)} ${exprToWat(a[1] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)})`;
-      if (fn === "abs")    return expectedType === "i32" ? `(call $__i32_abs ${exprToWat(a[0] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)})` : `(f64.abs ${arg0})`;
-      if (fn === "min")    return expectedType === "i32" ? `(call $__i32_min ${exprToWat(a[0] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)} ${exprToWat(a[1] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)})` : `(f64.min ${arg0} ${arg1})`;
-      if (fn === "max")    return expectedType === "i32" ? `(call $__i32_max ${exprToWat(a[0] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)} ${exprToWat(a[1] ?? "0", locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)})` : `(f64.max ${arg0} ${arg1})`;
-      if (fn === "sqrt")   return `(f64.sqrt ${arg0})`;
-      if (fn === "floor")  return `(f64.floor ${arg0})`;
-      if (fn === "ceil")   return `(f64.ceil ${arg0})`;
-      if (fn === "trunc")  return `(f64.trunc ${arg0})`;
-      if (fn === "round")  return `(f64.floor (f64.add ${arg0} (f64.const 0.5)))`;
-      if (fn === "pow")    return `(call $__math_pow ${arg0} ${arg1})`;
-      if (fn === "sign")   return `(if (result f64) (f64.eq ${arg0} (f64.const 0)) (then (f64.const 0)) (else (f64.copysign (f64.const 1) ${arg0})))`;
-      if (fn === "hypot")  return `(f64.sqrt (f64.add (f64.mul ${arg0} ${arg0}) (f64.mul ${arg1} ${arg1})))`;
+      const a = aStr ? splitTopLevelArgs(aStr) : [];
+      const arg0 = exprToWat(
+        a[0] ?? "0",
+        locals,
+        "f64",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      );
+      const arg1 = exprToWat(
+        a[1] ?? "0",
+        locals,
+        "f64",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      );
+      if (fn === "clz32") {
+        return `(i32.clz ${
+          exprToWat(
+            a[0] ?? "0",
+            locals,
+            "i32",
+            funcLookup,
+            allocString,
+            arrayLookup,
+            structLookup,
+            globals,
+          )
+        })`;
+      }
+      if (fn === "imul") {
+        return `(i32.mul ${
+          exprToWat(
+            a[0] ?? "0",
+            locals,
+            "i32",
+            funcLookup,
+            allocString,
+            arrayLookup,
+            structLookup,
+            globals,
+          )
+        } ${
+          exprToWat(
+            a[1] ?? "0",
+            locals,
+            "i32",
+            funcLookup,
+            allocString,
+            arrayLookup,
+            structLookup,
+            globals,
+          )
+        })`;
+      }
+      if (fn === "abs") {
+        return expectedType === "i32"
+          ? `(call $__i32_abs ${
+            exprToWat(
+              a[0] ?? "0",
+              locals,
+              "i32",
+              funcLookup,
+              allocString,
+              arrayLookup,
+              structLookup,
+              globals,
+            )
+          })`
+          : `(f64.abs ${arg0})`;
+      }
+      if (fn === "min") {
+        return expectedType === "i32"
+          ? `(call $__i32_min ${
+            exprToWat(
+              a[0] ?? "0",
+              locals,
+              "i32",
+              funcLookup,
+              allocString,
+              arrayLookup,
+              structLookup,
+              globals,
+            )
+          } ${
+            exprToWat(
+              a[1] ?? "0",
+              locals,
+              "i32",
+              funcLookup,
+              allocString,
+              arrayLookup,
+              structLookup,
+              globals,
+            )
+          })`
+          : `(f64.min ${arg0} ${arg1})`;
+      }
+      if (fn === "max") {
+        return expectedType === "i32"
+          ? `(call $__i32_max ${
+            exprToWat(
+              a[0] ?? "0",
+              locals,
+              "i32",
+              funcLookup,
+              allocString,
+              arrayLookup,
+              structLookup,
+              globals,
+            )
+          } ${
+            exprToWat(
+              a[1] ?? "0",
+              locals,
+              "i32",
+              funcLookup,
+              allocString,
+              arrayLookup,
+              structLookup,
+              globals,
+            )
+          })`
+          : `(f64.max ${arg0} ${arg1})`;
+      }
+      if (fn === "sqrt") return `(f64.sqrt ${arg0})`;
+      if (fn === "floor") return `(f64.floor ${arg0})`;
+      if (fn === "ceil") return `(f64.ceil ${arg0})`;
+      if (fn === "trunc") return `(f64.trunc ${arg0})`;
+      if (fn === "round") return `(f64.floor (f64.add ${arg0} (f64.const 0.5)))`;
+      if (fn === "pow") return `(call $__math_pow ${arg0} ${arg1})`;
+      if (fn === "sign") {
+        return `(if (result f64) (f64.eq ${arg0} (f64.const 0)) (then (f64.const 0)) (else (f64.copysign (f64.const 1) ${arg0})))`;
+      }
+      if (fn === "hypot") {
+        return `(f64.sqrt (f64.add (f64.mul ${arg0} ${arg0}) (f64.mul ${arg1} ${arg1})))`;
+      }
       if (fn === "fround") return `(f64.promote_f32 (f32.demote_f64 ${arg0}))`;
       // Phase 38: extended math library functions
-      const MATH38_UNARY = ["sin","cos","tan","asin","acos","atan",
-        "log","log2","log10","exp","expm1","log1p",
-        "cbrt","sinh","cosh","tanh","asinh","acosh","atanh"];
+      const MATH38_UNARY = [
+        "sin",
+        "cos",
+        "tan",
+        "asin",
+        "acos",
+        "atan",
+        "log",
+        "log2",
+        "log10",
+        "exp",
+        "expm1",
+        "log1p",
+        "cbrt",
+        "sinh",
+        "cosh",
+        "tanh",
+        "asinh",
+        "acosh",
+        "atanh",
+      ];
       if (MATH38_UNARY.includes(fn)) return `(call $mathlib_${fn} ${arg0})`;
-      if (fn === "atan2")  return `(call $mathlib_atan2 ${arg0} ${arg1})`;
+      if (fn === "atan2") return `(call $mathlib_atan2 ${arg0} ${arg1})`;
       if (fn === "random") return `(call $mathlib_random)`;
     }
   }
@@ -1136,17 +1802,38 @@ function exprToWat(
           const outerArgList = parts.outerRaw ? splitTopLevelArgs(parts.outerRaw) : [];
           const outerWat = outerArgList.map((a, i) => {
             const ptype = factorySig.params[i]?.type ?? "i32";
-            return exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup, globals);
+            return exprToWat(
+              a.trim(),
+              locals,
+              ptype,
+              funcLookup,
+              allocString,
+              arrayLookup,
+              structLookup,
+              globals,
+            );
           }).join(" ");
           const innerSig = funcLookup?.(`${factoryHead}__inner`);
           const captureCount = innerSig?.closureCaptures?.length ?? 0;
-          const innerCallParams = innerSig ? innerSig.params.slice(0, innerSig.params.length - captureCount) : [];
+          const innerCallParams = innerSig
+            ? innerSig.params.slice(0, innerSig.params.length - captureCount)
+            : [];
           const innerArgList = parts.innerRaw ? splitTopLevelArgs(parts.innerRaw) : [];
           const innerWat = innerArgList.map((a, i) => {
             const ptype = innerCallParams[i]?.type ?? "i32";
-            return exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup, globals);
+            return exprToWat(
+              a.trim(),
+              locals,
+              ptype,
+              funcLookup,
+              allocString,
+              arrayLookup,
+              structLookup,
+              globals,
+            );
           }).join(" ");
-          return `(call $${factoryHead}__trampoline (call $${factoryHead} ${outerWat}) ${innerWat})`.trim();
+          return `(call $${factoryHead}__trampoline (call $${factoryHead} ${outerWat}) ${innerWat})`
+            .trim();
         }
       }
     }
@@ -1163,7 +1850,10 @@ function exprToWat(
     const watArgsList = argList.flatMap((a, i) => {
       const ptype = sig?.params[i]?.type ?? "i32";
       const aTrimmed2 = a.trim();
-      if (ptype === "i32" && aTrimmed2.startsWith("{") && _structLiteralAlloc && sig?.params[i]?.structType) {
+      if (
+        ptype === "i32" && aTrimmed2.startsWith("{") && _structLiteralAlloc &&
+        sig?.params[i]?.structType
+      ) {
         const structName2 = sig.params[i].structType!;
         const braceContent2 = aTrimmed2.slice(1, aTrimmed2.lastIndexOf("}")).trim();
         const initFields2: Record<string, string> = {};
@@ -1176,7 +1866,18 @@ function exprToWat(
         }
         return [`(i32.const ${_structLiteralAlloc(structName2, initFields2)})`];
       }
-      return [exprToWat(a.trim(), locals, ptype, funcLookup, allocString, arrayLookup, structLookup, globals)];
+      return [
+        exprToWat(
+          a.trim(),
+          locals,
+          ptype,
+          funcLookup,
+          allocString,
+          arrayLookup,
+          structLookup,
+          globals,
+        ),
+      ];
     });
     // Fill in default values for omitted trailing params
     if (sig) {
@@ -1184,16 +1885,38 @@ function exprToWat(
       for (let i = argList.length; i < baseParamCount; i++) {
         const param = sig.params[i];
         if (param.defaultValue !== undefined) {
-          watArgsList.push(exprToWat(param.defaultValue, locals, param.type, funcLookup, allocString, arrayLookup, structLookup, globals));
+          watArgsList.push(
+            exprToWat(
+              param.defaultValue,
+              locals,
+              param.type,
+              funcLookup,
+              allocString,
+              arrayLookup,
+              structLookup,
+              globals,
+            ),
+          );
         }
       }
     }
-    return watArgsList.length > 0 ? `(call $${callee} ${watArgsList.join(" ")})` : `(call $${callee})`;
+    return watArgsList.length > 0
+      ? `(call $${callee} ${watArgsList.join(" ")})`
+      : `(call $${callee})`;
   }
 
   // Parenthesised sub-expression — unwrap and recurse
   if (expr.startsWith("(") && expr.endsWith(")")) {
-    return exprToWat(expr.slice(1, -1), locals, expectedType, funcLookup, allocString, arrayLookup, structLookup, globals);
+    return exprToWat(
+      expr.slice(1, -1),
+      locals,
+      expectedType,
+      funcLookup,
+      allocString,
+      arrayLookup,
+      structLookup,
+      globals,
+    );
   }
 
   const isFloat = expectedType === "f64" || expectedType === "f32";
@@ -1202,32 +1925,93 @@ function exprToWat(
 
   // Unary ! — logical not → i32.eqz
   if (expr.startsWith("!") && !expr.startsWith("!=")) {
-    return `(i32.eqz ${exprToWat(expr.slice(1).trim(), locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)})`;
+    return `(i32.eqz ${
+      exprToWat(
+        expr.slice(1).trim(),
+        locals,
+        "i32",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      )
+    })`;
   }
 
   // Unary ~ — bitwise not → i32.xor with -1
   if (expr.startsWith("~")) {
-    return `(i32.xor ${exprToWat(expr.slice(1).trim(), locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)} (i32.const -1))`;
+    return `(i32.xor ${
+      exprToWat(
+        expr.slice(1).trim(),
+        locals,
+        "i32",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      )
+    } (i32.const -1))`;
   }
 
   // Unary - on a non-literal (e.g. -x, -(a+b))
   if (expr.startsWith("-") && !/^-\d/.test(expr)) {
     const inner = expr.slice(1).trim();
-    if (isFloat) return `(${expectedType}.neg ${exprToWat(inner, locals, numType, funcLookup, allocString, arrayLookup, structLookup, globals)})`;
-    return `(i32.sub (i32.const 0) ${exprToWat(inner, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)})`;
+    if (isFloat) {
+      return `(${expectedType}.neg ${
+        exprToWat(
+          inner,
+          locals,
+          numType,
+          funcLookup,
+          allocString,
+          arrayLookup,
+          structLookup,
+          globals,
+        )
+      })`;
+    }
+    return `(i32.sub (i32.const 0) ${
+      exprToWat(inner, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)
+    })`;
   }
 
   // Ternary: cond ? then : else
   const ternQ = findTopLevelOp(expr, "?");
   if (ternQ !== -1) {
-    const rest  = expr.slice(ternQ + 1);
+    const rest = expr.slice(ternQ + 1);
     const ternC = findTopLevelOp(rest, ":");
     if (ternC !== -1) {
-      const cond     = expr.slice(0, ternQ).trim();
+      const cond = expr.slice(0, ternQ).trim();
       const thenPart = rest.slice(0, ternC).trim();
       const elsePart = rest.slice(ternC + 1).trim();
-      const resType  = isFloat ? expectedType : "i32";
-      return `(if (result ${resType}) ${exprToWat(cond, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)} (then ${exprToWat(thenPart, locals, resType, funcLookup, allocString, arrayLookup, structLookup, globals)}) (else ${exprToWat(elsePart, locals, resType, funcLookup, allocString, arrayLookup, structLookup, globals)}))`;
+      const resType = isFloat ? expectedType : "i32";
+      return `(if (result ${resType}) ${
+        exprToWat(cond, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals)
+      } (then ${
+        exprToWat(
+          thenPart,
+          locals,
+          resType,
+          funcLookup,
+          allocString,
+          arrayLookup,
+          structLookup,
+          globals,
+        )
+      }) (else ${
+        exprToWat(
+          elsePart,
+          locals,
+          resType,
+          funcLookup,
+          allocString,
+          arrayLookup,
+          structLookup,
+          globals,
+        )
+      }))`;
     }
   }
 
@@ -1239,18 +2023,36 @@ function exprToWat(
     if (strOpIdx === -1) continue;
     const strLhs = expr.slice(0, strOpIdx).trim();
     const strRhs = expr.slice(strOpIdx + strOp.length).trim();
-    if (!looksLikeString(strLhs, locals, arrayLookup) && !looksLikeString(strRhs, locals, arrayLookup)) break;
+    if (
+      !looksLikeString(strLhs, locals, arrayLookup) && !looksLikeString(strRhs, locals, arrayLookup)
+    ) break;
     // Helper: get ptr+len WAT for a string expression
     const getStrPL = (e: string): [string, string] => {
-      if (/^\w+$/.test(e) && locals.get(e) === "string") return [`(local.get $${e}_ptr)`, `(local.get $${e}_len)`];
+      if (/^\w+$/.test(e) && locals.get(e) === "string") {
+        return [`(local.get $${e}_ptr)`, `(local.get $${e}_len)`];
+      }
       const litM = e.match(/^["'](.*)["']$/);
-      if (litM && allocString) { const [p, l] = allocString(litM[1]); return [`(i32.const ${p})`, `(i32.const ${l})`]; }
+      if (litM && allocString) {
+        const [p, l] = allocString(litM[1]);
+        return [`(i32.const ${p})`, `(i32.const ${l})`];
+      }
       const bM = e.match(/^(\w+)\[([^\]]+)\]$/);
       if (bM && arrayLookup) {
         const ai = arrayLookup(bM[1]);
         if (ai && (ai.isStringArr || ai.elemType === "string")) {
-          const base = (ai.ptr === -1 || ai.dynamic) ? `(local.get $${bM[1]})` : `(i32.const ${ai.ptr})`;
-          const idxW = exprToWat(bM[2], locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+          const base = (ai.ptr === -1 || ai.dynamic)
+            ? `(local.get $${bM[1]})`
+            : `(i32.const ${ai.ptr})`;
+          const idxW = exprToWat(
+            bM[2],
+            locals,
+            "i32",
+            funcLookup,
+            allocString,
+            arrayLookup,
+            structLookup,
+            globals,
+          );
           const addr = `(i32.add (i32.add ${base} (i32.const 8)) (i32.shl ${idxW} (i32.const 3)))`;
           return [`(i32.load ${addr})`, `(i32.load offset=4 ${addr})`];
         }
@@ -1261,61 +2063,93 @@ function exprToWat(
     const [rPtr, rLen] = getStrPL(strRhs);
     _strCmpNeeded?.();
     const cmpCall = `(call $__str_cmp ${lPtr} ${lLen} ${rPtr} ${rLen})`;
-    return (strOp === "===" || strOp === "==") ? `(i32.eqz ${cmpCall})` : `(i32.ne (i32.eqz ${cmpCall}) (i32.const 0))`;
+    return (strOp === "===" || strOp === "==")
+      ? `(i32.eqz ${cmpCall})`
+      : `(i32.ne (i32.eqz ${cmpCall}) (i32.const 0))`;
   }
 
   // Binary operators — ascending precedence order (lowest first = outermost grouping).
   // [op, f64-watop, i32-watop, requiresPositiveIdx, alwaysI32]
   const binOps: Array<[string, string, string, boolean, boolean]> = [
-    ["||",  "i32.or",    "i32.or",    false, true ],   // logical OR
-    ["&&",  "i32.and",   "i32.and",   false, true ],   // logical AND
-    ["|",   "i32.or",    "i32.or",    false, true ],   // bitwise OR
-    ["^",   "i32.xor",   "i32.xor",   false, true ],   // bitwise XOR
-    ["&",   "i32.and",   "i32.and",   false, true ],   // bitwise AND
-    ["===", "f64.eq",    "i32.eq",    false, false],
-    ["!==", "f64.ne",    "i32.ne",    false, false],
-    ["==",  "f64.eq",    "i32.eq",    false, false],   // non-strict equality
-    ["!=",  "f64.ne",    "i32.ne",    false, false],   // non-strict inequality
-    ["<=",  "f64.le",    "i32.le_s",  false, false],
-    [">=",  "f64.ge",    "i32.ge_s",  false, false],
-    ["<",   "f64.lt",    "i32.lt_s",  false, false],
-    [">",   "f64.gt",    "i32.gt_s",  false, false],
-    [">>>", "i32.shr_u", "i32.shr_u", false, true ],   // unsigned shift
-    [">>",  "i32.shr_s", "i32.shr_s", false, true ],   // signed shift
-    ["<<",  "i32.shl",   "i32.shl",   false, true ],   // left shift
-    ["+",   "f64.add",   "i32.add",   false, false],
-    ["-",   "f64.sub",   "i32.sub",   true,  false],   // positiveIdx: skip unary minus
-    ["*",   "f64.mul",   "i32.mul",   false, false],
-    ["/",   "f64.div",   "i32.div_s", false, false],
-    ["%",   "f64.rem",   "i32.rem_u", false, false],
+    ["||", "i32.or", "i32.or", false, true], // logical OR
+    ["&&", "i32.and", "i32.and", false, true], // logical AND
+    ["|", "i32.or", "i32.or", false, true], // bitwise OR
+    ["^", "i32.xor", "i32.xor", false, true], // bitwise XOR
+    ["&", "i32.and", "i32.and", false, true], // bitwise AND
+    ["===", "f64.eq", "i32.eq", false, false],
+    ["!==", "f64.ne", "i32.ne", false, false],
+    ["==", "f64.eq", "i32.eq", false, false], // non-strict equality
+    ["!=", "f64.ne", "i32.ne", false, false], // non-strict inequality
+    ["<=", "f64.le", "i32.le_s", false, false],
+    [">=", "f64.ge", "i32.ge_s", false, false],
+    ["<", "f64.lt", "i32.lt_s", false, false],
+    [">", "f64.gt", "i32.gt_s", false, false],
+    [">>>", "i32.shr_u", "i32.shr_u", false, true], // unsigned shift
+    [">>", "i32.shr_s", "i32.shr_s", false, true], // signed shift
+    ["<<", "i32.shl", "i32.shl", false, true], // left shift
+    ["+", "f64.add", "i32.add", false, false],
+    ["-", "f64.sub", "i32.sub", true, false], // positiveIdx: skip unary minus
+    ["*", "f64.mul", "i32.mul", false, false],
+    ["/", "f64.div", "i32.div_s", false, false],
+    ["%", "f64.rem", "i32.rem_u", false, false],
   ];
   for (const [op, f64op, i32op, positiveIdx, alwaysI32] of binOps) {
     const idx = findTopLevelOp(expr, op);
     if (idx === -1) continue;
     if (positiveIdx && idx === 0) continue;
-    const lhs    = expr.slice(0, idx).trim();
-    const rhs    = expr.slice(idx + op.length).trim();
+    const lhs = expr.slice(0, idx).trim();
+    const rhs = expr.slice(idx + op.length).trim();
     // Logical && / || — emit SHORT-CIRCUIT (if/result) form, matching emitExpr in wasic.ts, so
     // a guarded RHS side effect (e.g. `i < len && s.charCodeAt(i) === c`) does not run when the
     // LHS already decides the result. Avoids OOB access and the wasmmerge call-in-i32.and trap.
     if (op === "&&" || op === "||") {
-      const lWat = exprToWat(lhs, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
-      const rWat = exprToWat(rhs, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+      const lWat = exprToWat(
+        lhs,
+        locals,
+        "i32",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      );
+      const rWat = exprToWat(
+        rhs,
+        locals,
+        "i32",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      );
       return op === "&&"
         ? `(if (result i32) ${lWat} (then ${rWat}) (else (i32.const 0)))`
         : `(if (result i32) ${lWat} (then (i32.const 1)) (else ${rWat}))`;
     }
     // Infer i64 from LHS local type so i64 expressions don't get cast to f64
-    const lhsLocalType = /^\w+$/.test(lhs) ? locals.get(lhs)
-                       : /^\w+\.length$/.test(lhs) ? "i32" as const
-                       : undefined;
-    const opType = alwaysI32 ? "i32"
-                 : lhsLocalType === "i64" ? "i64"
-                 : lhsLocalType === "i32" || lhsLocalType === "bool" ? "i32"
-                 : numType;
-    const watOp  = (opType === "f64" || opType === "f32") ? f64op
-                 : opType === "i64" ? i32op.replace(/^i32\./, "i64.") : i32op;
-    return `(${watOp} ${exprToWat(lhs, locals, opType, funcLookup, allocString, arrayLookup, structLookup, globals)} ${exprToWat(rhs, locals, opType, funcLookup, allocString, arrayLookup, structLookup, globals)})`;
+    const lhsLocalType = /^\w+$/.test(lhs)
+      ? locals.get(lhs)
+      : /^\w+\.length$/.test(lhs)
+      ? "i32" as const
+      : undefined;
+    const opType = alwaysI32
+      ? "i32"
+      : lhsLocalType === "i64"
+      ? "i64"
+      : lhsLocalType === "i32" || lhsLocalType === "bool"
+      ? "i32"
+      : numType;
+    const watOp = (opType === "f64" || opType === "f32")
+      ? f64op
+      : opType === "i64"
+      ? i32op.replace(/^i32\./, "i64.")
+      : i32op;
+    return `(${watOp} ${
+      exprToWat(lhs, locals, opType, funcLookup, allocString, arrayLookup, structLookup, globals)
+    } ${
+      exprToWat(rhs, locals, opType, funcLookup, allocString, arrayLookup, structLookup, globals)
+    })`;
   }
 
   // Fallback: emit a comment and a zero of the expected type
@@ -1336,18 +2170,18 @@ function findTopLevelOp(expr: string, op: string): number {
     if (ch === ")" || ch === "]") depth++;
     else if (ch === "(" || ch === "[") depth--;
     if (depth === 0 && expr.slice(i, i + op.length) === op) {
-      const after  = expr[i + op.length] ?? "";
+      const after = expr[i + op.length] ?? "";
       const before = i > 0 ? expr[i - 1] : "";
-      if (op === "<"  && (after === "=" || after === "<"))               continue;
-      if (op === ">"  && (after === "=" || after === ">" || before === ">")) continue;
-      if (op === "="  && after === "=")                                  continue;
-      if (op === "!"  && after === "=")                                  continue;
-      if (op === "==" && (after === "=" || before === "="))             continue; // avoid ===
-      if (op === "!=" && after === "=")                                  continue; // avoid !==
-      if (op === "&"  && (after === "&" || before === "&"))              continue;
-      if (op === "|"  && (after === "|" || before === "|"))              continue;
-      if (op === ">>" && (after === ">" || before === ">"))              continue;
-      if (op === "?"  && after === ".")                                   continue;
+      if (op === "<" && (after === "=" || after === "<")) continue;
+      if (op === ">" && (after === "=" || after === ">" || before === ">")) continue;
+      if (op === "=" && after === "=") continue;
+      if (op === "!" && after === "=") continue;
+      if (op === "==" && (after === "=" || before === "=")) continue; // avoid ===
+      if (op === "!=" && after === "=") continue; // avoid !==
+      if (op === "&" && (after === "&" || before === "&")) continue;
+      if (op === "|" && (after === "|" || before === "|")) continue;
+      if (op === ">>" && (after === ">" || before === ">")) continue;
+      if (op === "?" && after === ".") continue;
       return i;
     }
   }
@@ -1375,14 +2209,28 @@ export function parseConsoleLogArgs(
   dotCallLookup?: DotCallLookup,
   globals?: Map<string, string>,
   enumStringLookup?: (key: string) => string | undefined,
-  closureVarLookup?: ClosureVarLookup
+  closureVarLookup?: ClosureVarLookup,
 ): LogSegment[] {
   const args = splitTopLevelArgs(argsStr);
   const segments: LogSegment[] = [];
 
   for (let i = 0; i < args.length; i++) {
     if (i > 0) segments.push({ kind: "literal", text: " " }); // space between args
-    segments.push(...parseSingleArg(args[i], locals, funcLookup, allocString, enumLookup, arrayLookup, structLookup, dotCallLookup, globals, enumStringLookup, closureVarLookup));
+    segments.push(
+      ...parseSingleArg(
+        args[i],
+        locals,
+        funcLookup,
+        allocString,
+        enumLookup,
+        arrayLookup,
+        structLookup,
+        dotCallLookup,
+        globals,
+        enumStringLookup,
+        closureVarLookup,
+      ),
+    );
   }
 
   // Always terminate with a newline (console.log behaviour)
@@ -1417,7 +2265,13 @@ export function emitConsoleLog(
   fd = 1,
   iovBase = IOV_BASE,
   scratchBase = SCRATCH_BASE,
-): { statements: string[]; needsHelpers: boolean; needsStrGather: boolean; needsArrPrintHelper: boolean; needsJoinHelper: boolean } {
+): {
+  statements: string[];
+  needsHelpers: boolean;
+  needsStrGather: boolean;
+  needsArrPrintHelper: boolean;
+  needsJoinHelper: boolean;
+} {
   const nwrittenOffset = iovBase + (NWRITTEN_OFFSET - IOV_BASE); // = iovBase + 128
   // Step 1: merge consecutive literal segments to minimise iov count.
   // e.g. [{literal,"x: "},{literal," "},{literal,"\n"}] → [{literal,"x:  \n"}]
@@ -1432,14 +2286,14 @@ export function emitConsoleLog(
   }
 
   // Step 2: detect a standalone trailing "\n" so we can absorb it inline.
-  const numericKinds = new Set(["i32var","i64var","f64var","i32expr","i64expr","f64expr"]);
-  const strBoolKinds = new Set(["strvar","boolvar","strcall","strexpr"]);
-  const trailingLitNL =
-    merged.length >= 2 &&
+  const numericKinds = new Set(["i32var", "i64var", "f64var", "i32expr", "i64expr", "f64expr"]);
+  const strBoolKinds = new Set(["strvar", "boolvar", "strcall", "strexpr"]);
+  const trailingLitNL = merged.length >= 2 &&
     merged[merged.length - 1].kind === "literal" &&
     (merged[merged.length - 1] as { kind: "literal"; text: string }).text === "\n";
   const canInlineNL = trailingLitNL &&
-    (numericKinds.has(merged[merged.length - 2].kind) || strBoolKinds.has(merged[merged.length - 2].kind));
+    (numericKinds.has(merged[merged.length - 2].kind) ||
+      strBoolKinds.has(merged[merged.length - 2].kind));
 
   // Active segments to process (strip standalone "\n" when we will inline it).
   const activeSegs = (trailingLitNL && canInlineNL) ? merged.slice(0, -1) : merged;
@@ -1450,11 +2304,15 @@ export function emitConsoleLog(
   // strvar uses memory.copy into scratch; boolvar uses conditional memory.copy.
   // boolexpr (arbitrary WAT) stays in per-iov mode (evaluated multiple times would be unsafe).
   const gatherable = (s: LogSegment) =>
-    s.kind === "literal" || numericKinds.has(s.kind) || s.kind === "strvar" || s.kind === "boolvar" || s.kind === "arrptr" || s.kind === "joinarr" || s.kind === "strcall" || s.kind === "strexpr";
+    s.kind === "literal" || numericKinds.has(s.kind) || s.kind === "strvar" ||
+    s.kind === "boolvar" || s.kind === "arrptr" || s.kind === "joinarr" || s.kind === "strcall" ||
+    s.kind === "strexpr";
   const arrptrKinds = new Set(["arrptr", "joinarr"]);
   // Single strvar/boolvar/arrptr/joinarr/strcall/strexpr segments also use gather so the newline can be inlined.
   const useGather = activeSegs.every(gatherable) &&
-    (activeSegs.length > 1 || strBoolKinds.has(activeSegs[0]?.kind ?? "") || arrptrKinds.has(activeSegs[0]?.kind ?? "") || activeSegs[0]?.kind === "strcall" || activeSegs[0]?.kind === "strexpr");
+    (activeSegs.length > 1 || strBoolKinds.has(activeSegs[0]?.kind ?? "") ||
+      arrptrKinds.has(activeSegs[0]?.kind ?? "") || activeSegs[0]?.kind === "strcall" ||
+      activeSegs[0]?.kind === "strexpr");
 
   const statements: string[] = [];
   let needsHelpers = false;
@@ -1472,7 +2330,7 @@ export function emitConsoleLog(
       `${indent}(i32.store (i32.const ${cursorAddr}) (i32.const 0))`,
     );
 
-    let compileCursor = 0;   // byte offset from SCRATCH_BASE, valid until first numeric
+    let compileCursor = 0; // byte offset from SCRATCH_BASE, valid until first numeric
     let runtimeCursor = false; // true after the first numeric (cursor only in mem[cursorAddr])
 
     for (const seg of activeSegs) {
@@ -1482,7 +2340,9 @@ export function emitConsoleLog(
           // Compile-time position: fixed-address stores
           for (let j = 0; j < bytes.length; j++) {
             statements.push(
-              `${indent}(i32.store8 (i32.const ${scratchBase + compileCursor + j}) (i32.const ${bytes[j]}))`,
+              `${indent}(i32.store8 (i32.const ${scratchBase + compileCursor + j}) (i32.const ${
+                bytes[j]
+              }))`,
             );
           }
           compileCursor += bytes.length;
@@ -1490,7 +2350,9 @@ export function emitConsoleLog(
           // Runtime position: cursor-relative stores then advance cursor
           for (let j = 0; j < bytes.length; j++) {
             statements.push(
-              `${indent}(i32.store8 (i32.add (i32.const ${scratchBase}) (i32.add (i32.load (i32.const ${cursorAddr})) (i32.const ${j}))) (i32.const ${bytes[j]}))`,
+              `${indent}(i32.store8 (i32.add (i32.const ${scratchBase}) (i32.add (i32.load (i32.const ${cursorAddr})) (i32.const ${j}))) (i32.const ${
+                bytes[j]
+              }))`,
             );
           }
           if (bytes.length > 0) {
@@ -1527,13 +2389,14 @@ export function emitConsoleLog(
       } else if (seg.kind === "boolvar") {
         // Bool variable — copy "true"/"false" bytes into scratch via $__str_gather, advance cursor
         needsStrGather = true;
-        const [trueOff]  = allocString("true");
+        const [trueOff] = allocString("true");
         const [falseOff] = allocString("false");
         const val = `(local.get $${seg.name})`;
         const destExpr = runtimeCursor
           ? `(i32.add (i32.const ${scratchBase}) (i32.load (i32.const ${cursorAddr})))`
           : `(i32.const ${scratchBase + compileCursor})`;
-        const srcExpr = `(if (result i32) ${val} (then (i32.const ${trueOff})) (else (i32.const ${falseOff})))`;
+        const srcExpr =
+          `(if (result i32) ${val} (then (i32.const ${trueOff})) (else (i32.const ${falseOff})))`;
         const lenExpr = `(if (result i32) ${val} (then (i32.const 4)) (else (i32.const 5)))`;
         statements.push(
           `${indent}(call $__str_gather ${srcExpr} ${lenExpr} ${destExpr})`,
@@ -1559,9 +2422,11 @@ export function emitConsoleLog(
           );
           runtimeCursor = true;
         }
-        const helperName = seg.elemType === "f64" ? "$__write_f64arr_to_scratch"
-                         : seg.elemType === "i64" ? "$__write_i64arr_to_scratch"
-                         : "$__write_i32arr_to_scratch";
+        const helperName = seg.elemType === "f64"
+          ? "$__write_f64arr_to_scratch"
+          : seg.elemType === "i64"
+          ? "$__write_i64arr_to_scratch"
+          : "$__write_i32arr_to_scratch";
         statements.push(
           `${indent}(call ${helperName} ${seg.wat} (i32.const ${scratchBase}) (i32.const ${cursorAddr}))`,
         );
@@ -1675,12 +2540,12 @@ export function emitConsoleLog(
     // ── Per-iov mode (single active segment, or strvar/bool segments) ─────────
     let numericSlot = 0;
     let lastNumericScratch = -1;
-    let lastNumericIovLen  = -1;
+    let lastNumericIovLen = -1;
 
     for (let i = 0; i < activeSegs.length; i++) {
       const seg = activeSegs[i];
-      const iovPtr = iovBase + i * 8;      // iov[i].buf  (i32)
-      const iovLen = iovBase + i * 8 + 4;  // iov[i].buf_len (i32)
+      const iovPtr = iovBase + i * 8; // iov[i].buf  (i32)
+      const iovLen = iovBase + i * 8 + 4; // iov[i].buf_len (i32)
 
       if (seg.kind === "literal") {
         const [offset, len] = allocString(seg.text);
@@ -1689,7 +2554,7 @@ export function emitConsoleLog(
           `${indent}(i32.store (i32.const ${iovLen}) (i32.const ${len}))`,
         );
         lastNumericScratch = -1;
-        lastNumericIovLen  = -1;
+        lastNumericIovLen = -1;
       } else if (seg.kind === "strvar") {
         const _ptrMsc = seg.ptrLocal.match(/^__strconst_ptr_(\d+)$/);
         const _lenMsc = seg.lenLocal.match(/^__strconst_len_(\d+)$/);
@@ -1700,9 +2565,9 @@ export function emitConsoleLog(
           `${indent}(i32.store (i32.const ${iovLen}) ${_lenW})`,
         );
         lastNumericScratch = -1;
-        lastNumericIovLen  = -1;
+        lastNumericIovLen = -1;
       } else if (seg.kind === "boolvar" || seg.kind === "boolexpr") {
-        const [trueOff]  = allocString("true");
+        const [trueOff] = allocString("true");
         const [falseOff] = allocString("false");
         const val = seg.kind === "boolvar" ? `(local.get $${seg.name})` : seg.wat;
         statements.push(
@@ -1710,18 +2575,20 @@ export function emitConsoleLog(
           `${indent}(i32.store (i32.const ${iovLen}) (if (result i32) ${val} (then (i32.const 4)) (else (i32.const 5))))`,
         );
         lastNumericScratch = -1;
-        lastNumericIovLen  = -1;
+        lastNumericIovLen = -1;
       } else if (seg.kind === "arrptr") {
         needsArrPrintHelper = true;
         needsHelpers = true;
-        const helperName = seg.elemType === "f64" ? "$__write_f64arr_to_scratch" : "$__write_i32arr_to_scratch";
+        const helperName = seg.elemType === "f64"
+          ? "$__write_f64arr_to_scratch"
+          : "$__write_i32arr_to_scratch";
         statements.push(
           `${indent}(i32.store (i32.const ${iovPtr}) (i32.const ${scratchBase}))`,
           `${indent}(i32.store (i32.const ${iovLen}) (i32.const 0))`,
           `${indent}(call ${helperName} ${seg.wat} (i32.const ${scratchBase}) (i32.const ${iovLen}))`,
         );
         lastNumericScratch = -1;
-        lastNumericIovLen  = -1;
+        lastNumericIovLen = -1;
       } else if (seg.kind === "joinarr") {
         needsJoinHelper = true;
         needsHelpers = true;
@@ -1734,7 +2601,7 @@ export function emitConsoleLog(
           `${indent}(call ${joinHelper} ${seg.arrWat} (i32.const ${seg.sepPtr}) (i32.const ${seg.sepLen}) (i32.const ${scratchBase}) (i32.const ${iovLen}))`,
         );
         lastNumericScratch = -1;
-        lastNumericIovLen  = -1;
+        lastNumericIovLen = -1;
       } else if (seg.kind === "strcall") {
         // String-returning function: call (void, sets globals), store globals in iov
         statements.push(
@@ -1743,7 +2610,7 @@ export function emitConsoleLog(
           `${indent}(i32.store (i32.const ${iovLen}) (global.get $__str_ret_len))`,
         );
         lastNumericScratch = -1;
-        lastNumericIovLen  = -1;
+        lastNumericIovLen = -1;
       } else if (seg.kind === "strexpr") {
         // Arbitrary WAT ptr+len expressions — store computed values directly into iov
         statements.push(
@@ -1751,10 +2618,10 @@ export function emitConsoleLog(
           `${indent}(i32.store (i32.const ${iovLen}) ${seg.lenWat})`,
         );
         lastNumericScratch = -1;
-        lastNumericIovLen  = -1;
+        lastNumericIovLen = -1;
       } else {
         // Numeric segment
-        if (numericSlot >= SCRATCH_SLOTS) {  // SCRATCH_SLOTS = 4 (constant)
+        if (numericSlot >= SCRATCH_SLOTS) { // SCRATCH_SLOTS = 4 (constant)
           const [offset, len] = allocString("?");
           statements.push(
             `${indent}(i32.store (i32.const ${iovPtr}) (i32.const ${offset}))`,
@@ -1787,7 +2654,7 @@ export function emitConsoleLog(
           `${indent}(i32.store (i32.const ${iovLen}) ${callExpr})`,
         );
         lastNumericScratch = scratchPtr;
-        lastNumericIovLen  = iovLen;
+        lastNumericIovLen = iovLen;
       }
     }
 

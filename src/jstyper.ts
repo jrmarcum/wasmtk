@@ -14,16 +14,16 @@
 export type AnyPolicy = "skip" | "warn" | "default";
 
 export interface JstyperOptions {
-  dtsOnly?: boolean;     // generate skeleton .d.ts, don't produce .ts
-  dryRun?: boolean;      // print to stdout, don't write files
+  dtsOnly?: boolean; // generate skeleton .d.ts, don't produce .ts
+  dryRun?: boolean; // print to stdout, don't write files
   anyPolicy?: AnyPolicy; // how to handle `any`-typed params / returns
-  outPath?: string;      // override output path
+  outPath?: string; // override output path
 }
 
 export interface JsFuncDef {
   name: string;
-  params: string[];    // raw JS param names (no types)
-  body: string;        // verbatim { … } block from JS source
+  params: string[]; // raw JS param names (no types)
+  body: string; // verbatim { … } block from JS source
   isExported: boolean;
 }
 
@@ -42,11 +42,17 @@ function extractBraceBlock(src: string, startPos: number): string | null {
   for (let i = startPos; i < src.length; i++) {
     const ch = src[i];
     if (inStr) {
-      if (ch === "\\" && src[i + 1]) { i++; continue; }
+      if (ch === "\\" && src[i + 1]) {
+        i++;
+        continue;
+      }
       if (ch === inStr) inStr = null;
       continue;
     }
-    if (ch === '"' || ch === "'" || ch === "`") { inStr = ch; continue; }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      inStr = ch;
+      continue;
+    }
     if (ch === "{") depth++;
     else if (ch === "}") {
       if (--depth === 0) return src.slice(startPos, i + 1);
@@ -122,10 +128,10 @@ export function parseDtsFunctions(dts: string): DtsFuncDef[] {
     const returnType = m[3].trim();
     const params = rawParams
       ? rawParams.split(",").map((p) => {
-          const colon = p.indexOf(":");
-          if (colon < 0) return { name: p.trim(), type: "any" };
-          return { name: p.slice(0, colon).trim(), type: p.slice(colon + 1).trim() };
-        })
+        const colon = p.indexOf(":");
+        if (colon < 0) return { name: p.trim(), type: "any" };
+        return { name: p.slice(0, colon).trim(), type: p.slice(colon + 1).trim() };
+      })
       : [];
     results.push({ name, params, returnType });
   }
@@ -149,15 +155,27 @@ function correctedDecl(dts: DtsFuncDef): string {
 
 function mapDtsType(t: string, anyPolicy: AnyPolicy): string | null {
   switch (t.trim()) {
-    case "i32": case "i64": case "f32": case "f64":
-    case "bool": case "boolean": case "string": case "void": case "never":
+    case "i32":
+    case "i64":
+    case "f32":
+    case "f64":
+    case "bool":
+    case "boolean":
+    case "string":
+    case "void":
+    case "never":
       return t.trim();
-    case "number":  return "f64";
-    case "int":     return "i32";
+    case "number":
+      return "f64";
+    case "int":
+      return "i32";
     case "float":
-    case "double":  return "f64";
-    case "any":     return anyPolicy === "skip" ? null : "i32";
-    default:        return t.trim(); // unknown — pass through
+    case "double":
+      return "f64";
+    case "any":
+      return anyPolicy === "skip" ? null : "i32";
+    default:
+      return t.trim(); // unknown — pass through
   }
 }
 
@@ -196,9 +214,9 @@ export function generateTypedTs(
       const paramHint = jsFn.params.map((p) => `${p}: <type>`).join(", ");
       warnings.push(
         `'${jsFn.name}' has no declaration in ${dtsFile} — skipping\n` +
-        `  Fix: add to ${dtsFile}:\n` +
-        `    export declare function ${jsFn.name}(${paramHint}): <returnType>;\n` +
-        WASM_TYPES_HINT,
+          `  Fix: add to ${dtsFile}:\n` +
+          `    export declare function ${jsFn.name}(${paramHint}): <returnType>;\n` +
+          WASM_TYPES_HINT,
       );
       continue;
     }
@@ -208,13 +226,16 @@ export function generateTypedTs(
 
     for (const p of dts.params) {
       const mapped = mapDtsType(p.type, anyPolicy);
-      if (mapped === null) { skip = true; break; }
+      if (mapped === null) {
+        skip = true;
+        break;
+      }
       if (p.type === "any" && anyPolicy === "warn") {
         warnings.push(
           `'${jsFn.name}' param '${p.name}' has type 'any' — using i32 as fallback\n` +
-          `  Fix: replace 'any' with a concrete type in ${dtsFile}:\n` +
-          `${correctedDecl(dts)}\n` +
-          WASM_TYPES_HINT,
+            `  Fix: replace 'any' with a concrete type in ${dtsFile}:\n` +
+            `${correctedDecl(dts)}\n` +
+            WASM_TYPES_HINT,
         );
       }
       typedParams.push(`${p.name}: ${mapped}`);
@@ -223,10 +244,10 @@ export function generateTypedTs(
       const anyParam = dts.params.find((p) => p.type === "any")!;
       warnings.push(
         `skipping '${jsFn.name}' — param '${anyParam.name}' is typed 'any' in ${dtsFile}\n` +
-        `  Fix: replace 'any' with a concrete type in ${dtsFile}:\n` +
-        `${correctedDecl(dts)}\n` +
-        WASM_TYPES_HINT + "\n" +
-        `  Or use --any-policy=warn to include it as i32 for now.`,
+          `  Fix: replace 'any' with a concrete type in ${dtsFile}:\n` +
+          `${correctedDecl(dts)}\n` +
+          WASM_TYPES_HINT + "\n" +
+          `  Or use --any-policy=warn to include it as i32 for now.`,
       );
       continue;
     }
@@ -235,19 +256,19 @@ export function generateTypedTs(
     if (retMapped === null) {
       warnings.push(
         `skipping '${jsFn.name}' — return type 'any' in ${dtsFile}\n` +
-        `  Fix: replace 'any' with a concrete type in ${dtsFile}:\n` +
-        `${correctedDecl(dts)}\n` +
-        WASM_TYPES_HINT + "\n" +
-        `  Or use --any-policy=warn to include it as i32 for now.`,
+          `  Fix: replace 'any' with a concrete type in ${dtsFile}:\n` +
+          `${correctedDecl(dts)}\n` +
+          WASM_TYPES_HINT + "\n" +
+          `  Or use --any-policy=warn to include it as i32 for now.`,
       );
       continue;
     }
     if (dts.returnType === "any" && anyPolicy === "warn") {
       warnings.push(
         `'${jsFn.name}' return type 'any' — using i32 as fallback\n` +
-        `  Fix: replace 'any' with a concrete type in ${dtsFile}:\n` +
-        `${correctedDecl(dts)}\n` +
-        WASM_TYPES_HINT,
+          `  Fix: replace 'any' with a concrete type in ${dtsFile}:\n` +
+          `${correctedDecl(dts)}\n` +
+          WASM_TYPES_HINT,
       );
     }
 
@@ -295,7 +316,7 @@ export async function runJstyper(
   // Normal mode: .js + .d.ts  →  .ts
   const dtsPath = jsFile.replace(/\.js$/, ".d.ts");
   const dtsBase = dtsPath.replace(/.*[\\/]/, ""); // basename for display
-  const jsBase  = jsFile.replace(/.*[\\/]/, "");
+  const jsBase = jsFile.replace(/.*[\\/]/, "");
 
   let dtsText: string;
   try {
@@ -303,11 +324,11 @@ export async function runJstyper(
   } catch {
     console.error(
       `❌ jstyper: no type declarations found for '${jsBase}'\n\n` +
-      `  To generate a skeleton .d.ts, run:\n` +
-      `    wasmtk jstyper ${jsBase} --dts-only\n\n` +
-      `  Then edit ${dtsBase} — replace 'number' placeholders with WASM types\n` +
-      `  (i32, f64, bool, string, void) and re-run:\n` +
-      `    wasmtk jstyper ${jsBase}`,
+        `  To generate a skeleton .d.ts, run:\n` +
+        `    wasmtk jstyper ${jsBase} --dts-only\n\n` +
+        `  Then edit ${dtsBase} — replace 'number' placeholders with WASM types\n` +
+        `  (i32, f64, bool, string, void) and re-run:\n` +
+        `    wasmtk jstyper ${jsBase}`,
     );
     Deno.exit(1);
     return;

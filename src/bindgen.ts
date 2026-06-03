@@ -25,22 +25,22 @@ export type WitType = "s32" | "s64" | "f32" | "f64" | "bool" | "string";
 
 /** A single parameter in a WIT function signature with its camelCase TypeScript name and WIT type. */
 export interface WitParam {
-  name: string;  // camelCase (already converted from kebab)
+  name: string; // camelCase (already converted from kebab)
   type: WitType;
 }
 
 /** A parsed WIT function declaration with its original kebab-case name, derived camelCase name, params, and optional return type. */
 export interface WitFunc {
-  name: string;     // original kebab-case WIT name (used to derive WASM symbol)
-  tsName: string;   // camelCase TypeScript name
+  name: string; // original kebab-case WIT name (used to derive WASM symbol)
+  tsName: string; // camelCase TypeScript name
   params: WitParam[];
-  result: WitType | null;  // null = void
+  result: WitType | null; // null = void
 }
 
 /** The complete parsed representation of a `.wit` file produced by `wasmtk wasic` or `wasmtk modc`. */
 export interface ParsedWit {
-  packageName: string;  // e.g. "local:basic-wit-gen-41"
-  worldName: string;    // e.g. "basic-wit-gen-41"
+  packageName: string; // e.g. "local:basic-wit-gen-41"
+  worldName: string; // e.g. "basic-wit-gen-41"
   imports: WitFunc[];
   exports: WitFunc[];
 }
@@ -54,13 +54,20 @@ export interface BindgenOptions {
 
 function parseWitType(raw: string): WitType {
   switch (raw.trim()) {
-    case "s32":    return "s32";
-    case "s64":    return "s64";
-    case "f32":    return "f32";
-    case "f64":    return "f64";
-    case "bool":   return "bool";
-    case "string": return "string";
-    default:       return "s32";
+    case "s32":
+      return "s32";
+    case "s64":
+      return "s64";
+    case "f32":
+      return "f32";
+    case "f64":
+      return "f64";
+    case "bool":
+      return "bool";
+    case "string":
+      return "string";
+    default:
+      return "s32";
   }
 }
 
@@ -80,7 +87,7 @@ function kebabToWasmName(name: string): string {
 
 function parseWitParams(raw: string): WitParam[] {
   if (!raw.trim()) return [];
-  return raw.split(",").map(part => {
+  return raw.split(",").map((part) => {
     const colon = part.indexOf(":");
     if (colon < 0) return null;
     const rawName = part.slice(0, colon).trim();
@@ -97,7 +104,7 @@ function parseWitFuncs(body: string, keyword: "import" | "export"): WitFunc[] {
   );
   let m: RegExpExecArray | null;
   while ((m = re.exec(body)) !== null) {
-    const name = m[1];  // kebab-case WIT name
+    const name = m[1]; // kebab-case WIT name
     const params = parseWitParams(m[2]);
     const result = m[3] ? parseWitType(m[3]) : null;
     funcs.push({ name, tsName: kebabToCamel(name), params, result });
@@ -126,17 +133,23 @@ export function parseWit(src: string): ParsedWit {
 
 function witTypeToTs(t: WitType): string {
   switch (t) {
-    case "s32": case "f32": case "f64": return "number";
-    case "s64":   return "bigint";
-    case "bool":  return "boolean";
-    case "string": return "string";
+    case "s32":
+    case "f32":
+    case "f64":
+      return "number";
+    case "s64":
+      return "bigint";
+    case "bool":
+      return "boolean";
+    case "string":
+      return "string";
   }
 }
 
 function genExportsInterface(fns: WitFunc[], name = "ModuleExports"): string {
   const lines = [`export interface ${name} {`];
   for (const fn of fns) {
-    const paramStr = fn.params.map(p => `${p.name}: ${witTypeToTs(p.type)}`).join(", ");
+    const paramStr = fn.params.map((p) => `${p.name}: ${witTypeToTs(p.type)}`).join(", ");
     const retType = fn.result ? witTypeToTs(fn.result) : "void";
     lines.push(`  ${fn.tsName}(${paramStr}): ${retType};`);
   }
@@ -148,7 +161,7 @@ function genImportsInterface(fns: WitFunc[]): string {
   if (fns.length === 0) return "";
   const lines = [`export interface ModuleImports {`, `  env?: {`];
   for (const fn of fns) {
-    const paramStr = fn.params.map(p => `${p.name}: ${witTypeToTs(p.type)}`).join(", ");
+    const paramStr = fn.params.map((p) => `${p.name}: ${witTypeToTs(p.type)}`).join(", ");
     const retType = fn.result ? witTypeToTs(fn.result) : "void";
     lines.push(`    ${fn.tsName}?: (${paramStr}) => ${retType};`);
   }
@@ -160,8 +173,8 @@ function genImportsInterface(fns: WitFunc[]): string {
 function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): string {
   const { imports: importedFns, exports: exportedFns } = parsed;
   const hasImports = importedFns.length > 0;
-  const needsMalloc = exportedFns.some(fn => fn.params.some(p => p.type === "string"));
-  const needsStrRet = exportedFns.some(fn => fn.result === "string");
+  const needsMalloc = exportedFns.some((fn) => fn.params.some((p) => p.type === "string"));
+  const needsStrRet = exportedFns.some((fn) => fn.result === "string");
   const needsMemory = needsMalloc || needsStrRet;
 
   const lines: string[] = [];
@@ -183,9 +196,13 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
         return `_a${i}`;
       }).join(", ");
       if (fn.result === null) {
-        lines.push(`  env["${wasmName}"] = (${argList}: number) => { imports?.env?.${fn.tsName}?.(${callArgs}); };`);
+        lines.push(
+          `  env["${wasmName}"] = (${argList}: number) => { imports?.env?.${fn.tsName}?.(${callArgs}); };`,
+        );
       } else {
-        lines.push(`  env["${wasmName}"] = (${argList}: number) => (imports?.env?.${fn.tsName}?.(${callArgs}) ?? 0);`);
+        lines.push(
+          `  env["${wasmName}"] = (${argList}: number) => (imports?.env?.${fn.tsName}?.(${callArgs}) ?? 0);`,
+        );
       }
     }
     lines.push(`  const importObj = { env };`);
@@ -197,12 +214,18 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
   if (runtime === "node") {
     lines.push(`  // deno-lint-ignore-file`);
     lines.push(`  const { readFileSync } = await import("node:fs");`);
-    lines.push(`  const raw: ArrayBuffer = typeof source === "string" ? readFileSync(source).buffer`);
-    lines.push(`    : source instanceof URL ? readFileSync(source.pathname).buffer : source as ArrayBuffer;`);
+    lines.push(
+      `  const raw: ArrayBuffer = typeof source === "string" ? readFileSync(source).buffer`,
+    );
+    lines.push(
+      `    : source instanceof URL ? readFileSync(source.pathname).buffer : source as ArrayBuffer;`,
+    );
   } else if (runtime === "bun") {
     lines.push(`  const _src = String(source);`);
     lines.push(`  const raw: ArrayBuffer = typeof source === "string" || source instanceof URL`);
-    lines.push(`    ? await (globalThis as unknown as { Bun: { file(p: string): { arrayBuffer(): Promise<ArrayBuffer> } } }).Bun.file(_src).arrayBuffer()`);
+    lines.push(
+      `    ? await (globalThis as unknown as { Bun: { file(p: string): { arrayBuffer(): Promise<ArrayBuffer> } } }).Bun.file(_src).arrayBuffer()`,
+    );
     lines.push(`    : source instanceof ArrayBuffer ? source : (source as Uint8Array).buffer;`);
   } else {
     // deno (default) — use readFile for file:// paths, fetch for http
@@ -223,7 +246,9 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
     lines.push(`  const _mem = exp["memory"] as WebAssembly.Memory;`);
   }
   if (needsMalloc || needsStrRet) {
-    lines.push(`  const _cabi_realloc = exp["cabi_realloc"] as ((ptr: number, oldSize: number, align: number, newSize: number) => number);`);
+    lines.push(
+      `  const _cabi_realloc = exp["cabi_realloc"] as ((ptr: number, oldSize: number, align: number, newSize: number) => number);`,
+    );
   }
   if (needsMalloc) {
     lines.push(`  function _writeStr(s: string): [number, number] {`);
@@ -242,13 +267,13 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
   for (const fn of exportedFns) {
     // WASM export name = original camelCase TypeScript name; reconstruct via kebabToCamel
     const wasmName = kebabToCamel(fn.name);
-    const paramStr = fn.params.map(p => `${p.name}: ${witTypeToTs(p.type)}`).join(", ");
+    const paramStr = fn.params.map((p) => `${p.name}: ${witTypeToTs(p.type)}`).join(", ");
     const wasm = `(exp["${wasmName}"] as (...a: unknown[]) => unknown)`;
 
     // Build WASM call args
-    const callArgs = fn.params.map(p => {
+    const callArgs = fn.params.map((p) => {
       if (p.type === "string") return `..._writeStr(${p.name})`;
-      if (p.type === "bool")   return `${p.name} ? 1 : 0`;
+      if (p.type === "bool") return `${p.name} ? 1 : 0`;
       return p.name;
     }).join(", ");
 
@@ -258,14 +283,20 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
       lines.push(`      const _r = _cabi_realloc(0, 0, 4, 8);`);
       lines.push(`      ${wasm}(${cabiArgs});`);
       lines.push(`      const _v = new DataView(_mem.buffer);`);
-      lines.push(`      return new TextDecoder().decode(new Uint8Array(_mem.buffer, _v.getInt32(_r, true), _v.getInt32(_r + 4, true)));`);
+      lines.push(
+        `      return new TextDecoder().decode(new Uint8Array(_mem.buffer, _v.getInt32(_r, true), _v.getInt32(_r + 4, true)));`,
+      );
       lines.push(`    },`);
     } else if (fn.result === "bool") {
       lines.push(`    ${fn.tsName}(${paramStr}): boolean { return ${wasm}(${callArgs}) !== 0; },`);
     } else if (fn.result === null) {
       lines.push(`    ${fn.tsName}(${paramStr}): void { ${wasm}(${callArgs}); },`);
     } else {
-      lines.push(`    ${fn.tsName}(${paramStr}): ${witTypeToTs(fn.result)} { return ${wasm}(${callArgs}) as ${witTypeToTs(fn.result)}; },`);
+      lines.push(
+        `    ${fn.tsName}(${paramStr}): ${
+          witTypeToTs(fn.result)
+        } { return ${wasm}(${callArgs}) as ${witTypeToTs(fn.result)}; },`,
+      );
     }
   }
   lines.push(`  };`);

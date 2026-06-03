@@ -37,9 +37,9 @@ import { runBindgen } from "./bindgen.ts";
 /** A `// @wasm`-annotated function extracted from a hybrid TypeScript source file. */
 export interface WasmFunc {
   name: string;
-  text: string;      // complete function source text, guaranteed to start with "export "
+  text: string; // complete function source text, guaranteed to start with "export "
   lineStart: number; // 0-indexed line of the // @wasm annotation
-  lineEnd: number;   // 0-indexed last line of the function body
+  lineEnd: number; // 0-indexed last line of the function body
 }
 
 /** Result of `parseHybridFile()`: the extracted WASM functions, remaining TypeScript source, and any warnings. */
@@ -51,10 +51,15 @@ export interface ParseResult {
 
 // wasic-compatible primitive type names
 const WASIC_PRIMITIVES = new Set([
-  "i32", "i64", "f32", "f64",
-  "bool", "boolean",
+  "i32",
+  "i64",
+  "f32",
+  "f64",
+  "bool",
+  "boolean",
   "string",
-  "void", "never",
+  "void",
+  "never",
   "number", // maps to f64 in wasic
 ]);
 
@@ -99,8 +104,10 @@ function findCloseBrace(lines: string[], openLine: number): number {
   let seen = false;
   for (let i = openLine; i < lines.length; i++) {
     for (const ch of lines[i]) {
-      if (ch === "{") { depth++; seen = true; }
-      else if (ch === "}" && seen) {
+      if (ch === "{") {
+        depth++;
+        seen = true;
+      } else if (ch === "}" && seen) {
         if (--depth === 0) return i;
       }
     }
@@ -155,7 +162,9 @@ export function parseHybridFile(
     // A force-included function with non-wasic types: keep it (wasic reports the real error)
     // but surface why it looked non-routable.
     if (forceWasm && !sig.routable && sig.reason) {
-      warnings.push(`⚠  hybrid: '${name}' forced // @wasm but ${sig.reason} may not be wasic-compatible`);
+      warnings.push(
+        `⚠  hybrid: '${name}' forced // @wasm but ${sig.reason} may not be wasic-compatible`,
+      );
     }
 
     const endLine = findCloseBrace(lines, i);
@@ -257,7 +266,9 @@ export async function runHybrid(
 
   if (wasmFuncs.length === 0) {
     if (opts.auto) {
-      console.warn(`⚠  hybrid --auto: no statically-typed functions to route to WASM in ${inputPath}`);
+      console.warn(
+        `⚠  hybrid --auto: no statically-typed functions to route to WASM in ${inputPath}`,
+      );
       console.warn(`   A function is routed to WASM when it is non-async and every parameter +`);
       console.warn(`   return type is wasic-compatible (i32/i64/f32/f64/bool/string/number/…).`);
     } else {
@@ -270,7 +281,11 @@ export async function runHybrid(
   }
 
   const funcNames = wasmFuncs.map((f) => f.name);
-  console.log(`   hybrid${opts.auto ? " --auto" : ""}: ${funcNames.length} WASM function(s): ${funcNames.join(", ")}`);
+  console.log(
+    `   hybrid${opts.auto ? " --auto" : ""}: ${funcNames.length} WASM function(s): ${
+      funcNames.join(", ")
+    }`,
+  );
 
   // Step 1 — write generated core module
   const coreTsPath = join(outDir, `${base}_core.ts`);

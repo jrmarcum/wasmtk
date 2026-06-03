@@ -27,12 +27,18 @@ async function readTextFile(path: string): Promise<string> {
 }
 
 async function writeFile(path: string, data: Uint8Array): Promise<void> {
-  if (isBun) { await (globalThis as any).Bun.write(path, data); return; }
+  if (isBun) {
+    await (globalThis as any).Bun.write(path, data);
+    return;
+  }
   return Deno.writeFile(path, data);
 }
 
 async function writeTextFile(path: string, text: string): Promise<void> {
-  if (isBun) { await (globalThis as any).Bun.write(path, text); return; }
+  if (isBun) {
+    await (globalThis as any).Bun.write(path, text);
+    return;
+  }
   return Deno.writeTextFile(path, text);
 }
 
@@ -78,15 +84,19 @@ function rtExit(code: number): never {
   process.exit(code);
 }
 
-const build = isBun ? {
-  os: (process.platform === "win32" ? "windows"
-    : process.platform === "darwin" ? "darwin" : "linux") as "windows" | "darwin" | "linux",
-  arch: (process.arch === "arm64" ? "aarch64" : "x86_64") as "x86_64" | "aarch64",
-} : Deno.build;
+const build = isBun
+  ? {
+    os: (process.platform === "win32"
+      ? "windows"
+      : process.platform === "darwin"
+      ? "darwin"
+      : "linux") as "windows" | "darwin" | "linux",
+    arch: (process.arch === "arm64" ? "aarch64" : "x86_64") as "x86_64" | "aarch64",
+  }
+  : Deno.build;
 
 const env = {
-  get: (key: string): string | undefined =>
-    isBun ? process.env[key] : Deno.env.get(key),
+  get: (key: string): string | undefined => isBun ? process.env[key] : Deno.env.get(key),
   toObject: (): Record<string, string> =>
     isBun ? (process.env as Record<string, string>) : Deno.env.toObject(),
   set: (key: string, value: string): void =>
@@ -101,22 +111,34 @@ function execPath(): string {
 
 const stdout = {
   writeSync(buf: Uint8Array): number {
-    if (isBun) { process.stdout.write(buf); return buf.length; }
+    if (isBun) {
+      process.stdout.write(buf);
+      return buf.length;
+    }
     return Deno.stdout.writeSync(buf);
   },
   async write(buf: Uint8Array): Promise<number> {
-    if (isBun) { process.stdout.write(buf); return buf.length; }
+    if (isBun) {
+      process.stdout.write(buf);
+      return buf.length;
+    }
     return await Deno.stdout.write(buf);
   },
 };
 
 const stderr = {
   writeSync(buf: Uint8Array): number {
-    if (isBun) { process.stderr.write(buf); return buf.length; }
+    if (isBun) {
+      process.stderr.write(buf);
+      return buf.length;
+    }
     return Deno.stderr.writeSync(buf);
   },
   async write(buf: Uint8Array): Promise<number> {
-    if (isBun) { process.stderr.write(buf); return buf.length; }
+    if (isBun) {
+      process.stderr.write(buf);
+      return buf.length;
+    }
     return await Deno.stderr.write(buf);
   },
 };
@@ -164,7 +186,9 @@ export class RtCommand {
     if (isBun) {
       const bun = (globalThis as any).Bun;
       const proc = bun.spawn([this._cmd, ...(this._opts.args ?? [])], {
-        stdout: "inherit", stderr: "inherit", stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+        stdin: "inherit",
         env: this._opts.env,
       });
       return {
@@ -182,12 +206,20 @@ export class RtCommand {
   async output(): Promise<RtCommandOutput> {
     if (isBun) {
       const bun = (globalThis as any).Bun;
-      const bunStdout = this._opts.stdout === "piped" ? "pipe"
-        : this._opts.stdout === "null" ? "ignore" : "inherit";
-      const bunStderr = this._opts.stderr === "piped" ? "pipe"
-        : this._opts.stderr === "null" ? "ignore" : "inherit";
+      const bunStdout = this._opts.stdout === "piped"
+        ? "pipe"
+        : this._opts.stdout === "null"
+        ? "ignore"
+        : "inherit";
+      const bunStderr = this._opts.stderr === "piped"
+        ? "pipe"
+        : this._opts.stderr === "null"
+        ? "ignore"
+        : "inherit";
       const proc = bun.spawn([this._cmd, ...(this._opts.args ?? [])], {
-        stdout: bunStdout, stderr: bunStderr, stdin: "inherit",
+        stdout: bunStdout,
+        stderr: bunStderr,
+        stdin: "inherit",
         env: this._opts.env,
       });
       await proc.exited;
@@ -207,7 +239,12 @@ export class RtCommand {
       stderr: this._opts.stderr as "piped" | "null" | "inherit" | undefined,
       env: this._opts.env,
     }).output();
-    return { success: result.success, code: result.code, stdout: result.stdout, stderr: result.stderr };
+    return {
+      success: result.success,
+      code: result.code,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
   }
 }
 
