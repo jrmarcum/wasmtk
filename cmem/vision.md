@@ -88,7 +88,9 @@ WIT/bindgen/component yet (those stay wasmtk's). Distinct from the planned
 `universalWasmLoader-rs` *library loader* — rsxtk is a build/run **CLI**. See
 [polyglot-producers.md](polyglot-producers.md) § "Rust producer = rsxtk".
 
-Current state: **All 50 phases complete; Stage 0 Canonical ABI alignment complete;
+Current state: **All 50 phases complete; Stage 0 Canonical ABI alignment *partial* (see
+[polyglot-producers.md](polyglot-producers.md) — `cabi_realloc` exported, but return side not yet
+canonical; P1 core module + sidecar WIT, not a component);
 Stage 0.5 (dual JSR /compat backends) substantively complete; Stage 0.6
 (allocator unification in wasmmerge) complete; Stage 0.7 (all five Tier-1 stdlib
 capabilities — `Set<i32>` + `Map<i32,i32>` + `JSON` shared-heap libraries + the
@@ -98,7 +100,8 @@ under npm:wabt + npm:binaryen: 446/446 tests passing (2026-05-25; 270 wasic +
 Go-by-Example + 103 bindgen + 73 jstyper). **Under the current dual JSR /compat
 stack (`jsr:@jrmarcum/wabt-ts@^1.3.2/compat` +
 `jsr:@jrmarcum/binaryen-ts@^1.3.3/compat`, 2026-06-02):** the full `tests/wasm_wasi`
-suite is **278/278** (`core_` 33/33), jstyper 73/73, and **bindgen 103/103**. The 7
+suite is **279/279** (`core_` 33/33), jstyper 73/73, and **bindgen 103/103** (279th =
+`48_SingleLineBraceIf`, the single-line-brace-`if` regression test added 2026-06-03). The 7
 long-standing failures were all fixed 2026-06-02: `5e`/`19_*` via a wasic value-fallthru
 rewrite, and `38_*` via the wabt-ts 1.3.1 hex-float-literal fix (the constants were being
 encoded as 0). wabt-ts 1.3.0 had earlier recovered `15_panic` / `18_Multi-Scope`
@@ -328,7 +331,7 @@ wrapper) — were all filed and fixed upstream by 1.2.9. See CLAUDE.md §
 - ✅ `src/binaryen.ts` wrapper handles CJS-default vs ES-namespace asymmetry
 - ✅ Call-site shape preserved (upstream-npm-shaped API works against both backends)
 - ✅ Wasic-side patch: explicit `inlineExport: false` on `.toText(...)` calls (wabt-ts/compat's default differs from npm:wabt's)
-- ✅ Full wasic suite: **260/270 PASS (96.3%)** under dual /compat 1.2.9 — historical snapshot; the 10 then-failing tests (9 wasic-side codegen + 1 binaryen-ts `-Oz` interaction) have all since been fixed (suite is now **278/278**; see compiler-bugs.md / testing.md)
+- ✅ Full wasic suite: **260/270 PASS (96.3%)** under dual /compat 1.2.9 — historical snapshot; the 10 then-failing tests (9 wasic-side codegen + 1 binaryen-ts `-Oz` interaction) have all since been fixed (suite is now **279/279**; see compiler-bugs.md / testing.md)
 - ✅ Switching back to `npm:wabt` / `npm:binaryen` is a one-line deno.json change — both backends remain supported as fallbacks
 
 ---
@@ -588,13 +591,15 @@ for what wasmtk emits. The two documents cross-reference each other.
 In order:
 
 1. **Stage 1** — Enhance universalWasmLoader + write SPEC.md — **CURRENT PRIORITY**
-   Reference: `wasmtk/src/bindgen.ts` (Phase 50) for all ABI details (Canonical ABI complete)
+   Reference: `wasmtk/src/bindgen.ts` (Phase 50) for ABI details (Canonical ABI alignment is
+   *partial* — see [polyglot-producers.md](polyglot-producers.md); realloc/param side adjacent,
+   return side not yet canonical)
 2. **stdlib-bundling-brief.md §5–7** — Tier-1 capability libraries as `modc` modules,
    plus tree-shake wiring in `wasmbundle`; unblocked by Stage 0.6 allocator unification.
    `Set<i32>` + `Map<i32,i32>` + `Date` + `JSON` (parse+navigate, integer v1) + `RegExp`
    (backtracking matcher) all shipped (Stage 0.7, 2026-05-30/31). Parallel track to Stage 1.
 3. **Stage 2** — `universalWasmLoader-rs` and `universalWasmLoader-py` — validates the spec
 4. **Stage 3** — Build orchestration — the pixi integration becomes real
-5. **Stage 0** ✅ COMPLETE — Canonical ABI alignment in wasmtk done (2026-05-19); 446/446 pass under npm:wabt baseline (2026-05-25)
+5. **Stage 0** ✅ COMPLETE (partial alignment) — `cabi_realloc` export + out-param string returns (2026-05-19); 446/446 pass under npm:wabt baseline (2026-05-25). NOTE: this is *partial* Canonical ABI alignment — return side not yet canonical, output is a P1 core module + sidecar WIT (see [polyglot-producers.md](polyglot-producers.md)); full forward-alignment is a decided-but-unimplemented track
 6. **Stage 0.5** ✅ COMPLETE — Dual JSR /compat migration done (2026-05-28); wabt-ts/compat 1.2.9 + binaryen-ts/compat 1.2.9; 260/270 PASS on the wasic population; 15 toolchain bugs filed and fixed during rollout; deno.json is the single switch point for npm ↔ JSR backends
 7. **Stage 0.6** ✅ COMPLETE — Allocator unification in wasmmerge done (2026-05-30); binaryen-ts/compat bumped to 1.3.1; 262/271 PASS; `wasmbundle` now functions as an on-demand stdlib linker
