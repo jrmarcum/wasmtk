@@ -80,6 +80,14 @@ prototype with a Rust production implementation is a one-line manifest change.
 **Role:** TypeScript-to-WASM compiler; reference language pillar; polyglot build
 orchestrator CLI
 
+**Rust-side sibling toolkit:** `jrmarcum/rsxtk` (crates.io `rsxtk`, v0.4.4 / 2026-04-20,
+MIT OR Apache-2.0) — *"A high-performance Rust WASM Toolkit for managing and running
+WASI scripts, WAT, and WASM modules."* It is the **Rust producer's build+run driver**:
+compiles Rust → `wasm32-wasip1` (+ `.cwasm` precompile), runs via wasmtime. No
+WIT/bindgen/component yet (those stay wasmtk's). Distinct from the planned
+`universalWasmLoader-rs` *library loader* — rsxtk is a build/run **CLI**. See
+[polyglot-producers.md](polyglot-producers.md) § "Rust producer = rsxtk".
+
 Current state: **All 50 phases complete; Stage 0 Canonical ABI alignment complete;
 Stage 0.5 (dual JSR /compat backends) substantively complete; Stage 0.6
 (allocator unification in wasmmerge) complete; Stage 0.7 (all five Tier-1 stdlib

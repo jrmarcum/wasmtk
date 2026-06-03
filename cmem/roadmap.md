@@ -102,7 +102,7 @@ nothing.
 
 ## Congruent polyglot-producer goal + ABI posture (added 2026-06-03 — full detail in [polyglot-producers.md](polyglot-producers.md))
 
-**Goal:** unify the **TS/JS, C, C++, Rust, Zig** toolchains into one congruent wasm capability —
+**Goal:** unify the **TS/JS, C, C++, Rust, Zig, Go** toolchains into one congruent wasm capability —
 heterogeneous *producers* converging on the homogeneous middle/back end wasmtk already owns (WASI-P1
 core-module output → bindgen ABI → binaryen-ts optimize → wasmmerge/wasmbundle link → wasmtk TS WASI
 host). Adding a language = adding a producer, not a toolchain.
@@ -110,9 +110,10 @@ host). Adding a language = adding a producer, not a toolchain.
 | Track | Scope | Status / gating |
 | --- | --- | --- |
 | **ABI forward-alignment (stay P1)** | Canonicalize the **in-memory boundary layout** + the **return convention** now (callee-allocated i32-ptr return + `cabi_post_<name>`; route all boundary allocs through `cabi_realloc`); keep P1 WASI imports behind a thin seam. Both P1-legal; makes future P2 a wrap, not a rewrite. | ⬜ **decided 2026-06-03**, not yet implemented. Independent of Phase 51; small near-term track. |
+| **Go producer (TinyGo)** | `tinygo build -target=wasip1` → WASI-P1 core module → shared optimize/host path; `wasmtk run` hosts it (wasmtime optional). Library = reactor exports (`//go:wasmexport`). WASI-first (browser `syscall/js` deferred); stdlib `GOOS=wasip1` heavier fallback. **ADR + scope approved 2026-06-03.** | ⬜ future producer track |
 | **C/C++ producer (Zig)** | `zig cc`/`zig c++` (bundled clang + libc-from-source) → `wasm32-wasi`, then through the shared optimize/host path. **ADR: no TS reimplementation of emscripten.** | ⬜ future producer track |
 | **Zig producer** | `zig build-exe -target wasm32-wasi` (cleanest native path) | ⬜ future producer track |
-| **Rust producer** | `rustc wasm32-wasip1` (+ Zig as C cross-linker for C-dep crates). `wasm32-wasip2` is the one native-P2 path — decide before mixing into a P1-merge flow. | ⬜ future producer track |
+| **Rust producer** | Driver = **`rsxtk`** (owner's Rust WASM toolkit, crates.io `jrmarcum/rsxtk`) — builds Rust → `wasm32-wasip1` (+`.cwasm`) and runs via wasmtime; underneath `rustc wasm32-wasip1` (+ Zig as C cross-linker for C-dep crates). No WIT/bindgen yet (stays wasmtk's). `wasm32-wasip2` is the one native-P2 path — decide before mixing into a P1-merge flow. | ⬜ future producer track |
 | **P2 producer (real components)** | Embed component-type section + emit/wrap via `wasm-tools component new`; migrate WASI P1→`wasi:cli`/`wasi:io`. | ⬜ **deferred** — only pays off vs. a *native component-runtime* consumer (Wasmtime/WasmEdge/WAMR/Spin); JS-runtime consumers transpile P2 back to core wasm anyway. P1-core + terminal adapter covers the goal. |
 
 **Scope pin:** the congruent contract is **WASI Preview 1 / core modules**. Componentization is a
