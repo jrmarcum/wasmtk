@@ -1295,6 +1295,16 @@ function exprToWat(
     if (positiveIdx && idx === 0) continue;
     const lhs    = expr.slice(0, idx).trim();
     const rhs    = expr.slice(idx + op.length).trim();
+    // Logical && / || — emit SHORT-CIRCUIT (if/result) form, matching emitExpr in wasic.ts, so
+    // a guarded RHS side effect (e.g. `i < len && s.charCodeAt(i) === c`) does not run when the
+    // LHS already decides the result. Avoids OOB access and the wasmmerge call-in-i32.and trap.
+    if (op === "&&" || op === "||") {
+      const lWat = exprToWat(lhs, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+      const rWat = exprToWat(rhs, locals, "i32", funcLookup, allocString, arrayLookup, structLookup, globals);
+      return op === "&&"
+        ? `(if (result i32) ${lWat} (then ${rWat}) (else (i32.const 0)))`
+        : `(if (result i32) ${lWat} (then (i32.const 1)) (else ${rWat}))`;
+    }
     // Infer i64 from LHS local type so i64 expressions don't get cast to f64
     const lhsLocalType = /^\w+$/.test(lhs) ? locals.get(lhs)
                        : /^\w+\.length$/.test(lhs) ? "i32" as const

@@ -88,8 +88,8 @@ capabilities — `Set<i32>` + `Map<i32,i32>` + `JSON` shared-heap libraries + th
 `wasmtk:<cap>` imports) and `wasmtk hybrid --auto` type-routing.** Historical baseline
 under npm:wabt + npm:binaryen: 446/446 tests passing (2026-05-25; 270 wasic +
 Go-by-Example + 103 bindgen + 73 jstyper). **Under the current dual JSR /compat
-stack (`jsr:@jrmarcum/wabt-ts@^1.3.1/compat` +
-`jsr:@jrmarcum/binaryen-ts@^1.3.2/compat`, 2026-06-02):** the full `tests/wasm_wasi`
+stack (`jsr:@jrmarcum/wabt-ts@^1.3.2/compat` +
+`jsr:@jrmarcum/binaryen-ts@^1.3.3/compat`, 2026-06-02):** the full `tests/wasm_wasi`
 suite is **278/278** (`core_` 33/33), jstyper 73/73, and **bindgen 103/103**. The 7
 long-standing failures were all fixed 2026-06-02: `5e`/`19_*` via a wasic value-fallthru
 rewrite, and `38_*` via the wabt-ts 1.3.1 hex-float-literal fix (the constants were being

@@ -1,6 +1,7 @@
 # Compiler bug log
 
-Live record of bugs found + fixed (and one still open). Newest first.
+Live record of bugs found + fixed. Newest first. (No open bugs — the last one, the merge
+OOB-`charCodeAt` trap, was fixed 2026-06-02 by short-circuiting `&&`/`||`.)
 
 ## FIXED — the 7 long-standing test failures (2026-06-02)
 
@@ -47,41 +48,41 @@ Bisected with a minimal repro (`f64.const 0x1.921fb54442d18p+2` → npm:wabt giv
 both f32 and f64 Hexfloat cases route through it; decimal `Float` still uses `parseFloat`). `deno.json`
 bumped `^1.3.0` → `^1.3.1`. Regression test in wabt-ts `tests/tools/wat2wasm.test.ts`.
 
-## OPEN — merge mis-encodes an OOB `charCodeAt` in a non-short-circuit `&&` loop condition (2026-05-31)
+## FIXED — short-circuit `&&`/`||` removes the merge OOB-`charCodeAt` trap class (2026-06-02)
 
-**Symptom:** A modc library that runs **correctly standalone** silently halts (WASM trap; runner
-exits 0, no stderr) once `wasmbundle`/`wasmmerge` splices it into a host module. Surfaced building
-the RegExp capability (the matcher's count loop).
+This was the last OPEN bug. **Fixed properly** (Proper-fix #1 from the original writeup) by making
+wasic emit **short-circuit** `&&`/`||` instead of a bitwise `i32.and`/`i32.or`; the RegExp library's
+defensive workaround was then **removed** and 18g still passes, proving the codegen fix carries the
+original trap construct on its own. Full suite re-validated: `wasm_wasi` **278/278**, `bindgen`
+**103/103**, `jstyper` **73/73** (wabt-ts 1.3.2 + binaryen-ts 1.3.3).
 
-**Minimal repro:** a `while` loop whose condition is
-`i < len && atomMatches(p, pi, s.charCodeAt(i)) === 1` (i.e. a function call wrapping
-`charCodeAt`, nested in an `i32.and`, in the loop's `br_if`). When `i == len`, the **non-short-
-circuit `&&`** still evaluates `s.charCodeAt(i)` (an OOB index). Standalone, `$__str_char_code_at`
-bounds-checks (`idx>=len → return -1`) and the loop ends cleanly. Merged, the same construct traps.
+**Original symptom:** a modc library that ran **correctly standalone** silently halted (WASM trap;
+runner exits 0, no stderr) once `wasmbundle`/`wasmmerge` spliced it into a host module. Surfaced
+building the RegExp capability (the matcher's count loop). Minimal repro: a `while` loop whose
+condition is `i < len && atomMatches(p, pi, s.charCodeAt(i)) === 1` — a function call wrapping
+`charCodeAt`, nested in an `i32.and`, in the loop's `br_if`. wasic emitted `a && b` as a
+**non-short-circuit `i32.and`** (both operands always evaluated), so when `i == len` the OOB
+`s.charCodeAt(i)` still ran; standalone `$__str_char_code_at` bounds-checks and returns -1, but the
+spliced/reassembled `call`-in-`i32.and`-in-`loop`-`br_if` mis-encoded and trapped. (JSON didn't hit
+it: its `&&`-with-`charCodeAt` conditions were in `if`s with a *direct* one-call `charCodeAt`, not a
+nested call inside a `while` `br_if`.)
 
-**Confirmed NOT:** infinite loop (a `count < 1000` cap as the first `&&` operand did not stop it →
-it's a trap, not a runaway); Binaryen (halts with Binaryen disabled on both modc and the wasic
-merge step via a temporary env gate — now reverted); the merged `charCodeAt`'s bounds check (read
-the merged WAT — it is fully intact: `idx<0→-1`, `idx>=len→-1`, else load). The merged call-site
-also passes the correct `(t_ptr, t_len, idx)`. So the corruption is introduced by the
-**splice + wabt-ts reassembly** of the larger module (shifted function/type indices), in the same
-family as the wabt-ts name/index-resolver bugs the brief documents — a `call` nested in an
-`i32.and` inside a `loop` `br_if`.
+**The fix** (`src/wasic.ts` `emitExpr` binary-op loop, ~line 6135; mirrored in `src/console_log.ts`
+`exprToWat`, ~line 1298): intercept `op === "&&" | "||"` before the bitwise `["&&","and",…]` /
+`["||","or",…]` table mapping is applied and emit short-circuit control flow —
+`&&` → `(if (result i32) <lhs> (then <rhs>) (else (i32.const 0)))`,
+`||` → `(if (result i32) <lhs> (then (i32.const 1)) (else <rhs>))`. The result is i32 0/1, promoted
+to the surrounding context via `(f64.convert_i32_s …)` / `(i64.extend_i32_s …)` when `watBaseType`
+of the context type is wider. The old table entries STAY — they still drive operator *detection* in
+the scan; only emission changed. Matches JavaScript semantics (RHS skipped once the LHS decides),
+which is independently more correct. High blast radius (every `&&`/`||` site) — validated with the
+three full suites above, zero regressions.
 
-**Why JSON didn't hit it:** JSON's `&&`-with-`charCodeAt` conditions are in `if`s with a *direct*
-`charCodeAt` (one call), not a nested `atomMatches(charCodeAt(...))` inside a `while` `br_if`.
-
-**Workaround in use:** the RegExp library is written to NEVER call `charCodeAt` on an unchecked
-index — every fetch is guarded by an enclosing `if (i < len)` (helper `atomAt`). This is also the
-correct defensive style. Set/Map/Date/JSON are unaffected.
-
-**Proper fixes (future, pick one):**
-1. Make wasic emit **short-circuit** `&&`/`||` (an `if`/`select` that skips the RHS when the LHS
-   is false) instead of `i32.and`/`i32.or`. This is more correct JS semantics and would fix the
-   whole class, but is high-blast-radius (some code may rely on both sides evaluating) — validate
-   against the full suite.
-2. Confirm + fix in the merge: swap `deno.json` to `npm:wabt` and re-run 18g to verify it's the
-   wabt-ts assembler; if so, file/fix upstream like the other wabt-ts encoder bugs.
+**Workaround removed:** `tests/wasm_wasi_bundle/regex_bundle/regex_lib_modc.ts` was rewritten to the
+natural form — `atomAt` now returns `ti < t.length && atomMatches(p, pi, t.charCodeAt(ti)) === 1`,
+and `matchStar`'s consume loop puts `ti + count < t.length && atomMatches(p, atomPi,
+t.charCodeAt(ti + count)) === 1` **directly in the `while` `br_if`** (the exact original trap shape).
+18g passes merged, so the fix — not the guard — is what carries it.
 
 ## FIXED — RegExp work (2026-05-31)
 

@@ -23,7 +23,7 @@ deno install -g --allow-read --allow-write --allow-run --allow-env --allow-net \
   --config deno.json --force -n wasmtk main.ts
 ```
 
-## Current pass counts (2026-06-02, wabt-ts 1.3.1 + binaryen-ts 1.3.2)
+## Current pass counts (2026-06-02, wabt-ts 1.3.2 + binaryen-ts 1.3.3)
 
 | Suite | Result |
 | --- | --- |

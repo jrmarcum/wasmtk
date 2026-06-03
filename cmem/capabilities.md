@@ -78,10 +78,12 @@ literals, `.`, classes `[...]` (ranges, negation, `\d \w \s`), escapes `\d \w \s
 v2 gap: alternation `|`, groups/captures `(...)`, `{n,m}`, lazy `*?`, backreferences. Engine =
 Kernighan/Pike recursive backtracker, index-based; `matchHere` returns the end text index (or -1).
 
-**RegExp is written merge-safe:** it NEVER calls `charCodeAt` on an unchecked index, because the
-merge mis-encodes an OOB `charCodeAt` nested in a non-short-circuit `&&` loop condition (the
-matcher works standalone but traps merged otherwise). All bounds are checked by an enclosing
-`if` first (helper `atomAt` does this). See compiler-bugs.md § "merge OOB-charCodeAt".
+**RegExp is written in the natural form** — `atomAt` / `matchStar` guard the index with a
+short-circuit `&&` in the same expression as the `charCodeAt` (e.g. `ti < t.length &&
+atomMatches(p, pi, t.charCodeAt(ti)) === 1`), even directly in a loop `br_if`. This used to trap
+after the merge (wasic emitted `&&` as a non-short-circuit `i32.and`, so the OOB `charCodeAt` ran);
+**fixed 2026-06-02** by making wasic short-circuit `&&`/`||`, and the former defensive workaround was
+removed. See compiler-bugs.md § "short-circuit `&&`/`||` removes the merge OOB-`charCodeAt` trap".
 
 ## Regenerating a capability's artifacts
 

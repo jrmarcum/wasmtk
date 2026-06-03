@@ -17,17 +17,17 @@
 // (start) and `$` (end) are supported. `matchHere` returns the text index just past the
 // match (so the caller can recover the matched span), or -1 on failure.
 //
-// MERGE-SAFETY (IMPORTANT — see CLAUDE.md/cmem § "RegExp / merge OOB-charCodeAt bug")
+// SHORT-CIRCUIT `&&` / `||` (see CLAUDE.md/cmem § "RegExp / merge OOB-charCodeAt bug")
 // ------------------------------------------------------------------------------------
-// wasic compiles `a && b` to a NON-short-circuit `i32.and` (both operands always evaluated).
-// A condition like `i < s.length && s.charCodeAt(i) === C` therefore calls `charCodeAt(i)`
-// even when `i >= length`. Standalone that is harmless (charCodeAt bounds-checks and returns
-// -1), but after `wasmbundle` splices this library into a host module, that out-of-bounds
-// `charCodeAt` call — nested inside the `i32.and` of a loop's `br_if` condition — is
-// mis-encoded by the merge/wabt-ts reassembly and TRAPS at runtime (a merge-only bug; the
-// standalone `.wasm` runs correctly). The whole matcher is therefore written to NEVER call
-// `charCodeAt` unless the index has already been bounds-checked by an enclosing `if`. This is
-// also simply the correct, defensive way to write it.
+// wasic emits `a && b` / `a || b` as SHORT-CIRCUIT control flow (an `(if (result i32) …)`
+// that skips the RHS once the LHS decides the result) — matching JavaScript semantics. So a
+// condition like `i < s.length && s.charCodeAt(i) === C` does NOT evaluate `charCodeAt(i)`
+// when `i >= length`; the bounds guard and the access compose naturally in one expression,
+// even inside a loop's `br_if`. (Historically wasic emitted a NON-short-circuit `i32.and`
+// that always evaluated both sides; an out-of-bounds `charCodeAt` nested in that `i32.and`
+// inside a loop `br_if` was mis-encoded by the wasmmerge splice and trapped after bundling.
+// That whole bug class is gone now that `&&`/`||` short-circuit — see the matcher below,
+// which relies on it directly in `atomAt` and `matchStar`.)
 //
 // SCOPE (v1): literals, `.`, char classes `[...]` (ranges, negation, `\d \w \s`), the
 // escapes above, quantifiers `* + ?`, and anchors `^ $`. NOT in v1 (documented v2 gap):
@@ -152,8 +152,8 @@ function atomMatches(p: string, pi: i32, c: i32): i32 {
 
 /** 1 if the atom at `pi` matches the text char at `ti` (bounds-checked), else 0. */
 function atomAt(p: string, t: string, pi: i32, ti: i32): i32 {
-  if (ti >= t.length) return 0; // never call charCodeAt out of bounds (merge-safety)
-  return atomMatches(p, pi, t.charCodeAt(ti));
+  // Short-circuit `&&`: when `ti >= t.length` the RHS `charCodeAt(ti)` is never evaluated.
+  return ti < t.length && atomMatches(p, pi, t.charCodeAt(ti)) === 1 ? 1 : 0;
 }
 
 /**
@@ -162,14 +162,13 @@ function atomAt(p: string, t: string, pi: i32, ti: i32): i32 {
  * full match, or -1.
  */
 function matchStar(p: string, t: string, atomPi: i32, restPi: i32, ti: i32, minCount: i32): i32 {
+  // Consume as many atom matches as possible. The bounds guard and the (function-wrapped)
+  // `charCodeAt` compose in one short-circuit `&&` directly in the loop's `br_if` — the exact
+  // construct that historically trapped after the wasmmerge splice and now works because
+  // wasic short-circuits `&&` (the RHS atom test is skipped once `ti + count >= t.length`).
   let count: i32 = 0;
-  let go: i32 = 1;
-  while (go === 1) {
-    if (atomAt(p, t, atomPi, ti + count) === 1) {
-      count = count + 1;
-    } else {
-      go = 0;
-    }
+  while (ti + count < t.length && atomMatches(p, atomPi, t.charCodeAt(ti + count)) === 1) {
+    count = count + 1;
   }
   let k: i32 = count;
   while (k >= minCount) {

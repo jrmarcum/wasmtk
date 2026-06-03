@@ -18,10 +18,10 @@ in `deno.json`; no source change needed.
 
 | Specifier | npm (legacy) | JSR (jrmarcum ecosystem) |
 | --- | --- | --- |
-| `"wabt"` | `npm:wabt@^1.0.36` | `jsr:@jrmarcum/wabt-ts@^1.3.1/compat` |
-| `"binaryen"` | `npm:binaryen@^116.0.0` | `jsr:@jrmarcum/binaryen-ts@^1.3.2/compat` |
+| `"wabt"` | `npm:wabt@^1.0.36` | `jsr:@jrmarcum/wabt-ts@^1.3.2/compat` |
+| `"binaryen"` | `npm:binaryen@^116.0.0` | `jsr:@jrmarcum/binaryen-ts@^1.3.3/compat` |
 
-**Current (2026-06-02):** `wabt-ts@^1.3.1/compat` + `binaryen-ts@^1.3.2/compat`. The `/compat`
+**Current (2026-06-02):** `wabt-ts@^1.3.2/compat` + `binaryen-ts@^1.3.3/compat`. The `/compat`
 subpaths mirror the upstream-npm shape so call sites stay backend-agnostic. **binaryen-ts must
 stay ≥ 1.3.2** (1.3.2 fixed a merge-path optimizer miscompile on division-heavy merged code;
 reverting below re-introduces it with no wasmtk-side workaround). wabt-ts 1.3.0 fixed a
@@ -39,8 +39,10 @@ from npm:wabt and breaks the standalone-export regex otherwise).
 
 15 toolchain bugs were filed+fixed upstream during the JSR migration (10 wabt-ts, 5 binaryen-ts)
 plus the 1.3.0 call-before-return fix, 1.3.2 merge-optimizer fix, and 1.3.1 hex-float-literal fix.
-One **open** merge bug remains on the wasmtk/wabt-ts side — see compiler-bugs.md § "merge
-OOB-charCodeAt".
+The former **open** merge bug (an OOB `charCodeAt` nested in a non-short-circuit `&&` loop `br_if`
+that trapped only after the splice) is **fixed 2026-06-02** by making wasic emit short-circuit
+`&&`/`||` — no open merge bugs remain. See compiler-bugs.md § "short-circuit `&&`/`||` removes the
+merge OOB-`charCodeAt` trap".
 
 ## Build pipeline (wasic)
 

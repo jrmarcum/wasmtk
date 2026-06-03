@@ -35,10 +35,16 @@ high-value subset.
 - **String-literal regexes are escape-aware** `"((?:[^"\\]|\\.)*)"` at the statement/expression
   sites (`emitStringPtrLen`, `emitStringAssign`, module-const detection). `allocString` →
   `unescapeString` decodes. (The `console_log.ts` console.log-arg path is still un-escaped.)
-- **`&&`/`||` are NON-short-circuit** (`i32.and`/`i32.or`) — both operands always evaluate. Code
-  must not rely on the RHS being skipped; in particular never put an OOB-prone `charCodeAt`/array
-  read on the RHS of a bound check inside a merged library (see compiler-bugs.md). `switch` on
-  `f64`/`number` must use `f64.eq`/`f64.const`.
+- **`&&`/`||` SHORT-CIRCUIT** (since 2026-06-02). `emitExpr`'s binary-op loop (`src/wasic.ts`
+  ~6135, mirrored in `console_log.ts` `exprToWat` ~1298) intercepts `&&`/`||` BEFORE the bitwise
+  `["&&","and",…]`/`["||","or",…]` table mapping and emits `(if (result i32) lhs (then rhs)
+  (else (i32.const 0)))` for `&&` / `(if (result i32) lhs (then (i32.const 1)) (else rhs))` for
+  `||`, promoting the i32 0/1 result to the context type via `f64.convert_i32_s`/`i64.extend_i32_s`
+  when wider. The RHS is skipped once the LHS decides — matching JS, and the reason an OOB-prone
+  `charCodeAt`/array read guarded by `i < len &&` on its LHS is now SAFE (it no longer evaluates
+  when out of bounds, which previously trapped after the wasmmerge splice — see compiler-bugs.md).
+  Do NOT revert to `i32.and`/`i32.or` emission. The table entries stay (they drive operator
+  *detection*); only emission changed. `switch` on `f64`/`number` must use `f64.eq`/`f64.const`.
 
 ## Merge (wasmmerge) invariants
 

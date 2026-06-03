@@ -845,22 +845,23 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 
 > **Test-count taglines in this table are historical snapshots under `npm:wabt` +
 > `npm:binaryen` (last full-suite validation 2026-05-25: 446/446 PASS). The current
-> wasmtk dependencies are `jsr:@jrmarcum/wabt-ts@^1.3.1/compat` and
-> `jsr:@jrmarcum/binaryen-ts@^1.3.2/compat` (dual JSR-native TS ecosystem). wabt-ts
+> wasmtk dependencies are `jsr:@jrmarcum/wabt-ts@^1.3.2/compat` and
+> `jsr:@jrmarcum/binaryen-ts@^1.3.3/compat` (dual JSR-native TS ecosystem). wabt-ts
 > 1.3.0 fixed a folded `(call …)`-before-`(return …)` encoder bug (recovering
 > `15_panic`, `18_Multi-Scope`), and **wabt-ts 1.3.1 fixed hex-float literals being
 > parsed as 0** (every merged-`mathlib` constant was encoded as 0, recovering all four
 > `38_*` Math tests). Under that toolchain, with the Stage 0.6 allocator-unification pass
 > and all five Tier-1 stdlib capabilities (Stage 0.7 — Set/Map/Date/JSON/RegExp)
-> in place, **the full `tests/wasm_wasi` suite is 277/277** (`core_`
+> in place, **the full `tests/wasm_wasi` suite is 278/278** (`core_`
 > 33/33, jstyper 73/73, bindgen **103/103**). The 7 long-standing failures were all fixed
 > 2026-06-02: a value-fallthru codegen fix in wasic (`5e_MixedSignatures`, `19_*` — a
 > value-returning function ending in a void `if/else` where all paths `return` is rewritten
 > into a value-producing `if` so V8's strict validator accepts it) and the wabt-ts 1.3.1
 > hex-float fix (`38_*`). (The earlier `as unknown as i32` stray-f64-convert cast bug
 > and the modc unused-`fd_write`-import bug were also fixed; Date development fixed
-> two merge-path codegen bugs; JSON development fixed four more; RegExp surfaced an open merge bug
-> worked around in the library — see Stage 0.7 below.) See CLAUDE.md
+> two merge-path codegen bugs; JSON development fixed four more; the RegExp merge bug
+> was fixed 2026-06-02 by making wasic short-circuit `&&`/`||`, and the library workaround
+> was removed — see Stage 0.7 below.) See CLAUDE.md
 > § "Pluggable wabt + binaryen backends" for the encoder-bug table. The per-phase
 > historical counts are preserved as a record of when each phase first reached
 > green; they should not be read as a live-system invariant.**
@@ -1010,7 +1011,7 @@ your own modc libraries. (Capabilities are v1 — integer Set/Map/JSON keys, etc
 
 **`JSON`** (parse + navigate) is the first capability to take **string input across the merge boundary** (Set/Map are i32-only; Date is a pure-integer leaf) (`tests/wasm_wasi_bundle/json_bundle/json_lib_modc.ts`). It is shared-heap: a `wasic` program — which has no native JSON — gains `JSON.parse` + a navigation API by merging the library, and the parsed value tree lives on the driver's heap. Each value is an i32 handle = base ptr of a 4-slot `Int32Array` node `[tag, a, b, c]` (tag 0=null 1=bool 2=number(int) 3=string 4=array 5=object); containers reuse wasic's native dynamic `i32[]` (stored/reconstructed by ptr), string values are decoded into `Uint8Array` buffers. Recursive-descent parser with a module-level cursor. Exports `jsonParse`/`jsonType`/`jsonInt`/`jsonBool`/`jsonArrayLen`/`jsonArrayGet`/`jsonObjectLen`/`jsonStrLen`/`jsonStrCharAt`/`jsonStrEq`/`jsonGet`/`jsonHas`. Self-checking `@test-pipeline` `18f_JsonCapabilityLibrary.ts` (PASS). v1 scope: null/bool/**integer** numbers/strings/arrays/objects + basic escapes (`\" \\ \/ \b \f \n \r \t`); float numbers and `\uXXXX` are the documented v2 gap (mirroring Set<i32> scoping to integer keys first). JSON surfaced and fixed **four compiler bugs**: (1) string args to a merged import dropped to one stack value — fixed by recovering the logical signature from the sibling `.wit`; (2) the allocator detector mis-dropped a `global += param; return global` accumulator as a fake bump allocator — fixed by requiring the heap global to be read exactly once (a real `$__malloc` returns the *old* value); (3) escaped-quote string literals (`\"`) matched as empty — fixed escape-aware at three statement/expression sites; (4) `findBinaryOp` missed an operator whose RHS ends in a call (`v[i] !== t.charCodeAt(i)`) because it never counted the trailing `)` for depth — fixed to scan the full string (and brackets). Full `tests/wasm_wasi` suite: **269/276** (7 pre-existing failures, no regressions); bindgen 103/103; jstyper 73/73.
 
-**`RegExp`** (fifth/final Tier-1; *leaf*) is a classic Kernighan/Pike recursive backtracking matcher (`tests/wasm_wasi_bundle/regex_bundle/regex_lib_modc.ts`), index-based over two `(string, index)` pairs threaded through the recursion — no heap, straight function splice. Exports `reTest(p, t)` (1/0), `reSearch(p, t)` (first-match start index, or -1; sets `reEnd()`), and `reEnd()` (match end, exclusive). v1 scope: literals, `.`, char classes `[...]` (ranges, negation, `\d \w \s`), escapes `\d \w \s \D \W \S \n \t \r`, quantifiers `* + ?` (greedy + backtracking), anchors `^ $`; v2 gap: alternation `|`, groups/captures, `{n,m}`, lazy `*?`, backreferences. Self-checking `@test-pipeline` `18g_RegexCapabilityLibrary.ts` (PASS). RegExp surfaced an **open merge-path bug**: an out-of-bounds `charCodeAt` evaluated inside a non-short-circuit `&&` loop condition is mis-encoded by the splice (the matcher runs correctly standalone but traps once merged). It is worked around in the library by never calling `charCodeAt` on an unchecked index (every fetch is guarded by an enclosing `if`); the proper fix is short-circuit `&&`/`||` in wasic or an upstream wabt-ts fix — see `cmem/compiler-bugs.md` and the brief §7d.
+**`RegExp`** (fifth/final Tier-1; *leaf*) is a classic Kernighan/Pike recursive backtracking matcher (`tests/wasm_wasi_bundle/regex_bundle/regex_lib_modc.ts`), index-based over two `(string, index)` pairs threaded through the recursion — no heap, straight function splice. Exports `reTest(p, t)` (1/0), `reSearch(p, t)` (first-match start index, or -1; sets `reEnd()`), and `reEnd()` (match end, exclusive). v1 scope: literals, `.`, char classes `[...]` (ranges, negation, `\d \w \s`), escapes `\d \w \s \D \W \S \n \t \r`, quantifiers `* + ?` (greedy + backtracking), anchors `^ $`; v2 gap: alternation `|`, groups/captures, `{n,m}`, lazy `*?`, backreferences. Self-checking `@test-pipeline` `18g_RegexCapabilityLibrary.ts` (PASS). RegExp surfaced a merge-path bug — an out-of-bounds `charCodeAt` evaluated inside a non-short-circuit `&&` loop condition was mis-encoded by the splice (the matcher ran correctly standalone but trapped once merged) — that is now **fixed (2026-06-02)**: wasic emits **short-circuit** `&&`/`||`, so the guarded `charCodeAt` is never evaluated out of bounds. The library's defensive workaround was removed (it now uses the natural `i < len && …charCodeAt…` form directly in the matcher's loop condition) and 18g still passes merged — see `cmem/compiler-bugs.md` and the brief §7d.
 
 See [`cmem/stdlib-bundling-brief.md`](cmem/stdlib-bundling-brief.md). **All five Tier-1 stdlib capabilities complete.** Next tracks: feature-level tree-shake wiring (§7-#4), Promise/async (§7-#5).
 

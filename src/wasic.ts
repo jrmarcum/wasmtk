@@ -6125,6 +6125,26 @@ class WasicTranspiler {
         const lhs     = expr.slice(0, idx).trim();
         const rhs     = expr.slice(idx + op.length).trim();
 
+        // Logical && / || — emit SHORT-CIRCUIT form (an if/result that skips the RHS when the
+        // LHS already decides the result) instead of a bitwise (i32.and/or) that always
+        // evaluates both sides. This matches JavaScript semantics and, critically, prevents an
+        // RHS with a guarded side effect (e.g. `i < len && s.charCodeAt(i) === c`) from
+        // evaluating an out-of-bounds access when the LHS is false. The old non-short-circuit
+        // form also mis-encoded under wasmmerge splice (a `call` nested in an `i32.and` inside a
+        // loop `br_if` trapped after reassembly); short-circuiting removes that whole class.
+        if (op === "&&" || op === "||") {
+          const lWat = this.emitExpr(lhs, locals, "i32");
+          const rWat = this.emitExpr(rhs, locals, "i32");
+          const scWat = op === "&&"
+            ? `(if (result i32) ${lWat} (then ${rWat}) (else (i32.const 0)))`
+            : `(if (result i32) ${lWat} (then (i32.const 1)) (else ${rWat}))`;
+          // Result is i32 0/1; promote if the surrounding context expects a wider type.
+          const ctxBase = watBaseType(defaultType as WatType);
+          if (ctxBase === "f64") return `(f64.convert_i32_s ${scWat})`;
+          if (ctxBase === "i64") return `(i64.extend_i32_s ${scWat})`;
+          return scWat;
+        }
+
         // Phase 24: null/undefined comparison — intercept before the regular type dispatch.
         if ((op === "===" || op === "!==" || op === "==" || op === "!=") &&
             (rhs === "null" || rhs === "undefined" || lhs === "null" || lhs === "undefined")) {

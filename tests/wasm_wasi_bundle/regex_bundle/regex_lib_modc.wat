@@ -669,17 +669,17 @@
     (local.get $arr)
   )
   (func $isWord (param $c i32) (result i32)
-    (if (i32.and (i32.ge_s (local.get $c) (i32.const 48)) (i32.le_s (local.get $c) (i32.const 57)))
+    (if (if (result i32) (i32.ge_s (local.get $c) (i32.const 48)) (then (i32.le_s (local.get $c) (i32.const 57))) (else (i32.const 0)))
       (then
       (return (i32.const 1))
       )
     )
-    (if (i32.and (i32.ge_s (local.get $c) (i32.const 65)) (i32.le_s (local.get $c) (i32.const 90)))
+    (if (if (result i32) (i32.ge_s (local.get $c) (i32.const 65)) (then (i32.le_s (local.get $c) (i32.const 90))) (else (i32.const 0)))
       (then
       (return (i32.const 1))
       )
     )
-    (if (i32.and (i32.ge_s (local.get $c) (i32.const 97)) (i32.le_s (local.get $c) (i32.const 122)))
+    (if (if (result i32) (i32.ge_s (local.get $c) (i32.const 97)) (then (i32.le_s (local.get $c) (i32.const 122))) (else (i32.const 0)))
       (then
       (return (i32.const 1))
       )
@@ -693,7 +693,7 @@
   )
 
   (func $isSpace (param $c i32) (result i32)
-    (if (i32.or (i32.or (i32.or (i32.or (i32.or (i32.eq (local.get $c) (i32.const 32)) (i32.eq (local.get $c) (i32.const 9))) (i32.eq (local.get $c) (i32.const 10))) (i32.eq (local.get $c) (i32.const 13))) (i32.eq (local.get $c) (i32.const 12))) (i32.eq (local.get $c) (i32.const 11)))
+    (if (if (result i32) (if (result i32) (if (result i32) (if (result i32) (if (result i32) (i32.eq (local.get $c) (i32.const 32)) (then (i32.const 1)) (else (i32.eq (local.get $c) (i32.const 9)))) (then (i32.const 1)) (else (i32.eq (local.get $c) (i32.const 10)))) (then (i32.const 1)) (else (i32.eq (local.get $c) (i32.const 13)))) (then (i32.const 1)) (else (i32.eq (local.get $c) (i32.const 12)))) (then (i32.const 1)) (else (i32.eq (local.get $c) (i32.const 11))))
       (then
       (return (i32.const 1))
       )
@@ -800,12 +800,12 @@
               )
               (else
               (local.set $lo (call $__str_char_code_at (local.get $p_ptr) (local.get $p_len) (local.get $j)))
-              (if (i32.and (i32.eq (local.get $lo) (i32.const 92)) (i32.lt_s (i32.add (local.get $j) (i32.const 1)) (local.get $p_len)))
+              (if (if (result i32) (i32.eq (local.get $lo) (i32.const 92)) (then (i32.lt_s (i32.add (local.get $j) (i32.const 1)) (local.get $p_len))) (else (i32.const 0)))
                 (then
                 (local.set $e (call $__str_char_code_at (local.get $p_ptr) (local.get $p_len) (i32.add (local.get $j) (i32.const 1))))
                 (if (i32.eq (local.get $e) (i32.const 100))
                   (then
-                  (if (i32.and (i32.ge_s (local.get $c) (i32.const 48)) (i32.le_s (local.get $c) (i32.const 57)))
+                  (if (if (result i32) (i32.ge_s (local.get $c) (i32.const 48)) (then (i32.le_s (local.get $c) (i32.const 57))) (else (i32.const 0)))
                     (then
                     (local.set $found (i32.const 1))
                     )
@@ -835,7 +835,7 @@
                 (if (i32.eq (local.get $isRange) (i32.const 1))
                   (then
                   (local.set $hi (call $__str_char_code_at (local.get $p_ptr) (local.get $p_len) (i32.add (local.get $j) (i32.const 2))))
-                  (if (i32.and (i32.ge_s (local.get $c) (local.get $lo)) (i32.le_s (local.get $c) (local.get $hi)))
+                  (if (if (result i32) (i32.ge_s (local.get $c) (local.get $lo)) (then (i32.le_s (local.get $c) (local.get $hi))) (else (i32.const 0)))
                     (then
                     (local.set $found (i32.const 1))
                     )
@@ -884,12 +884,12 @@
       (local.set $e (call $__str_char_code_at (local.get $p_ptr) (local.get $p_len) (i32.add (local.get $pi) (i32.const 1))))
       (if (i32.eq (local.get $e) (i32.const 100))
         (then
-        (return (if (result i32) (i32.and (i32.ge_s (local.get $c) (i32.const 48)) (i32.le_s (local.get $c) (i32.const 57))) (then (i32.const 1)) (else (i32.const 0))))
+        (return (if (result i32) (if (result i32) (i32.ge_s (local.get $c) (i32.const 48)) (then (i32.le_s (local.get $c) (i32.const 57))) (else (i32.const 0))) (then (i32.const 1)) (else (i32.const 0))))
         )
       )
       (if (i32.eq (local.get $e) (i32.const 68))
         (then
-        (return (if (result i32) (i32.and (i32.ge_s (local.get $c) (i32.const 48)) (i32.le_s (local.get $c) (i32.const 57))) (then (i32.const 0)) (else (i32.const 1))))
+        (return (if (result i32) (if (result i32) (i32.ge_s (local.get $c) (i32.const 48)) (then (i32.le_s (local.get $c) (i32.const 57))) (else (i32.const 0))) (then (i32.const 0)) (else (i32.const 1))))
         )
       )
       (if (i32.eq (local.get $e) (i32.const 119))
@@ -940,33 +940,20 @@
 
   (func $atomAt (param $p_ptr i32) (param $p_len i32) (param $t_ptr i32) (param $t_len i32) (param $pi i32) (param $ti i32) (result i32)
     (local $__iface_tmp i32)
-    (if (i32.ge_s (local.get $ti) (local.get $t_len))
-      (then
-      (return (i32.const 0))
-      )
-    )
-    (return (call $atomMatches (local.get $p_ptr) (local.get $p_len) (local.get $pi) (call $__str_char_code_at (local.get $t_ptr) (local.get $t_len) (local.get $ti))))
+    (return (if (result i32) (if (result i32) (i32.lt_s (local.get $ti) (local.get $t_len)) (then (i32.eq (call $atomMatches (local.get $p_ptr) (local.get $p_len) (local.get $pi) (call $__str_char_code_at (local.get $t_ptr) (local.get $t_len) (local.get $ti))) (i32.const 1))) (else (i32.const 0))) (then (i32.const 1)) (else (i32.const 0))))
   )
 
   (func $matchStar (param $p_ptr i32) (param $p_len i32) (param $t_ptr i32) (param $t_len i32) (param $atomPi i32) (param $restPi i32) (param $ti i32) (param $minCount i32) (result i32)
     (local $count i32)
-    (local $go i32)
     (local $k i32)
     (local $e i32)
+    (local $__iface_tmp i32)
     (local.set $count (i32.const 0))
-    (local.set $go (i32.const 1))
     (block $break_2
       (loop $loop_2
-        (br_if $break_2 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
+        (br_if $break_2 (i32.eqz (if (result i32) (i32.lt_s (i32.add (local.get $ti) (local.get $count)) (local.get $t_len)) (then (i32.eq (call $atomMatches (local.get $p_ptr) (local.get $p_len) (local.get $atomPi) (call $__str_char_code_at (local.get $t_ptr) (local.get $t_len) (i32.add (local.get $ti) (local.get $count)))) (i32.const 1))) (else (i32.const 0)))))
         (block $cont_2
-          (if (i32.eq (call $atomAt (local.get $p_ptr) (local.get $p_len) (local.get $t_ptr) (local.get $t_len) (local.get $atomPi) (i32.add (local.get $ti) (local.get $count))) (i32.const 1))
-            (then
-            (local.set $count (i32.add (local.get $count) (i32.const 1)))
-            )
-            (else
-            (local.set $go (i32.const 0))
-            )
-          )
+          (local.set $count (i32.add (local.get $count) (i32.const 1)))
         )
         (br $loop_2)
       )
@@ -1004,7 +991,7 @@
       )
     )
     (local.set $pc0 (call $__str_char_code_at (local.get $p_ptr) (local.get $p_len) (local.get $pi)))
-    (if (i32.and (i32.eq (local.get $pc0) (i32.const 36)) (i32.ge_s (i32.add (local.get $pi) (i32.const 1)) (local.get $p_len)))
+    (if (if (result i32) (i32.eq (local.get $pc0) (i32.const 36)) (then (i32.ge_s (i32.add (local.get $pi) (i32.const 1)) (local.get $p_len))) (else (i32.const 0)))
       (then
       (return (if (result i32) (i32.ge_s (local.get $ti) (local.get $t_len)) (then (local.get $ti)) (else (i32.const -1))))
       )
@@ -1015,7 +1002,7 @@
     (if (i32.lt_s (local.get $nextPi) (local.get $p_len))
       (then
       (local.set $q (call $__str_char_code_at (local.get $p_ptr) (local.get $p_len) (local.get $nextPi)))
-      (if (i32.or (i32.or (i32.eq (local.get $q) (i32.const 42)) (i32.eq (local.get $q) (i32.const 43))) (i32.eq (local.get $q) (i32.const 63)))
+      (if (if (result i32) (if (result i32) (i32.eq (local.get $q) (i32.const 42)) (then (i32.const 1)) (else (i32.eq (local.get $q) (i32.const 43)))) (then (i32.const 1)) (else (i32.eq (local.get $q) (i32.const 63))))
         (then
         (local.set $quant (local.get $q))
         )
