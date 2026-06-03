@@ -963,18 +963,27 @@
               local.get 3
               i32.const 32
               i32.eq
-              local.get 3
-              i32.const 9
-              i32.eq
-              i32.or
-              local.get 3
-              i32.const 10
-              i32.eq
-              i32.or
-              local.get 3
-              i32.const 13
-              i32.eq
-              i32.or
+              if (result i32)  ;; label = @6
+                i32.const 1
+              else
+                local.get 3
+                i32.const 9
+                i32.eq
+              end
+              if (result i32)  ;; label = @6
+                i32.const 1
+              else
+                local.get 3
+                i32.const 10
+                i32.eq
+              end
+              if (result i32)  ;; label = @6
+                i32.const 1
+              else
+                local.get 3
+                i32.const 13
+                i32.eq
+              end
               if  ;; label = @6
                 global.get $json_lib_modc_global1
                 i32.const 1
@@ -1233,10 +1242,13 @@
               local.get 5
               i32.const 48
               i32.lt_s
-              local.get 5
-              i32.const 57
-              i32.gt_s
-              i32.or
+              if (result i32)  ;; label = @6
+                i32.const 1
+              else
+                local.get 5
+                i32.const 57
+                i32.gt_s
+              end
               if  ;; label = @6
                 i32.const 0
                 local.set 4
@@ -1265,13 +1277,16 @@
     global.get $json_lib_modc_global1
     local.get 1
     i32.lt_s
-    local.get 0
-    local.get 1
-    global.get $json_lib_modc_global1
-    call $json_lib_modc__fn2
-    i32.const 46
-    i32.eq
-    i32.and
+    if (result i32)  ;; label = @1
+      local.get 0
+      local.get 1
+      global.get $json_lib_modc_global1
+      call $json_lib_modc__fn2
+      i32.const 46
+      i32.eq
+    else
+      i32.const 0
+    end
     if  ;; label = @1
       block  ;; label = @2
         global.get $json_lib_modc_global1
@@ -1306,10 +1321,13 @@
                   local.get 5
                   i32.const 48
                   i32.lt_s
-                  local.get 5
-                  i32.const 57
-                  i32.gt_s
-                  i32.or
+                  if (result i32)  ;; label = @8
+                    i32.const 1
+                  else
+                    local.get 5
+                    i32.const 57
+                    i32.gt_s
+                  end
                   if  ;; label = @8
                     i32.const 0
                     local.set 4
@@ -1335,10 +1353,13 @@
         local.get 4
         i32.const 101
         i32.eq
-        local.get 4
-        i32.const 69
-        i32.eq
-        i32.or
+        if (result i32)  ;; label = @3
+          i32.const 1
+        else
+          local.get 4
+          i32.const 69
+          i32.eq
+        end
         if  ;; label = @3
           block  ;; label = @4
             global.get $json_lib_modc_global1
@@ -1359,10 +1380,13 @@
                 local.get 4
                 i32.const 43
                 i32.eq
-                local.get 4
-                i32.const 45
-                i32.eq
-                i32.or
+                if (result i32)  ;; label = @7
+                  i32.const 1
+                else
+                  local.get 4
+                  i32.const 45
+                  i32.eq
+                end
                 if  ;; label = @7
                   global.get $json_lib_modc_global1
                   i32.const 1
@@ -1398,10 +1422,13 @@
                       local.get 5
                       i32.const 48
                       i32.lt_s
-                      local.get 5
-                      i32.const 57
-                      i32.gt_s
-                      i32.or
+                      if (result i32)  ;; label = @10
+                        i32.const 1
+                      else
+                        local.get 5
+                        i32.const 57
+                        i32.gt_s
+                      end
                       if  ;; label = @10
                         i32.const 0
                         local.set 4

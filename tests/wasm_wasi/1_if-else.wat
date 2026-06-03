@@ -312,7 +312,7 @@
             (i32.const 128)))
       )
     )
-    (if (i32.or (i32.eq (i32.rem_s (i32.const 8) (i32.const 2)) (i32.const 0)) (i32.eq (i32.rem_s (i32.const 7) (i32.const 2)) (i32.const 0)))
+    (if (if (result i32) (i32.eq (i32.rem_s (i32.const 8) (i32.const 2)) (i32.const 0)) (then (i32.const 1)) (else (i32.eq (i32.rem_s (i32.const 7) (i32.const 2)) (i32.const 0))))
       (then
           (i32.store (i32.const 0) (i32.const 299))
           (i32.store (i32.const 4) (i32.const 23))

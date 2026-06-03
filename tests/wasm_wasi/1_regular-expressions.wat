@@ -738,7 +738,7 @@
       (loop $loop_1
         (br_if $break_1 (i32.eqz (f64.lt (local.get $i) (f64.sub (f64.convert_i32_s (local.get $s_len)) (f64.const 2)))))
         (block $cont_1
-          (if (i32.and (i32.and (i32.eq (call $__str_char_code_at (local.get $s_ptr) (local.get $s_len) (i32.trunc_f64_s (local.get $i))) (i32.const 112)) (i32.eq (call $__str_char_code_at (local.get $s_ptr) (local.get $s_len) (i32.trunc_f64_s (f64.add (local.get $i) (f64.const 2)))) (i32.const 99))) (i32.eq (call $__str_char_code_at (local.get $s_ptr) (local.get $s_len) (i32.trunc_f64_s (f64.add (local.get $i) (f64.const 3)))) (i32.const 104)))
+          (if (if (result i32) (if (result i32) (i32.eq (call $__str_char_code_at (local.get $s_ptr) (local.get $s_len) (i32.trunc_f64_s (local.get $i))) (i32.const 112)) (then (i32.eq (call $__str_char_code_at (local.get $s_ptr) (local.get $s_len) (i32.trunc_f64_s (f64.add (local.get $i) (f64.const 2)))) (i32.const 99))) (else (i32.const 0))) (then (i32.eq (call $__str_char_code_at (local.get $s_ptr) (local.get $s_len) (i32.trunc_f64_s (f64.add (local.get $i) (f64.const 3)))) (i32.const 104))) (else (i32.const 0)))
             (then
             (call $__str_slice (local.get $s_ptr) (local.get $s_len) (i32.trunc_f64_s (local.get $i)) (i32.trunc_f64_s (f64.add (local.get $i) (f64.const 5))))
       (local.set $__ret_str_len)

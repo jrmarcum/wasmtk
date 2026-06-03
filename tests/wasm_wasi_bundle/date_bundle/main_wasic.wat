@@ -696,18 +696,27 @@
     local.get 1
     i32.const 4
     i32.eq
-    local.get 1
-    i32.const 6
-    i32.eq
-    i32.or
-    local.get 1
-    i32.const 9
-    i32.eq
-    i32.or
-    local.get 1
-    i32.const 11
-    i32.eq
-    i32.or
+    if (result i32)  ;; label = @1
+      i32.const 1
+    else
+      local.get 1
+      i32.const 6
+      i32.eq
+    end
+    if (result i32)  ;; label = @1
+      i32.const 1
+    else
+      local.get 1
+      i32.const 9
+      i32.eq
+    end
+    if (result i32)  ;; label = @1
+      i32.const 1
+    else
+      local.get 1
+      i32.const 11
+      i32.eq
+    end
     if  ;; label = @1
       i32.const 30
       return

@@ -298,7 +298,7 @@
                   (br $cont_0)
                   )
                 )
-                (if (i32.and (i32.eq (local.get $i) (i32.const 2)) (i32.eq (local.get $j) (i32.const 2)))
+                (if (if (result i32) (i32.eq (local.get $i) (i32.const 2)) (then (i32.eq (local.get $j) (i32.const 2))) (else (i32.const 0)))
                   (then
                   (br $cont_outerLoop)
                   )

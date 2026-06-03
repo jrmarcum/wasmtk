@@ -737,7 +737,7 @@
 
   (func $isAbsolute (param $p_ptr i32) (param $p_len i32) (result i32)
     (local $__iface_tmp i32)
-    (return (i32.and (i32.gt_s (local.get $p_len) (i32.const 0)) (i32.eq (call $__str_char_code_at (local.get $p_ptr) (local.get $p_len) (i32.const 0)) (i32.const 47))))
+    (return (if (result i32) (i32.gt_s (local.get $p_len) (i32.const 0)) (then (i32.eq (call $__str_char_code_at (local.get $p_ptr) (local.get $p_len) (i32.const 0)) (i32.const 47))) (else (i32.const 0))))
   )
 
   (func $extname (param $filename_ptr i32) (param $filename_len i32) 

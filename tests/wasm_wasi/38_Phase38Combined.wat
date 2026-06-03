@@ -413,7 +413,7 @@
             (i32.const 128)))
     (local.set $t (call $mathlib_tanh (f64.const 3.0)))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__f64_to_str (if (result f64) (i32.and (f64.gt (local.get $t) (f64.const 0)) (f64.lt (local.get $t) (f64.const 1))) (then (f64.const 1)) (else (f64.const 0))) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (if (result f64) (if (result i32) (f64.gt (local.get $t) (f64.const 0)) (then (f64.lt (local.get $t) (f64.const 1))) (else (i32.const 0))) (then (f64.const 1)) (else (f64.const 0))) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write
@@ -469,7 +469,7 @@
             (i32.const 128)))
     (local.set $r (call $mathlib_random))
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__f64_to_str (if (result f64) (i32.and (f64.ge (local.get $r) (f64.const 0)) (f64.lt (local.get $r) (f64.const 1))) (then (f64.const 1)) (else (f64.const 0))) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__f64_to_str (if (result f64) (if (result i32) (f64.ge (local.get $r) (f64.const 0)) (then (f64.lt (local.get $r) (f64.const 1))) (else (i32.const 0))) (then (f64.const 1)) (else (f64.const 0))) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write

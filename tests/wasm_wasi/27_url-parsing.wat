@@ -741,7 +741,7 @@
       )
     )
     (local.set $q (f64.convert_i32_s (call $__str_indexof_from (local.get $u_ptr) (local.get $u_len) (i32.const 310) (i32.const 1) (i32.trunc_f64_s (local.get $afterAt)))))
-    (if (i32.and (f64.ge (local.get $q) (f64.const 0)) (f64.lt (local.get $q) (local.get $end)))
+    (if (if (result i32) (f64.ge (local.get $q) (f64.const 0)) (then (f64.lt (local.get $q) (local.get $end))) (else (i32.const 0)))
       (then
       (local.set $end (local.get $q))
       )

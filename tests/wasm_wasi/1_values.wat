@@ -323,8 +323,8 @@
             (i32.const 0)
             (i32.const 1)
             (i32.const 128)))
-        (i32.store (i32.const 0) (if (result i32) (i32.and (i32.const 1) (i32.const 0)) (then (i32.const 272)) (else (i32.const 276))))
-          (i32.store (i32.const 4) (if (result i32) (i32.and (i32.const 1) (i32.const 0)) (then (i32.const 4)) (else (i32.const 5))))
+        (i32.store (i32.const 0) (if (result i32) (if (result i32) (i32.const 1) (then (i32.const 0)) (else (i32.const 0))) (then (i32.const 272)) (else (i32.const 276))))
+          (i32.store (i32.const 4) (if (result i32) (if (result i32) (i32.const 1) (then (i32.const 0)) (else (i32.const 0))) (then (i32.const 4)) (else (i32.const 5))))
           (i32.store (i32.const 8) (i32.const 281))
           (i32.store (i32.const 12) (i32.const 1))
           (drop (call $fd_write
@@ -332,8 +332,8 @@
             (i32.const 0)
             (i32.const 2)
             (i32.const 128)))
-        (i32.store (i32.const 0) (if (result i32) (i32.or (i32.const 1) (i32.const 0)) (then (i32.const 272)) (else (i32.const 276))))
-          (i32.store (i32.const 4) (if (result i32) (i32.or (i32.const 1) (i32.const 0)) (then (i32.const 4)) (else (i32.const 5))))
+        (i32.store (i32.const 0) (if (result i32) (if (result i32) (i32.const 1) (then (i32.const 1)) (else (i32.const 0))) (then (i32.const 272)) (else (i32.const 276))))
+          (i32.store (i32.const 4) (if (result i32) (if (result i32) (i32.const 1) (then (i32.const 1)) (else (i32.const 0))) (then (i32.const 4)) (else (i32.const 5))))
           (i32.store (i32.const 8) (i32.const 281))
           (i32.store (i32.const 12) (i32.const 1))
           (drop (call $fd_write

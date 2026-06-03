@@ -28,11 +28,11 @@
   )
 
   (func $compareAnd (export "compareAnd") (param $a i32) (param $b i32) (param $c i32) (result i32)
-    (return (i32.and (i32.lt_s (local.get $a) (local.get $b)) (i32.lt_s (local.get $b) (local.get $c))))
+    (return (if (result i32) (i32.lt_s (local.get $a) (local.get $b)) (then (i32.lt_s (local.get $b) (local.get $c))) (else (i32.const 0))))
   )
 
   (func $compareOr (export "compareOr") (param $a i32) (param $b i32) (param $c i32) (result i32)
-    (return (i32.or (i32.eq (local.get $a) (local.get $b)) (i32.eq (local.get $a) (local.get $c))))
+    (return (if (result i32) (i32.eq (local.get $a) (local.get $b)) (then (i32.const 1)) (else (i32.eq (local.get $a) (local.get $c)))))
   )
   (func $_start (export "_start")
     (local $__iface_tmp i32)

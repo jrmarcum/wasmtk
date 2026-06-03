@@ -316,7 +316,7 @@
   )
 
   (func $inRange (param $v f64) (param $lo f64) (param $hi f64) (result i32)
-    (return (i32.and (f64.ge (local.get $v) (local.get $lo)) (f64.le (local.get $v) (local.get $hi))))
+    (return (if (result i32) (f64.ge (local.get $v) (local.get $lo)) (then (f64.le (local.get $v) (local.get $hi))) (else (i32.const 0))))
   )
   (func $_start (export "_start")
     (local $__iface_tmp i32)

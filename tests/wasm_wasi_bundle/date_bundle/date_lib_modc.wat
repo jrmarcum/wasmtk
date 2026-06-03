@@ -37,7 +37,7 @@
       (return (if (result i32) (i32.eq (call $isLeapYear (local.get $year)) (i32.const 1)) (then (i32.const 29)) (else (i32.const 28))))
       )
     )
-    (if (i32.or (i32.or (i32.or (i32.eq (local.get $month) (i32.const 4)) (i32.eq (local.get $month) (i32.const 6))) (i32.eq (local.get $month) (i32.const 9))) (i32.eq (local.get $month) (i32.const 11)))
+    (if (if (result i32) (if (result i32) (if (result i32) (i32.eq (local.get $month) (i32.const 4)) (then (i32.const 1)) (else (i32.eq (local.get $month) (i32.const 6)))) (then (i32.const 1)) (else (i32.eq (local.get $month) (i32.const 9)))) (then (i32.const 1)) (else (i32.eq (local.get $month) (i32.const 11))))
       (then
       (return (i32.const 30))
       )

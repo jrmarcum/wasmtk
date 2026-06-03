@@ -551,14 +551,14 @@
     (local $__iface_tmp i32)
     (local $__str_op_ptr i32)
     (local $__str_op_len i32)
-    (return (i32.and (i32.ge_s (local.get $s_len) (local.get $prefix_len)) (i32.eqz (call $__str_cmp (call $__str_slice (local.get $s_ptr) (local.get $s_len) (i32.const 0) (local.get $prefix_len)) (local.get $prefix_ptr) (local.get $prefix_len)))))
+    (return (if (result i32) (i32.ge_s (local.get $s_len) (local.get $prefix_len)) (then (i32.eqz (call $__str_cmp (call $__str_slice (local.get $s_ptr) (local.get $s_len) (i32.const 0) (local.get $prefix_len)) (local.get $prefix_ptr) (local.get $prefix_len)))) (else (i32.const 0))))
   )
 
   (func $hasSuffix (param $s_ptr i32) (param $s_len i32) (param $suffix_ptr i32) (param $suffix_len i32) (result i32)
     (local $__iface_tmp i32)
     (local $__str_op_ptr i32)
     (local $__str_op_len i32)
-    (return (i32.and (i32.ge_s (local.get $s_len) (local.get $suffix_len)) (i32.eqz (call $__str_cmp (call $__str_slice (local.get $s_ptr) (local.get $s_len) (i32.sub (local.get $s_len) (local.get $suffix_len)) (local.get $s_len)) (local.get $suffix_ptr) (local.get $suffix_len)))))
+    (return (if (result i32) (i32.ge_s (local.get $s_len) (local.get $suffix_len)) (then (i32.eqz (call $__str_cmp (call $__str_slice (local.get $s_ptr) (local.get $s_len) (i32.sub (local.get $s_len) (local.get $suffix_len)) (local.get $s_len)) (local.get $suffix_ptr) (local.get $suffix_len)))) (else (i32.const 0))))
   )
 
   (func $strIndex (param $s_ptr i32) (param $s_len i32) (param $sub_ptr i32) (param $sub_len i32) (result f64)

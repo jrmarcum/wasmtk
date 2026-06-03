@@ -1031,7 +1031,7 @@
       (local.set $c_len)
       (local.set $c_ptr)
           (local.set $d (f64.convert_i32_s (call $__str_indexof (local.get $chars_ptr) (local.get $chars_len) (local.get $c_ptr) (local.get $c_len))))
-          (if (i32.or (f64.lt (local.get $d) (f64.const 0)) (f64.ge (local.get $d) (local.get $base)))
+          (if (if (result i32) (f64.lt (local.get $d) (f64.const 0)) (then (i32.const 1)) (else (f64.ge (local.get $d) (local.get $base))))
             (then
             (return (f64.const nan))
             )
