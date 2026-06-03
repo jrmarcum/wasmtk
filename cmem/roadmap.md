@@ -49,7 +49,56 @@ implemented yet; `javyc` (QuickJS) remains the interim dynamic fallback until th
 to the own-runtime once it exists.
 
 Remaining open tracks: **#5 Promise/async** (state-machine lowering + microtask runtime) and the
-**own dynamic runtime** (#7 decision). Both are large, dedicated efforts.
+**own dynamic runtime** (#7 decision). Both are large, dedicated efforts — and both are now
+**gated behind Phase 51 language hardening** (see next section).
+
+## Prioritized execution order (set 2026-06-03)
+
+**Principle (project owner, 2026-06-03):** the never-scheduled language-completeness gaps take
+**precedence over the big tracks**, because #5 async and the own dynamic runtime *lower onto* the
+existing codegen (struct layout, field access, type inference, narrowing, tag dispatch). Completing
+the foundational gaps first — with cheap, standalone repros — hardens exactly those paths so a later
+bug is debugged once, not while also debugging a state-machine/interpreter transform. Ordered
+foundation-depth first, then by effort (quick wins first). Each item ships with its own regression
+test. (The **ecosystem loader** track is the exception — it consumes the compiled `.wasm`/`.wit`/ABI,
+not TS syntax, so it is orthogonal and ungated.)
+
+### Phase 51 — Language hardening (GATES #5 async + own-runtime)
+
+1. **`instanceof`** (class tags + DU tags) — *first.* Lowest effort; tag infra already exists
+   (Phase 47 class tags, Phase 32 DU tags). Hardens the tag-dispatch path the dynamic runtime +
+   narrowing reuse.
+2. **Object spread** `{...base, k: v}` — hardens struct field-copy + override codegen (high-frequency;
+   central to struct handling).
+3. **Destructuring in function params** `f({x, y}: Vec2)`, then **nested destructuring**
+   (`{a:{b}}`, `[[a,b],c]`) — hardens binding/offset paths, built on the layout validated in #2.
+4. **Utility types** — `Partial`/`Readonly`/`Record`/`Pick`/`Omit`/`NonNullable` first, then
+   `Exclude`/`Extract`/`ReturnType`/`Parameters`. Source-level type-resolution hardening (Phase 36
+   style); after the value-level struct work since some interact with struct shapes.
+
+### Phase 52 — Leaf conveniences (NO downstream risk; opportunistic, never gating)
+
+5. `void expr` → `(drop …)`; 6. chained assignment `a = b = c = 0`; 7. `in` operator (closed-world →
+compile-time `1`/`0`); 8. `Array.from([…])` / `Array.of(…)` / `Array.isArray(x)`;
+9. `String.fromCodePoint(n)`. Nothing builds on these, so they cannot introduce later bugs.
+
+### Phase 53 — Standalone built-ins (user-value; schedule on demand, not foundational)
+
+10. `Number.parseInt(s, radix)` / `Number.parseFloat(s)` — real WAT string→number parser.
+11. Multi-level interface inheritance (>2 deep) — offset-calc fix.
+
+### Big tracks (the "last items")
+
+12. **Ecosystem Stage 1 — `universalWasmLoader`** (+ `SPEC.md` + `InstancePool`) — **orthogonal /
+    ungated**; can run in parallel anytime (consumes ABI/WIT, not TS syntax).
+13. **#5 Promise/async** — state-machine lowering + microtask runtime; lift `hybrid` async exclusion.
+    **Gated behind Phase 51.**
+14. **Own dynamic runtime** (§7-#7) — boxed values + property map + interpreter for the irreducible
+    kernel (`eval`/`new Function`, pervasive `any`, open-prototype mutation). **Gated behind Phase
+    51.** Largest single track; `javyc` (QuickJS) is the interim fallback until it lands.
+
+**Gating summary:** 51 → (13, 14). 12 is parallel/ungated. 52 + 53 are opportunistic and block
+nothing.
 
 ## "TypeScript as a DLL" vision
 
@@ -79,8 +128,10 @@ channels/select, `os.Exit` non-zero propagation (runner enhancement). And the ir
 kernel — `eval`/`new Function`, pervasive `any`, open prototype mutation — stays in `javyc` unless
 §7-#7 decides to build wasmtk's own dynamic runtime.
 
-## TypeScript feature gaps compilable later (not scheduled)
+## TypeScript feature gaps compilable later (now scheduled — see "Prioritized execution order")
 
 Object spread `{...o, k:v}`, utility types (`Partial`/`Record`/…), destructuring in params,
 `Number.parseInt`/`parseFloat`, `instanceof` for class/DU tags, `in` operator, nested destructuring.
-Full analysis in CLAUDE.md § "TypeScript Feature Gap Analysis".
+As of 2026-06-03 these are no longer unscheduled — they are sequenced into **Phases 51–53** above
+(foundational subset gates the async + own-runtime tracks). Full analysis in CLAUDE.md
+§ "TypeScript Feature Gap Analysis".
