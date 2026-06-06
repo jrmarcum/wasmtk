@@ -199,5 +199,10 @@ Options:
 }
 
 if (import.meta.main) {
-  main();
+  main().catch((err) => {
+    // Surface thrown errors (e.g. an unsupported-merge diagnostic from wasmmerge) as a clean
+    // one-line message with a non-zero exit, instead of an unhandled-rejection stack trace.
+    console.error(`❌ wasmtk: ${err instanceof Error ? err.message : err}`);
+    Deno.exit(1);
+  });
 }

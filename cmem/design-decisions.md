@@ -144,3 +144,50 @@ string-array element, and `Math.*`/`Number.*` handling all have such twins.
   byte-identical — but it IS the compiler, so reinstall (`deno install -g … -n wasmtk`) and re-run
   the three suites after any reformat. fmt is not CI-gated (see testing.md), but staying clean keeps
   the pre-publish checklist green.
+
+## Intentional fallbacks — NOT workarounds (do not "fix" or remove)
+
+These are deliberate design choices that can look like workarounds in a sweep. They are correct as-is;
+removing them would break things. Listed so a future audit doesn't re-flag them.
+
+- **`javyc` (QuickJS) as the interim dynamic runtime.** Covers the irreducible dynamic kernel
+  (`eval`/`new Function`, pervasive `any`, open-prototype mutation) that wasic deliberately does not
+  compile. Stays until wasmtk's own dynamic runtime lands (roadmap §7-#7). Not a bug.
+- **`npm:wabt` / `npm:binaryen` as fallback backends.** `deno.json` is the single switch; the JSR
+  `/compat` packages are the default, npm is the always-available fallback for the migration's
+  lifetime. Both code paths are intentional (see architecture.md).
+- **Env-import no-op `Proxy` in the runner** (`utils.ts` `runWasi`): returns a `() => 0` stub for any
+  `env` import a module declares but the host doesn't supply (Phase 40 externals). Lets
+  `declare const`-importing modules instantiate under `wasmtk run` without a real host. By design.
+- **`modc` drops non-`export` top-level statements.** Library mode emits only `export function`s; a
+  runner `main()` / module-level code in a modc input is intentionally ignored (it's a library, not
+  an executable). By design.
+- **Bump allocator with no `free`.** Allocations live for the instance lifetime; this is the documented
+  DLL memory model (singleton or pool, see vision.md), not a leak to fix.
+
+## Silent-stub audit (2026-06-05) — why a blanket "make stubs loud" was NOT done
+
+The class-construction gaps were hard to find because the compiler emits silent comment-stubs
+(`(;? … ;) 0` in `emitExpr`, `(;; … ;)` in `emitStatement`, and the `emitStringAssign`
+complex-expression stub) for code it doesn't fully handle. The obvious fix — route all three to the
+`this.diagnostics` channel (which **hard-aborts** the compile) — was **measured and rejected**:
+temporary instrumentation logged **77 stub hits across the currently-passing suite**, almost all
+**benign**: (a) discriminated-union type-declaration continuation lines (`| { kind: "rect"; … }`) and
+multi-line literal element lines reaching `emitStatement` after the type/literal is already parsed
+(genuine no-ops); (b) **speculative/pre-scan `emitExpr`/`emitStatement`/`emitStringAssign` calls whose
+result is discarded** (e.g. type inference, the `s = "["; for(…)` string-gather mega-lines). The real
+emission for those uses correct paths — the tests produce correct output. So a blanket abort would
+break valid programs, and a blanket warning would flood noise people learn to ignore. **The stub
+fallbacks are deliberate, load-bearing tolerance — keep them.**
+
+The audit DID surface one genuine silent wrong-answer: the chained `s.at(i).charCodeAt(j)` fell to the
+expr stub and returned 0 (the plain `charCodeAt` handler only matches a `\w+` receiver). **Fixed**
+2026-06-05 with a targeted `atChainMatch` handler in `emitExpr` (norm-index → `$__str_char_code_at`).
+Bare `.at()` in other contexts is already handled by the string paths (emitStringAssign /
+emitStringPtrLen / parseSingleArg).
+
+RULE going forward: when adding a NEW feature path, prefer pushing a `this.diagnostics` entry (which
+aborts) over a silent stub — but do NOT retro-fit aborts onto the existing catch-all stubs (they
+absorb benign remnants + speculative calls). For genuinely-broken merges, fail loudly: `wasmmerge`
+throws on `call_indirect` inside a merged module (Phase 18 strips imported type sections, so the
+table/type ref would dangle), and `main.ts` surfaces thrown errors as a clean `❌ wasmtk:` line.

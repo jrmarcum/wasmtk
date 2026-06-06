@@ -28,10 +28,13 @@
  *     module, and across capability boundaries.
  *  6. Relocates data segment base addresses by a caller-supplied delta so that the
  *     imported module's static data is placed above the main module's data section.
- *  7. Conservatively relocates data-pointer i32.const values in function bodies:
- *     any i32.const >= DATA_PTR_THRESHOLD (260) is assumed to be a static-data
- *     pointer and is shifted by the same delta.  Small integer literals are left
- *     untouched.
+ *  7. Relocates data-pointer i32.const values in function bodies by the same delta —
+ *     but ONLY constants that fall inside THIS module's own static-data extent
+ *     [dataLo, dataHi), derived from its (data …) segment offsets+lengths. Constants
+ *     outside that range (arithmetic literals, small integers) are left untouched.
+ *     A pure leaf with no data segments (dataHi === 0) relocates nothing. (This is the
+ *     range-scoped relocation from the Stage 0.7 Date merge-path fix; it replaced an
+ *     earlier blanket "any i32.const >= 260 is a pointer" heuristic.)
  *  8. Returns the ExternalFuncDef list so WasicTranspiler can register imported
  *     functions in its function table and correctly type call expressions.
  *
@@ -40,17 +43,20 @@
  *  ✅  Pure computation (no memory, no WASI imports) — clean merge
  *  ✅  Modules with globals — prefixed like functions
  *  ✅  Modules sharing WASI imports (fd_write etc.) — deduplicated
- *  ✅  Modules with memory / data segments — conservative pointer relocation
+ *  ✅  Modules with memory / data segments — range-scoped pointer relocation (item 7)
  *
  * ## Limitations
  *
- *  - call_indirect with imported type indices may fail if the imported module's
- *    type table conflicts with the main module's.  Phase 18 strips type declarations
- *    from imports (the main module emits its own), so call_indirect is unsupported
- *    for now.  Direct calls work fine.
- *  - i32.const values that happen to be >= 260 but are NOT pointers (e.g. a magic
- *    constant 1000) will be incorrectly relocated.  This is a known conservative
- *    over-approximation; use data-section-free modc libraries when precision matters.
+ *  - call_indirect inside a MERGED module is rejected with a clear diagnostic rather than
+ *    silently miscompiled: Phase 18 strips imported type declarations (the main module emits
+ *    its own type section), so an imported body's `call_indirect (type N)` / table indices
+ *    would dangle. `assertNoMergedCallIndirect()` surfaces this at merge time. Direct calls
+ *    work fine; the capability libraries (Set/Map/Date/JSON/RegExp) use only direct calls.
+ *  - Pointer relocation (item 7) is range-scoped but still address-based, not dataflow-exact:
+ *    an arithmetic i32.const that coincidentally lands inside a string-bearing library's own
+ *    [dataLo, dataHi) data range would be mis-relocated. This residual is far narrower than the
+ *    old blanket heuristic (leaf libs with no data segments relocate nothing). A fully exact
+ *    fix would track which constants are actually used as load/store addresses.
  */
 
 // ---------------------------------------------------------------------------
@@ -650,6 +656,17 @@ export function mergeWasmWat(
       body = renameCallSites(body);
       body = renameGlobalRefs(body);
       body = relocateDataPtrs(body);
+      // call_indirect inside a merged body would dangle: Phase 18 strips the imported module's
+      // type section (the main module emits its own), so `(type N)` / table indices no longer
+      // resolve. Fail loudly here instead of emitting a silently-broken module.
+      if (/\bcall_indirect\b/.test(body)) {
+        throw new Error(
+          `wasmmerge: '${prefix}' uses call_indirect, which is not supported when merging an ` +
+            `imported module (Phase 18 strips imported type sections, so the table/type reference ` +
+            `would dangle). Refactor the library to use only direct calls — no function-pointer, ` +
+            `closure, or vtable dispatch across the merge boundary — or keep it standalone.`,
+        );
+      }
       funcParts.push(body);
       continue;
     }

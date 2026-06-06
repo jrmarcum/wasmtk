@@ -854,7 +854,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 > parsed as 0** (every merged-`mathlib` constant was encoded as 0, recovering all four
 > `38_*` Math tests). Under that toolchain, with the Stage 0.6 allocator-unification pass
 > and all five Tier-1 stdlib capabilities (Stage 0.7 — Set/Map/Date/JSON/RegExp)
-> in place, **the full `tests/wasm_wasi` suite is 286/286** (`core_`
+> in place, **the full `tests/wasm_wasi` suite is 287/287** (`core_`
 > 33/33, jstyper 73/73, bindgen **103/103**; Phase 51 — 2026-06-05 — added `instanceof` plus 7
 > `51_*` tests, including fixes for module-level class instances, class-instance array literals,
 > and single-physical-line class/constructor bodies; `48_SingleLineBraceIf` was the

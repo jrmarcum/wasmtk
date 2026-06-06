@@ -1,9 +1,34 @@
 # Compiler bug log
 
 Live record of bugs found + fixed. Newest first. **No open bugs.** Phase 51 (2026-06-05) added
-`instanceof` and closed three construction/parsing gaps it surfaced (module-level class instances,
-class-instance array literals, AND single-physical-line class/constructor bodies — all fixed below).
-The full suite is now **286/286** (Phase 51 added 7 `51_*` tests; was 279).
+`instanceof`, closed three construction/parsing gaps it surfaced, and a follow-up workaround-audit
+fixed one more silent bug + added a loud merge guard (all below). The full suite is now **287/287**
+(Phase 51 added 8 `51_*` tests; was 279).
+
+## Workaround audit follow-up (2026-06-05)
+
+A sweep for remaining "workarounds" (keywords + a measurement of silent-stub hits) produced:
+
+- **FIXED — `s.at(i).charCodeAt(j)` silently returned 0.** The chain fell to the catch-all `emitExpr`
+  stub (the plain `charCodeAt` handler only matches a `\w+` receiver, not `s.at(i)`). New `atChainMatch`
+  handler in `emitExpr` computes `$__str_char_code_at` at the normalized index. Regression test
+  `51_AtCharCodeChain.ts`. (Bare `.at()` elsewhere is already handled by the string paths.)
+- **FIXED (loud-failure guard) — `call_indirect` inside a merged module.** `wasmmerge` now throws a
+  clear error (`❌ wasmtk: wasmmerge: '<lib>' uses call_indirect …`) instead of emitting a
+  silently-dangling reference (Phase 18 strips imported type sections). `main.ts` gained a top-level
+  `.catch` so thrown errors surface as a clean one-line message with exit 1. No current capability lib
+  triggers it (all use direct calls); verified manually with a callback-param modc lib.
+- **Silent-stub audit — NO blanket change (deliberate).** Instrumented the 3 catch-all stub sites
+  (`emitExpr`/`emitStatement`/`emitStringAssign` fallbacks): **77 hits across the passing suite**,
+  almost all benign — DU type-declaration continuation lines (`| { kind: … }`), multi-line literal
+  element lines, and speculative/pre-scan emit calls whose results are discarded (real emission uses
+  correct paths). Routing them to the (hard-aborting) diagnostics channel would break valid programs;
+  a blanket warning would be noise. The stubs are deliberate tolerance — kept. See design-decisions.md
+  "Silent-stub audit" + "Intentional fallbacks".
+- **Doc — `wasmmerge` pointer-relocation comment was stale.** Header still described the pre-Date-fix
+  blanket ">= 260 is a pointer" heuristic; the code is range-scoped to each module's own
+  `[dataLo, dataHi)` data extent. Comment corrected; residual (an arithmetic const coincidentally
+  inside a string-bearing lib's data range) documented as the only narrow remaining heuristic.
 
 ## Single-physical-line class / constructor bodies — FIXED 2026-06-05
 

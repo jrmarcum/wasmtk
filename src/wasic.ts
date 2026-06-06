@@ -5713,6 +5713,24 @@ class WasicTranspiler {
       }_len) ${subPtrLen}) (i32.const -1))`;
     }
 
+    // Phase 51: chained `s.at(i).charCodeAt(j)` → char code at the normalized index of `s`.
+    // `.at(i)` returns a 1-char string, so j is 0 and the result is the code at norm(i). Without
+    // this, the chain fell through to the catch-all expr stub and silently returned 0 (the plain
+    // charCodeAt handler below only matches a `\w+` receiver, not `s.at(i)`).
+    const atChainMatch = expr.match(/^(\w+)\.at\s*\(([^)]*)\)\.charCodeAt\s*\([^)]*\)$/);
+    if (atChainMatch && locals.get(atChainMatch[1]) === "string") {
+      this.needsStringExtHelpers = true;
+      const recv = atChainMatch[1];
+      const idxWat = this.emitArrayIndex(atChainMatch[2].trim(), locals);
+      const lenWat = `(local.get $${recv}_len)`;
+      // normalize a possibly-negative index: i >= 0 ? i : len + i
+      const normIdx =
+        `(select ${idxWat} (i32.add ${lenWat} ${idxWat}) (i32.ge_s ${idxWat} (i32.const 0)))`;
+      const ccaWat = `(call $__str_char_code_at (local.get $${recv}_ptr) ${lenWat} ${normIdx})`;
+      if (defaultType === "f64" || defaultType === "f32") return `(f64.convert_i32_s ${ccaWat})`;
+      return ccaWat;
+    }
+
     // Phase 27: str.charCodeAt(i) → i32 char code (promoted to f64 in numeric context)
     // parenDepthNeverNegative guards the greedy `(.+)`: when the expression as a whole ends in
     // a `)` belonging to a LATER call (e.g. `p.charCodeAt(i) === t.charCodeAt(i)`), the matched
