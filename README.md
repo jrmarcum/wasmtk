@@ -14,6 +14,7 @@ A polyglot WebAssembly toolkit for Deno. Compile TypeScript directly to optimize
 - **WIT interface generation**: Every compiled module automatically produces a `.wit` file describing its exports and imports — the foundation for cross-language interop and the WASM Component Model.
 - **Host binding generation (`bindgen`)**: Generate a self-contained TypeScript binding file from any `.wit` interface. Load and call WASM exports from a TypeScript host with full type safety and automatic ABI translation for numbers, booleans, and strings.
 - **Universal running**: Execute `.ts`, `.js`, `.wasm`, and `.wat` with a single command across Deno, Bun, and Node. Expanded WASI syscall shims ensure compatibility with modules compiled from Zig, Rust, C/C++, and Go.
+- **Go producer (`--lang=go`)**: A full Go command set via TinyGo (or the standard `go` toolchain with `--go-runtime=std`) — `init` (scaffold a WASI or browser project), `wasic` (→ WASI module), `run` (build + run), and `modc` (→ browser WASM + `wasm_exec.js`). When `wasm-opt` (binaryen) isn't installed, wasmtk auto-optimizes TinyGo's output with binaryen-ts instead (goroutine-free code; goroutine code needs binaryen). First of the planned polyglot producers (C/C++/Rust/Zig to follow).
 - **Library mode (`modc`)**: Compile TypeScript to a WASM library with no `_start` entry point — callable from any host environment.
 - **WASM bundling**: Merge multiple `.wasm` files into a single artifact; import pre-compiled `.wasm` modules directly from TypeScript source via `tsbundler`.
 - **jstyper**: Convert `.js` + `.d.ts` pairs to typed TypeScript that `wasic` can compile — bridges existing JS libraries into the WASM pipeline.
@@ -192,6 +193,49 @@ wasmtk run myprogram.wasm
 - Multi-file programs composed from local `.ts` modules
 - Programs that only need WASI I/O (`console.log`, file I/O)
 - Situations where binary size and startup time matter
+
+---
+
+### `--lang=go` — Go Producer (TinyGo)
+
+Compiles **Go** to wasm and runs it through the same downstream as every other producer. The first of
+the planned polyglot producers — a full command set (the path argument defaults to the current
+directory):
+
+```bash
+wasmtk init  --lang=go myapp              # scaffold go.mod + a WASI main.go (then cd myapp)
+wasmtk init  --lang=go --go-target=wasm   # scaffold a browser (syscall/js) project instead
+wasmtk wasic --lang=go                     # build the package → WASI P1 module (<dir>.wasm)
+wasmtk run   --lang=go                      # build a WASI module and run it in one step
+wasmtk modc  --lang=go                      # build a BROWSER module (-target=wasm) + wasm_exec.js
+wasmtk wasic --lang=go hello.go            # a single .go file also works
+wasmtk wasic --lang=go --go-runtime=std    # standard Go toolchain instead of TinyGo
+```
+
+> **Note on `modc --lang=go`:** unlike TypeScript `modc` (a WASI-less *library*), the Go `modc`
+> produces a **browser** module (`-target=wasm`, `syscall/js`) and copies `wasm_exec.js` beside it —
+> matching the owner's `tgo-modc` workflow. It is not a WASI module, so `wasmtk run` cannot host it;
+> load it with `wasm_exec.js` in a browser. (A Go *library/reactor* for the bindgen DLL model is
+> planned separately.)
+
+**Backends (`--go-runtime`):**
+
+- **`tinygo`** (default) — small output. TinyGo runs binaryen's `wasm-opt` internally. If a real
+  `wasm-opt` is on your `PATH` (or `$WASMOPT`), wasmtk lets TinyGo use it — full support, including
+  goroutines. If it's **not** installed, wasmtk transparently substitutes a passthrough and optimizes
+  the module with **binaryen-ts `-Oz`** instead, so no external binaryen is required. In that mode the
+  program must be **goroutine-free** (goroutines need TinyGo's mandatory `asyncify` transform, which
+  requires a real `wasm-opt` — install binaryen, e.g. `scoop install binaryen` / `brew install
+  binaryen`).
+- **`std`** — uses the standard Go toolchain (`GOOS=wasip1 GOARCH=wasm go build`). No `wasm-opt`
+  needed, but pulls in the full Go runtime/GC (large, multi-MB binaries).
+
+**Prerequisites:** [TinyGo](https://tinygo.org/getting-started/install/) (for the default backend) or
+the [Go toolchain](https://go.dev/dl/) (for `--go-runtime=std`).
+
+**Scope (v1):** command-mode Go (`func main()`) with numeric exports and console output. Go
+string/slice/aggregate **host bindings** (`bindgen`) and a true library/reactor module
+(`//go:wasmexport`) for the DLL model are planned — see the roadmap.
 
 ---
 

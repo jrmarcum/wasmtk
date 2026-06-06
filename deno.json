@@ -17,7 +17,8 @@
     "./wasmmerge": "./src/wasmmerge.ts",
     "./jstyper": "./src/jstyper.ts",
     "./bindgen": "./src/bindgen.ts",
-    "./hybrid": "./src/hybrid.ts"
+    "./hybrid": "./src/hybrid.ts",
+    "./gowasic": "./src/gowasic.ts"
   },
   "bin": {
     "wasmtk": "./main.ts"

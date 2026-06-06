@@ -289,12 +289,61 @@ Zig). Scope:
 
 ### Command surface (producer-plugin model)
 
-- `wasmtk wasic --lang=go <dir>` (or `gowasic`) → `tinygo build -target=wasip1` → optional binaryen-ts
-  `-Oz` → runnable by `wasmtk run`.
-- `wasmtk modc --lang=go` → reactor/library exports via `//go:wasmexport` (or `-buildmode=c-shared`),
-  no `_start` — the form bindgen consumes for the DLL model.
-- `wasmtk run <wasm>` already executes any wasip1 module — covers the run step natively.
-- Project scaffolding (`init`) and the browser target: optional, later.
+(Original plan — superseded by the v1-shipped command table below, which folds in the owner's
+`tgo-*.ps1` scripts literally. NOTE the divergence: "modc" in those scripts = the BROWSER
+`-target=wasm` build, not a `//go:wasmexport` reactor/library. A real Go reactor/library for the
+bindgen DLL model remains deferred.)
+
+### v1 SHIPPED 2026-06-06 (`src/gowasic.ts`) — full `tgo-*.ps1` command set
+
+All five owner scripts folded into wasmtk via the `--lang=go` flag (path defaults to cwd):
+
+| Command | Was | Does |
+| --- | --- | --- |
+| `wasmtk init --lang=go [dir]` | `tgo-init-wasi.ps1` | `go mod init <dir>` + WASI `main.go` |
+| `wasmtk init --lang=go --go-target=wasm [dir]` | `tgo-init-wasm.ps1` | `go mod init` + browser `syscall/js` `main.go` |
+| `wasmtk wasic --lang=go [path]` | `tgo-wasic.ps1` | `tinygo build -target=wasip1` (WASI program) |
+| `wasmtk modc --lang=go [path]` | `tgo-modc.ps1` | `tinygo build -target=wasm` (browser; **NOT** a WASI lib) + copies `wasm_exec.js` |
+| `wasmtk run --lang=go [path]` | `tgo-run.ps1` | build wasip1, then run it on wasmtk's WASI host |
+
+`--go-runtime=tinygo` (default) / `std` (stdlib `go`: `GOOS=wasip1` for wasic/run, `GOOS=js` for the
+browser modc). All builds use `-p 1 -no-debug -panic=trap` + local `TINYGO_CACHE`/`GOTMPDIR`, matching
+the scripts. Input may be a `.go` file, a dir, or omitted (cwd); a dir builds package `.` → `<dir>.wasm`
+(needs `cwd` on `rt.Command` — added to `rt.ts`). `tgobuild.ps1` (native `.exe`) is out of scope.
+
+NOTE on `modc`: in the owner's scripts "modc" = the BROWSER `-target=wasm` build (NOT the wasmtk
+TS-library/reactor sense). So `modc --lang=go` produces a browser module (syscall/js, needs
+`wasm_exec.js` + a browser) — `wasmtk run` can't host it. A genuine Go *library/reactor* (`//go:wasmexport`,
+no `_start`, for the bindgen DLL model) is still **deferred** (with Go string/aggregate bindgen → ABI
+forward-alignment). `deno.json` exports `./gowasic`. `main.ts` branches `init`/`wasic`/`modc`/`run` on
+`--lang=go` (+ allows an omitted positional target → cwd). Verified end-to-end (TinyGo 0.41.1 / Go 1.26):
+init(wasi+wasm), wasic (90 KB) + run ("Hello from WASI!"), modc browser (10 KB) + `wasm_exec.js` copied.
+Fixture: `tests/go_fixtures/hello.go` (NOT auto-run — needs TinyGo).
+
+**wasm-opt handling (the load-bearing detail).** TinyGo's internal `wasm-opt` call is
+`--asyncify -Oz -g`. `--asyncify` is **mandatory codegen** (TinyGo's goroutine scheduler), NOT
+optimization — a passthrough that skips it leaves unresolved `asyncify` imports (won't instantiate).
+So:
+
+- **Real `wasm-opt` present** (on PATH or `$WASMOPT`) → TinyGo uses it → full support incl. goroutines.
+- **Absent** → `gowasic` writes a **passthrough `wasm-opt` shim** (answers `--version`; copies input →
+  `-o` output, no opt; cross-platform `.cmd`/`.sh` launcher invoking `rt.execPath()` + a Deno shim) and
+  builds with **`-scheduler=none`** (which drops the asyncify request — wasm-opt call becomes just
+  `-Oz`), then runs **binaryen-ts `-Oz`** on the result. No external binaryen needed. Works for
+  goroutine-FREE code; goroutine code errors under `-scheduler=none` → clear "install binaryen" hint.
+- binaryen-ts has `-Oz` (`optimize()`) but **NOT the `asyncify` pass** (verified: `runPasses(["asyncify"])`
+  → "Unknown pass"). Porting asyncify into binaryen-ts (to cover goroutine Go with zero external deps)
+  is a large future item — see roadmap "asyncify pass in binaryen-ts".
+
+**Two `rt.Command` gotchas baked into `gowasic.ts`:** (1) `rt.Command.output()` always reads
+`result.stdout`/`stderr`, which **throws unless they are `"piped"`** — never pass `"null"`/`"inherit"`
+to a `.output()` call (use `"piped"` and decode). (2) `rt.remove` is single-arg (unlink-based under
+Bun) — use `Deno.remove(dir, {recursive:true})` for the temp shim dir. Subprocess env is built as
+`{ ...rt.env.toObject(), WASMOPT/GOOS/GOARCH }` so PATH is preserved.
+
+**Deferred:** Go string/slice/aggregate **bindgen** host marshalling (needs ABI forward-alignment —
+Go's string/slice layout ≠ Canonical ABI); reactor `modc --lang=go` (`//go:wasmexport`); browser
+`syscall/js`.
 
 ### Architectural fit (producer → optimize → host stays ours)
 

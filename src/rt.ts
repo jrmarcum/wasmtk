@@ -164,6 +164,7 @@ export interface RtCommandOptions {
   stdout?: "piped" | "null" | "inherit";
   stderr?: "piped" | "null" | "inherit";
   env?: Record<string, string>;
+  cwd?: string;
 }
 
 export interface RtCommandOutput {
@@ -221,6 +222,7 @@ export class RtCommand {
         stderr: bunStderr,
         stdin: "inherit",
         env: this._opts.env,
+        cwd: this._opts.cwd,
       });
       await proc.exited;
       const code: number = proc.exitCode ?? 0;
@@ -238,6 +240,7 @@ export class RtCommand {
       stdout: this._opts.stdout as "piped" | "null" | "inherit" | undefined,
       stderr: this._opts.stderr as "piped" | "null" | "inherit" | undefined,
       env: this._opts.env,
+      cwd: this._opts.cwd,
     }).output();
     return {
       success: result.success,

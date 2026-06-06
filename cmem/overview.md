@@ -21,6 +21,7 @@ wasmtk/
 │   ├── modc.ts          # Library-mode compilation (no _start, no WASI)
 │   ├── bindgen.ts       # TS host binding generator from .wit (Phase 50)
 │   ├── hybrid.ts        # // @wasm-annotated split compiler
+│   ├── gowasic.ts       # Go producer (--lang=go): init/wasic/modc/run via TinyGo/std (2026-06-06)
 │   ├── javyc.ts         # TypeScript via Javy/QuickJS embedded runtime
 │   ├── jstyper.ts       # .js + .d.ts → typed .ts pre-processor (Phase 39)
 │   ├── binaryen.ts      # 3-line wrapper papering over npm vs JSR binaryen default-export shape

@@ -10,6 +10,7 @@
 | `hybrid` | `.ts` → core `.wasm` + TS runner | Splits on `// @wasm` annotations; routes annotated fns through modc→bindgen. |
 | `jstyper` | `.js`+`.d.ts` → typed `.ts` | Regex-based; `number→f64`, `--any-policy`, `--dts-only`. |
 | `javyc` | `.ts` → `.wasm` via QuickJS | The dynamic-kernel fallback (~1.26 MB). Out of scope for typed code. |
+| Go producer (`--lang=go`) | `.go` → `.wasm` | **`src/gowasic.ts`** (2026-06-06). Shells to TinyGo (`--go-runtime=std` for stdlib `go`); NOT the wasic TS compiler — a front-end handing wasm to the shared downstream. Commands (path defaults to cwd): `init` (scaffold; `--go-target=wasm`=browser), `wasic` (wasip1, `wasmtk run` hosts), `modc` (**browser** `-target=wasm` + `wasm_exec.js`), `run` (build wasip1 + run). wasm-opt auto-fallback: passthrough shim + `-scheduler=none` + binaryen-ts `-Oz` when no real wasm-opt (goroutine-free). See [polyglot-producers.md](polyglot-producers.md). |
 
 ## Pluggable wabt + binaryen backends — `deno.json` is the single switch
 

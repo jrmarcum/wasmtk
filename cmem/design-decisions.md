@@ -129,6 +129,13 @@ string-array element, and `Math.*`/`Number.*` handling all have such twins.
 
 - `tsbundle` outputs **`.ts`** (`.bundled.ts`), an import inliner — NOT `deno bundle`/JavaScript.
 - `.wasm` import detection matches **single-line** `import { … } from "./x.wasm"` only.
+- **`rt.Command.output()` always reads `result.stdout`/`stderr`, which THROWS unless they are
+  `"piped"`.** Never pass `stdout`/`stderr` `"null"` or `"inherit"` to a `.output()` call (it surfaces
+  as a misleading `catch` — e.g. a tool wrongly reported "not found"). Always `"piped"` and decode the
+  captured bytes. (Bit the Go producer; see `src/gowasic.ts` `decodeOut`.) Also: `rt.remove` is
+  single-arg (unlink-based under Bun) — use `Deno.remove(dir, {recursive:true})` for a directory.
+  Build subprocess env as `{ ...rt.env.toObject(), …overrides }` so PATH is preserved. `rt.Command`
+  now also accepts `cwd` (added 2026-06-06 for the Go producer's `go mod init` / package builds).
 - Bump the version with **`deno task bump`** (`scripts/bump.ts`): raises the semver in `deno.json`
   (`patch` default; `deno task bump minor` / `major`) and then propagates to `package.json` +
   `src/utils.ts VERSION` via `sync-version.ts`. `deno task update-version` only *propagates* an

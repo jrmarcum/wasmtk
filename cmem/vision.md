@@ -270,7 +270,7 @@ WIT interfaces, composes components, and produces the final `app.wasm`.
 | Rust        | cargo-component                          | First-class             | Tier 1          |
 | Python      | componentize-py                          | Full                    | Tier 1          |
 | C / C++     | clang wasm32-wasi + wasm-tools wrap      | Via adapter             | Tier 1          |
-| Go          | TinyGo                                   | Partial, in progress    | Tier 2          |
+| Go          | wasmtk --lang=go (init/wasic/modc/run; TinyGo/std) | Producer v1 ✅ 2026-06-06; bindgen deferred | Tier 2 |
 | C# / .NET   | dotnet wasm/wasi                         | .NET 8+ experimental    | Tier 2          |
 | Zig         | zig --target wasm32-wasi                 | Via adapter             | Tier 2          |
 | Java/Kotlin | TeaVM or GraalVM                         | Limited                 | Tier 3          |

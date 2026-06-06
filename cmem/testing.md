@@ -73,6 +73,10 @@ tags it, and pushes; the tag triggers `publish.yml`.
 | Go-by-Example tests (imported) | `wasi_tests.ts` |
 | jstyper unit tests | `jstyper_tests.ts` |
 
+**Not auto-run:** `tests/go_fixtures/hello.go` — the Go producer (`wasic --lang=go`) fixture. Excluded
+from the suites because building it needs the TinyGo/Go toolchain (not assumed on every machine/CI).
+Manual verify command is in the file header.
+
 ## Conventions
 
 - **File naming:** `NN_Label.ext` (phase number first) so listings sort by phase.

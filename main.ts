@@ -59,7 +59,16 @@ async function main(): Promise<void> {
       o: "name",
     },
     boolean: ["version", "help", "dts-only", "dry-run", "auto"],
-    string: ["name", "on-conflict", "alias", "any-policy", "runtime"],
+    string: [
+      "name",
+      "on-conflict",
+      "alias",
+      "any-policy",
+      "runtime",
+      "lang",
+      "go-runtime",
+      "go-target",
+    ],
   });
 
   if (args.version) {
@@ -71,13 +80,22 @@ async function main(): Promise<void> {
   const target = args._[1] as string;
   const outPath = args.name as string | undefined;
 
-  if (args.help || !command || (!target && command !== "wasmbundle")) {
+  // Go producer commands accept an optional path (default = current dir), so they don't require a
+  // positional target the way the TS commands do.
+  const isGoCmd = (args.lang as string | undefined)?.toLowerCase() === "go" &&
+    (command === "wasic" || command === "modc" || command === "run" || command === "init");
+
+  if (args.help || !command || (!target && command !== "wasmbundle" && !isGoCmd)) {
     console.log(`
 wasmtk - WebAssembly Development Toolkit v${VERSION}
 
 Usage:
   wasmtk modc <file.ts>                   Compile a TypeScript file to a WASM library
   wasmtk wasic <file.ts|.wat>             Compile to a standalone WASI module (no JS runtime, smaller output)
+  wasmtk init  --lang=go [dir]            Scaffold a Go project (go.mod + main.go); --go-target=wasm for browser
+  wasmtk wasic --lang=go [path]           Compile Go → WASI module via TinyGo (run with: wasmtk run)
+  wasmtk modc  --lang=go [path]           Compile Go → browser WASM (-target=wasm, syscall/js) + wasm_exec.js
+  wasmtk run   --lang=go [path]           Build a Go WASI module and run it in one step
   wasmtk javyc <file.ts>                  Compile a TypeScript file to a WASI module via Javy/QuickJS
   wasmtk run <file>                       Run a .wasm, .wat, .js, or .ts file
   wasmtk mod <file> [fn] [...]            Call a function in a WASM library module (no fn = list functions)
@@ -105,21 +123,67 @@ Options:
       -o, --name <dir>         (hybrid)  Output directory for generated files (default: same as input)
       --auto                   (hybrid)  Route every statically-typed function to WASM by type
                                          (no // @wasm needed); dynamic/async/any stay in TS host
+      --lang=go                (init/wasic/modc/run)  Treat the input as Go (path defaults to cwd)
+      --go-runtime=tinygo|std  (go)      Go backend: tinygo (default, small) or std go (large).
+                                         TinyGo without wasm-opt installed auto-uses binaryen-ts -Oz
+                                         (goroutine-free code); goroutine code needs binaryen.
+      --go-target=wasi|wasm    (init)    Scaffold variant: wasi (default) or wasm (browser/syscall/js)
     `);
     return;
   }
 
+  const lang = (args.lang as string | undefined)?.toLowerCase();
+  const goRuntime = ((args["go-runtime"] as string | undefined)?.toLowerCase() === "std")
+    ? "std"
+    : "tinygo";
+  const goPath = target ?? "."; // Go commands default to the current directory
+
   switch (command) {
+    case "init": {
+      if (lang !== "go") {
+        console.error("❌ wasmtk: `init` currently supports only `--lang=go`.");
+        Deno.exit(1);
+      }
+      const { scaffoldGoProject } = await import("./src/gowasic.ts");
+      const scaffold = (args["go-target"] as string | undefined)?.toLowerCase() === "wasm"
+        ? "wasm"
+        : "wasi";
+      const r = await scaffoldGoProject(goPath, scaffold);
+      if (!r.success) Deno.exit(1);
+      break;
+    }
     case "modc":
+      if (lang === "go") {
+        // `modc --lang=go` builds the BROWSER wasm target (`-target=wasm`, syscall/js) — the
+        // tgo-modc.ps1 analog. Not a WASI module; load it with wasm_exec.js in a browser.
+        const { compileGoWasi } = await import("./src/gowasic.ts");
+        const r = await compileGoWasi(goPath, { outPath, runtime: goRuntime, target: "wasm" });
+        if (!r.success) Deno.exit(1);
+        break;
+      }
       await compileModule(target, outPath);
       break;
     case "wasic":
+      if (lang === "go") {
+        const { compileGoWasi } = await import("./src/gowasic.ts");
+        const r = await compileGoWasi(goPath, { outPath, runtime: goRuntime, target: "wasip1" });
+        if (!r.success) Deno.exit(1);
+        break;
+      }
       await compileWasi(target, outPath);
       break;
     case "javyc":
       await compileJavy(target, outPath);
       break;
     case "run":
+      if (lang === "go") {
+        // Build a WASI program, then run it (the tgo-run.ps1 analog).
+        const { compileGoWasi } = await import("./src/gowasic.ts");
+        const r = await compileGoWasi(goPath, { outPath, runtime: goRuntime, target: "wasip1" });
+        if (!r.success || !r.outputPath) Deno.exit(1);
+        await runWasi(r.outputPath, args._.slice(2).map(String));
+        break;
+      }
       await runWasi(target, []);
       break;
     case "mod": {
