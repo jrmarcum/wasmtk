@@ -530,6 +530,7 @@ All eight typed array types from the JavaScript standard library are supported. 
 | Discriminated union types | `type Shape = { kind: "circle"; r: f64 } \| { kind: "rect"; w: f64; h: f64 }` — flat super-struct layout; `switch (s.kind)` and `if (s.kind === "circle")` compile to integer tag comparisons |
 | Intersection types | `type Widget = Nameable & Sizeable` — all fields merged into a flat struct; chained intersections (`A & B & C`) resolved in source order |
 | Type predicates | `function isCircle(s: Shape): s is Circle { ... }` — return type annotation; compile-time narrowing of `structVars` in if-branch scopes |
+| `instanceof` | `x instanceof Dog` — runtime class-tag check across an inheritance hierarchy (true for the class and any subclass); folds to a compile-time constant when the module has no inheritance. `if (x instanceof Dog)` narrows `x` to `Dog` in the then-branch (subclass fields/methods resolve); also works in `console.log`. Works at module scope and over arrays built with either `[new Sub(), …]` literals or `arr.push(new Sub())` |
 | `typeof x` | Compile-time evaluation: `typeof x === "number"` → `(i32.const 1/0)`; `const t: string = typeof x` → static string in data section; `console.log(typeof x)` → zero-overhead literal |
 | `keyof T` | Source pre-pass rewrites `: keyof T` → `: string`; works in function params and variable declarations |
 | Conditional types | `type Toggle<T> = T extends i32 ? f64 : i32` (generic) and `type AlwaysI32 = f64 extends number ? i32 : string` (non-generic) — resolved entirely at compile time by `expandConditionalTypes()` |
@@ -853,9 +854,11 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 > parsed as 0** (every merged-`mathlib` constant was encoded as 0, recovering all four
 > `38_*` Math tests). Under that toolchain, with the Stage 0.6 allocator-unification pass
 > and all five Tier-1 stdlib capabilities (Stage 0.7 — Set/Map/Date/JSON/RegExp)
-> in place, **the full `tests/wasm_wasi` suite is 279/279** (`core_`
-> 33/33, jstyper 73/73, bindgen **103/103**; the 279th is `48_SingleLineBraceIf`, the
-> regression test for the single-physical-line brace `if` fix landed 2026-06-03). The 7 long-standing failures were all fixed
+> in place, **the full `tests/wasm_wasi` suite is 286/286** (`core_`
+> 33/33, jstyper 73/73, bindgen **103/103**; Phase 51 — 2026-06-05 — added `instanceof` plus 7
+> `51_*` tests, including fixes for module-level class instances, class-instance array literals,
+> and single-physical-line class/constructor bodies; `48_SingleLineBraceIf` was the
+> single-physical-line brace `if` regression added 2026-06-03). The 7 long-standing failures were all fixed
 > 2026-06-02: a value-fallthru codegen fix in wasic (`5e_MixedSignatures`, `19_*` — a
 > value-returning function ending in a void `if/else` where all paths `return` is rewritten
 > into a value-producing `if` so V8's strict validator accepts it) and the wabt-ts 1.3.1

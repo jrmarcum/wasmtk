@@ -230,6 +230,17 @@ export function setFuncTableLookup(fn: ((name: string) => number | undefined) | 
   _funcTableLookup = fn;
 }
 
+/** Phase 51: resolve `x instanceof ClassName` to a WAT i32 bool via wasic's emitExpr (which owns
+ *  the class tag / inheritance tables). Set by wasic.ts around parseConsoleLogArgs. */
+let _instanceofResolver:
+  | ((token: string, locals: Map<string, string>) => string | undefined)
+  | undefined = undefined;
+export function setInstanceofResolver(
+  fn: ((token: string, locals: Map<string, string>) => string | undefined) | undefined,
+): void {
+  _instanceofResolver = fn;
+}
+
 /** Callback to resolve an array variable by name: returns its element type, base ptr, and length.
  *  ptr=-1 means runtime local (param). ptr=-2 means dynamic heap array (local with 8-byte header).
  *  dynamic=true means the array has a [length, capacity] header at its pointer. */
@@ -1024,6 +1035,12 @@ function parseSingleArg(
     if (locals.get(dotLenMatch[1]) === "i32") {
       return [{ kind: "i32expr", wat: `(i32.load (local.get $${dotLenMatch[1]}))` }];
     }
+  }
+
+  // ── Phase 51: x instanceof ClassName → boolexpr via wasic's emitExpr (owns the tag tables)
+  if (_instanceofResolver && /^\w+\s+instanceof\s+\w+$/.test(token)) {
+    const iw = _instanceofResolver(token, locals);
+    if (iw !== undefined) return [{ kind: "boolexpr", wat: iw }];
   }
 
   // ── Boolean expression: &&, ||, !, comparisons → boolexpr (prints "true"/"false")

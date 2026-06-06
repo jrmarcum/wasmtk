@@ -27,7 +27,7 @@ deno install -g --allow-read --allow-write --allow-run --allow-env --allow-net \
 
 | Suite | Result |
 | --- | --- |
-| `tests/wasm_wasi` (full) | **279 / 279** (no open bugs — the single-line brace `if` form fixed 2026-06-03 added `48_SingleLineBraceIf`; see compiler-bugs.md) |
+| `tests/wasm_wasi` (full) | **286 / 286** (Phase 51 2026-06-05: 4 `instanceof` tests + 3 class-gap tests `51_ModuleLevelClassInstance`/`51_ClassInstanceArrayLiteral`/`51_SingleLineClassBody`; single-line brace `if` form fixed 2026-06-03 added `48_SingleLineBraceIf`; see compiler-bugs.md) |
 | `bindgen_tests.ts` | **103 / 103** |
 | `jstyper_tests.ts` | **73 / 73** |
 | Capability pipelines `18c`–`18g` (Set/Map/Date/JSON/RegExp) + `18h` (virtual `wasmtk:` imports) | **6 / 6** |
@@ -54,7 +54,7 @@ The full green pre-publish checklist actually run (2026-06-02):
 deno publish --dry-run --allow-dirty   # THE gate: type-check + slow-types + package — must pass
 deno lint main.ts src/                 # clean (18 files)
 deno fmt  --check main.ts src/         # clean as of 2026-06-02 (see design-decisions.md)
-deno run -A tests/wasi_tests.ts        # 279/279
+deno run -A tests/wasi_tests.ts        # 286/286
 deno run -A tests/bindgen_tests.ts     # 103/103
 deno run -A tests/jstyper_tests.ts     # 73/73
 ```

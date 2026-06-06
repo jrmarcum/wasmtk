@@ -99,9 +99,10 @@ capabilities — `Set<i32>` + `Map<i32,i32>` + `JSON` shared-heap libraries + th
 under npm:wabt + npm:binaryen: 446/446 tests passing (2026-05-25; 270 wasic +
 Go-by-Example + 103 bindgen + 73 jstyper). **Under the current dual JSR /compat
 stack (`jsr:@jrmarcum/wabt-ts@^1.3.2/compat` +
-`jsr:@jrmarcum/binaryen-ts@^1.3.3/compat`, 2026-06-02):** the full `tests/wasm_wasi`
-suite is **279/279** (`core_` 33/33), jstyper 73/73, and **bindgen 103/103** (279th =
-`48_SingleLineBraceIf`, the single-line-brace-`if` regression test added 2026-06-03). The 7
+`jsr:@jrmarcum/binaryen-ts@^1.3.3/compat`):** the full `tests/wasm_wasi`
+suite is **286/286** (`core_` 33/33), jstyper 73/73, and **bindgen 103/103** (Phase 51, 2026-06-05,
+added `instanceof` + 7 `51_*` tests, incl. the 3 class-construction-gap fixes; `48_SingleLineBraceIf`
+was the single-line-brace-`if` regression added 2026-06-03). The 7
 long-standing failures were all fixed 2026-06-02: `5e`/`19_*` via a wasic value-fallthru
 rewrite, and `38_*` via the wabt-ts 1.3.1 hex-float-literal fix (the constants were being
 encoded as 0). wabt-ts 1.3.0 had earlier recovered `15_panic` / `18_Multi-Scope`
@@ -331,7 +332,7 @@ wrapper) — were all filed and fixed upstream by 1.2.9. See CLAUDE.md §
 - ✅ `src/binaryen.ts` wrapper handles CJS-default vs ES-namespace asymmetry
 - ✅ Call-site shape preserved (upstream-npm-shaped API works against both backends)
 - ✅ Wasic-side patch: explicit `inlineExport: false` on `.toText(...)` calls (wabt-ts/compat's default differs from npm:wabt's)
-- ✅ Full wasic suite: **260/270 PASS (96.3%)** under dual /compat 1.2.9 — historical snapshot; the 10 then-failing tests (9 wasic-side codegen + 1 binaryen-ts `-Oz` interaction) have all since been fixed (suite is now **279/279**; see compiler-bugs.md / testing.md)
+- ✅ Full wasic suite: **260/270 PASS (96.3%)** under dual /compat 1.2.9 — historical snapshot; the 10 then-failing tests (9 wasic-side codegen + 1 binaryen-ts `-Oz` interaction) have all since been fixed (suite is now **286/286**; see compiler-bugs.md / testing.md)
 - ✅ Switching back to `npm:wabt` / `npm:binaryen` is a one-line deno.json change — both backends remain supported as fallbacks
 
 ---

@@ -137,6 +137,7 @@ import {
   parseConsoleLogArgs,
   SCRATCH_BASE,
   setFuncTableLookup,
+  setInstanceofResolver,
   setStrCmpNeededCallback,
   setStringArrayAllocator,
   setStructLiteralAllocator,
@@ -830,6 +831,113 @@ function splitBraceAwareCommas(s: string): string[] {
       if (part.length > 0) result.push(part);
       start = i + 1;
     }
+  }
+  const last = s.slice(start).trim();
+  if (last.length > 0) result.push(last);
+  return result;
+}
+
+/** Advances past a string literal starting at s[i] (a quote char); returns the index just after
+ *  the closing quote. Handles `\` escapes. Used by the bracket/comma scanners below. */
+function skipStringLiteral(s: string, i: number): number {
+  const q = s[i];
+  i++;
+  while (i < s.length) {
+    if (s[i] === "\\") {
+      i += 2;
+      continue;
+    }
+    if (s[i] === q) return i + 1;
+    i++;
+  }
+  return i;
+}
+
+/** Given s[openIdx] === "[", returns the index of the matching "]" respecting nested
+ *  ()/[]/{} and string literals; -1 if unbalanced. */
+function findMatchingBracketAware(s: string, openIdx: number): number {
+  let depth = 0;
+  let i = openIdx;
+  while (i < s.length) {
+    const ch = s[i];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      i = skipStringLiteral(s, i);
+      continue;
+    }
+    if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") {
+      depth--;
+      if (depth === 0) return i;
+    }
+    i++;
+  }
+  return -1;
+}
+
+/** Splits a class body into member "lines" (field declarations and whole method definitions),
+ *  respecting nested ()/[]/{} and string literals. Splits at depth-0 `;`, depth-0 newlines, and
+ *  immediately after a depth-0 `}` (a method body's close). This makes field parsing work whether
+ *  members are newline-separated, semicolon-separated, or all on one physical line (the
+ *  single-physical-line class form). Comments are already stripped from the source before this
+ *  runs (see stripComments in transpile), so no comment handling is needed here. */
+function splitClassMemberLines(body: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  let i = 0;
+  while (i < body.length) {
+    const ch = body[i];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      i = skipStringLiteral(body, i);
+      continue;
+    }
+    if (ch === "{" || ch === "(" || ch === "[") {
+      depth++;
+      i++;
+      continue;
+    }
+    if (ch === "}" || ch === ")" || ch === "]") {
+      depth--;
+      i++;
+      if (depth === 0 && ch === "}") {
+        out.push(body.slice(start, i)); // whole method member, incl. its closing brace
+        start = i;
+      }
+      continue;
+    }
+    if (depth === 0 && (ch === ";" || ch === "\n")) {
+      out.push(body.slice(start, i));
+      start = i + 1;
+      i++;
+      continue;
+    }
+    i++;
+  }
+  if (start < body.length) out.push(body.slice(start));
+  return out.map((l) => l.trim()).filter((l) => l.length > 0);
+}
+
+/** Splits on top-level commas, respecting nested ()/[]/{} and string literals (unlike
+ *  splitBraceAwareCommas, which is not string-aware). */
+function splitTopLevelCommasStringAware(s: string): string[] {
+  const result: string[] = [];
+  let depth = 0;
+  let start = 0;
+  let i = 0;
+  while (i < s.length) {
+    const ch = s[i];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      i = skipStringLiteral(s, i);
+      continue;
+    }
+    if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") depth--;
+    else if (ch === "," && depth === 0) {
+      const part = s.slice(start, i).trim();
+      if (part.length > 0) result.push(part);
+      start = i + 1;
+    }
+    i++;
   }
   const last = s.slice(start).trim();
   if (last.length > 0) result.push(last);
@@ -3614,7 +3722,10 @@ class WasicTranspiler {
         }
       }
 
-      for (const rawLine of classBody.split("\n")) {
+      // Split into member lines via a depth/string-aware splitter (not raw "\n") so a class whose
+      // fields share a physical line with the constructor/methods — the single-physical-line form
+      // `class C { v: i32; constructor(x: i32) { this.v = x; } }` — still has its fields parsed.
+      for (const rawLine of splitClassMemberLines(classBody)) {
         const line = rawLine.trim();
         const opens = (rawLine.match(/\{/g) ?? []).length;
         const closes = (rawLine.match(/\}/g) ?? []).length;
@@ -3763,9 +3874,17 @@ class WasicTranspiler {
                     bodyEnd++;
                   }
                   const rawBody = src.slice(methodBodyStart, bodyEnd - 1);
-                  const bodyLines = rawBody.split("\n").map((l) => l.trim()).filter((l) =>
+                  let bodyLines = rawBody.split("\n").map((l) => l.trim()).filter((l) =>
                     l.length > 0
                   );
+                  // Single-physical-line method/constructor body — `{ stmt; stmt; … }` on one line.
+                  // Split into statements so multi-statement single-line bodies (e.g.
+                  // `super(k); this.value = v;`) are processed correctly instead of being emitted as
+                  // one mangled statement (mirrors the parseFunctions single-line-body fix).
+                  // splitStmts is string-aware and keeps if/else chains intact.
+                  if (bodyLines.length === 1) {
+                    bodyLines = WasicTranspiler.splitStmts(bodyLines[0]);
+                  }
 
                   const isConstructor = methodName === "constructor";
                   const funcName = isConstructor
@@ -3835,6 +3954,51 @@ class WasicTranspiler {
       current = this.classInheritance.get(current);
     }
     return null;
+  }
+
+  /** Phase 51 (gap #2): desugar a class-instance array literal
+   *    const arr: C[] = [new C(a), new C(b), …]
+   *  into the proven dynamic-array + push form
+   *    const arr: C[] = [];
+   *    arr.push(new C(a));
+   *    arr.push(new C(b));
+   *  Static array-literal allocation cannot run constructors (it left the element structs
+   *  zero-filled with no class tag); the `arr.push(new C(…))` path constructs each element
+   *  correctly (allocate + write tag + call ctor). Only fires when the declared element type is a
+   *  known class AND every element is a `new …(…)` expression. Runs as a source pre-pass (after
+   *  parseClasses so classDefs is populated, before parseFunctions/parseTopLevel collect bodies);
+   *  bracket- and string-aware so multi-line literals are handled. */
+  private expandClassInstanceArrayLiterals(): void {
+    const src = this.src;
+    const declRe =
+      /(^|\n)([ \t]*)((?:export\s+)?(?:const|let|var)\s+(\w+)\s*:\s*([A-Z]\w*)\[\]\s*=\s*)\[/g;
+    let out = "";
+    let lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = declRe.exec(src)) !== null) {
+      const className = m[5]!;
+      if (!this.classDefs.has(className)) continue;
+      const openBracket = declRe.lastIndex - 1; // index of the '['
+      const end = findMatchingBracketAware(src, openBracket);
+      if (end === -1) continue;
+      const body = src.slice(openBracket + 1, end);
+      const elements = splitTopLevelCommasStringAware(body);
+      if (elements.length === 0) continue; // empty literal — leave [] as-is
+      if (!elements.every((e) => /^new\s+\w+\s*\(/.test(e))) continue; // only all-`new` literals
+      const lead = m[1]!; // "" (BOL) or "\n"
+      const indent = m[2]!;
+      const declPrefix = m[3]!; // e.g. "const arr: C[] = "
+      const varName = m[4]!;
+      out += src.slice(lastIndex, m.index);
+      out += `${lead}${indent}${declPrefix}[];`;
+      for (const e of elements) out += `\n${indent}${varName}.push(${e});`;
+      let after = end + 1;
+      if (src[after] === ";") after++; // absorb the literal's own trailing semicolon
+      lastIndex = after;
+      declRe.lastIndex = after;
+    }
+    out += src.slice(lastIndex);
+    this.src = out;
   }
 
   /** Find all class names that are (or transitively extend) baseClass in this module. */
@@ -7289,6 +7453,56 @@ class WasicTranspiler {
       }
     }
 
+    // Phase 51: instanceof — class membership test.
+    // Placed AFTER the binary-op loop so a compound like `a instanceof X && b instanceof Y`
+    // is split on `&&` first; each `a instanceof X` operand (no binary op of its own) then
+    // reaches here. When the module has class inheritance (a 4-byte tag header at offset 0)
+    // we emit a runtime tag check: tag(obj) ∈ { tags of the target class and all its
+    // subclasses }. With no inheritance there is no tag, so the test is resolved at compile
+    // time from the variable's statically-tracked class.
+    {
+      const instM = expr.match(/^(.+?)\s+instanceof\s+(\w+)$/);
+      if (instM && this.classDefs.has(instM[2]!)) {
+        const lhsExpr = instM[1]!.trim();
+        const targetCls = instM[2]!;
+        const cvLhs = this.classVars.get(lhsExpr);
+        let objWat: string;
+        let trackedClass: string | undefined;
+        if (lhsExpr === "this" && this.currentMethodClass) {
+          objWat = "(local.get $__self)";
+          trackedClass = this.currentMethodClass;
+        } else if (cvLhs) {
+          objWat = cvLhs.ptr === -1 ? `(local.get $${lhsExpr})` : `(i32.const ${cvLhs.ptr})`;
+          trackedClass = cvLhs.className;
+        } else {
+          objWat = this.emitExpr(lhsExpr, locals, "i32");
+          trackedClass = undefined;
+        }
+        let resWat: string;
+        if (this.classHeaderSize > 0) {
+          const tags = this.findSubclasses(targetCls)
+            .map((s) => this.classTags.get(s))
+            .filter((t): t is number => t !== undefined);
+          if (tags.length === 0) {
+            resWat = "(i32.const 0)";
+          } else {
+            resWat = `(i32.eq (i32.load ${objWat}) (i32.const ${tags[0]}))`;
+            for (let k = 1; k < tags.length; k++) {
+              resWat = `(i32.or ${resWat} (i32.eq (i32.load ${objWat}) (i32.const ${tags[k]})))`;
+            }
+          }
+        } else {
+          const isInstance = trackedClass !== undefined &&
+            this.findSubclasses(targetCls).includes(trackedClass);
+          resWat = `(i32.const ${isInstance ? 1 : 0})`;
+        }
+        const ctxBase = watBaseType(defaultType as WatType);
+        if (ctxBase === "f64") return `(f64.convert_i32_s ${resWat})`;
+        if (ctxBase === "i64") return `(i64.extend_i32_s ${resWat})`;
+        return resWat;
+      }
+    }
+
     // Inline arrow literal still present — liftInlineArrows() couldn't lift it
     if (expr.includes("=>")) {
       this.diagnostics.push(
@@ -9664,6 +9878,11 @@ class WasicTranspiler {
       setFuncTableLookup((name) =>
         this.functions.find((f) => f.name === name) ? this.getFuncTableIdx(name) : undefined
       );
+      setInstanceofResolver((tok, locs) => {
+        const m = tok.match(/^\w+\s+instanceof\s+(\w+)$/);
+        if (!m || !this.classDefs.has(m[1]!)) return undefined;
+        return this.emitExpr(tok, locs as Map<string, WatType>, "i32");
+      });
       const segments = parseConsoleLogArgs(
         logMatch[1],
         locals as Map<string, string>,
@@ -9681,6 +9900,7 @@ class WasicTranspiler {
       setStructLiteralAllocator(undefined);
       setStrCmpNeededCallback(undefined);
       setFuncTableLookup(undefined);
+      setInstanceofResolver(undefined);
       const { statements, needsHelpers, needsStrGather, needsArrPrintHelper, needsJoinHelper } =
         emitConsoleLog(segments, allocator, "    ", 1, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
@@ -9975,6 +10195,11 @@ class WasicTranspiler {
       setFuncTableLookup((name) =>
         this.functions.find((f) => f.name === name) ? this.getFuncTableIdx(name) : undefined
       );
+      setInstanceofResolver((tok, locs) => {
+        const m = tok.match(/^\w+\s+instanceof\s+(\w+)$/);
+        if (!m || !this.classDefs.has(m[1]!)) return undefined;
+        return this.emitExpr(tok, locs as Map<string, WatType>, "i32");
+      });
       const segments = parseConsoleLogArgs(
         errMatch[2],
         locals as Map<string, string>,
@@ -9992,6 +10217,7 @@ class WasicTranspiler {
       setStructLiteralAllocator(undefined);
       setStrCmpNeededCallback(undefined);
       setFuncTableLookup(undefined);
+      setInstanceofResolver(undefined);
       const {
         statements,
         needsHelpers,
@@ -10613,6 +10839,16 @@ class WasicTranspiler {
               this.classVars.set(narrowKey, { className: predInfo.targetType, ptr: curPtr });
             }
           }
+        }
+        // Phase 51: instanceof narrowing — `if (x instanceof Dog) { … }` narrows x's tracked
+        // class to Dog in the then-branch so Dog-only fields/methods resolve. Mirrors the
+        // predicate-narrowing save/restore above (same narrowKey machinery).
+        const instCondMatch = cond.match(/^(\w+)\s+instanceof\s+(\w+)$/);
+        if (narrowKey === null && instCondMatch && this.classDefs.has(instCondMatch[2]!)) {
+          narrowKey = instCondMatch[1]!;
+          narrowOrigClass = this.classVars.get(narrowKey);
+          const curPtr = narrowOrigClass?.ptr ?? -1;
+          this.classVars.set(narrowKey, { className: instCondMatch[2]!, ptr: curPtr });
         }
         const ifWat = this.emitBlock(ifBody, locals, funcResult, indent + "  ");
         // Restore pre-narrowing state
@@ -14707,6 +14943,9 @@ class WasicTranspiler {
     this.parseStructs();
     this.parseClasses();
     this.parseIntersectionTypes(); // Phase 33: after parseStructs+parseClasses so constituent types are registered
+    // Phase 51 (gap #2): desugar class-instance array literals into push() form. Must run AFTER
+    // parseClasses (needs classDefs) and BEFORE parseFunctions/parseTopLevel collect bodies.
+    this.expandClassInstanceArrayLiterals();
     this.parseNamedFuncTypeAliases(); // Phase 5g: must precede parseFunctions so parseParams can resolve aliases
     // Phase 18 fix: replace Array.from({ length: N }, () => []) with __arr_from_2d__(N)
     // Must run BEFORE parseFunctions() so that collected bodyLines don't still contain
@@ -14859,6 +15098,29 @@ class WasicTranspiler {
             this.structVars.set(varName2, { def: def2, ptr: ptr2 });
             startLocals.set(varName2, "i32");
             startDeclaredLocals.push([varName2, "i32"]);
+            continue;
+          }
+        }
+        // Phase 51 (gap #1): module-level class instance — const obj: Base = new Sub(args).
+        // Mirrors the emitFunction newClassPre pre-scan so module-level class vars are tracked in
+        // classVars (enabling field access, method dispatch, and instanceof at module scope). The
+        // static ptr is required because the const-new statement handler emits (i32.const ptr) for
+        // both the local.set and the constructor call. The `if (cd)` guard skips TypedArrays
+        // (PascalCase but not in classDefs) so they fall through to their own pre-scan below.
+        const newClassPre2 = line.match(
+          /^(?:var|let|const)\s+(\w+)\s*(?::\s*([A-Z]\w*))?\s*=\s*new\s+([A-Z]\w*)\s*\(/,
+        );
+        if (newClassPre2) {
+          const ncVarName = newClassPre2[1];
+          const ncCtorName = newClassPre2[3];
+          const ncTypeName = newClassPre2[2] ?? ncCtorName;
+          const ncCd = this.classDefs.get(ncCtorName) ?? this.classDefs.get(ncTypeName);
+          if (ncCd) {
+            const ncTag = this.classTags.get(ncCd.name);
+            const ncPtr = this.allocStructData(ncCd.struct, {}, ncTag);
+            this.classVars.set(ncVarName, { className: ncCd.name, ptr: ncPtr });
+            startLocals.set(ncVarName, "i32");
+            startDeclaredLocals.push([ncVarName, "i32"]);
             continue;
           }
         }

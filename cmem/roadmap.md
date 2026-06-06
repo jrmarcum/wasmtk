@@ -65,9 +65,25 @@ not TS syntax, so it is orthogonal and ungated.)
 
 ### Phase 51 — Language hardening (GATES #5 async + own-runtime)
 
-1. **`instanceof`** (class tags + DU tags) — *first.* Lowest effort; tag infra already exists
-   (Phase 47 class tags, Phase 32 DU tags). Hardens the tag-dispatch path the dynamic runtime +
-   narrowing reuse.
+1. **`instanceof`** — ✅ **DONE 2026-06-05** (class tags). Runtime tag check when the module has
+   inheritance (`tag(obj) ∈ {target + all subclasses}` via `findSubclasses`, read from offset 0);
+   compile-time const from the var's tracked class when there is no inheritance (no tag header).
+   `if (x instanceof Sub)` narrows x to Sub in the then-branch (reuses the Phase-34 narrow machinery
+   in `emitBlock`); `console.log(x instanceof C)` works via a `setInstanceofResolver` bridge in
+   `console_log.ts`. Tests `51_BasicInstanceof`/`51_InstanceofNarrowing`/`51_InstanceofNoInheritance`/
+   `51_Phase51Combined` (suite 279→283). DU-tag `instanceof` not added — TS DUs aren't classes, so
+   `instanceof` doesn't apply; class hierarchies are the real use. Two PRE-EXISTING construction
+   gaps were surfaced AND **fixed 2026-06-05** (tests `51_ModuleLevelClassInstance` +
+   `51_ClassInstanceArrayLiteral`, suite 283→285): (a) module-level class instances are now tracked
+   in `classVars` (new `newClassPre` in the startBodyLines pre-scan) so field access / method
+   dispatch / instanceof work at module scope; (b) `const a: C[] = [new C(…), …]` is desugared to
+   `const a: C[] = []; a.push(new C(…));…` (new `expandClassInstanceArrayLiterals` source pre-pass)
+   so each element is constructed with its ctor + class tag. See compiler-bugs.md / design-decisions.md.
+   A third gap surfaced here — single-PHYSICAL-line class/constructor bodies, e.g.
+   `class C { v: i32; constructor(x: i32) { this.v = x; } }` all on one line — was ALSO **fixed
+   2026-06-05** (test `51_SingleLineClassBody`, suite 285→286): `parseClasses` now splits class members
+   with a depth/string-aware `splitClassMemberLines` (so fields sharing a line with methods are parsed)
+   and splits single-physical-line method bodies via `splitStmts`.
 2. **Object spread** `{...base, k: v}` — hardens struct field-copy + override codegen (high-frequency;
    central to struct handling).
 3. **Destructuring in function params** `f({x, y}: Vec2)`, then **nested destructuring**

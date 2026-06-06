@@ -91,6 +91,40 @@ high-value subset.
 console.error closures) and update it too. Static-field, getter, TypedArray `.length`/`.byteLength`,
 string-array element, and `Math.*`/`Number.*` handling all have such twins.
 
+## Class / feature codegen
+
+- **`instanceof` (Phase 51)** lives in `emitExpr` AFTER the binary-op loop (so `a instanceof X && …`
+  splits on `&&` first). When `classHeaderSize > 0` it emits a runtime tag check
+  (`tag(obj) ∈ {target + findSubclasses(target)}`, OR-folded, tag read at offset 0); when
+  `classHeaderSize === 0` (no inheritance, no tag header) it folds to a compile-time const from the
+  var's tracked class. The object pointer comes from `classVars`/`this`, else falls back to
+  `emitExpr(lhs)` (this fallback is why the array-element / base-typed-param cases work). Narrowing
+  for `if (x instanceof Sub)` reuses the Phase-34 `narrowKey` save/restore in `emitBlock`. For
+  `console.log(x instanceof C)`, `console_log.ts` calls back into `emitExpr` via the
+  `setInstanceofResolver` singleton (the resolver returns `undefined` for non-class RHS so
+  `instanceof Error` etc. still hit their existing handlers). Result is i32 0/1, promoted to
+  f64/i64 when the context type is wider (same pattern as the short-circuit `&&`/`||` handler).
+- **Module-level class instances (Phase 51)** are registered in `classVars` by a `newClassPre`
+  block in the `startBodyLines` pre-scan that mirrors `emitFunction`'s. It MUST allocate a static
+  ptr via `allocStructData(cd.struct, {}, classTag)` — the const-new statement handler emits
+  `(i32.const ptr)` for both the `local.set` and the constructor call, so registering with `ptr:-1`
+  would `local.set`/construct at address -1. The `if (cd)` guard skips TypedArrays (PascalCase but
+  not in `classDefs`).
+- **Class-instance array literals (Phase 51)** — `const a: C[] = [new C(…), …]` is desugared to
+  `const a: C[] = []; a.push(new C(…));…` by `expandClassInstanceArrayLiterals()` (source pre-pass,
+  after `parseClasses`, before `parseFunctions`/`parseTopLevel`). The static struct-array path can't
+  run constructors (it only fills `{field:val}` literals → zeroed structs, no tag); `push(new C())`
+  constructs each element. Only fires when the element type is a known class AND every element is a
+  `new …(…)`. Don't move it before `parseClasses` (needs `classDefs`) or after body collection (the
+  bodies must already contain the desugared lines).
+- **Single-physical-line class/constructor bodies (Phase 51)** — `parseClasses` field parsing iterates
+  `splitClassMemberLines(classBody)` (depth/string-aware: splits at depth-0 `;`, depth-0 `\n`, and
+  after a depth-0 `}`), NOT raw `classBody.split("\n")` — otherwise a field sharing a physical line
+  with the constructor is skipped (the field loop skips any line containing `(`). And a method/ctor
+  `rawBody` that is a single physical line is split via `splitStmts` so multi-statement single-line
+  bodies (`super(k); this.v = v;`) aren't mangled into one stub. Relies on comments being stripped
+  before `parseClasses` (they are — `stripComments` runs at the top of `transpile`).
+
 ## Tooling
 
 - `tsbundle` outputs **`.ts`** (`.bundled.ts`), an import inliner — NOT `deno bundle`/JavaScript.

@@ -1,8 +1,57 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **No open bugs.** The last one — the single-line
-brace `if {…}` form — was fixed 2026-06-03 (see directly below); the full suite is now **279/279**
-(the new regression test `48_SingleLineBraceIf` adds the 279th).
+Live record of bugs found + fixed. Newest first. **No open bugs.** Phase 51 (2026-06-05) added
+`instanceof` and closed three construction/parsing gaps it surfaced (module-level class instances,
+class-instance array literals, AND single-physical-line class/constructor bodies — all fixed below).
+The full suite is now **286/286** (Phase 51 added 7 `51_*` tests; was 279).
+
+## Single-physical-line class / constructor bodies — FIXED 2026-06-05
+
+`class C { v: i32; constructor(x: i32) { this.v = x; } }` with the whole class (and/or constructor)
+body on ONE physical line previously parsed wrong two ways: (1) **fields were dropped** — the field
+loop iterated `classBody.split("\n")` and skipped any line containing `(`, so a field sharing the
+line with the constructor was never registered; (2) **multi-statement bodies were mangled** — a
+single-physical-line method body like `{ super(k); this.v = v; }` became one `bodyLine`
+(`"super(k); this.v = v;"`) that emitted as one stubbed statement. Net effect: empty constructors +
+unparsed fields → fields read 0. (The class-scope analogue of the function-body single-line gap fixed
+2026-06-03.) **Fix** (`src/wasic.ts` `parseClasses`): (a) field parsing now iterates
+`splitClassMemberLines(classBody)` — a new depth/string-aware splitter that breaks at depth-0 `;`,
+depth-0 newlines, and immediately after a depth-0 `}` (a method body close), so fields, methods, and
+the single-physical-line form all yield correct member lines (comments are already stripped globally
+before `parseClasses`, so no comment handling is needed); (b) a method/constructor `rawBody` that is a
+single physical line is split into statements via the existing string-aware `splitStmts` (mirrors the
+2026-06-03 parseFunctions single-line-body fix). Regression test: `51_SingleLineClassBody.ts` (carries
+`// deno-fmt-ignore-file` so `deno fmt` can't expand the single-line forms under test). Multi-line
+class bodies (the norm) are unaffected. Validated: full suites green, zero regressions.
+
+## Class construction gaps surfaced during Phase 51 instanceof — FIXED 2026-06-05
+
+Found while writing instanceof tests; both predated Phase 51 and were unrelated to instanceof (the
+WASM output silently diverged from the TS oracle — no error — so they were latent). Both now fixed
+with regression tests `51_ModuleLevelClassInstance` + `51_ClassInstanceArrayLiteral` (suite 283→285).
+
+1. **Module-level class instances weren't tracked in `classVars`.** `const b: Box = new Box(7)` at
+   module scope constructed the object (the const-new statement handler ran), but `classVars` had no
+   entry for `b`, so `b.v` / method dispatch / `b instanceof Box` didn't resolve (field reads stubbed
+   to 0; instanceof folded to 0). Root cause: the `startBodyLines` pre-scan resets `classVars` and had
+   no `newClassPre` equivalent (the registration lived only in `emitFunction`). **Fix** (`src/wasic.ts`):
+   added a `newClassPre` block to the startBodyLines pre-scan mirroring `emitFunction` — allocates the
+   instance via `allocStructData(cd.struct, {}, classTag)` (STATIC ptr, because the const-new statement
+   handler emits `(i32.const ptr)` for both the `local.set` and the ctor call) and registers
+   `classVars[var] = {className: ctorClass, ptr}`. The `if (cd)` guard skips TypedArrays.
+2. **Array-literal of `new` instances were zero-filled.** `const a: C[] = [new C(1), new C(2)]` ran the
+   static struct-array path, which parses `{field: val}` literals only — for `new C(...)` it allocated
+   zeroed structs with no ctor call and no class tag, so fields read 0 and `a[i] instanceof C` was
+   always false. (Field-access emission was already correct; only construction was missing.) **Fix**
+   (`src/wasic.ts`): new `expandClassInstanceArrayLiterals()` source pre-pass (runs after `parseClasses`,
+   before `parseFunctions`/`parseTopLevel`; bracket- and string-aware so multi-line literals work)
+   desugars `const a: C[] = [new C(…), …]` → `const a: C[] = []; a.push(new C(…));…` when the element
+   type is a known class and every element is a `new …(…)`. This reuses the proven `arr.push(new C())`
+   path, which constructs each element with its ctor + tag. Helpers `findMatchingBracketAware` /
+   `splitTopLevelCommasStringAware` / `skipStringLiteral` added.
+
+(The single-physical-line class/constructor body gap that this work also surfaced was fixed in the
+same Phase 51 pass — see the "Single-physical-line class / constructor bodies" section above.)
 
 ## FIXED — single-physical-line function bodies were mangled (2026-06-03)
 
