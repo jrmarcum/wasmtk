@@ -53,6 +53,7 @@ This is the durable contract for this repo. Any agent reading this file is expec
 | [roadmap.md](roadmap.md) | Phase status + **prioritized execution order (set 2026-06-03)**: Phase 51 language hardening (`instanceof` ✅ **DONE 2026-06-05** → object spread NEXT → param/nested destructuring → utility types) gates the #5 async + own-runtime tracks; Phase 52 leaf conveniences + Phase 53 standalone built-ins are ungated; ecosystem loader is orthogonal. Links to the two long-form docs below |
 | [vision.md](vision.md) | **Full** polyglot ecosystem vision + "TypeScript as a DLL" vision: guiding decisions, layer diagram, language-support matrix, staged roadmap, repo map (moved from root `VISION.md`, 2026-05-31) |
 | [stdlib-bundling-brief.md](stdlib-bundling-brief.md) | **Full** on-demand stdlib bundling design brief (§1–§7d): rationale, allocator unification, the two linking regimes, feature tiering, Javy-independence verdict, work items, per-capability + merge-bug post-mortems (moved from root, 2026-05-31) |
+| [component-model-discussion.md](component-model-discussion.md) | **DRAFT / OPEN (2026-06-06) — circle back.** Polyglot monorepo component model + language-selection CLI: tentative decisions (drop C/C++; keep TS/Go/Rust/Zig; explicit `--lang` on init/modc/wasic; auto-detect `run`); the central finding (**cross-language inclusion = `instance`/WIT/bindgen only, never `merge`**); draft `wasmtk.json` schema + validity matrix + build-graph/host-wiring; open decisions. Not implemented |
 
 ## Long-form docs are now inside cmem
 
