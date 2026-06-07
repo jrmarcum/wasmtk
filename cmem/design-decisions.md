@@ -157,9 +157,21 @@ string-array element, and `Math.*`/`Number.*` handling all have such twins.
   `def.fields.find("x = 1.0")` misses and the whole compile aborts (the binding emits a stub); the
   `valuePart` still carries `x = 1.0` so the flat-bind branch extracts local `x` + default `1.0`.
   (2) `emitDestructurePattern` and `collectDestructureLocals` MUST stay structurally identical (same
-  field/valuePart parsing) so the pre-scan declares exactly the locals the emit sets. Nested
-  *tuple/array* `[[a,b],c]` is NOT handled — nested-tuple type infra (`makeTupleStructDef`/`tupleTypeName`
-  bracket-awareness) and nested-tuple value construction are missing prerequisites.
+  field/valuePart parsing) so the pre-scan declares exactly the locals the emit sets. (3) Both use
+  `splitBraceAwareCommasKeepEmpty` (NOT `splitBraceAwareCommas`, which drops empties) so positional
+  **gaps** `[a, , c]` keep index alignment — see the gap-collapse bug in compiler-bugs.md.
+- **Nested tuple/array `const [[a, b], c] = t` (Phase 51.3)** — tuples are structs, so once the tuple
+  *type* parser is bracket-aware the recursive destructure/spread machinery handles nesting for free.
+  `tupleTypeName` + `makeTupleStructDef` split elements with `splitBraceAwareCommas` and, for a nested
+  tuple element, **embed it INLINE** (a `tupleTypeName` field, natural-aligned via `tupleFieldAlign`,
+  `size = nested.totalSize`) — same shape as a Phase-21 embedded tuple, NOT a heap pointer. So
+  `nestedFieldBaseWat` uses the field *address* for these. Value construction
+  (`const t: [[i32,i32],i32] = [[1,2],3]`) recurses via `emitTupleLiteralStores`, storing each nested
+  element at `baseOffset + field.offset` (a compile-time-constant WAT store offset). All tuple
+  literal/destructure regexes were widened from `\[[^\]]+\]` (stops at first `]`) to a one-level-nesting
+  bracket class or balanced detection (`findMatchingBracketAware`). **Determinism check:** the rewritten
+  flat-tuple path emits byte-identical WAT to the pre-rewrite code (verified: zero tracked-`.wat`
+  content changes), so only genuinely-new nested cases produce new bytes.
 
 ## Tooling
 

@@ -114,10 +114,19 @@ not TS syntax, so it is orthogonal and ungated.)
    itself a `{…}`/`[…]` pattern recurses into the nested struct/tuple field (pointer fields load the
    stored ptr; inline-tuple fields use the field address) — no temps, nested loads inline. Arbitrary
    depth + renames + Phase-48 zero-default fallback all work, incl. nested destructuring in a param
-   (`f({a:{b}}: T)`, via the param pre-pass). **Remaining narrow gap:** nested *tuple/array* `[[a,b],c]`
-   — that's a nested-tuple pattern (`[[i32,i32],i32]`), blocked on prerequisite tuple infra
-   (`makeTupleStructDef`/`tupleTypeName` split on `,` non-bracket-aware, and nested-tuple *values* can't
-   be constructed yet) — a separate, larger feature. Phase 51.3 is otherwise complete.
+   (`f({a:{b}}: T)`, via the param pre-pass). **Nested tuple/array `const [[a, b], c] = t` — ✅ DONE
+   2026-06-07** (test `51_NestedTuple`, suite 290→291). Made the tuple infra bracket-aware end-to-end:
+   `tupleTypeName`/`makeTupleStructDef` now split bracket-aware and **embed a nested tuple element
+   inline** (`tupleTypeName` field, natural-aligned, size = nested totalSize); tuple-literal construction
+   (`const t: [[i32,i32],i32] = [[1,2],3]`) recurses via `emitTupleLiteralStores` (stores sub-elements at
+   `baseOffset+field.offset`); tuple destructuring routes through the same recursive
+   `emitDestructurePattern` as objects (balanced-bracket detection). Works for mixed f64/i32, nested tuple
+   **params** (`f([[a,b],c]: [[i32,i32],i32])`), and preserves positional gaps. **Phase 51.3 COMPLETE.**
+   **Process note:** the test runner judges by per-step **exit code, not output diff** — a broad codegen
+   change can silently alter output while still "passing". Always output-verify (ts-run vs wasm-run) the
+   tests your change touches; a gap-collapse bug here (`splitBraceAwareCommas` drops empty elements →
+   `[a, , c]` read the wrong index) passed the suite but was caught by output-diffing `21_*`. Fixed with
+   `splitBraceAwareCommasKeepEmpty`.
 4. **Utility types** — `Partial`/`Readonly`/`Record`/`Pick`/`Omit`/`NonNullable` first, then
    `Exclude`/`Extract`/`ReturnType`/`Parameters`. Source-level type-resolution hardening (Phase 36
    style); after the value-level struct work since some interact with struct shapes.

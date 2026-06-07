@@ -899,6 +899,25 @@ function splitBraceAwareCommas(s: string): string[] {
   return result;
 }
 
+/** Like splitBraceAwareCommas but PRESERVES empty elements — needed for positional destructuring
+ *  gaps (`[a, , c]` must keep index 1 empty so `c` reads index 2). (Phase 51.3) */
+function splitBraceAwareCommasKeepEmpty(s: string): string[] {
+  const result: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "{" || ch === "[" || ch === "(") depth++;
+    else if (ch === "}" || ch === "]" || ch === ")") depth--;
+    else if (ch === "," && depth === 0) {
+      result.push(s.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  result.push(s.slice(start).trim());
+  return result;
+}
+
 /** Advances past a string literal starting at s[i] (a quote char); returns the index just after
  *  the closing quote. Handles `\` escapes. Used by the bracket/comma scanners below. */
 function skipStringLiteral(s: string, i: number): number {
@@ -3710,11 +3729,30 @@ class WasicTranspiler {
    * types string such as "i32, f64".  The returned name is whatever the caller passes.
    */
   private makeTupleStructDef(name: string, innerTypesStr: string): StructDef {
-    const typeList = innerTypesStr.split(",").map((t) => t.trim()).filter(Boolean);
+    // Phase 51.3: bracket-aware element split so a nested tuple element ([i32,i32]) stays whole.
+    const typeList = splitBraceAwareCommas(innerTypesStr).map((t) => t.trim()).filter(Boolean);
     const fields: StructField[] = [];
     let offset = 0;
     for (let i = 0; i < typeList.length; i++) {
-      const type = mapType(typeList[i]) as WatType;
+      const elem = typeList[i];
+      // Phase 51.3: nested tuple element — embed INLINE (like a Phase-21 embedded tuple field).
+      if (elem.startsWith("[") && elem.endsWith("]")) {
+        const nested = this.getOrCreateTupleDef(elem);
+        if (nested) {
+          const align = this.tupleFieldAlign(nested);
+          if (offset % align !== 0) offset = Math.ceil(offset / align) * align;
+          fields.push({
+            name: `_${i}`,
+            type: "i32",
+            offset,
+            size: nested.totalSize,
+            tupleTypeName: nested.name,
+          });
+          offset += nested.totalSize;
+          continue;
+        }
+      }
+      const type = mapType(elem) as WatType;
       const size = (type === "f64" || type === "i64") ? 8 : 4;
       if (offset % size !== 0) offset = Math.ceil(offset / size) * size;
       fields.push({ name: `_${i}`, type, offset, size });
@@ -3723,9 +3761,26 @@ class WasicTranspiler {
     return { name, fields, totalSize: offset };
   }
 
-  /** Returns a canonical synthetic name for an inline tuple type annotation like "[i32, f64]". */
+  /** Natural alignment for embedding a (possibly nested) tuple as an inline field: 8 if it
+   *  recursively contains an 8-byte primitive (f64/i64), else 4. Alignment is a WAT hint only
+   *  (no trap on misalignment), but keeping it natural avoids slow unaligned accesses. */
+  private tupleFieldAlign(def: StructDef): number {
+    for (const f of def.fields) {
+      if (f.tupleTypeName) {
+        const nd = this.structDefs.get(f.tupleTypeName);
+        if (nd && this.tupleFieldAlign(nd) === 8) return 8;
+      } else if (f.size === 8) return 8;
+    }
+    return 4;
+  }
+
+  /** Returns a canonical synthetic name for an inline tuple type annotation like "[i32, f64]".
+   *  Phase 51.3: bracket-aware + recursive so nested tuples get a stable unique name. */
   private tupleTypeName(innerTypesStr: string): string {
-    const parts = innerTypesStr.split(",").map((t) => mapType(t.trim()));
+    const parts = splitBraceAwareCommas(innerTypesStr).map((t) => {
+      const e = t.trim();
+      return e.startsWith("[") && e.endsWith("]") ? this.tupleTypeName(e.slice(1, -1)) : mapType(e);
+    });
     return `__Tuple_${parts.join("_")}`;
   }
 
@@ -4430,10 +4485,11 @@ class WasicTranspiler {
     const stmts: string[] = [];
     const isObject = pattern.trim()[0] === "{";
     const inner = pattern.trim().slice(1, -1);
-    const parts = splitBraceAwareCommas(inner);
+    const parts = splitBraceAwareCommasKeepEmpty(inner);
     for (let i = 0; i < parts.length; i++) {
       const raw = parts[i].trim();
-      if (!raw) continue; // tuple gap: skip a position
+      if (!raw) continue; // tuple gap: skip a position (index i still advances)
+      if (raw.startsWith("...")) continue; // rest element: not supported in tuple destructure (no-op)
       let field: StructField | undefined;
       let valuePart: string; // either a local name (+default) or a nested pattern
       if (isObject) {
@@ -4490,10 +4546,10 @@ class WasicTranspiler {
   ): void {
     const isObject = pattern.trim()[0] === "{";
     const inner = pattern.trim().slice(1, -1);
-    const parts = splitBraceAwareCommas(inner);
+    const parts = splitBraceAwareCommasKeepEmpty(inner);
     for (let i = 0; i < parts.length; i++) {
       const raw = parts[i].trim();
-      if (!raw) continue;
+      if (!raw || raw.startsWith("...")) continue;
       let field: StructField | undefined;
       let valuePart: string;
       if (isObject) {
@@ -4520,6 +4576,50 @@ class WasicTranspiler {
         out.push([localName, field.type]);
       }
     }
+  }
+
+  /** Phase 51.3: recursively emit the element stores for a tuple literal RHS (without the outer
+   *  brackets), handling nested tuple literals by recursing inline at `baseOffset + field.offset`.
+   *  `basePtr` is the WAT local name holding the (malloc'd) tuple pointer. */
+  private emitTupleLiteralStores(
+    elementsStr: string,
+    basePtr: string,
+    def: StructDef,
+    baseOffset: number,
+    locals: Map<string, WatType>,
+  ): string[] {
+    const elements = splitBraceAwareCommas(elementsStr).map((e) => e.trim()).filter(Boolean);
+    const stmts: string[] = [];
+    for (let i = 0; i < elements.length; i++) {
+      const field = def.fields[i];
+      if (!field) continue;
+      const elem = elements[i];
+      if (field.tupleTypeName && elem.startsWith("[")) {
+        const nested = this.structDefs.get(field.tupleTypeName);
+        if (nested) {
+          stmts.push(
+            ...this.emitTupleLiteralStores(
+              elem.slice(1, -1),
+              basePtr,
+              nested,
+              baseOffset + field.offset,
+              locals,
+            ),
+          );
+          continue;
+        }
+      }
+      const storeOp = field.type === "f64"
+        ? "f64.store"
+        : field.type === "i64"
+        ? "i64.store"
+        : "i32.store";
+      const valWat = this.emitExpr(elem, locals, field.type);
+      stmts.push(
+        `(${storeOp} offset=${baseOffset + field.offset} (local.get $${basePtr}) ${valWat})`,
+      );
+    }
+    return stmts;
   }
 
   // -------------------------------------------------------------------------
@@ -8619,34 +8719,25 @@ class WasicTranspiler {
     }
 
     // Phase 23: tuple literal init: const t: [i32, f64] = [e0, e1, ...]
+    // Phase 51.3: bracket-aware type match + recursive element stores so nested tuples
+    // (const t: [[i32, i32], i32] = [[1, 2], 3]) construct their inline sub-tuples.
     // Must come before array and struct checks since the type annotation contains brackets.
-    const tupleLitStmt = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\[[^\]]+\])\s*=\s*\[/);
+    const tupleLitStmt = line.match(
+      /^(?:var|let|const)\s+(\w+)\s*:\s*\[(?:[^[\]]|\[[^\]]*\])*\]\s*=\s*\[/,
+    );
     if (tupleLitStmt) {
       const sv = this.structVars.get(tupleLitStmt[1]);
       if (sv) {
         if (sv.ptr >= 0) {
           return `(local.set $${tupleLitStmt[1]} (i32.const ${sv.ptr}))`;
         }
-        // Runtime allocation: malloc, store each element, set local
+        // Runtime allocation: malloc, store each (possibly nested) element, set local.
         const eqBI2 = line.indexOf("= [");
         const vBody2 = eqBI2 !== -1 ? line.slice(eqBI2 + 3).replace(/\]\s*;?\s*$/, "") : "";
-        const elems3 = vBody2 ? this.splitArgs(vBody2) : [];
         const stmtsT: string[] = [
           `(local.set $${tupleLitStmt[1]} (call $__malloc (i32.const ${sv.def.totalSize})))`,
+          ...this.emitTupleLiteralStores(vBody2, tupleLitStmt[1], sv.def, 0, locals),
         ];
-        for (let i = 0; i < elems3.length; i++) {
-          const field = sv.def.fields[i];
-          if (!field) continue;
-          const storeOp = field.type === "f64"
-            ? "f64.store"
-            : field.type === "i64"
-            ? "i64.store"
-            : "i32.store";
-          const valWat = this.emitExpr(elems3[i].trim(), locals, field.type);
-          stmtsT.push(
-            `(${storeOp} offset=${field.offset} (local.get $${tupleLitStmt[1]}) ${valWat})`,
-          );
-        }
         return stmtsT.join("\n      ");
       }
     }
@@ -8690,31 +8781,22 @@ class WasicTranspiler {
 
     // Phase 23: tuple destructuring: const [a, b] = tupleVar (when source is a structVar/tuple)
     // Phase 21: preserve empty slots ("gaps") so positional index advances correctly: [a, , c]
-    const tupleArrDestructStmt = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\s*;?$/);
-    if (tupleArrDestructStmt) {
-      const sv = this.structVars.get(tupleArrDestructStmt[2]);
-      if (sv) {
-        const bindings2 = tupleArrDestructStmt[1].split(",").map((b) => b.trim());
-        const stmts2: string[] = [];
-        for (let i = 0; i < bindings2.length; i++) {
-          const b = bindings2[i];
-          if (b === "") continue;
-          if (b.startsWith("...")) continue;
-          const field = sv.def.fields[i];
-          if (!field) continue;
-          const loadOp = field.type === "f64"
-            ? "f64.load"
-            : field.type === "i64"
-            ? "i64.load"
-            : "i32.load";
-          const baseWat = sv.ptr === -1
-            ? `(local.get $${tupleArrDestructStmt[2]})`
-            : `(i32.const ${sv.ptr})`;
-          stmts2.push(
-            `(local.set $${b} (${loadOp} (i32.add ${baseWat} (i32.const ${field.offset}))))`,
-          );
+    // Phase 51.3: balanced-bracket detection + recursion so nested tuple patterns work:
+    // const [[a, b], c] = t. Runs after the array-destructure handler, so array sources are
+    // already consumed; this only fires when the source is a tuple structVar.
+    const tupleDestructHead = line.match(/^(?:var|let|const)\s*\[/);
+    if (tupleDestructHead) {
+      const openIdx = line.indexOf("[");
+      const closeIdx = findMatchingBracketAware(line, openIdx);
+      const after = closeIdx !== -1 ? line.slice(closeIdx + 1).trim() : "";
+      const eqM = after.match(/^=\s*(\w+)\s*;?$/);
+      if (closeIdx !== -1 && eqM) {
+        const sv = this.structVars.get(eqM[1]);
+        if (sv) {
+          const pattern = line.slice(openIdx, closeIdx + 1);
+          const baseWat = sv.ptr === -1 ? `(local.get $${eqM[1]})` : `(i32.const ${sv.ptr})`;
+          return this.emitDestructurePattern(pattern, baseWat, sv.def, locals).join("\n      ");
         }
-        return stmts2.join("\n      ");
       }
     }
 
@@ -13943,7 +14025,9 @@ class WasicTranspiler {
 
       // Phase 23: tuple literal: const t: [i32, f64] = [1, 2.0]
       // Must come before struct and array checks since the type annotation contains brackets.
-      const tupleLitPre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\[[^\]]+\])\s*=\s*\[/);
+      const tupleLitPre = line.match(
+        /^(?:var|let|const)\s+(\w+)\s*:\s*(\[(?:[^[\]]|\[[^\]]*\])*\])\s*=\s*\[/,
+      );
       if (tupleLitPre) {
         const varName = tupleLitPre[1];
         const typeAnnotation = tupleLitPre[2];
@@ -14028,22 +14112,24 @@ class WasicTranspiler {
       }
       // Phase 23: tuple destructuring: const [a, b] = tupleVar (when source is a tuple in structVars)
       // Phase 21: preserve empty slots ("gaps") so positional index aligns with field index
-      const tupleDestructPre = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\s*;?$/);
-      if (tupleDestructPre) {
-        const sv = this.structVars.get(tupleDestructPre[2]);
-        if (sv) {
-          const bindingsTD = tupleDestructPre[1].split(",").map((b) => b.trim());
-          for (let i = 0; i < bindingsTD.length; i++) {
-            const b = bindingsTD[i];
-            if (b === "") continue;
-            if (b.startsWith("...")) continue;
-            const field = sv.def.fields[i];
-            if (field) {
-              declaredLocals.push([b, field.type]);
-              locals.set(b, field.type);
+      // Phase 51.3: balanced-bracket detection + recursive local collection for nested patterns.
+      const tupleDestructHeadPre = line.match(/^(?:var|let|const)\s*\[/);
+      if (tupleDestructHeadPre) {
+        const openIdx = line.indexOf("[");
+        const closeIdx = findMatchingBracketAware(line, openIdx);
+        const after = closeIdx !== -1 ? line.slice(closeIdx + 1).trim() : "";
+        const eqM = after.match(/^=\s*(\w+)\s*;?$/);
+        if (closeIdx !== -1 && eqM) {
+          const sv = this.structVars.get(eqM[1]);
+          if (sv) {
+            const collected: Array<[string, WatType]> = [];
+            this.collectDestructureLocals(line.slice(openIdx, closeIdx + 1), sv.def, collected);
+            for (const [localName, ty] of collected) {
+              declaredLocals.push([localName, ty]);
+              locals.set(localName, ty);
             }
+            continue;
           }
-          continue;
         }
       }
       // Struct object literal: const p: Point = { x: 1.5, y: 2.5 }
@@ -15382,7 +15468,9 @@ class WasicTranspiler {
       const startDeclaredLocals: [string, WatType][] = [];
       for (const line of this.startBodyLines) {
         // Phase 23: tuple literal — const t: [i32, f64] = [1, 2.0] (mirrors emitFunction pre-scan)
-        const tupleLitPre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\[[^\]]+\])\s*=\s*\[/);
+        const tupleLitPre2 = line.match(
+          /^(?:var|let|const)\s+(\w+)\s*:\s*(\[(?:[^[\]]|\[[^\]]*\])*\])\s*=\s*\[/,
+        );
         if (tupleLitPre2) {
           const varNameT = tupleLitPre2[1];
           const tupleDef2 = this.getOrCreateTupleDef(tupleLitPre2[2]);
@@ -15550,23 +15638,24 @@ class WasicTranspiler {
           }
         }
         // Phase 23: tuple destructuring — const [a, b] = tupleVar (mirrors emitFunction pre-scan)
-        // Phase 21: preserve empty slots ("gaps") so positional index aligns with field index
-        const tupleDestructPre2 = line.match(/^(?:var|let|const)\s*\[([^\]]*)\]\s*=\s*(\w+)\s*;?$/);
-        if (tupleDestructPre2) {
-          const sv2 = this.structVars.get(tupleDestructPre2[2]);
-          if (sv2) {
-            const blist2 = tupleDestructPre2[1].split(",").map((b) => b.trim());
-            for (let i = 0; i < blist2.length; i++) {
-              const b = blist2[i];
-              if (b === "") continue;
-              if (b.startsWith("...")) continue;
-              const field2 = sv2.def.fields[i];
-              if (field2) {
-                startLocals.set(b, field2.type);
-                startDeclaredLocals.push([b, field2.type]);
+        // Phase 21: preserve empty slots ("gaps"); Phase 51.3: balanced + recursive for nesting.
+        const tupleDestructHeadPre2 = line.match(/^(?:var|let|const)\s*\[/);
+        if (tupleDestructHeadPre2) {
+          const openIdx = line.indexOf("[");
+          const closeIdx = findMatchingBracketAware(line, openIdx);
+          const after = closeIdx !== -1 ? line.slice(closeIdx + 1).trim() : "";
+          const eqM = after.match(/^=\s*(\w+)\s*;?$/);
+          if (closeIdx !== -1 && eqM) {
+            const sv2 = this.structVars.get(eqM[1]);
+            if (sv2) {
+              const collected: Array<[string, WatType]> = [];
+              this.collectDestructureLocals(line.slice(openIdx, closeIdx + 1), sv2.def, collected);
+              for (const [localName, ty] of collected) {
+                startLocals.set(localName, ty);
+                startDeclaredLocals.push([localName, ty]);
               }
+              continue;
             }
-            continue;
           }
         }
         // Phase 31: TypedArray declaration (mirrors emitFunction pre-scan)

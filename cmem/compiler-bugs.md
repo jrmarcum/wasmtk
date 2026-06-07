@@ -3,10 +3,20 @@
 Live record of bugs found + fixed. Newest first. **No open bugs.** Phase 51 (2026-06-05) added
 `instanceof`, closed three construction/parsing gaps it surfaced, and a follow-up workaround-audit
 fixed one more silent bug + added a loud `call_indirect`-in-merge guard; a 2026-06-07 follow-up added
-a companion `memory.grow`-in-merge guard (all below). The full suite is **290/290**
+a companion `memory.grow`-in-merge guard (all below). The full suite is **291/291**
 (Phase 51 added 8 `51_*` tests + `51_ObjectSpread` (51.2) + `51_ParamDestructuring` +
-`51_NestedDestructuring` (51.3), 2026-06-07; was 279); the 2026-06-07 merge guard + Go-CLI changes add
-no tests and were validated against the 14 merge-dependent tests with no regression.
+`51_NestedDestructuring` + `51_NestedTuple` (51.3), 2026-06-07; was 279); the 2026-06-07 merge guard +
+Go-CLI changes add no tests and were validated against the 14 merge-dependent tests with no regression.
+
+## Tuple positional-gap collapse in nested destructure rewrite — FIXED 2026-06-07 (pre-commit)
+
+Caught during Phase 51.3 nested-tuple work, never shipped. The rewritten recursive destructure helpers
+used `splitBraceAwareCommas`, which **drops empty elements** — so `const [coordX, , coordY] = t`
+collapsed the gap and `coordY` read index 1 instead of 2 (`21_SkippedElementsAndGaps` printed
+`Extracted Y: 999` instead of `20`). The test suite **did not catch it** (it judges per-step exit code,
+not output), so it was found only by output-diffing ts-run vs wasm-run. Fixed with a gap-preserving
+`splitBraceAwareCommasKeepEmpty` used by `emitDestructurePattern`/`collectDestructureLocals`. Lesson
+recorded in testing.md / roadmap.md: output-verify the tests a codegen change touches.
 
 ## Reactor library exports trapped without `_initialize` — FIXED 2026-06-07
 
