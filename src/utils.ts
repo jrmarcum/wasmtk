@@ -168,6 +168,25 @@ const wasiImports: WasiImports = {
   },
 };
 
+/**
+ * Builds the `wasi_snapshot_preview1` import object as a Proxy: any WASI function we don't
+ * explicitly implement above resolves to a no-op stub returning 0, so a module that imports a
+ * *fuller* WASI surface than our shims (e.g. Zig std / Rust std pull in `clock_res_get`, `path_*`,
+ * `fd_pread`, `fd_readdir`, …) still INSTANTIATES rather than failing with a LinkError. Implemented
+ * shims (`fd_write`, `random_get`, `clock_time_get`, …) are returned as-is. The stub is only a
+ * fallback for functions a program imports but typically doesn't call on the common path.
+ */
+function makeWasiImport(): Record<string, unknown> {
+  const shims = wasiImports.wasi_snapshot_preview1 as unknown as Record<string, unknown>;
+  return new Proxy(shims, {
+    get(target, prop) {
+      const key = typeof prop === "string" ? prop : String(prop);
+      if (key in target) return target[key];
+      return (..._args: unknown[]) => 0;
+    },
+  });
+}
+
 async function getWasmBytes(path: string): Promise<Uint8Array> {
   if (path.endsWith(".wat")) {
     try {
@@ -245,7 +264,7 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
         return (..._args: unknown[]) => 0;
       },
     });
-    const extendedImports = { ...wasiImports, env: envProxy };
+    const extendedImports = { wasi_snapshot_preview1: makeWasiImport(), env: envProxy };
     const result = await WebAssembly.instantiate(
       wasmBytes as BufferSource,
       extendedImports as unknown as WebAssembly.Imports,
@@ -256,6 +275,9 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
       const [name, ...params] = args;
       const fn = wasiInstance.exports[name];
       if (typeof fn === "function") {
+        // Reactor libraries need _initialize before any export is called (else they trap).
+        const initFn = wasiInstance.exports._initialize;
+        if (typeof initFn === "function") (initFn as WasmCallable)();
         const parsedArgs = params.map((p) => {
           const n = Number(p);
           return isNaN(n) ? 0 : n;
@@ -325,19 +347,35 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
 export async function callExport(path: string, fnName: string, params: string[]): Promise<void> {
   try {
     const wasmBytes = await getWasmBytes(path);
-    const extendedImports = {
-      ...wasiImports,
-      env: {
+    // Phase 40-style env proxy: any unlisted env import becomes a no-op stub (returns 0) so
+    // modules with extra env imports still instantiate. (A browser/syscall-js module imports the
+    // separate `gojs` namespace, which this does NOT provide — those are browser-only by design.)
+    const envProxy = new Proxy(
+      {
         abort: (): void => {
           throw new WebAssembly.RuntimeError("abort");
         },
+      } as Record<string, (...args: unknown[]) => unknown>,
+      {
+        get(target, prop) {
+          const key = typeof prop === "string" ? prop : String(prop);
+          if (key in target) return target[key];
+          return (..._args: unknown[]) => 0;
+        },
       },
-    };
+    );
+    const extendedImports = { wasi_snapshot_preview1: makeWasiImport(), env: envProxy };
     const result = await WebAssembly.instantiate(
       wasmBytes as BufferSource,
       extendedImports as unknown as WebAssembly.Imports,
     );
     wasiInstance = result.instance;
+
+    // Reactor modules (e.g. TinyGo c-shared Go libraries) must run `_initialize` to set up the
+    // runtime (heap/stack/globals) before any export is called, or exports trap (`unreachable`).
+    // No-op for non-reactor modules with no `_initialize` export (e.g. wasic/modc TS libraries).
+    const initFn = wasiInstance.exports._initialize;
+    if (typeof initFn === "function") (initFn as WasmCallable)();
 
     const fn = wasiInstance.exports[fnName];
     if (typeof fn !== "function") {

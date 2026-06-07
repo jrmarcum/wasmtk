@@ -40,14 +40,14 @@ build+run driver**. Run individual Rust files as scripts with dependency managem
 - **No WIT / bindgen / component-model** — so interface generation + canonical-ABI marshalling
   remain **wasmtk's** job; rsxtk is the producer + native runner.
 
-**Division of labor / open integration question.** rsxtk already covers Rust *build + native (wasmtime)
-run*; wasmtk owns the *optimize (binaryen-ts) → merge (wasmmerge) → WIT/bindgen → TS-WASI-host* tier.
-Two host paths exist for Rust output: rsxtk's wasmtime+`.cwasm` (fast, native) and wasmtk's TS WASI
-host (`run`) — both P1 WASI, complementary. Decide whether the Rust producer **delegates to `rsxtk
-build`** for codegen (preferred — reuses its cargo/dep/cwasm machinery) vs. wasmtk shelling to
-`rustc`/`cargo` directly. Also distinguish `rsxtk` (a build/run **CLI toolkit**) from the planned
-`universalWasmLoader-rs` (a **library loader** implementing the loader SPEC) — adjacent, not the same;
-they may converge later.
+**Division of labor — RESOLVED 2026-06-07: delegate fully to `rsxtk`** (shipped, `src/rustwasic.ts`;
+see "SHIPPED 2026-06-07" section below). rsxtk owns Rust *build + deps + native (wasmtime) run*;
+wasmtk wraps its commands and still owns the *optimize (binaryen-ts) → merge (wasmmerge) →
+WIT/bindgen* tier (bindgen for Rust deferred). The earlier open question (delegate to rsxtk vs. wasmtk
+shelling to `rustc`/`cargo` directly) was decided in favor of **delegation** — reuses rsxtk's
+cargo/dep/cwasm machinery; `run --lang=rust` uses rsxtk's wasmtime runner (not wasmtk's TS host).
+Still distinguish `rsxtk` (a build/run **CLI toolkit**) from the planned `universalWasmLoader-rs`
+(a **library loader** implementing the loader SPEC) — adjacent, not the same; they may converge later.
 
 ### Producer → contract mapping
 
@@ -192,6 +192,168 @@ Producers ingest single translation units / crates cleanly; driving full existin
 (configure/make/cmake/cargo with C deps) against the wasm target is the harder, less-bounded part.
 Decide per language how far wasmtk wraps the build system vs. ingests pre-built units.
 
+## VERIFIED: native-producer mergeability — allocation is the gate, allocator-control is the differentiator (2026-06-07)
+
+Empirically tested end-to-end (TinyGo 0.41.1, Zig 0.16.0, Rust nightly 1.98 `wasm32-unknown-unknown`)
+by building leaf + allocating variants of each, disassembling with wabt-ts, and running them through
+the **actual** `wasmtk wasic` import-merge pipeline (`import { … } from "./leaf.wasm"` →
+`wasmmerge` → binaryen-ts `-Oz` → run). Probe artifacts were under `tmp/go_merge_probe/`.
+
+**One-line summary (owner-confirmed):** *Pure libraries of exported functions from Go, Rust, and Zig
+are mergeable.* The gate is **whether the module allocates**, not the source language or the module
+"style". For modules that DO allocate, only **Zig** stays mergeable, and only with a **static arena
+allocator** (`FixedBufferAllocator`) — not a memory-growing one.
+
+### Results matrix
+
+| Module | `call_indirect` | `memory.grow` | Merge result |
+| --- | --- | --- | --- |
+| **Go** leaf (no alloc) | — | — | ✅ merges + runs correct (984 B → 3.5 KB merged) |
+| **Go** allocating (`make`/`append`, `-gc=leaking`) | none | yes | ❌ **silently corrupts** |
+| **Zig** leaf | — | — | ✅ merges + runs (216 B → 3.6 KB) |
+| **Zig** alloc — `FixedBufferAllocator` (static arena) | none | none | ✅ **merges + runs correct** |
+| **Zig** alloc — `page_allocator` (growing heap) | yes | yes | ❌ rejected **loudly** (call_indirect guard) |
+| **Rust** leaf (`#![no_std]`, no allocator) | — | — | ✅ merges + runs |
+| **Rust** alloc — `Vec` + static-bump `#[global_allocator]` | yes | none | ❌ rejected loudly |
+| **Rust** alloc — manual `alloc()` + static-bump | yes (6) | none | ❌ rejected loudly (panic/`unwrap`/fmt drag in indirect calls) |
+
+NOTE: the merged leaves are NOT WASI modules — they are **freestanding** (`wasm-unknown` /
+`wasm32-freestanding` / `wasm32-unknown-unknown`) library modules with **zero WASI imports**, merged
+*into* a wasic WASI program. "WASI-ness" is an axis of the consuming/main module, not the leaf.
+
+### Why Go differs from Rust/Zig (the root cause)
+
+- **Go has a mandatory runtime** whose allocator is welded in. Even `-gc=leaking` keeps a runtime
+  allocator that (a) stores its heap metadata at **hardcoded absolute linear-memory addresses**
+  (`i32.store offset=65540`, base `i32.const 0` — `offset=` *instruction immediates*, NOT relocatable
+  `i32.const` data pointers, and Go emits no data segments so wasmmerge's pointer relocation is a
+  no-op for it), (b) grows via `memory.grow` claiming all memory from a fixed base upward, and (c)
+  relies on `_initialize` running to set that metadata — which the WAT-splice merge never calls. None
+  of the three relocation levers (`global` rename, `call`-target rename, data-range `i32.const` shift)
+  apply, and Go's allocator doesn't match `detectBumpAllocator` (it touches no wasm global and uses
+  `memory.grow`). So it can't be unified — and worse, it **slips past the merge guard** (no
+  `call_indirect`) and corrupts wasic's heap region (wasic `$__heap_ptr`≈65796 vs Go's hardcoded
+  65536–65568).
+- **Rust and Zig are freestanding-capable with no mandatory runtime**, and the allocator is
+  **swappable (Rust `#[global_allocator]`) or explicit (Zig passes an `Allocator`)**. So a
+  self-contained **static-arena** allocator never calls `memory.grow`, never claims wasic's region,
+  and lives high in memory (well above wasic's heap) — it merges cleanly. Verified with Zig's
+  `FixedBufferAllocator` (allocates a slice, sums it, returns 4950 merged, no corruption).
+
+### Failure mode is the real headline
+
+- **Go** silently corrupts — `memory.grow`-based, no `call_indirect`, so the only guard misses it.
+- **Rust** almost always gets caught: even minimal `alloc` use drags `call_indirect` in via
+  panic/`unwrap`/fmt/drop-glue → rejected at merge. Hard to *accidentally* merge a corrupting Rust
+  module; also harder than Zig to hit the *working* path (would need `panic=abort`, no `unwrap`, custom
+  alloc-error handler, manual memory).
+- **Zig** is the sweet spot: explicit allocators make the clean static-arena path natural, and the bad
+  (growing-heap) path fails loudly via `call_indirect`.
+
+### Guard gap — CLOSED 2026-06-07 (`memory.grow` merge guard implemented)
+
+The `wasmmerge` guard originally rejected only `call_indirect`. **Go's allocating case proved that
+necessary-but-not-sufficient**: a `memory.grow`-based, indirect-call-free allocator (Go's, or a
+hand-rolled direct-call dlmalloc in Rust/Zig) slipped through and corrupted. **Now FIXED** —
+`wasmmerge` also throws a loud, actionable error on a merged module containing `memory.grow` (message
+names the per-language fix: static-arena allocator, or keep standalone as a WIT/bindgen component),
+turning Go-style silent corruption into a loud failure across all languages. wasmtk's own producers
+never emit `memory.grow`, so no false positives; verified against all 14 merge tests. Full writeup +
+implementation: [compiler-bugs.md](compiler-bugs.md) "Merge guard #2". (Companion to the
+`call_indirect`-in-merge guard, 2026-06-05.)
+
+### Practical takeaway per language
+
+- **Zig** — best merge fit. Leaf merges trivially; allocating code merges *iff* it uses a static arena
+  allocator. Document "use `FixedBufferAllocator`, not `page_allocator`" and Zig is a first-class merge
+  producer.
+- **Rust** — great for leaf (`no_std`, no allocator). Allocating Rust is realistically a **standalone
+  component** (Canonical ABI / instance, not merge), because the toolchain pulls in indirect calls so
+  readily.
+- **Go** — **leaf-only** for merging; anything with a heap is a standalone component.
+
+### Future — true shared-heap unification is tractable for Rust/Zig, not Go
+
+The "option 4" that's intractable for Go (rebuild its runtime allocator) is **straightforward for
+Rust/Zig** precisely because the allocator is user-replaceable: point a custom `#[global_allocator]`
+(Rust) / `Allocator` wrapper (Zig) at an **imported wasmtk `$__malloc`/`$__heap_ptr`**, and they'd
+share wasic's heap exactly like a modc capability — pointers and all, with full cross-module interop.
+Not wired yet; the static-arena path is the available today-answer. This dovetails with the
+cross-language-inclusion finding in [component-model-discussion.md](component-model-discussion.md)
+(*cross-language merge is the exception; `instance`/WIT/bindgen is the default*).
+
+---
+
+## SHIPPED 2026-06-07 — Zig producer (`--lang=zig`) + Rust producer (`--lang=rust`, via rsxtk)
+
+Both mirror the Go producer's command shape. Zig "stays in chain" (a native shell-out producer like
+Go); Rust **delegates fully to `rsxtk`** (the owner's Rust WASM toolkit, installed on PATH — the
+decision was: wrap rsxtk wholesale, incl. `run` via its wasmtime). New files: `src/zigwasic.ts`,
+`src/rustwasic.ts`. `deno.json` exports both.
+
+### Zig — `src/zigwasic.ts` (shell to `zig`; no wasm-opt shim — zig self-optimizes)
+
+| Command | Action |
+| --- | --- |
+| `wasmtk init --lang=zig [dir]` | scaffold a wasm-library `main.zig` (`export fn` + a comptime-guarded `pub fn main` test harness) |
+| `wasmtk modc --lang=zig [path]` | `zig build-exe -target wasm32-freestanding -O ReleaseSmall -fno-entry --export=<name>…` → clean library (only the `export fn`s + memory, no `_start`/WASI) + **binaryen-ts `-Oz`** (62-byte `add` lib in testing) |
+| `wasmtk run --lang=zig [path]` / `run <file.zig>` | `zig build-exe -target wasm32-wasi -O ReleaseSmall` → WASI program, run on wasmtk's TS host (auto-detected `.zig`) |
+
+**Zig gotchas discovered (load-bearing):**
+- **Zig semantically analyzes `pub fn main` even with `-fno-entry`** — so a single-file scaffold's
+  std-using `main` breaks the freestanding (library) build (`std` I/O pulls `posix.getrandom`, absent
+  on freestanding). FIX: the scaffold **comptime-guards** the test body to the WASI target
+  (`if (builtin.os.tag == .wasi) { … std.debug.print … }`); Zig comptime-prunes the std branch for
+  freestanding. Do not remove the guard.
+- **Clean library exports via `--export=<name>`, not `-rdynamic`.** `-rdynamic` also exports `main`
+  as `_start`; `export fn` alone isn't exported in `build-exe`. So `zigwasic.ts` **scans the root
+  source for `export fn <name>`** (`scanExportFns`) and passes explicit `--export=<name>` (falls back
+  to `-rdynamic` if none found — e.g. exports in imported files). The user confirmed this pattern
+  (`zig build-exe math.zig -target wasm32-freestanding -fno-entry --export=add`).
+- WASI target triple: `wasm32-wasi` (alias of `wasm32-wasi-musl` in Zig 0.16; both work, identical).
+
+### Rust — `src/rustwasic.ts` (delegate to `rsxtk`)
+
+A thin delegator: `runRust(subcommand, forwardArgs)` shells to `rsxtk` (spawn + inherited stdio so
+its output streams), with a clear "install: `cargo install rsxtk`" error if absent. `main.ts` maps
+each verb (the wasmtk command name + `--lang` stripped from the raw args, then forwarded):
+
+| wasmtk command | rsxtk | Notes |
+| --- | --- | --- |
+| `init --lang=rust <name>` | `rsxtk init` | wasi **script** template (has `main`) |
+| `initmod --lang=rust <name>` | `rsxtk initmod` | **library** script (`#[no_mangle]` exports, no `main`) → writes `<name>.rs` |
+| `modc --lang=rust <path>` | `rsxtk build <path> wasm` | library/universal wasm (TARGET `wasm` auto-appended) |
+| `build --lang=rust <path>` | `rsxtk build <path> wasi` | WASI program (TARGET `wasi` auto-appended) |
+| `run --lang=rust <path>` / `run <file.rs>` | `rsxtk run <path>` | build + run via rsxtk's wasmtime (auto-detected `.rs` / `Cargo.toml`) |
+| `add/remove/list --lang=rust <path> [crate]` | `rsxtk add/remove/list` | rsxtk arg shape: `add <PATH> <CRATE>`, `list <PATH>` |
+| `fmt --lang=rust` / `clean --lang=rust` | `rsxtk fmt` / `rsxtk clean` | clean wipes the `.tk` cache |
+
+- rsxtk's `build` signature is `<PATH> <TARGET>` (`wasi|wasm|wat`) — so `modc` auto-appends `wasm`,
+  `build` auto-appends `wasi` (via `delegateRust(sub, extraArgs)`).
+- The Rust-only verbs (`initmod build add remove list fmt clean`) **require `--lang=rust`** (else a
+  one-line "use --lang=rust" error); they're new top-level `case`s in `main.ts`.
+- **Prerequisite:** `rustup target add wasm32-wasip1` (rsxtk builds wasip1; not installed by default —
+  rsxtk prints the exact hint if missing). Installed during verification.
+- **Verified working:** `init`→`run` ("Hello from rsxtk!"), `build`→`tmp/rprog.wasm` (65 KB),
+  `add`/`list` (manifest updated), `clean` (cache cleared), error case (no `--lang`).
+- **rsxtk-side limitation (NOT a wasmtk bug):** `rsxtk 0.4.4`'s `initmod` library + `build`/`mod`
+  flow compiles the script as a `bin` and errors `main function not found` — its `initmod` template
+  lacks a `[lib]`/crate-type marker. So `modc --lang=rust` on an `initmod` library currently fails at
+  the rsxtk layer; the wasmtk delegation is correct. To address in **rsxtk** (owner maintains it).
+
+### Host change required by these (general win): WASI-import Proxy
+
+`src/utils.ts` `runWasi` + `callExport` now build `wasi_snapshot_preview1` as a **Proxy** (`makeWasiImport`)
+that stubs any WASI function we don't implement (→ `() => 0`), so modules importing a *fuller* WASI
+surface than our shims (Zig std imports ~28: `clock_res_get`, `path_*`, `fd_pread`, `fd_readdir`, …)
+**instantiate** instead of failing `LinkError`. Implemented shims (`fd_write`, `random_get`, …) are
+used as-is. Verified no regression (merge slice 14/14).
+
+### Shared helper
+
+`binaryenOptimize(bytes)` moved from `gowasic.ts` to **`src/binaryen.ts`** (exported); Go + Zig both
+import it. Rust skips it (rsxtk optimizes).
+
 ---
 
 ## ADR: C/C++ → wasm ingestion path — Zig toolchain, not an emscripten/TS reimplementation (2026-06-03)
@@ -292,33 +454,190 @@ Zig). Scope:
 (Original plan — superseded by the v1-shipped command table below, which folds in the owner's
 `tgo-*.ps1` scripts literally. NOTE the divergence: "modc" in those scripts = the BROWSER
 `-target=wasm` build, not a `//go:wasmexport` reactor/library. A real Go reactor/library for the
-bindgen DLL model remains deferred.)
+bindgen DLL model was deferred at v1 but is now **SHIPPED 2026-06-07** — `modc --lang=go` builds it by
+default; the browser build moved to `--go-target=wasm`.)
 
 ### v1 SHIPPED 2026-06-06 (`src/gowasic.ts`) — full `tgo-*.ps1` command set
 
+> **⚠ This table is the v1 (2026-06-06) snapshot. Three rows were SUPERSEDED on 2026-06-07 — see the
+> UPDATE blocks below: `wasic --lang=go` REMOVED; `modc --lang=go` flipped browser→WASI reactor
+> library (browser now `--go-target=wasm`); `init --lang=go` defaults to a wasm-library scaffold; `run`
+> auto-detects Go.** The rows are kept as historical record; the current behavior is in the UPDATEs.
+
 All five owner scripts folded into wasmtk via the `--lang=go` flag (path defaults to cwd):
 
-| Command | Was | Does |
+| Command | Was | Does (v1; see UPDATEs for current) |
 | --- | --- | --- |
-| `wasmtk init --lang=go [dir]` | `tgo-init-wasi.ps1` | `go mod init <dir>` + WASI `main.go` |
+| `wasmtk init --lang=go [dir]` | `tgo-init-wasi.ps1` | `go mod init <dir>` + `main.go` (v1: "WASI"; now a wasm-**library** scaffold) |
 | `wasmtk init --lang=go --go-target=wasm [dir]` | `tgo-init-wasm.ps1` | `go mod init` + browser `syscall/js` `main.go` |
-| `wasmtk wasic --lang=go [path]` | `tgo-wasic.ps1` | `tinygo build -target=wasip1` (WASI program) |
-| `wasmtk modc --lang=go [path]` | `tgo-modc.ps1` | `tinygo build -target=wasm` (browser; **NOT** a WASI lib) + copies `wasm_exec.js` |
-| `wasmtk run --lang=go [path]` | `tgo-run.ps1` | build wasip1, then run it on wasmtk's WASI host |
+| `wasmtk modc --lang=go [path]` | `tgo-modc.ps1` | v1: `-target=wasm` browser + `wasm_exec.js`. **SUPERSEDED 2026-06-07 → WASI reactor library by default; browser via `--go-target=wasm`** |
+| `wasmtk run [--lang=go] <path>` | `tgo-run.ps1` | build wasip1, then run it on wasmtk's WASI host. **`--lang=go` is now OPTIONAL** — `run` auto-detects Go (see UPDATE below) |
 
-`--go-runtime=tinygo` (default) / `std` (stdlib `go`: `GOOS=wasip1` for wasic/run, `GOOS=js` for the
-browser modc). All builds use `-p 1 -no-debug -panic=trap` + local `TINYGO_CACHE`/`GOTMPDIR`, matching
+**UPDATE 2026-06-07 — `wasmtk wasic --lang=go` REMOVED as a standalone command.** The direct
+Go→WASI compile (was `tgo-wasic.ps1`, `tinygo build -target=wasip1`) is no longer a user-facing CLI
+option. Rationale: a standalone Go WASI *executable* isn't consumable by wasmtk's value-add pipeline
+— it can't be merged (heap-using Go corrupts the shared heap; even leaf Go is only mergeable as an
+import, not as a `_start` program) and a WASI command isn't a bindgen library either. The Go→wasip1
+**build still exists** in `compileGoWasi(..., target: "wasip1")` and is invoked by **`run`** (with or
+without `--lang=go`), which needs it to execute the module — that path is retained. `main.ts`'s `wasic`
+case now intercepts `--lang=go` and prints a removal message pointing at `run --lang=go` (exit 1),
+rather than compiling. `gowasic.ts` is unchanged (the function stays; only the CLI entry was
+withdrawn). So the live Go CLI surface is **`init` / `modc` / `run`** (the `--lang=go` option help now
+reads `(init/modc/run)`).
+
+**UPDATE 2026-06-07 — `wasmtk run` auto-detects Go (no `--lang=go` needed).** `run` now routes to the
+Go build+run path when its target is (a) a `.go` file, or (b) a directory containing a `go.mod`. The
+detection lives in `main.ts` (`isGoRunTarget()` — a `.go`-extension check + `rt.stat` go.mod probe),
+deliberately NOT in `gowasic.ts`, so a plain `wasmtk run x.wasm` doesn't import the Go producer module
+(which pulls in binaryen) just to decide; `gowasic.ts` is loaded lazily only once a Go target is
+confirmed. The explicit `--lang=go` flag still works and is required only where detection can't tell
+(e.g. a bare `wasmtk run` with no path → defaults to cwd, which the help guard would otherwise treat
+as missing-target). Auto-detection is **`run`-only**; `init`/`modc` still require `--lang=go`.
+Rationale (owner, 2026-06-07): when authoring a pure Go *module/library*, the way to test it is to
+import it from a small `_start` driver and run that via WASI output — so `run` is the natural Go entry
+point and should "just work" on Go source. Verified: `run hello.go`, `run <dir-with-go.mod>` both
+build+run; non-Go `run` (.ts/.wasm) unaffected; a directory WITHOUT go.mod is not treated as Go.
+
+**UPDATE 2026-06-07 — `init` dir-creation bug FIXED + two-part "library + test-driver" workflow
+verified, and the library-compile GAP confirmed.** Two related items from validating the owner's real
+Go workflow (root `main.go` test-driver + a subfolder library package):
+
+- **Bug fixed (`src/gowasic.ts scaffoldGoProject`):** `wasmtk init --lang=go <newdir>` failed with
+  "No such cwd" — `go mod init` runs with `cwd: baseDir` but the scaffolder never created `baseDir`.
+  Fixed by `rt.mkdir(baseDir, { recursive: true })` before `go mod init`. Verified: init into a
+  non-existent dir now scaffolds `go.mod` + `main.go`.
+- **Scaffold templates now teach exports (2026-06-07).** Both Go scaffold templates in `gowasic.ts`
+  (`MAIN_GO_LIBRARY` / `MAIN_GO_BROWSER` — renamed later that day from `MAIN_GO_WASI` / `MAIN_GO_WASM`;
+  see follow-up (3) below) include a commented `//go:wasmexport` example function (`add` / `square`)
+  plus guidance (directive goes on the line directly above `func`, no blank line; only
+  annotated funcs are exported; use WASM-friendly numeric/bool types). The WASI template frames
+  `func main` as the test harness (runs under `wasmtk run`, DCE'd from a library build — ties to the
+  single-file pattern above). Verified: both scaffolds are gofmt-clean and build — WASI `run` prints
+  `add(2,3)=5`; browser `modc` produces a module that actually exports `square` (confirms
+  `//go:wasmexport` works on `-target=wasm` too).
+- **Workflow HALF 1 (test loop) — WORKS today.** Project = `go.mod` + root `main.go` (`package main`,
+  imports the subpackage `mod/mathlib`, runs assertions) + `mathlib/mathlib.go` (`package mathlib`,
+  exported funcs). `wasmtk run <projdir>` auto-detects the go.mod, builds the root driver → wasip1, runs
+  it → all checks PASS. This is the developer's "test the library before shipping it" loop, flagless.
+- **Workflow HALF 2 (compile a Go library to a wasm library) — ✅ NOW WIRED (2026-06-07; was the
+  long-deferred reactor/library item).** `modc --lang=go` now builds a **WASI reactor library** by
+  default (`-target=wasip1 -buildmode=c-shared`): no `_start`, exports the `//go:wasmexport` functions +
+  runtime, callable via `wasmtk mod`/bindgen — the Go analog of TS `modc` (library mode). The browser
+  build (`-target=wasm`, syscall/js + `wasm_exec.js`) is now **opt-in via `--go-target=wasm`**. See the
+  dedicated "UPDATE 2026-06-07 — `modc --lang=go` = reactor library" section below for the full
+  implementation + the `_initialize` fix it required. (Historical: before this, `modc --lang=go` built
+  browser-only and rejected library packages with *"expected main package to have name 'main'"*.)
+- **Path forward CONFIRMED at the toolchain level.** Direct `tinygo build -target=wasip1
+  -buildmode=c-shared -scheduler=none` of a `package main` with empty `func main()` + `//go:wasmexport`
+  funcs produces a 9.5 KB **reactor library** exporting the funcs (`add`/`isLeap`) + `_initialize` +
+  `malloc`/`free`/`realloc`/`calloc` + `memory`, with one wasi import (`random_get`). So TinyGo 0.41
+  fully supports the reactor/library build; wasmtk just needs a build mode wired to it. IMPORTANT shape
+  note tying back to the mergeability matrix above: this c-shared reactor **exports its own dlmalloc
+  heap and uses `memory.grow` (count=1)** → it is the **standalone/bindgen "DLL" shape (own memory,
+  host-loaded), NOT a mergeable leaf**. A *mergeable* Go library would instead need to be
+  allocation-free + `-target=wasm-unknown` (no wasi import, no allocator) — the leaf case proven
+  mergeable in the matrix above. So the deferred feature really has two sub-targets: (a) reactor
+  `c-shared`/`wasip1` library for the bindgen/host DLL model (heap OK), and (b) `wasm-unknown`
+  allocation-free leaf for the wasmmerge model.
+- **VERIFIED 2026-06-07 — single-file "library + tests in one `main.go`" works via DCE.** A single
+  `package main` file can hold BOTH the `//go:wasmexport` library functions AND a `func main` test
+  harness, and the two build modes cleanly separate them:
+  - **Command build** (`-target=wasip1`, what `wasmtk run` does) → `func main` is `_start` → the test
+    harness runs. The `//go:wasmexport` funcs are also present (harmless). So `wasmtk run <onefile.go>`
+    runs the tests today, no changes.
+  - **Reactor/library build** (`-target=wasip1 -buildmode=c-shared`) → `func main` is NOT a root, so
+    TinyGo's dead-code elimination strips `main` and everything reachable only from it. Proven: a
+    constant placed only in the test harness (`222000`) was ABSENT from the library build while the
+    library constant (`111000`) remained; `main`/`selfCheck` were not exported; and even the `println`
+    `fd_write` import was gone. The library exported only the two `//go:wasmexport` funcs + runtime
+    (`_initialize`/`malloc`/`free`/`memory`/fmin-fmax).
+  - Export control is automatic: **only `//go:wasmexport` functions are user-exported**, regardless of
+    what else is in the file. The one authoring rule: keep test-only helpers OUT of the exported call
+    graph (don't let an exported func call a test helper), else DCE keeps it.
+  - **Implication for the deferred feature (NOW IMPLEMENTED 2026-06-07 — see the next UPDATE):** this
+    is the ideal Go DLL authoring ergonomic — one file, `wasmtk run` to test, build to ship. It needed
+    the **reactor (`-buildmode=c-shared`) build mode** (at the time of writing `modc --lang=go` still
+    built `-target=wasm` browser); wiring that reactor-library mode into `modc --lang=go` is exactly
+    what was done next, turning this pattern into a wasmtk command. The clean-library result itself is a
+    TinyGo guarantee (DCE), confirmed above.
+
+**UPDATE 2026-06-07 — `modc --lang=go` = WASI reactor library (Option A, IMPLEMENTED) + the
+`_initialize` fix it required.** Closes the HALF 2 gap above. Triggered by the owner hitting it: a
+browser module built by `modc --lang=go` couldn't be called (`wasmtk mod main.wasm square` →
+`WebAssembly.instantiate(): Import #2 "gojs": module is not an object or function`). Root cause: the
+browser (`-target=wasm`) module imports `gojs` (TinyGo's syscall/js bridge that only `wasm_exec.js` in
+a real browser supplies); wasmtk's hosts provide WASI + `env`, not `gojs`. The deeper mismatch: TS
+`modc` = a clean library (no `_start`, no WASI imports — wasic emits no runtime), but `modc --lang=go`
+was mapped to TinyGo's browser target → a browser app with `_start` + `gojs`, not a library.
+
+**Design decision (owner-approved):** make `modc --lang=go` build the **WASI reactor library** by
+default — the Go analog of TS `modc` library mode — and move the browser build behind
+`--go-target=wasm`. Caveat captured: Go's mandatory runtime means even this library is NOT as bare as
+the TS one — it carries `_initialize` (runtime init), one WASI import (`random_get`), and runtime
+`malloc`/`free`. (The truly-bare option, `wasm-unknown` with no WASI, is allocation-free-only — the
+mergeable-leaf sub-target, still not auto-wired; reactor is the general default.)
+
+**Implementation:**
+- `src/gowasic.ts`: `GoTarget` gained `"reactor"` → `-target=wasip1 -buildmode=c-shared` (both the
+  real-wasm-opt and shim+`-scheduler=none` paths add `-buildmode=c-shared`; `buildWithStd` adds it for
+  `GOOS=wasip1` too — std Go 1.24+ supports `//go:wasmexport` in c-shared). Report label
+  "wasip1 c-shared library".
+- `main.ts`: `modc --lang=go` → `target: goBrowser ? "wasm" : "reactor"` where
+  `goBrowser = --go-target=wasm`. Help text + the `--go-target` option updated (now `(init/modc)`).
+- **`_initialize` fix (`src/utils.ts`) — required, or reactor exports trap.** A reactor must run
+  `_initialize` (Go runtime/heap/stack/globals setup) before any export, else exports trap
+  (`unreachable`). `callExport` (`wasmtk mod`) and `runWasi`'s named-export path now call
+  `exports._initialize()` (if present) right after instantiation, before the target function. No-op for
+  non-reactor modules (wasic/modc TS libraries have no `_initialize`). `callExport` also gained the same
+  Phase-40 `env` Proxy as `runWasi` (unlisted `env` imports → no-op stubs) for robustness — note this
+  does NOT provide `gojs`, so browser modules remain (correctly) un-hostable.
+- Empirically proven the bug + fix: reactor `square(12)` trapped without `_initialize`, returned `144`
+  after it.
+
+**Verified end-to-end (2026-06-07):** `init` Go lib → `modc --lang=go` builds a 9.8 KB reactor library
+(no `_start`, exports `add`, has `_initialize`, no `gojs`) → `wasmtk mod golib.wasm add 2 3` → **5**.
+Browser opt-in `modc --lang=go --go-target=wasm` → browser module + `wasm_exec.js`. `run --lang=go`
+still builds+runs the command test harness. TS `modc` library regression: `wasmtk mod addts.wasm addts
+2 3` → 5 (the `_initialize`/proxy changes are a no-op for runtime-free TS). Merge slice `^(18|38)`
+14/14 (run-path edits in `utils.ts` don't disturb normal running). So the full Go DLL loop is live:
+**one `main.go` (`//go:wasmexport` funcs + `func main` tests) → `wasmtk run` to test → `wasmtk modc
+--lang=go` to ship the callable library** (`func main`/tests DCE-stripped from the library).
+
+**Follow-ups from the default flip (2026-06-07):** (1) A browser-style `main.go` (imports
+`syscall/js`) fails the default library build — `syscall/js` only has Go files for the browser
+(`GOOS=js`) target, so wasip1/reactor reports *"build constraints exclude all Go files in
+.../syscall/js"*. Rather than surface the raw error, `gowasic.ts` now appends an actionable hint
+(`goBuildHint`): "use `--go-target=wasm` for a browser module, or remove `syscall/js` for a library."
+Wired into all three build-error sites (real-wasm-opt, shim, std-go). (2) The browser **scaffold's own
+printed Build hint** was corrected to `wasmtk modc --lang=go <dir> --go-target=wasm` (it previously
+said plain `modc`, which now builds a library and fails on the syscall/js scaffold). (3) **`init
+--lang=go` now defaults to a wasm LIBRARY scaffold** (owner, 2026-06-07): since the Go producer's
+primary output is a wasm library (`modc --lang=go`), init shouldn't require a flag for it. `GoScaffold`
+renamed `"wasi"|"wasm"` → `"library"|"browser"`; templates renamed `MAIN_GO_WASI`→`MAIN_GO_LIBRARY`
+(now frames `add` as "an EXPORTED library function" + a PASS/FAIL self-test `main`), `MAIN_GO_WASM`→
+`MAIN_GO_BROWSER`. Default messaging "Initializing Go wasm library project"; post-init guidance prints
+both **Test** (`wasmtk run --lang=go <dir>`) and **Build** (`wasmtk modc --lang=go <dir>`). Browser
+project still opt-in via `--go-target=wasm`. All verified: init (no flag) → run PASS → modc library →
+`wasmtk mod lib.wasm add 2 3` → 5; browser opt-in scaffolds + builds; gofmt-clean.
+
+`--go-runtime=tinygo` (default) / `std` (stdlib `go`: `GOOS=wasip1` for the `run` build, `GOOS=js` for
+the browser modc). All builds use `-p 1 -no-debug -panic=trap` + local `TINYGO_CACHE`/`GOTMPDIR`, matching
 the scripts. Input may be a `.go` file, a dir, or omitted (cwd); a dir builds package `.` → `<dir>.wasm`
 (needs `cwd` on `rt.Command` — added to `rt.ts`). `tgobuild.ps1` (native `.exe`) is out of scope.
 
-NOTE on `modc`: in the owner's scripts "modc" = the BROWSER `-target=wasm` build (NOT the wasmtk
-TS-library/reactor sense). So `modc --lang=go` produces a browser module (syscall/js, needs
-`wasm_exec.js` + a browser) — `wasmtk run` can't host it. A genuine Go *library/reactor* (`//go:wasmexport`,
-no `_start`, for the bindgen DLL model) is still **deferred** (with Go string/aggregate bindgen → ABI
-forward-alignment). `deno.json` exports `./gowasic`. `main.ts` branches `init`/`wasic`/`modc`/`run` on
-`--lang=go` (+ allows an omitted positional target → cwd). Verified end-to-end (TinyGo 0.41.1 / Go 1.26):
-init(wasi+wasm), wasic (90 KB) + run ("Hello from WASI!"), modc browser (10 KB) + `wasm_exec.js` copied.
-Fixture: `tests/go_fixtures/hello.go` (NOT auto-run — needs TinyGo).
+NOTE on `modc` (⚠ **v1/2026-06-06 — SUPERSEDED 2026-06-07**: `modc --lang=go` now builds a WASI
+reactor library by default and the Go reactor/library is **shipped**, not deferred; browser is
+`--go-target=wasm`. See the "UPDATE 2026-06-07 — `modc --lang=go` = WASI reactor library" section
+above. The v1 text is kept for history.): in the owner's scripts "modc" = the BROWSER `-target=wasm`
+build (NOT the wasmtk TS-library/reactor sense). So `modc --lang=go` produces a browser module
+(syscall/js, needs `wasm_exec.js` + a browser) — `wasmtk run` can't host it. A genuine Go
+*library/reactor* (`//go:wasmexport`, no `_start`, for the bindgen DLL model) is still **deferred**
+(with Go string/aggregate bindgen → ABI forward-alignment). `deno.json` exports `./gowasic`. `main.ts`
+branches `init`/`modc`/`run` on
+`--lang=go` (and intercepts `wasic --lang=go` with a removal message → `run`; see UPDATE 2026-06-07
+above) (+ allows an omitted positional target → cwd). Verified end-to-end (TinyGo 0.41.1 / Go 1.26):
+init(wasi+wasm), `run --lang=go` (builds 90 KB wasip1 + prints output), modc browser (10 KB) +
+`wasm_exec.js` copied. Fixture: `tests/go_fixtures/hello.go` (NOT auto-run — needs TinyGo).
 
 **wasm-opt handling (the load-bearing detail).** TinyGo's internal `wasm-opt` call is
 `--asyncify -Oz -g`. `--asyncify` is **mandatory codegen** (TinyGo's goroutine scheduler), NOT
@@ -341,9 +660,10 @@ to a `.output()` call (use `"piped"` and decode). (2) `rt.remove` is single-arg 
 Bun) — use `Deno.remove(dir, {recursive:true})` for the temp shim dir. Subprocess env is built as
 `{ ...rt.env.toObject(), WASMOPT/GOOS/GOARCH }` so PATH is preserved.
 
-**Deferred:** Go string/slice/aggregate **bindgen** host marshalling (needs ABI forward-alignment —
-Go's string/slice layout ≠ Canonical ABI); reactor `modc --lang=go` (`//go:wasmexport`); browser
-`syscall/js`.
+**Deferred (as of v1; updated 2026-06-07):** Go string/slice/aggregate **bindgen** host marshalling
+(still deferred — needs ABI forward-alignment; Go's string/slice layout ≠ Canonical ABI). ~~reactor
+`modc --lang=go`~~ — **DONE 2026-06-07** (`modc --lang=go` now builds the `//go:wasmexport` reactor
+library by default). Browser `syscall/js` — shipped behind `--go-target=wasm`.
 
 ### Architectural fit (producer → optimize → host stays ours)
 

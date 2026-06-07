@@ -152,6 +152,60 @@ string-array element, and `Math.*`/`Number.*` handling all have such twins.
   the three suites after any reformat. fmt is not CI-gated (see testing.md), but staying clean keeps
   the pre-publish checklist green.
 
+## Go producer (CLI / build invariants — set 2026-06-07)
+
+The Go command surface was deliberately shaped to mirror the TS commands' *meaning*. Do not silently
+revert these (full rationale in [polyglot-producers.md](polyglot-producers.md)):
+
+- **`wasic --lang=go` is REMOVED** — there is no standalone Go→WASI *compile* command (a bare WASI
+  executable isn't merge/bindgen-consumable). The `wasic` case intercepts `--lang=go` and prints a
+  pointer to `run`. The Go→wasip1 build lives ONLY inside `run`. Don't re-add it as a compile command.
+- **`modc --lang=go` = WASI reactor library by default** (`-target=wasip1 -buildmode=c-shared`: no
+  `_start`, exports `//go:wasmexport` funcs, callable via `wasmtk mod`/bindgen) — the Go analog of TS
+  `modc` (library mode). The **browser** build (`-target=wasm`, syscall/js + `wasm_exec.js`) is opt-in
+  via `--go-target=wasm`. Do NOT flip the default back to browser.
+- **`run --lang=go` builds a wasip1 COMMAND** (`target: "wasip1"`, has `_start`) and runs it — NOT a
+  reactor. It also **auto-detects** Go: a `.go` file or a dir containing `go.mod` routes to the Go
+  build+run without `--lang=go`. The detection (`isGoRunTarget`) lives in `main.ts`, deliberately NOT
+  in `gowasic.ts`, so a plain `wasmtk run x.wasm` doesn't import the Go module (which pulls in
+  binaryen) just to decide.
+- **`init --lang=go` defaults to a wasm LIBRARY scaffold** (`GoScaffold = "library" | "browser"`;
+  templates `MAIN_GO_LIBRARY` / `MAIN_GO_BROWSER`). No flag needed for the library (the producer's
+  primary output); `--go-target=wasm` scaffolds a browser project. The library scaffold is one file:
+  `//go:wasmexport` funcs + a `func main` test harness (run with `run`, DCE-stripped by `modc`).
+- **Reactor exports require `_initialize`** — `callExport` (`wasmtk mod`) and `runWasi`'s named-export
+  path MUST call `exports._initialize()` (if present) before any export, or a reactor library traps
+  (`unreachable`). No-op for runtime-free TS libraries. Don't remove.
+- **Merge guards (loud-fail, `wasmmerge`)** — a module merged via `wasmbundle`/`.wasm`-import must not
+  contain `call_indirect` (Phase 18 strips imported type sections → dangling ref) or `memory.grow` (a
+  foreign growing-heap allocator that would corrupt the shared bump heap). Both throw clear,
+  actionable diagnostics; wasmtk's own producers emit neither. Keep both guards.
+
+## Zig & Rust producers (CLI / build invariants — set 2026-06-07)
+
+- **Zig (`src/zigwasic.ts`, shell to `zig`):** `init --lang=zig`=library scaffold, `modc --lang=zig`=
+  freestanding library, `run --lang=zig`=`wasm32-wasi` program on wasmtk's TS host. Two load-bearing
+  details: (1) the scaffold **comptime-guards** the test `main`'s std I/O to `builtin.os.tag == .wasi`
+  — Zig analyzes `pub fn main` even with `-fno-entry`, so an unguarded std-using main breaks the
+  freestanding library build (`posix.getrandom` absent). (2) the library build passes
+  **`--export=<name>` scanned from the root source** (`scanExportFns`), not `-rdynamic` (which also
+  exports `main` as `_start`); falls back to `-rdynamic` only if no `export fn` is found. WASI triple
+  is `wasm32-wasi`.
+- **Rust (`src/rustwasic.ts`) — delegates fully to `rsxtk`** (do NOT reimplement via cargo). wasmtk
+  wraps rsxtk: `init`→init, `initmod`→initmod, `modc`→`build … wasm`, `build`→`build … wasi`, `run`→
+  run, `add`/`remove`/`list`/`fmt`/`clean`→same. The Rust-only verbs (`initmod build add remove list
+  fmt clean`) **require `--lang=rust`**. Args are forwarded raw (command + `--lang` stripped) so
+  rsxtk's own positionals/flags pass through; `modc`/`build` auto-append the rsxtk `build` TARGET
+  (`wasm`/`wasi`). Prereq: `rustup target add wasm32-wasip1`.
+- **Run auto-detect** (`detectRunLang` in `main.ts`, NOT the producer modules): `.go`/`go.mod`→go,
+  `.zig`→zig, `.rs`/`Cargo.toml`→rust. Keep it in main.ts so a plain `wasmtk run x.wasm` never loads a
+  producer module (binaryen / toolchain shell-out) just to decide.
+- **WASI-import Proxy** (`makeWasiImport` in `src/utils.ts`): `runWasi`/`callExport` stub any
+  unimplemented `wasi_snapshot_preview1` function (→ `()=>0`) so modules importing a fuller WASI
+  surface (Zig/Rust std) instantiate. Don't revert to the fixed `wasiImports` object.
+- **`binaryenOptimize`** lives in `src/binaryen.ts` (shared by Go + Zig). Don't duplicate it back into
+  the producer modules.
+
 ## Intentional fallbacks — NOT workarounds (do not "fix" or remove)
 
 These are deliberate design choices that can look like workarounds in a sweep. They are correct as-is;

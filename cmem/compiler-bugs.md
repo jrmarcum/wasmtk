@@ -2,8 +2,53 @@
 
 Live record of bugs found + fixed. Newest first. **No open bugs.** Phase 51 (2026-06-05) added
 `instanceof`, closed three construction/parsing gaps it surfaced, and a follow-up workaround-audit
-fixed one more silent bug + added a loud merge guard (all below). The full suite is now **287/287**
-(Phase 51 added 8 `51_*` tests; was 279).
+fixed one more silent bug + added a loud `call_indirect`-in-merge guard; a 2026-06-07 follow-up added
+a companion `memory.grow`-in-merge guard (all below). The full suite is **287/287**
+(Phase 51 added 8 `51_*` tests; was 279); the 2026-06-07 merge guard + Go-CLI changes add no tests and
+were validated against the 14 merge-dependent tests with no regression.
+
+## Reactor library exports trapped without `_initialize` — FIXED 2026-06-07
+
+Surfaced wiring `modc --lang=go` to build a WASI **reactor library** (`-buildmode=c-shared`; see
+polyglot-producers.md). Calling such a library's export via `wasmtk mod <lib> fn args` (or `wasmtk
+run <lib> fn args`) **trapped with `unreachable`**. Cause: a reactor module must run its `_initialize`
+export (Go runtime: heap/stack/globals setup) **before any other export**; `callExport` (and
+`runWasi`'s named-export path) instantiated and called the target function directly, skipping
+`_initialize`. **Proven** with a minimal probe: `square(12)` trapped without `_initialize`, returned
+`144` after calling it first. **Fix** (`src/utils.ts`): both `callExport` and `runWasi`'s
+named-export branch now call `exports._initialize()` (if present) right after instantiation, before
+the target function. No-op for non-reactor modules with no `_initialize` (wasic/modc **TS** libraries
+— regression-verified: `wasmtk mod addts.wasm addts 2 3` → 5). `callExport` also gained the same
+Phase-40 `env` Proxy as `runWasi` (unlisted `env` imports → no-op stubs) for robustness; it does NOT
+provide the browser `gojs` namespace, so syscall/js browser modules stay (correctly) un-hostable.
+
+## Merge guard #2 — `memory.grow` in a merged module (2026-06-07)
+
+Companion to the 2026-06-05 `call_indirect`-in-merge guard. `wasmmerge` now also throws a loud,
+actionable error when a module being merged contains `memory.grow`. **Why:** `memory.grow` signals
+that the module carries its OWN allocator which claims linear memory upward (a foreign-language
+growing heap — Go's runtime allocator, Rust dlmalloc, Zig `page_allocator`) instead of sharing
+wasmtk's unified bump heap (`$__malloc`/`$__heap_ptr`). Splicing it in lets its allocations overlap
+the host's heap/scratch region → **silent memory corruption** once it allocates. It's *worse* than
+`call_indirect` because it can appear to work for tiny allocations, so failing loudly is the safe
+default.
+
+**Motivation (empirical):** a TinyGo `wasm-unknown` module that allocates (`make`/`append`) merged
+without error but produced corrupted output — its heap had no `call_indirect`, so the existing guard
+missed it; only `memory.grow` distinguished it. Full matrix in
+[polyglot-producers.md](polyglot-producers.md) ("native-producer mergeability"): allocation-free Go/
+Rust/Zig leaves merge cleanly; allocating code merges only for Zig + a static-arena allocator;
+allocating Go slipped the `call_indirect` guard and corrupted — this guard closes that hole.
+
+**Implementation** (`src/wasmmerge.ts`, in the per-func body loop right after the `call_indirect`
+check): `if (/\bmemory\.grow\b/.test(body)) throw …`. The message names the per-language fix — Zig
+`FixedBufferAllocator` (not `page_allocator`), Rust `#[global_allocator]` over a static array, Go not
+supported for merging — or "keep it standalone as a WIT/bindgen component." `main.ts`'s top-level
+`.catch` surfaces it as a clean one-line `❌ wasmtk:` message with exit 1. **No false positives:**
+wasmtk's own producers (wasic/modc) never emit `memory.grow` (their bump allocator runs over fixed
+pre-declared pages). **Verified:** all 14 merge-dependent tests (`^(18|38)` — every capability
+pipeline + shared-heap two-libraries + wasm-import merge + virtual imports + mathlib) pass; a
+hand-built `memory.grow` module imported by a wasic program is rejected with the full message + exit 1.
 
 ## Workaround audit follow-up (2026-06-05)
 

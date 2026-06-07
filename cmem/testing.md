@@ -73,8 +73,11 @@ tags it, and pushes; the tag triggers `publish.yml`.
 | Go-by-Example tests (imported) | `wasi_tests.ts` |
 | jstyper unit tests | `jstyper_tests.ts` |
 
-**Not auto-run:** `tests/go_fixtures/hello.go` — the Go producer (`wasic --lang=go`) fixture. Excluded
-from the suites because building it needs the TinyGo/Go toolchain (not assumed on every machine/CI).
+**Not auto-run:** `tests/go_fixtures/hello.go` — the Go producer (`run` / `modc --lang=go`) fixture.
+Excluded from the suites because building it needs the TinyGo/Go toolchain (not assumed on every machine/CI).
+The **Zig and Rust producers** (`--lang=zig` / `--lang=rust`) are likewise not auto-tested — they need
+the `zig` toolchain / `rsxtk` + `wasm32-wasip1`. Both were verified manually end-to-end (2026-06-07):
+Zig `init`→`run`(PASS)/`modc`→`mod add 2 3`→5; Rust `init`→`run`("Hello from rsxtk!")/`build`→`.wasm`/`add`/`list`/`clean`.
 Manual verify command is in the file header.
 
 ## Conventions

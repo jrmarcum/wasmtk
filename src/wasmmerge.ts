@@ -52,6 +52,14 @@
  *    its own type section), so an imported body's `call_indirect (type N)` / table indices
  *    would dangle. `assertNoMergedCallIndirect()` surfaces this at merge time. Direct calls
  *    work fine; the capability libraries (Set/Map/Date/JSON/RegExp) use only direct calls.
+ *  - memory.grow inside a MERGED module is likewise rejected (2026-06-07): it signals a foreign
+ *    allocator that claims linear memory upward (Go runtime allocator / Rust dlmalloc / Zig
+ *    page_allocator) instead of sharing wasmtk's unified bump heap, which silently corrupts memory
+ *    once it allocates. The diagnostic names the per-language fix (static-arena allocator) or points
+ *    to keeping the module standalone as a WIT/bindgen component. wasmtk's own producers (wasic /
+ *    modc) never emit memory.grow — their bump allocator runs over fixed pre-declared pages — so
+ *    this guard only fires on heap-using foreign-language modules. See
+ *    cmem/polyglot-producers.md "native-producer mergeability".
  *  - Pointer relocation (item 7) is range-scoped but still address-based, not dataflow-exact:
  *    an arithmetic i32.const that coincidentally lands inside a string-bearing library's own
  *    [dataLo, dataHi) data range would be mis-relocated. This residual is far narrower than the
@@ -665,6 +673,28 @@ export function mergeWasmWat(
             `imported module (Phase 18 strips imported type sections, so the table/type reference ` +
             `would dangle). Refactor the library to use only direct calls — no function-pointer, ` +
             `closure, or vtable dispatch across the merge boundary — or keep it standalone.`,
+        );
+      }
+      // memory.grow means the imported module carries its OWN allocator that claims linear memory
+      // upward (a foreign-language growing heap — Go's runtime allocator, Rust dlmalloc, Zig's
+      // page_allocator). It does NOT share wasmtk's unified bump heap ($__malloc / $__heap_ptr), so
+      // its allocations overlap wasic's heap/scratch region and silently corrupt state once the
+      // module allocates. Worse than call_indirect: it can *appear* to work for tiny allocations,
+      // so fail loudly here rather than emit a latently-corrupt module. (See
+      // cmem/polyglot-producers.md "native-producer mergeability", 2026-06-07.)
+      if (/\bmemory\.grow\b/.test(body)) {
+        throw new Error(
+          `wasmmerge: '${prefix}' calls memory.grow — it carries its own allocator that grows and ` +
+            `claims linear memory, instead of sharing wasmtk's unified bump heap. Merging it would ` +
+            `silently corrupt memory once it allocates (merged modules share ONE linear memory and ` +
+            `one allocator: $__malloc / $__heap_ptr).\n` +
+            `  Fix — for allocating code that must be MERGED, use a self-contained static-arena ` +
+            `allocator that never grows memory:\n` +
+            `    • Zig:  std.heap.FixedBufferAllocator over a static buffer (NOT std.heap.page_allocator)\n` +
+            `    • Rust: a #[global_allocator] backed by a fixed static byte array (avoid std/dlmalloc/wee_alloc)\n` +
+            `    • Go:   not supported for merging — TinyGo's runtime allocator can't be swapped; keep it standalone\n` +
+            `  Or keep this module STANDALONE and call it as a component via WIT/bindgen (an instance, ` +
+            `not a merge) — the right path for any heap-using foreign module.`,
         );
       }
       funcParts.push(body);

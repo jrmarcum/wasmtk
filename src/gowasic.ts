@@ -30,11 +30,14 @@
 
 import { basename, dirname, join, resolve } from "@std/path";
 import { rt } from "./rt.ts";
-import binaryen from "./binaryen.ts";
+import { binaryenOptimize } from "./binaryen.ts";
 
 export type GoRuntime = "tinygo" | "std";
-export type GoTarget = "wasip1" | "wasm"; // wasip1 = WASI; wasm = browser (syscall/js)
-export type GoScaffold = "wasi" | "wasm";
+// wasip1 = WASI command (_start); wasm = browser (syscall/js); reactor = WASI library
+// (`-buildmode=c-shared`: no _start, exports //go:wasmexport funcs + runtime, callable via
+// `wasmtk mod` / bindgen — the Go analog of TS `modc` library mode).
+export type GoTarget = "wasip1" | "wasm" | "reactor";
+export type GoScaffold = "library" | "browser";
 
 export interface GoCompileOptions {
   outPath?: string;
@@ -48,6 +51,24 @@ type GoResult = { success: boolean; outputPath?: string; error?: string };
 function decodeOut(r: { stdout: Uint8Array; stderr: Uint8Array }): string {
   const dec = new TextDecoder();
   return [dec.decode(r.stderr), dec.decode(r.stdout)].filter((s) => s.trim().length > 0).join("\n");
+}
+
+/**
+ * Actionable hint appended to a failed Go build, derived from the error text + target. Turns raw
+ * toolchain errors into next-step guidance so users aren't surprised. Currently covers the common
+ * "imports `syscall/js` under a non-browser target" case (a browser-only file built as the default
+ * WASI reactor library): syscall/js only has Go files for the browser (`GOOS=js`) target, so a
+ * wasip1/reactor build reports "build constraints exclude all Go files in .../syscall/js".
+ */
+function goBuildHint(errText: string, target: GoTarget): string {
+  if (target !== "wasm" && /syscall\/js/i.test(errText)) {
+    return "\n   This code imports `syscall/js`, which only builds for the browser target. " +
+      "`modc --lang=go` builds a WASI reactor library by default (no syscall/js).\n" +
+      "   • For a browser module:  wasmtk modc --lang=go <path> --go-target=wasm\n" +
+      "   • For a WASI library:    remove `syscall/js` — use //go:wasmexport functions (a plain " +
+      "`func main` / test harness is fine; the library build strips it).";
+  }
+  return "";
 }
 
 /** Returns true if `cmd <versionArgs>` runs and exits 0. (Always pipe — rt.Command.output() reads
@@ -69,26 +90,6 @@ async function isDirectory(path: string): Promise<boolean> {
     return typeof s.isDirectory === "function" ? s.isDirectory() : !!s.isDirectory;
   } catch {
     return false;
-  }
-}
-
-/** binaryen-ts `-Oz` over wasm bytes. Returns optimized bytes, or the input unchanged on failure. */
-function binaryenOptimize(bytes: Uint8Array): { bytes: Uint8Array; optimized: boolean } {
-  try {
-    const m = binaryen.readBinary(bytes);
-    const binAny = binaryen as unknown as Record<string, unknown>;
-    const feat = binAny["Features"] as Record<string, number> | undefined;
-    if (typeof (m as unknown as Record<string, unknown>)["setFeatures"] === "function") {
-      (m as unknown as { setFeatures(n: number): void }).setFeatures(feat?.["All"] ?? 0x7FFFFFFF);
-    }
-    binaryen.setShrinkLevel(2);
-    binaryen.setOptimizeLevel(2);
-    m.optimize();
-    const out = m.emitBinary();
-    m.dispose();
-    return { bytes: out, optimized: true };
-  } catch {
-    return { bytes, optimized: false };
   }
 }
 
@@ -190,7 +191,10 @@ async function buildWithTinyGo(
     console.error(`❌ wasmtk (go): ${msg}`);
     return { success: false, error: msg };
   }
+  // reactor (WASI library) builds wasip1 + `-buildmode=c-shared`; everything else maps directly.
   const tgoTarget = target === "wasm" ? "wasm" : "wasip1";
+  const buildModeArgs = target === "reactor" ? ["-buildmode=c-shared"] : [];
+  const reportLabel = target === "reactor" ? "wasip1 c-shared library" : tgoTarget;
   const baseEnv = {
     ...rt.env.toObject(),
     TINYGO_CACHE: join(baseDir, ".tinygo-cache"),
@@ -205,6 +209,7 @@ async function buildWithTinyGo(
     "-o",
     out,
     `-target=${tgoTarget}`,
+    ...buildModeArgs,
   ];
 
   const haveRealWasmOpt = !!rt.env.get("WASMOPT") || await toolAvailable("wasm-opt", ["--version"]);
@@ -219,10 +224,13 @@ async function buildWithTinyGo(
       stderr: "piped",
     }).output();
     if (!r.success) {
-      console.error(`❌ wasmtk (go): TinyGo build failed:\n${decodeOut(r)}`);
+      const errText = decodeOut(r);
+      console.error(
+        `❌ wasmtk (go): TinyGo build failed:\n${errText}${goBuildHint(errText, target)}`,
+      );
       return { success: false, error: "tinygo build failed" };
     }
-    return await report(out, `tinygo:${tgoTarget} (wasm-opt)`);
+    return await report(out, `tinygo:${reportLabel} (wasm-opt)`);
   }
 
   // No real wasm-opt → passthrough shim + -scheduler=none (skip mandatory asyncify) + binaryen-ts -Oz.
@@ -239,6 +247,7 @@ async function buildWithTinyGo(
         "-o",
         out,
         `-target=${tgoTarget}`,
+        ...buildModeArgs,
         buildArg,
       ],
       cwd: baseDir,
@@ -249,12 +258,13 @@ async function buildWithTinyGo(
     if (!r.success) {
       const errText = decodeOut(r);
       const goroutineIssue = /scheduler|goroutine|asyncify|channel/i.test(errText);
-      const hint = goroutineIssue
+      const grHint = goroutineIssue
         ? "\n   This program appears to use goroutines/channels, which need TinyGo's asyncify " +
           "transform (real `wasm-opt`). Install binaryen (e.g. `scoop install binaryen` / " +
           "`brew install binaryen`) so wasm-opt is on PATH, then rebuild. (Roadmap: 'asyncify pass " +
           "in binaryen-ts'.)"
         : "";
+      const hint = goBuildHint(errText, target) + grHint;
       console.error(`❌ wasmtk (go): TinyGo build failed:\n${errText}${hint}`);
       return { success: false, error: "tinygo build failed" };
     }
@@ -264,9 +274,9 @@ async function buildWithTinyGo(
   try {
     const { bytes, optimized } = binaryenOptimize(await rt.readFile(out));
     if (optimized) await rt.writeFile(out, bytes);
-    return await report(out, `tinygo:${tgoTarget}${optimized ? " + binaryen-ts -Oz" : ""}`);
+    return await report(out, `tinygo:${reportLabel}${optimized ? " + binaryen-ts -Oz" : ""}`);
   } catch {
-    return await report(out, `tinygo:${tgoTarget}`);
+    return await report(out, `tinygo:${reportLabel}`);
   }
 }
 
@@ -286,20 +296,23 @@ async function buildWithStd(
     "   ⚠️  --go-runtime=std uses the full Go runtime/GC — output is large (often several MB). " +
       "TinyGo (the default) produces far smaller modules.",
   );
-  // wasip1 → GOOS=wasip1; browser wasm → GOOS=js. Both GOARCH=wasm.
+  // wasip1 → GOOS=wasip1; browser wasm → GOOS=js. Both GOARCH=wasm. reactor = wasip1 library
+  // via `-buildmode=c-shared` (std Go 1.24+ supports //go:wasmexport for wasip1 in this mode).
   const goos = target === "wasm" ? "js" : "wasip1";
+  const buildModeArgs = target === "reactor" ? ["-buildmode=c-shared"] : [];
   const r = await new rt.Command("go", {
-    args: ["build", "-o", out, buildArg],
+    args: ["build", ...buildModeArgs, "-o", out, buildArg],
     cwd: baseDir,
     env: { ...rt.env.toObject(), GOOS: goos, GOARCH: "wasm" },
     stdout: "piped",
     stderr: "piped",
   }).output();
   if (!r.success) {
-    console.error(`❌ wasmtk (go): go build failed:\n${decodeOut(r)}`);
+    const errText = decodeOut(r);
+    console.error(`❌ wasmtk (go): go build failed:\n${errText}${goBuildHint(errText, target)}`);
     return { success: false, error: "go build failed" };
   }
-  return await report(out, `std:${goos}`);
+  return await report(out, `std:${goos}${target === "reactor" ? " c-shared library" : ""}`);
 }
 
 /** Copies the toolchain's wasm_exec.js next to a browser build (best effort). */
@@ -340,7 +353,12 @@ async function copyWasmExecJs(baseDir: string, runtime: GoRuntime): Promise<void
   } catch { /* best effort — skip silently */ }
 }
 
-/** Scaffolds a Go project: `go mod init <dirname>` + a boilerplate main.go (WASI or browser). */
+/**
+ * Scaffolds a Go project: `go mod init <dirname>` + a boilerplate main.go. Default is a **wasm
+ * library** (`//go:wasmexport` functions + a `func main` test harness); `"browser"` is the
+ * syscall/js variant. The library scaffold is the default precisely because the Go producer's
+ * primary output is a wasm library (`modc --lang=go`) — no flag should be needed for it.
+ */
 export async function scaffoldGoProject(
   dir: string,
   scaffold: GoScaffold,
@@ -353,10 +371,17 @@ export async function scaffoldGoProject(
     return { success: false, error: msg };
   }
   console.log(
-    scaffold === "wasm"
-      ? `Initializing browser WASM Go project: ${name}`
-      : `Initializing WASI Go project: ${name}`,
+    scaffold === "browser"
+      ? `Initializing Go browser WASM project: ${name}`
+      : `Initializing Go wasm library project: ${name}`,
   );
+
+  // Ensure the target directory exists. `go mod init` (below) runs with cwd=baseDir and the
+  // file writes target paths inside it, so scaffolding into a not-yet-created dir (e.g.
+  // `wasmtk init --lang=go newproj`) would otherwise fail with "No such cwd".
+  try {
+    await rt.mkdir(baseDir, { recursive: true });
+  } catch { /* already exists (or a benign race) — fine */ }
 
   // go mod init (skip if go.mod already present)
   let hasGoMod = false;
@@ -389,34 +414,71 @@ export async function scaffoldGoProject(
   if (hasMain) {
     console.log("   main.go already exists — leaving it as is.");
   } else {
-    await rt.writeTextFile(mainPath, scaffold === "wasm" ? MAIN_GO_WASM : MAIN_GO_WASI);
+    await rt.writeTextFile(mainPath, scaffold === "browser" ? MAIN_GO_BROWSER : MAIN_GO_LIBRARY);
     console.log(`   wrote ${mainPath}`);
   }
-  console.log(
-    scaffold === "wasm"
-      ? `   Build: wasmtk modc --lang=go ${baseDir}`
-      : `   Build & run: wasmtk run --lang=go ${baseDir}`,
-  );
+  if (scaffold === "browser") {
+    // Browser scaffold uses syscall/js → needs --go-target=wasm (modc's default is a wasm library).
+    console.log(`   Build: wasmtk modc --lang=go ${baseDir} --go-target=wasm`);
+  } else {
+    console.log(`   Test:  wasmtk run  --lang=go ${baseDir}   (runs func main as a test harness)`);
+    console.log(
+      `   Build: wasmtk modc --lang=go ${baseDir}   (→ wasm library; exports //go:wasmexport funcs)`,
+    );
+  }
   return { success: true, outputPath: baseDir };
 }
 
-const MAIN_GO_WASI = `package main
+// Default scaffold: a wasm LIBRARY (exports + a test harness in one file). Build it with
+// ` + "`wasmtk modc --lang=go`" + ` (→ wasm library); test it with ` + "`wasmtk run --lang=go`" + `.
+const MAIN_GO_LIBRARY = `package main
 
-import (
-	"fmt"
-)
+import "fmt"
 
+// add is an EXPORTED library function — this is what your wasm library exposes.
+//
+// ` + "`//go:wasmexport <name>`" + ` (TinyGo) marks a function for export so a host — or another
+// WASM module — can call it. Rules: put the directive on the line DIRECTLY above the function (no
+// blank line between it and "func"), and ONLY functions you annotate are exported. Use WASM-friendly
+// types (int32 / int64 / float32 / float64 / bool); strings & slices need host glue. Add one
+// //go:wasmexport block per function you want to expose.
+//
+//go:wasmexport add
+func add(a int32, b int32) int32 {
+	return a + b
+}
+
+// main is your test harness — put assertions here. ` + "`wasmtk run --lang=go .`" + ` builds this
+// file as a command and runs main, so you can test your library before shipping it. ` +
+  "`wasmtk modc --lang=go .`" + ` builds the wasm LIBRARY: main (and everything reachable only from
+// it) is dead-code-eliminated, so the library exports just the //go:wasmexport functions above.
 func main() {
-	fmt.Println("Hello from WASI!")
+	if add(2, 3) == 5 {
+		fmt.Println("PASS: add(2, 3) =", add(2, 3))
+	} else {
+		fmt.Println("FAIL: add(2, 3) =", add(2, 3))
+	}
 }
 `;
 
-const MAIN_GO_WASM = `package main
+const MAIN_GO_BROWSER = `package main
 
-import (
-	"syscall/js"
-)
+import "syscall/js"
 
+// square is exported from the compiled WASM module.
+//
+// ` + "`//go:wasmexport <name>`" + ` (TinyGo) marks a function for raw WASM export — callable
+// from JavaScript as ` + "`instance.exports.square(...)`" + `. Put the directive on the line
+// DIRECTLY above the function (no blank line between it and "func"); ONLY annotated functions
+// are exported. Use WASM-friendly types (int32 / int64 / float32 / float64 / bool). (For the
+// JS-bridge style instead, expose functions with js.Global().Set("name", js.FuncOf(...)).)
+//
+//go:wasmexport square
+func square(x int32) int32 {
+	return x * x
+}
+
+// main runs when the module is loaded in the browser (via wasm_exec.js).
 func main() {
 	println("WASM Initialized")
 	alert := js.Global().Get("alert")

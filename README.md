@@ -14,7 +14,9 @@ A polyglot WebAssembly toolkit for Deno. Compile TypeScript directly to optimize
 - **WIT interface generation**: Every compiled module automatically produces a `.wit` file describing its exports and imports — the foundation for cross-language interop and the WASM Component Model.
 - **Host binding generation (`bindgen`)**: Generate a self-contained TypeScript binding file from any `.wit` interface. Load and call WASM exports from a TypeScript host with full type safety and automatic ABI translation for numbers, booleans, and strings.
 - **Universal running**: Execute `.ts`, `.js`, `.wasm`, and `.wat` with a single command across Deno, Bun, and Node. Expanded WASI syscall shims ensure compatibility with modules compiled from Zig, Rust, C/C++, and Go.
-- **Go producer (`--lang=go`)**: A full Go command set via TinyGo (or the standard `go` toolchain with `--go-runtime=std`) — `init` (scaffold a WASI or browser project), `wasic` (→ WASI module), `run` (build + run), and `modc` (→ browser WASM + `wasm_exec.js`). When `wasm-opt` (binaryen) isn't installed, wasmtk auto-optimizes TinyGo's output with binaryen-ts instead (goroutine-free code; goroutine code needs binaryen). First of the planned polyglot producers (C/C++/Rust/Zig to follow).
+- **Go producer (`--lang=go`)**: A Go command set via TinyGo (or the standard `go` toolchain with `--go-runtime=std`) — `init` (scaffold a wasm library or browser project), `run` (build a WASI module and run it in one step), and `modc` (→ a callable WASI library via `//go:wasmexport`; `--go-target=wasm` for a browser module + `wasm_exec.js`). When `wasm-opt` (binaryen) isn't installed, wasmtk auto-optimizes TinyGo's output with binaryen-ts instead (goroutine-free code; goroutine code needs binaryen).
+- **Zig producer (`--lang=zig`)**: `init`/`modc`/`run` via the `zig` toolchain — a wasm library (freestanding, `export fn`) or a `wasm32-wasi` program. Same shape as Go.
+- **Rust producer (`--lang=rust`)**: delegates to [`rsxtk`](https://crates.io/crates/rsxtk) — `init`/`initmod`/`modc`/`build`/`run` plus dependency management (`add`/`remove`/`list`) and `fmt`/`clean`. (Polyglot producers: TypeScript, Go, Zig, Rust today; C/C++ planned.)
 - **Library mode (`modc`)**: Compile TypeScript to a WASM library with no `_start` entry point — callable from any host environment.
 - **WASM bundling**: Merge multiple `.wasm` files into a single artifact; import pre-compiled `.wasm` modules directly from TypeScript source via `tsbundler`.
 - **jstyper**: Convert `.js` + `.d.ts` pairs to typed TypeScript that `wasic` can compile — bridges existing JS libraries into the WASM pipeline.
@@ -200,23 +202,45 @@ wasmtk run myprogram.wasm
 
 Compiles **Go** to wasm and runs it through the same downstream as every other producer. The first of
 the planned polyglot producers — a full command set (the path argument defaults to the current
-directory):
+directory). The scaffolded `main.go` (both WASI and browser variants) includes a commented
+`//go:wasmexport` example function, so the correct way to declare exports is shown from the start:
 
 ```bash
-wasmtk init  --lang=go myapp              # scaffold go.mod + a WASI main.go (then cd myapp)
+wasmtk init  --lang=go myapp              # scaffold a wasm LIBRARY project (default; then cd myapp)
 wasmtk init  --lang=go --go-target=wasm   # scaffold a browser (syscall/js) project instead
-wasmtk wasic --lang=go                     # build the package → WASI P1 module (<dir>.wasm)
-wasmtk run   --lang=go                      # build a WASI module and run it in one step
-wasmtk modc  --lang=go                      # build a BROWSER module (-target=wasm) + wasm_exec.js
-wasmtk wasic --lang=go hello.go            # a single .go file also works
-wasmtk wasic --lang=go --go-runtime=std    # standard Go toolchain instead of TinyGo
+wasmtk run   hello.go                       # build a single .go file → WASI module and run it (auto-detected)
+wasmtk run   ./mypkg                        # a directory containing a go.mod is auto-detected too
+wasmtk run   --lang=go                      # force Go for the current dir (e.g. cwd without auto-detect)
+wasmtk run   --lang=go --go-runtime=std    # standard Go toolchain instead of TinyGo
+wasmtk modc  --lang=go mylib.go            # build a WASI reactor LIBRARY (callable; default)
+wasmtk mod   mylib.wasm add 2 3            #   → call an exported function: prints 5
+wasmtk modc  --lang=go app.go --go-target=wasm   # build a BROWSER module (-target=wasm) + wasm_exec.js
 ```
 
-> **Note on `modc --lang=go`:** unlike TypeScript `modc` (a WASI-less *library*), the Go `modc`
-> produces a **browser** module (`-target=wasm`, `syscall/js`) and copies `wasm_exec.js` beside it —
-> matching the owner's `tgo-modc` workflow. It is not a WASI module, so `wasmtk run` cannot host it;
-> load it with `wasm_exec.js` in a browser. (A Go *library/reactor* for the bindgen DLL model is
-> planned separately.)
+> **`wasmtk run` auto-detects Go.** A `.go` file argument, or a directory containing a `go.mod`, is
+> built (via TinyGo) and run automatically — no `--lang=go` needed. The explicit flag still works and
+> is required only to force Go where detection can't tell (e.g. a bare `wasmtk run` with no path, which
+> defaults to the current directory). Auto-detection applies to `run` only; `init`/`modc` still take
+> the flag.
+
+> **No standalone `wasic --lang=go`.** There is intentionally no direct Go→WASI *compile* command. A
+> standalone Go WASI executable isn't consumable by wasmtk's value-add pipeline — it can't be merged
+> (`wasmbundle`/imports), and a WASI command isn't a bindgen library. The Go→WASI build still happens
+> inside **`run --lang=go`** (it needs it to execute the module). Running `wasmtk wasic --lang=go`
+> prints a pointer to `run --lang=go`. For a callable Go *library*, use `modc --lang=go` (below).
+
+> **`modc --lang=go` builds a callable library (default).** Like TypeScript `modc` (a library, no
+> `_start`), the Go `modc` produces a **WASI reactor library** (`-buildmode=c-shared`): it exports your
+> `//go:wasmexport` functions and is callable via `wasmtk mod` / bindgen. Because Go bundles a runtime,
+> the library carries a little more than the TS one (an `_initialize` the host calls automatically, one
+> WASI import, and runtime `malloc`/`free`) — that's expected. Author it as one file: your
+> `//go:wasmexport` functions plus a `func main` test harness; `wasmtk run` runs the tests, and the
+> library build strips `main` (only the exported functions remain).
+>
+> For a **browser** module instead, add `--go-target=wasm`: that builds the `syscall/js` (`-target=wasm`)
+> variant and copies `wasm_exec.js` beside it — load it in a browser (`wasmtk run` can't host a browser
+> module). Note: a `main.go` that imports `syscall/js` only builds with `--go-target=wasm`; without it,
+> the default library build reports a clear hint pointing you to that flag.
 
 **Backends (`--go-runtime`):**
 
@@ -233,9 +257,46 @@ wasmtk wasic --lang=go --go-runtime=std    # standard Go toolchain instead of Ti
 **Prerequisites:** [TinyGo](https://tinygo.org/getting-started/install/) (for the default backend) or
 the [Go toolchain](https://go.dev/dl/) (for `--go-runtime=std`).
 
-**Scope (v1):** command-mode Go (`func main()`) with numeric exports and console output. Go
-string/slice/aggregate **host bindings** (`bindgen`) and a true library/reactor module
-(`//go:wasmexport`) for the DLL model are planned — see the roadmap.
+**Scope (v1):** command-mode Go (`func main()`) plus the library/reactor build (`modc --lang=go`,
+`//go:wasmexport`) with numeric exports. Go string/slice/aggregate **host bindings** (`bindgen`) are
+planned — see the roadmap.
+
+### `--lang=zig` — Zig Producer
+
+Compiles **Zig** through the same downstream as the other producers (shells to `zig`; no extra deps —
+`zig` self-optimizes, with a binaryen-ts `-Oz` pass on libraries). Same shape as Go:
+
+```bash
+wasmtk init --lang=zig myzig       # scaffold a wasm-library main.zig (export fn + a test main)
+wasmtk run  --lang=zig myzig       # build a wasm32-wasi program and run it (or: wasmtk run x.zig)
+wasmtk modc --lang=zig myzig       # build a wasm library (freestanding; exports your 'export fn's)
+wasmtk mod  myzig/myzig.wasm add 2 3   #   → call an exported function: prints 5
+```
+
+Mark library functions with Zig's `export fn` keyword. The scaffolded `main.zig` is one file: your
+`export fn`s plus a `pub fn main` test harness — `run` builds it as a WASI program and runs the tests;
+`modc` builds it as a clean library (the `main` is comptime-guarded to the WASI target, so it's
+excluded from the freestanding library build). **Prerequisite:** [Zig](https://ziglang.org/download/).
+
+### `--lang=rust` — Rust Producer (via rsxtk)
+
+The Rust producer **delegates to [`rsxtk`](https://crates.io/crates/rsxtk)** — the Rust WASM toolkit
+(install with `cargo install rsxtk`). wasmtk wraps rsxtk's command set under `--lang=rust`:
+
+```bash
+wasmtk init    --lang=rust myprog   # scaffold a Rust wasi script (with main)
+wasmtk initmod --lang=rust mylib    # scaffold a Rust library module (#[no_mangle] exports)
+wasmtk run     --lang=rust myprog.rs   # build + run a wasi program (or: wasmtk run myprog.rs)
+wasmtk build   --lang=rust myprog.rs   # build a wasi program → .wasm
+wasmtk modc    --lang=rust mylib.rs    # build a wasm library → .wasm
+wasmtk add --lang=rust myprog.rs serde   # manage dependencies (also: remove, list)
+wasmtk fmt  --lang=rust               # inject a manifest where missing
+wasmtk clean --lang=rust              # wipe the .tk build cache
+```
+
+**Prerequisites:** [`rsxtk`](https://crates.io/crates/rsxtk) on PATH, plus
+`rustup target add wasm32-wasip1`. The Rust-only verbs (`initmod`/`build`/`add`/`remove`/`list`/`fmt`/`clean`)
+require `--lang=rust`. (WIT/bindgen for Rust output remains wasmtk's job and is planned.)
 
 ---
 

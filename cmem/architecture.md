@@ -10,7 +10,9 @@
 | `hybrid` | `.ts` → core `.wasm` + TS runner | Splits on `// @wasm` annotations; routes annotated fns through modc→bindgen. |
 | `jstyper` | `.js`+`.d.ts` → typed `.ts` | Regex-based; `number→f64`, `--any-policy`, `--dts-only`. |
 | `javyc` | `.ts` → `.wasm` via QuickJS | The dynamic-kernel fallback (~1.26 MB). Out of scope for typed code. |
-| Go producer (`--lang=go`) | `.go` → `.wasm` | **`src/gowasic.ts`** (2026-06-06). Shells to TinyGo (`--go-runtime=std` for stdlib `go`); NOT the wasic TS compiler — a front-end handing wasm to the shared downstream. Commands (path defaults to cwd): `init` (scaffold; `--go-target=wasm`=browser), `wasic` (wasip1, `wasmtk run` hosts), `modc` (**browser** `-target=wasm` + `wasm_exec.js`), `run` (build wasip1 + run). wasm-opt auto-fallback: passthrough shim + `-scheduler=none` + binaryen-ts `-Oz` when no real wasm-opt (goroutine-free). See [polyglot-producers.md](polyglot-producers.md). |
+| Go producer (`--lang=go`) | `.go` → `.wasm` | **`src/gowasic.ts`** (2026-06-06). Shells to TinyGo (`--go-runtime=std` for stdlib `go`); NOT the wasic TS compiler — a front-end handing wasm to the shared downstream. Commands (path defaults to cwd): `init` (scaffold `go.mod`+`main.go`; `--go-target=wasm`=browser; the scaffold includes a `//go:wasmexport` example), `modc` (**WASI reactor library** by default — `-target=wasip1 -buildmode=c-shared`: no `_start`, exports `//go:wasmexport` funcs + runtime, callable via `wasmtk mod`/bindgen; **`--go-target=wasm`** for a browser module + `wasm_exec.js`), `run` (build wasip1 command + run). **`wasic --lang=go` was REMOVED 2026-06-07** (standalone Go→WASI isn't merge/bindgen-consumable; the wasip1 build now lives inside `run`); **`run` auto-detects Go 2026-06-07** (a `.go` file or a dir with `go.mod` → builds+runs without `--lang=go`). **`modc --lang=go` = reactor library 2026-06-07** (was browser-only; flipped to match TS `modc` = library mode) — required a `_initialize` fix in `callExport`/`runWasi` (reactor exports trap unless `_initialize` runs first; see [compiler-bugs.md](compiler-bugs.md)). wasm-opt auto-fallback: passthrough shim + `-scheduler=none` + binaryen-ts `-Oz` when no real wasm-opt (goroutine-free). See [polyglot-producers.md](polyglot-producers.md). |
+| Zig producer (`--lang=zig`) | `.zig` → `.wasm` | **`src/zigwasic.ts`** (2026-06-07). Shells to `zig` (no wasm-opt shim — zig self-optimizes). `init` (scaffold a wasm-library `main.zig`: `export fn` + a **comptime-guarded** `pub fn main` test harness — Zig analyzes `main` even with `-fno-entry`, so std I/O must be guarded to the wasi target), `modc` (freestanding library: `-fno-entry --export=<name>…` scanned from source → clean exports, no `_start`/WASI + binaryen-ts `-Oz`), `run` (`wasm32-wasi` program on wasmtk's TS host; auto-detects `.zig`). See [polyglot-producers.md](polyglot-producers.md). |
+| Rust producer (`--lang=rust`) | `.rs` → `.wasm` | **`src/rustwasic.ts`** (2026-06-07) — **delegates fully to `rsxtk`** (owner's Rust WASM toolkit on PATH; `cargo install rsxtk`). `init`→`rsxtk init` (wasi script), `initmod`→`initmod` (library), `modc`→`rsxtk build <p> wasm`, `build`→`rsxtk build <p> wasi`, `run`→`rsxtk run` (its wasmtime; auto-detects `.rs`/`Cargo.toml`), `add`/`remove`/`list`/`fmt`/`clean`→same. Rust-only verbs require `--lang=rust`. Prereq `rustup target add wasm32-wasip1`. See [polyglot-producers.md](polyglot-producers.md). |
 
 ## Pluggable wabt + binaryen backends — `deno.json` is the single switch
 
@@ -73,6 +75,17 @@ Splicing a modc `.wasm` into a host module needs three hard parts, all handled:
   call sites + the heap-ptr global to the host's single `$__malloc`/`$__heap_ptr`. This makes a
   structure built in one merged unit share one live heap with another. `WatMergeResult.
   droppedAllocator` signals it; a leaf lib (no malloc) skips it.
+- **Merge guards (loud failure, not silent corruption)** — a merged-in module must not carry
+  constructs that can't survive the WAT-splice; `wasmmerge` throws a clear diagnostic instead of
+  emitting a broken/corrupt module: (1) **`call_indirect`** (2026-06-05) — Phase 18 strips imported
+  type sections, so a `(type N)`/table ref would dangle; (2) **`memory.grow`** (2026-06-07) — signals
+  a foreign allocator that claims linear memory upward (Go runtime alloc / Rust dlmalloc / Zig
+  `page_allocator`) instead of sharing the host bump heap, which would silently corrupt once it
+  allocates. The `memory.grow` diagnostic names the per-language fix (static-arena allocator) or
+  points to keeping the module standalone as a WIT/bindgen component. wasmtk's own producers
+  (wasic/modc) emit neither — their bump allocator runs over fixed pre-declared pages — so the guards
+  fire only on heap-using foreign-language modules. (Background: the native-producer mergeability
+  matrix in [polyglot-producers.md](polyglot-producers.md).)
 
 ## Bump allocator / instance lifecycle
 

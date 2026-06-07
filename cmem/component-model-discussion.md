@@ -5,6 +5,17 @@
 > tentative decisions, the options weighed, the holes found, and a concrete schema draft so the
 > thread can be resumed without re-deriving it. When this is resolved, fold the decided parts
 > into `architecture.md` / `roadmap.md` / a new `component-model.md` and delete or archive this file.
+>
+> **UPDATE 2026-06-07 — parts of the Go CLI here are now SHIPPED (supersede the tentatives below):**
+> `wasic --lang=go` was **removed** (so tentative #2's "`wasic` takes `--lang=go`" no longer applies to
+> Go); **`modc --lang=go` builds a WASI reactor library** by default (browser via `--go-target=wasm`);
+> **`run` auto-detects Go** (a `.go` file or a `go.mod` dir — NOT explicit-flag-only); **`init --lang=go`
+> defaults to a wasm library scaffold**. See [polyglot-producers.md](polyglot-producers.md) +
+> [design-decisions.md](design-decisions.md). Also, the central **"cross-language merge is impossible"**
+> finding below is now **empirically backed** (the native-producer mergeability matrix) and **enforced**
+> by the `call_indirect` + `memory.grow` merge guards — with one refinement: *allocation-free leaves*
+> from Go/Rust/Zig **can** merge; only allocating/runtime modules (real libraries/components) can't. So
+> the conclusion (cross-language inclusion = `instance`/WIT/bindgen, not `merge`) stands for components.
 
 ## Scope of the discussion
 
@@ -67,11 +78,12 @@ So the cross-language convergence point is the **WIT/bindgen host boundary, NOT 
 wasmmerge is the intra-TS / capability optimization. A polyglot host loads a Go component and a
 Rust component as **two separate instances behind two WIT contracts**, never as one bundle.
 
-**And the instance path is ABI-blocked for non-TS today:** TS emits clean WIT now; **Go bindgen is
-deferred** (strings/aggregates need ABI forward-alignment — see polyglot-producers.md); Rust/Zig
-producers aren't built. So: TS components are fully includable now; Go is *runnable* but not yet
-cleanly *includable* for strings/structs; Rust/Zig are producer-pending. Shipping a producer
-(Go ✅) is **not** the same as shipping an includable component.
+**And the instance path is ABI-blocked for non-TS today:** TS emits clean WIT now; **bindgen for
+Go/Zig/Rust output is deferred** (strings/aggregates need ABI forward-alignment — see
+polyglot-producers.md). NOTE (2026-06-07): the **Go, Zig, and Rust producers are now all shipped**
+(`--lang=go|zig|rust`), but shipping a producer is **not** the same as shipping an includable
+component — TS components are fully includable now; Go/Zig/Rust are *runnable/buildable* but not yet
+cleanly *includable* via WIT/bindgen for strings/structs (bindgen pending for all three).
 
 ## Secondary holes to remember
 
@@ -155,7 +167,8 @@ One source of truth, consumed by the build task graph AND the host loader wiring
 Three hard rules the schema encodes:
 1. **`merge` ⇒ `lang:ts`** (shared-memory wasmmerge; whole merge column is TS-only, incl. caps).
 2. **Cross-language inclusion ⇒ `instance`** (bindgen/loadModule behind WIT, own memory).
-3. **`instance` ⇒ a `.wit` exists** — the gap: TS now; Go pending ABI; Rust/Zig producer-pending.
+3. **`instance` ⇒ a `.wit` exists** — the gap: TS now; Go/Zig/Rust producers all shipped (2026-06-07)
+   but their WIT/bindgen is pending (ABI forward-alignment) → not yet includable as instances.
 
 Bluntly: the schema is **fully live for an all-TS monorepo today** (merge + instance + caps). The
 moment a Go/Rust/Zig `instance` row is added, you're on the ABI-forward-alignment + per-language

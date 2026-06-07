@@ -34,3 +34,26 @@ import * as ns from "binaryen";
 const lib: any = (ns as any).default ?? ns;
 
 export default lib;
+
+/**
+ * binaryen-ts `-Oz` over raw wasm bytes. Returns the optimized bytes, or the input unchanged on
+ * failure. Shared by the native producers (Go/Zig) to shrink + strip name/debug sections from
+ * toolchain output. (Rust's producer doesn't use this — rsxtk optimizes its own output.)
+ */
+export function binaryenOptimize(bytes: Uint8Array): { bytes: Uint8Array; optimized: boolean } {
+  try {
+    const m = lib.readBinary(bytes);
+    const feat = (lib as Record<string, unknown>)["Features"] as Record<string, number> | undefined;
+    if (typeof (m as Record<string, unknown>)["setFeatures"] === "function") {
+      (m as { setFeatures(n: number): void }).setFeatures(feat?.["All"] ?? 0x7FFFFFFF);
+    }
+    lib.setShrinkLevel(2);
+    lib.setOptimizeLevel(2);
+    m.optimize();
+    const out: Uint8Array = m.emitBinary();
+    m.dispose();
+    return { bytes: out, optimized: true };
+  } catch {
+    return { bytes, optimized: false };
+  }
+}

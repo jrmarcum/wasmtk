@@ -18,7 +18,9 @@
     "./jstyper": "./src/jstyper.ts",
     "./bindgen": "./src/bindgen.ts",
     "./hybrid": "./src/hybrid.ts",
-    "./gowasic": "./src/gowasic.ts"
+    "./gowasic": "./src/gowasic.ts",
+    "./zigwasic": "./src/zigwasic.ts",
+    "./rustwasic": "./src/rustwasic.ts"
   },
   "bin": {
     "wasmtk": "./main.ts"
