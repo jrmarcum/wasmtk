@@ -97,8 +97,30 @@ not TS syntax, so it is orthogonal and ungated.)
    Known limits: single-physical-line literals only; string-field *overrides* still store ptr-only
    (pre-existing `emitRuntimeStructLiteral` limitation — copies are fine); spread in `return {...}` /
    call-arg position not wired (struct-let + array `push` contexts are).
-3. **Destructuring in function params** `f({x, y}: Vec2)`, then **nested destructuring**
-   (`{a:{b}}`, `[[a,b],c]`) — hardens binding/offset paths, built on the layout validated in #2.
+3. **Destructuring in function params** `f({x, y}: Vec2)` — ✅ **DONE 2026-06-07** (test
+   `51_ParamDestructuring`, suite 288→289). Source pre-pass `expandParamDestructuring()` rewrites a
+   destructuring param `{ x, y }: Vec2` / `[a, b]: [i32,i32]` to a synthetic struct/tuple param
+   `__pd_N: Type` and injects `const { x, y } = __pd_N;` / `const [a, b] = __pd_N;` at the top of the
+   body — reusing the existing struct-param + `const {…}=obj` / `const […]=tup` machinery (no new emit
+   path). Runs before `parseFunctions`. Also fixed `parseParams`' comma-split to be **bracket/brace-aware**
+   (was paren-only, so a tuple-type param `[i32, i32]` split at the inner comma). Covers object params
+   (incl. renamed `{a: lo}`), tuple params, destructured-alongside-normal params, struct-var args, and
+   multiple destructured params. Known limits: named `function NAME(...)` declarations only (arrow/method
+   params are a follow-up); inline tuple-literal *args* (`f([1,2])`) remain a separate pre-existing gap
+   (pass a tuple var; struct-literal args work). **Nested destructuring** `const { a: { b }, c } = obj`
+   — ✅ **DONE 2026-06-07** (test `51_NestedDestructuring`, suite 289→290). The object-destructure
+   emit handler + pre-scan were rewritten from the `\{([^}]+)\}` regex to **balanced-brace detection +
+   recursive helpers** (`emitDestructurePattern` / `collectDestructureLocals`): a binding whose value is
+   itself a `{…}`/`[…]` pattern recurses into the nested struct/tuple field (pointer fields load the
+   stored ptr; inline-tuple fields use the field address) — no temps, nested loads inline. Arbitrary
+   depth + renames + Phase-48 zero-default fallback all work, incl. nested destructuring in a param
+   (`f({a:{b}}: T)`, via the param pre-pass). **Remaining narrow gap:** nested *tuple/array* `[[a,b],c]`
+   — that's a nested-tuple pattern (`[[i32,i32],i32]`), blocked on prerequisite tuple infra
+   (`makeTupleStructDef`/`tupleTypeName` split on `,` non-bracket-aware, and nested-tuple *values* can't
+   be constructed yet) — a separate, larger feature. Phase 51.3 is otherwise complete.
+4. **Utility types** — `Partial`/`Readonly`/`Record`/`Pick`/`Omit`/`NonNullable` first, then
+   `Exclude`/`Extract`/`ReturnType`/`Parameters`. Source-level type-resolution hardening (Phase 36
+   style); after the value-level struct work since some interact with struct shapes.
 4. **Utility types** — `Partial`/`Readonly`/`Record`/`Pick`/`Omit`/`NonNullable` first, then
    `Exclude`/`Extract`/`ReturnType`/`Parameters`. Source-level type-resolution hardening (Phase 36
    style); after the value-level struct work since some interact with struct shapes.

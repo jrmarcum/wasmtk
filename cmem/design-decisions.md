@@ -135,6 +135,31 @@ string-array element, and `Math.*`/`Number.*` handling all have such twins.
   `...tok` from the override map so the shorthand-detection regex can't misfire on the spread source.
   Single-physical-line literals only; string-field *overrides* are ptr-only (pre-existing
   `emitRuntimeStructLiteral` limit — copies are fine).
+- **Param destructuring `f({x,y}: Vec2)` (Phase 51.3)** — `expandParamDestructuring()` is a source
+  pre-pass (runs BEFORE `parseFunctions`, after `parseStructs`/`parseClasses`) that rewrites a
+  destructuring param to a synthetic `__pd_N: Type` and injects `const { … } = __pd_N;` /
+  `const [ … ] = __pd_N;` as the FIRST body statement(s) — deliberately reusing the existing
+  struct-param registration + flat-destructure handlers, so there is NO new emit path. Two
+  load-bearing details: (1) injected bindings MUST be newline-separated (function bodies are split
+  per newline; space-joining collapses multiple bindings into one unmatched stub); (2) `parseParams`'
+  param comma-split tracks `()`+`[]`+`{}` (NOT paren-only) — otherwise a tuple-type param
+  `__pd_N: [i32, i32]` splits at the inner comma into two broken params. Only named `function NAME(...)`
+  declarations are rewritten (arrow/method params are a follow-up). Inline tuple-literal *args*
+  (`f([1,2])`) are a separate pre-existing gap; struct-literal args work.
+- **Nested object destructuring `const { a: { b }, c } = obj` (Phase 51.3)** — the object-destructure
+  emit handler + pre-scan use **balanced-brace detection** (`findMatchingBracketAware`, NOT `\{([^}]+)\}`
+  which can't match nested `}`) and delegate to recursive helpers `emitDestructurePattern` /
+  `collectDestructureLocals`. A binding whose value is a `{…}`/`[…]` pattern recurses into the nested
+  field: pointer fields (`structType`, Phase 42) load the stored ptr as the new base; inline-tuple
+  fields (`tupleTypeName`, Phase 21) use the field *address* — `nestedFieldBaseWat` encodes this. No
+  temps (nested loads inline). Two load-bearing details when refactoring: (1) object *shorthand with
+  default* `{ x = 1.0 }` (no colon) must strip the `= default` BEFORE the field-name lookup — else
+  `def.fields.find("x = 1.0")` misses and the whole compile aborts (the binding emits a stub); the
+  `valuePart` still carries `x = 1.0` so the flat-bind branch extracts local `x` + default `1.0`.
+  (2) `emitDestructurePattern` and `collectDestructureLocals` MUST stay structurally identical (same
+  field/valuePart parsing) so the pre-scan declares exactly the locals the emit sets. Nested
+  *tuple/array* `[[a,b],c]` is NOT handled — nested-tuple type infra (`makeTupleStructDef`/`tupleTypeName`
+  bracket-awareness) and nested-tuple value construction are missing prerequisites.
 
 ## Tooling
 

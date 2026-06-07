@@ -100,9 +100,9 @@ under npm:wabt + npm:binaryen: 446/446 tests passing (2026-05-25; 270 wasic +
 Go-by-Example + 103 bindgen + 73 jstyper). **Under the current dual JSR /compat
 stack (`jsr:@jrmarcum/wabt-ts@^1.3.2/compat` +
 `jsr:@jrmarcum/binaryen-ts@^1.3.3/compat`):** the full `tests/wasm_wasi`
-suite is **288/288** (`core_` 33/33), jstyper 73/73, and **bindgen 103/103** (Phase 51, 2026-06-05,
-added `instanceof` + 7 `51_*` tests, incl. the 3 class-construction-gap fixes; `51_ObjectSpread` added
-2026-06-07 for the 51.2 object-spread feature; `48_SingleLineBraceIf`
+suite is **290/290** (`core_` 33/33), jstyper 73/73, and **bindgen 103/103** (Phase 51, 2026-06-05,
+added `instanceof` + 7 `51_*` tests, incl. the 3 class-construction-gap fixes; `51_ObjectSpread` (51.2)
++ `51_ParamDestructuring` + `51_NestedDestructuring` (51.3) added 2026-06-07; `48_SingleLineBraceIf`
 was the single-line-brace-`if` regression added 2026-06-03). The 7
 long-standing failures were all fixed 2026-06-02: `5e`/`19_*` via a wasic value-fallthru
 rewrite, and `38_*` via the wabt-ts 1.3.1 hex-float-literal fix (the constants were being

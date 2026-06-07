@@ -844,6 +844,40 @@ function parseStructLiteralWithSpread(
   return { spreadSource, fields };
 }
 
+/** Phase 51.3: parse a destructuring function parameter `{ a, b }: Type` or `[a, b]: Type`.
+ *  Returns the bracket style, the inner binding list (verbatim, so renames/defaults survive), and
+ *  the type annotation (trailing `= default` stripped). Returns null if `p` is not a destructuring
+ *  pattern or is malformed (unbalanced / missing `: Type`). Uses balanced-bracket scanning so a
+ *  nested pattern's inner braces don't terminate the match early. */
+function parseDestructParam(
+  p: string,
+): { open: "{" | "["; close: "}" | "]"; inner: string; type: string } | null {
+  const t = p.trim();
+  if (t[0] !== "{" && t[0] !== "[") return null;
+  const open = t[0] as "{" | "[";
+  const close = open === "{" ? "}" : "]";
+  let depth = 0;
+  let ci = -1;
+  for (let k = 0; k < t.length; k++) {
+    const ch = t[k];
+    if (ch === "{" || ch === "[" || ch === "(") depth++;
+    else if (ch === "}" || ch === "]" || ch === ")") {
+      depth--;
+      if (depth === 0) {
+        ci = k;
+        break;
+      }
+    }
+  }
+  if (ci === -1) return null;
+  const inner = t.slice(1, ci).trim();
+  const rest = t.slice(ci + 1).trim();
+  if (!rest.startsWith(":")) return null;
+  const type = rest.slice(1).trim().replace(/\s*=.*$/, "").trim();
+  if (!inner || !type) return null;
+  return { open, close, inner, type };
+}
+
 /** Splits a comma-separated string respecting curly-brace and bracket nesting.
  *  Use instead of `.split(",")` when elements may be struct/object literals. */
 function splitBraceAwareCommas(s: string): string[] {
@@ -1980,9 +2014,12 @@ class WasicTranspiler {
     const paramStrs: string[] = [];
     let depth = 0, start = 0;
     for (let i = 0; i < rawParams.length; i++) {
-      if (rawParams[i] === "(") depth++;
-      else if (rawParams[i] === ")") depth--;
-      else if (rawParams[i] === "," && depth === 0) {
+      const ch = rawParams[i];
+      // Track (), [], and {} so commas inside tuple types ([i32, i32]) or destructuring
+      // patterns ({ x, y }) don't split a single param. (Phase 51.3 — bracket/brace-aware.)
+      if (ch === "(" || ch === "[" || ch === "{") depth++;
+      else if (ch === ")" || ch === "]" || ch === "}") depth--;
+      else if (ch === "," && depth === 0) {
         paramStrs.push(rawParams.slice(start, i).trim());
         start = i + 1;
       }
@@ -4033,6 +4070,64 @@ class WasicTranspiler {
     this.src = out;
   }
 
+  /** Phase 51.3: desugar destructuring function parameters into a synthetic struct/tuple/array
+   *  param plus an injected destructuring binding statement at the top of the body. E.g.
+   *    function f({ x, y }: Vec2): i32 { return x + y; }
+   *  becomes
+   *    function f(__pd_0: Vec2): i32 { const { x, y } = __pd_0; return x + y; }
+   *  This reuses the existing struct-param + `const { … } = obj` / `const [ … ] = tup` machinery,
+   *  so no new emit path is needed. Runs as a source pre-pass BEFORE parseFunctions so the injected
+   *  binding lands in the collected body. Only named `function NAME(...)` declarations with a body
+   *  are rewritten (arrow/method params are a documented follow-up). */
+  private expandParamDestructuring(): void {
+    const src = this.src;
+    let out = "";
+    let cursor = 0;
+    let counter = 0;
+    const headerRe = /\bfunction\s+\w+\s*\(/g;
+    let m: RegExpExecArray | null;
+    while ((m = headerRe.exec(src)) !== null) {
+      const openParen = m.index + m[0].length - 1; // index of '('
+      const [rawParams, afterClose] = WasicTranspiler.extractParamBlock(src, openParen);
+      const parts = splitBraceAwareCommas(rawParams);
+      const injections: string[] = [];
+      let changed = false;
+      const newParts = parts.map((p) => {
+        const d = parseDestructParam(p);
+        if (!d) return p;
+        const syn = `__pd_${counter++}`;
+        changed = true;
+        injections.push(`const ${d.open} ${d.inner} ${d.close} = ${syn};`);
+        return `${syn}: ${d.type}`;
+      });
+      if (!changed) {
+        headerRe.lastIndex = afterClose;
+        continue;
+      }
+      // Locate the body's opening `{` (skip optional `: ReturnType`). Bail on `;` (overload/decl).
+      let bi = afterClose;
+      while (bi < src.length && src[bi] !== "{" && src[bi] !== ";") bi++;
+      out += src.slice(cursor, openParen + 1); // …function NAME(
+      out += newParts.join(", ");
+      out += ")";
+      if (src[bi] === "{") {
+        out += src.slice(afterClose, bi + 1); // : RetType {  (or just {)
+        // Each binding on its OWN line — function bodies are split per newline, so multiple
+        // injected statements (or an injection sharing a single-line body) must not collide.
+        out += "\n" + injections.join("\n") + "\n";
+        cursor = bi + 1;
+        headerRe.lastIndex = bi + 1;
+      } else {
+        // No body — rewrite params only, drop the (unusable) injections.
+        out += src.slice(afterClose, bi);
+        cursor = bi;
+        headerRe.lastIndex = bi;
+      }
+    }
+    out += src.slice(cursor);
+    this.src = out;
+  }
+
   /** Find all class names that are (or transitively extend) baseClass in this module. */
   private findSubclasses(baseClass: string): string[] {
     const result: string[] = [];
@@ -4266,6 +4361,165 @@ class WasicTranspiler {
     }
     stmts.push(`(local.get $__rt_struct_ptr)`);
     return `(block (result i32)\n        ${stmts.join("\n        ")}\n      )`;
+  }
+
+  // -------------------------------------------------------------------------
+  // Phase 51.3: nested destructuring (recursive pattern binding against a struct/tuple def)
+  // -------------------------------------------------------------------------
+
+  /** First depth-0 occurrence of `ch` in `s` (ignores chars inside (), [], {}). -1 if none. */
+  private static depth0IndexOf(s: string, ch: string): number {
+    let depth = 0;
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (c === "(" || c === "[" || c === "{") depth++;
+      else if (c === ")" || c === "]" || c === "}") depth--;
+      else if (c === ch && depth === 0) return i;
+    }
+    return -1;
+  }
+
+  /** Emit a single flat field bind: `(local.set $local (load … offset))`, with the Phase 48
+   *  zero-sentinel `= default` fallback when a default is present. */
+  private emitFlatFieldBind(
+    field: StructField,
+    baseWat: string,
+    localName: string,
+    defaultExpr: string | null,
+    locals: Map<string, WatType>,
+  ): string {
+    const loadOp = field.type === "f64"
+      ? "f64.load"
+      : field.type === "i64"
+      ? "i64.load"
+      : "i32.load";
+    const loadWat = `(${loadOp} (i32.add ${baseWat} (i32.const ${field.offset})))`;
+    if (defaultExpr !== null) {
+      const defWat = this.emitExpr(defaultExpr, locals, field.type);
+      const eqzWat = field.type === "f64"
+        ? `(f64.eq ${loadWat} (f64.const 0.0))`
+        : `(i32.eqz ${loadWat})`;
+      return `(local.set $${localName} (if (result ${field.type}) ${eqzWat} (then ${defWat}) (else ${loadWat})))`;
+    }
+    return `(local.set $${localName} ${loadWat})`;
+  }
+
+  /** The base-pointer WAT for a nested struct/tuple field: inline tuple fields (`tupleTypeName`)
+   *  yield the field address; pointer fields (`structType`) load the stored pointer. */
+  private nestedFieldBaseWat(field: StructField, baseWat: string): string {
+    return field.tupleTypeName
+      ? `(i32.add ${baseWat} (i32.const ${field.offset}))`
+      : `(i32.load (i32.add ${baseWat} (i32.const ${field.offset})))`;
+  }
+
+  /** Resolve the nested StructDef for a struct/tuple field, or null if not a nested aggregate. */
+  private nestedFieldDef(field: StructField): StructDef | null {
+    const n = field.structType ?? field.tupleTypeName;
+    return n ? this.structDefs.get(n) ?? null : null;
+  }
+
+  /** Recursively emit a destructuring pattern (`{ … }` object or `[ … ]` tuple) against a base
+   *  pointer + its StructDef. Object bindings match by field name; tuple bindings by position.
+   *  A binding whose value is itself a `{…}`/`[…]` pattern recurses into the nested field. */
+  private emitDestructurePattern(
+    pattern: string,
+    baseWat: string,
+    def: StructDef,
+    locals: Map<string, WatType>,
+  ): string[] {
+    const stmts: string[] = [];
+    const isObject = pattern.trim()[0] === "{";
+    const inner = pattern.trim().slice(1, -1);
+    const parts = splitBraceAwareCommas(inner);
+    for (let i = 0; i < parts.length; i++) {
+      const raw = parts[i].trim();
+      if (!raw) continue; // tuple gap: skip a position
+      let field: StructField | undefined;
+      let valuePart: string; // either a local name (+default) or a nested pattern
+      if (isObject) {
+        const colon = WasicTranspiler.depth0IndexOf(raw, ":");
+        if (colon !== -1) {
+          field = def.fields.find((f) => f.name === raw.slice(0, colon).trim());
+          valuePart = raw.slice(colon + 1).trim();
+        } else {
+          // shorthand: "field" or "field = default" — strip the default to get the field name
+          const eq = raw.indexOf("=");
+          field = def.fields.find((f) => f.name === (eq !== -1 ? raw.slice(0, eq) : raw).trim());
+          valuePart = raw;
+        }
+      } else {
+        field = def.fields[i];
+        valuePart = raw;
+      }
+      if (!field) {
+        this.diagnostics.push(`Destructuring: no field for binding '${raw}' in '${def.name}'`);
+        continue;
+      }
+      if (valuePart[0] === "{" || valuePart[0] === "[") {
+        const nestedDef = this.nestedFieldDef(field);
+        if (!nestedDef) {
+          this.diagnostics.push(
+            `Destructuring: field '${field.name}' is not a nested struct/tuple`,
+          );
+          continue;
+        }
+        stmts.push(
+          ...this.emitDestructurePattern(
+            valuePart,
+            this.nestedFieldBaseWat(field, baseWat),
+            nestedDef,
+            locals,
+          ),
+        );
+      } else {
+        const eqIdx = valuePart.indexOf("=");
+        const localName = eqIdx !== -1 ? valuePart.slice(0, eqIdx).trim() : valuePart;
+        const defaultExpr = eqIdx !== -1 ? valuePart.slice(eqIdx + 1).trim() : null;
+        stmts.push(this.emitFlatFieldBind(field, baseWat, localName, defaultExpr, locals));
+      }
+    }
+    return stmts;
+  }
+
+  /** Recursively collect (localName, type) for every leaf binding in a destructuring pattern,
+   *  for the pre-scan local declarations. Mirrors emitDestructurePattern's structure. */
+  private collectDestructureLocals(
+    pattern: string,
+    def: StructDef,
+    out: Array<[string, WatType]>,
+  ): void {
+    const isObject = pattern.trim()[0] === "{";
+    const inner = pattern.trim().slice(1, -1);
+    const parts = splitBraceAwareCommas(inner);
+    for (let i = 0; i < parts.length; i++) {
+      const raw = parts[i].trim();
+      if (!raw) continue;
+      let field: StructField | undefined;
+      let valuePart: string;
+      if (isObject) {
+        const colon = WasicTranspiler.depth0IndexOf(raw, ":");
+        if (colon !== -1) {
+          field = def.fields.find((f) => f.name === raw.slice(0, colon).trim());
+          valuePart = raw.slice(colon + 1).trim();
+        } else {
+          const eq = raw.indexOf("=");
+          field = def.fields.find((f) => f.name === (eq !== -1 ? raw.slice(0, eq) : raw).trim());
+          valuePart = raw;
+        }
+      } else {
+        field = def.fields[i];
+        valuePart = raw;
+      }
+      if (!field) continue;
+      if (valuePart[0] === "{" || valuePart[0] === "[") {
+        const nestedDef = this.nestedFieldDef(field);
+        if (nestedDef) this.collectDestructureLocals(valuePart, nestedDef, out);
+      } else {
+        const eqIdx = valuePart.indexOf("=");
+        const localName = eqIdx !== -1 ? valuePart.slice(0, eqIdx).trim() : valuePart;
+        out.push([localName, field.type]);
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -8551,73 +8805,25 @@ class WasicTranspiler {
     }
 
     // Object destructuring: const { x, y } = structVar  or  const { x: localX } = structVar
-    // Phase 48: supports "= default" fallback when field value is zero (wasic zero-sentinel semantics)
-    const destructMatch = line.match(/^(?:var|let|const)\s*\{([^}]+)\}\s*=\s*(\w+)\s*;?$/);
-    if (destructMatch) {
-      const sv = this.structVars.get(destructMatch[2]);
-      if (!sv) {
-        this.diagnostics.push(
-          `Destructuring: '${destructMatch[2]}' is not a known struct variable`,
-        );
-        return "";
+    // Phase 48: "= default" fallback when field value is zero (wasic zero-sentinel semantics).
+    // Phase 51.3: nesting-aware — `const { a: { b }, c } = obj` recurses into nested struct fields.
+    // Balanced-brace detection (not [^}]+) so nested patterns are captured whole.
+    const objHead = line.match(/^(?:var|let|const)\s*\{/);
+    if (objHead) {
+      const openIdx = line.indexOf("{");
+      const closeIdx = findMatchingBracketAware(line, openIdx);
+      const after = closeIdx !== -1 ? line.slice(closeIdx + 1).trim() : "";
+      const eqM = after.match(/^=\s*(\w+)\s*;?$/);
+      if (closeIdx !== -1 && eqM) {
+        const sv = this.structVars.get(eqM[1]);
+        if (!sv) {
+          this.diagnostics.push(`Destructuring: '${eqM[1]}' is not a known struct variable`);
+          return "";
+        }
+        const pattern = line.slice(openIdx, closeIdx + 1);
+        const baseWat = sv.ptr === -1 ? `(local.get $${eqM[1]})` : `(i32.const ${sv.ptr})`;
+        return this.emitDestructurePattern(pattern, baseWat, sv.def, locals).join("\n      ");
       }
-      const stmts: string[] = [];
-      for (const binding of destructMatch[1].split(",").map((b) => b.trim()).filter(Boolean)) {
-        // Parse binding: "field", "field = default", "field: local", "field: local = default"
-        let fieldName: string;
-        let localName: string;
-        let defaultExpr: string | null = null;
-        const colonIdx = binding.indexOf(":");
-        if (colonIdx !== -1) {
-          fieldName = binding.slice(0, colonIdx).trim();
-          const restPart = binding.slice(colonIdx + 1).trim();
-          const eqIdx = restPart.indexOf("=");
-          if (eqIdx !== -1) {
-            localName = restPart.slice(0, eqIdx).trim();
-            defaultExpr = restPart.slice(eqIdx + 1).trim();
-          } else {
-            localName = restPart;
-          }
-        } else {
-          const eqIdx = binding.indexOf("=");
-          if (eqIdx !== -1) {
-            fieldName = binding.slice(0, eqIdx).trim();
-            localName = fieldName;
-            defaultExpr = binding.slice(eqIdx + 1).trim();
-          } else {
-            fieldName = binding;
-            localName = binding;
-          }
-        }
-        const field = sv.def.fields.find((f) => f.name === fieldName);
-        if (!field) {
-          this.diagnostics.push(
-            `Destructuring: field '${fieldName}' not found in struct '${sv.def.name}'`,
-          );
-          continue;
-        }
-        const loadOp = field.type === "f64"
-          ? "f64.load"
-          : field.type === "i64"
-          ? "i64.load"
-          : "i32.load";
-        const baseWat = sv.ptr === -1
-          ? `(local.get $${destructMatch[2]})`
-          : `(i32.const ${sv.ptr})`;
-        const loadWat = `(${loadOp} (i32.add ${baseWat} (i32.const ${field.offset})))`;
-        if (defaultExpr !== null) {
-          const defWat = this.emitExpr(defaultExpr, locals, field.type);
-          const eqzWat = field.type === "f64"
-            ? `(f64.eq ${loadWat} (f64.const 0.0))`
-            : `(i32.eqz ${loadWat})`;
-          stmts.push(
-            `(local.set $${localName} (if (result ${field.type}) ${eqzWat} (then ${defWat}) (else ${loadWat})))`,
-          );
-        } else {
-          stmts.push(`(local.set $${localName} ${loadWat})`);
-        }
-      }
-      return stmts.join("\n      ");
     }
 
     // Phase 31: TypedArray initialization — must come BEFORE newDeclMatch.
@@ -14249,32 +14455,25 @@ class WasicTranspiler {
       }
       // Object destructuring: const { x, y } = structVar  or  const { x: localX } = structVar
       // Phase 48: also handles "= default" suffix on each binding
-      const destructPre = line.match(/^(?:var|let|const)\s*\{([^}]+)\}\s*=\s*(\w+)\s*;?$/);
-      if (destructPre) {
-        const sv = this.structVars.get(destructPre[2]);
-        if (sv) {
-          for (const binding of destructPre[1].split(",").map((b) => b.trim()).filter(Boolean)) {
-            let fieldName: string;
-            let localName: string;
-            const colonIdx = binding.indexOf(":");
-            if (colonIdx !== -1) {
-              fieldName = binding.slice(0, colonIdx).trim();
-              const restPart = binding.slice(colonIdx + 1).trim();
-              const eqIdx = restPart.indexOf("=");
-              localName = eqIdx !== -1 ? restPart.slice(0, eqIdx).trim() : restPart;
-            } else {
-              const eqIdx = binding.indexOf("=");
-              fieldName = eqIdx !== -1 ? binding.slice(0, eqIdx).trim() : binding;
-              localName = fieldName;
-            }
-            const field = sv.def.fields.find((f) => f.name === fieldName);
-            if (field) {
-              declaredLocals.push([localName, field.type]);
-              locals.set(localName, field.type);
+      // Phase 51.3: nesting-aware — declares leaf locals from nested patterns recursively.
+      const objDestructHead = line.match(/^(?:var|let|const)\s*\{/);
+      if (objDestructHead) {
+        const openIdx = line.indexOf("{");
+        const closeIdx = findMatchingBracketAware(line, openIdx);
+        const after = closeIdx !== -1 ? line.slice(closeIdx + 1).trim() : "";
+        const eqM = after.match(/^=\s*(\w+)\s*;?$/);
+        if (closeIdx !== -1 && eqM) {
+          const sv = this.structVars.get(eqM[1]);
+          if (sv) {
+            const collected: Array<[string, WatType]> = [];
+            this.collectDestructureLocals(line.slice(openIdx, closeIdx + 1), sv.def, collected);
+            for (const [localName, ty] of collected) {
+              declaredLocals.push([localName, ty]);
+              locals.set(localName, ty);
             }
           }
+          continue;
         }
-        continue;
       }
       // Phase 24: nullable variable declaration: const x: i32 | null = ...
       const nlPre = line.match(
@@ -15129,6 +15328,10 @@ class WasicTranspiler {
       /Array\.from\(\s*\{\s*length\s*:\s*([^}]+?)\s*\}\s*,\s*\(\s*\)\s*=>\s*\[\]\s*\)/g,
       (_full, lenExpr) => `__arr_from_2d__(${lenExpr.trim()})`,
     );
+    // Phase 51.3: desugar destructuring function params into a synthetic param + injected
+    // `const { … } = __pd` binding. Must run BEFORE parseFunctions so the binding is collected
+    // into the function body, and after parseStructs/parseClasses so synthetic params resolve.
+    this.expandParamDestructuring();
     this.parseFunctions();
     this.parseArrowFunctions();
     this.injectClosureCaptures();
