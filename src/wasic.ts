@@ -816,6 +816,34 @@ function parseDepth0FieldsWithShorthand(body: string): Record<string, string> {
   return result;
 }
 
+/** Phase 51.2: Parse an object-literal body that may contain a spread element `...source`.
+ *  Returns the spread source variable (last one wins; null if none) and the explicit
+ *  field overrides (named `k: v` and shorthand `k`). Spread tokens are excluded from `fields`. */
+function parseStructLiteralWithSpread(
+  body: string,
+): { spreadSource: string | null; fields: Record<string, string> } {
+  const fields: Record<string, string> = {};
+  let spreadSource: string | null = null;
+  for (const tok of splitBraceAwareCommas(body)) {
+    const t = tok.trim();
+    if (!t) continue;
+    const sp = t.match(/^\.\.\.(\w+)$/);
+    if (sp) {
+      spreadSource = sp[1];
+      continue;
+    }
+    const ci = t.indexOf(":");
+    if (ci !== -1) {
+      const key = t.slice(0, ci).trim();
+      const val = t.slice(ci + 1).trim();
+      if (/^\w+$/.test(key)) fields[key] = val;
+    } else if (/^\w+$/.test(t)) {
+      fields[t] = t; // shorthand property
+    }
+  }
+  return { spreadSource, fields };
+}
+
 /** Splits a comma-separated string respecting curly-brace and bracket nesting.
  *  Use instead of `.split(",")` when elements may be struct/object literals. */
 function splitBraceAwareCommas(s: string): string[] {
@@ -1305,6 +1333,10 @@ class WasicTranspiler {
   // Phase 30: runtime field initializers for struct literals with non-constant values
   // varName → { fieldName: exprString } — emitted as store instructions after local.set $p
   private structVarRuntimeInits: Map<string, Record<string, string>> = new Map();
+  // Phase 51.2: object spread — varName → spread-source var name for `const r: T = { ...src, k: v }`.
+  // Marks struct-let vars whose value is built at runtime by copying a base struct then applying
+  // overrides; the pre-scan sets ptr=-3 (heap) and the emit path routes to emitRuntimeStructLiteral.
+  private structSpreadVars: Map<string, string> = new Map();
   // Phase 34: type predicate functions: funcName → { paramName, targetType }
   // These functions return bool (i32) and annotate narrowing via "param is Type" return syntax.
   private typePredicateFuncs: Map<string, { paramName: string; targetType: string }> = new Map();
@@ -4126,6 +4158,16 @@ class WasicTranspiler {
     if (openIdx === -1) return null;
     const bodyStr = extractOuterObjectBody(litStr, openIdx);
     if (!bodyStr) return null;
+    // Phase 51.2: object spread `{ ...base, k: v }` — copy base fields, then apply overrides.
+    const spreadProbe = parseStructLiteralWithSpread(bodyStr);
+    if (spreadProbe.spreadSource) {
+      return this.emitSpreadStructLiteral(
+        def,
+        spreadProbe.spreadSource,
+        spreadProbe.fields,
+        locals,
+      );
+    }
     const rawFields = parseDepth0FieldsWithShorthand(bodyStr);
     const stmts: string[] = [
       `(local.set $__rt_struct_ptr (call $__malloc (i32.const ${def.totalSize})))`,
@@ -4139,6 +4181,88 @@ class WasicTranspiler {
         : "i32.store";
       const valWat = this.emitExpr(valExpr, locals, field.type);
       stmts.push(`(${storeOp} offset=${field.offset} (local.get $__rt_struct_ptr) ${valWat})`);
+    }
+    stmts.push(`(local.get $__rt_struct_ptr)`);
+    return `(block (result i32)\n        ${stmts.join("\n        ")}\n      )`;
+  }
+
+  /** Phase 51.2: resolve a spread-source variable to its struct def + a WAT pointer expression.
+   *  Works for struct vars (locals, module globals, or static-address consts) and class instances. */
+  private resolveStructBase(
+    name: string,
+    locals: Map<string, WatType>,
+  ): { def: StructDef; ptrWat: string } | null {
+    const sv = this.structVars.get(name);
+    if (sv) {
+      const ptrWat = locals.has(name)
+        ? `(local.get $${name})`
+        : this.moduleGlobals.has(name)
+        ? `(global.get $${name})`
+        : sv.ptr >= 0
+        ? `(i32.const ${sv.ptr})`
+        : `(local.get $${name})`;
+      return { def: sv.def, ptrWat };
+    }
+    const cv = this.classVars.get(name);
+    if (cv) {
+      const cd = this.classDefs.get(cv.className);
+      if (cd) {
+        const ptrWat = locals.has(name) ? `(local.get $${name})` : `(global.get $${name})`;
+        return { def: cd.struct, ptrWat };
+      }
+    }
+    return null;
+  }
+
+  /** Phase 51.2: build `{ ...base, k: v }` at runtime. Copies every target field from `base`
+   *  (matched by name, using base's own offset/type), then writes the explicit overrides. Fields
+   *  present in neither remain zero (fresh bump-allocated memory is zero). String fields copied
+   *  from base move both the ptr and len words. */
+  private emitSpreadStructLiteral(
+    def: StructDef,
+    spreadSource: string,
+    overrides: Record<string, string>,
+    locals: Map<string, WatType>,
+  ): string {
+    const baseInfo = this.resolveStructBase(spreadSource, locals);
+    const stmts: string[] = [
+      `(local.set $__rt_struct_ptr (call $__malloc (i32.const ${def.totalSize})))`,
+    ];
+    for (const field of def.fields) {
+      const storeOp = field.type === "f64"
+        ? "f64.store"
+        : field.type === "i64"
+        ? "i64.store"
+        : "i32.store";
+      if (Object.prototype.hasOwnProperty.call(overrides, field.name)) {
+        const valWat = this.emitExpr(overrides[field.name], locals, field.type);
+        stmts.push(`(${storeOp} offset=${field.offset} (local.get $__rt_struct_ptr) ${valWat})`);
+      } else if (baseInfo) {
+        const bf = baseInfo.def.fields.find((f) => f.name === field.name);
+        if (bf) {
+          if (field.type === "string") {
+            stmts.push(
+              `(i32.store offset=${field.offset} (local.get $__rt_struct_ptr) (i32.load offset=${bf.offset} ${baseInfo.ptrWat}))`,
+            );
+            stmts.push(
+              `(i32.store offset=${
+                field.offset + 4
+              } (local.get $__rt_struct_ptr) (i32.load offset=${
+                bf.offset + 4
+              } ${baseInfo.ptrWat}))`,
+            );
+          } else {
+            const loadOp = field.type === "f64"
+              ? "f64.load"
+              : field.type === "i64"
+              ? "i64.load"
+              : "i32.load";
+            stmts.push(
+              `(${storeOp} offset=${field.offset} (local.get $__rt_struct_ptr) (${loadOp} offset=${bf.offset} ${baseInfo.ptrWat}))`,
+            );
+          }
+        }
+      }
     }
     stmts.push(`(local.get $__rt_struct_ptr)`);
     return `(block (result i32)\n        ${stmts.join("\n        ")}\n      )`;
@@ -8338,6 +8462,17 @@ class WasicTranspiler {
         }
         return stmts2.join("\n      ");
       }
+    }
+
+    // Phase 51.2: object spread init: const/let r: TypeName = { ...src, k: v }
+    // The pre-scan flagged `r` in structSpreadVars and declared it as an i32 local; build the
+    // struct at runtime (copy base fields, apply overrides) and assign the pointer.
+    // Must come BEFORE the static structLetMatch handler below (which assumes a non-spread literal).
+    const structSpreadMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\{/);
+    if (structSpreadMatch && this.structSpreadVars.has(structSpreadMatch[1])) {
+      const litStr = line.slice(line.indexOf("{"));
+      const rt = this.emitRuntimeStructLiteral(litStr, structSpreadMatch[2], locals);
+      if (rt) return `(local.set $${structSpreadMatch[1]} ${rt})`;
     }
 
     // Struct object literal init: const/let p: TypeName = { ... }
@@ -13432,6 +13567,7 @@ class WasicTranspiler {
     this.typedArrayVars = new Map();
     this.structVars = new Map();
     this.structVarRuntimeInits = new Map();
+    this.structSpreadVars = new Map();
     this.classVars = new Map();
     this.interfaceVars = new Map();
     this.findResultVars = new Set();
@@ -13737,6 +13873,26 @@ class WasicTranspiler {
               const cOpenIdx = combined.indexOf("{", combined.indexOf("="));
               bodyStr = cOpenIdx !== -1 ? extractOuterObjectBody(combined, cOpenIdx) : null;
             }
+          }
+          // Phase 51.2: object spread `const r: T = { ...src, k: v }` — build at runtime by
+          // copying the base struct then applying overrides. Mark for heap alloc (ptr=-3) and
+          // route the emit path to emitRuntimeStructLiteral; skip static field parsing.
+          if (bodyStr !== null && parseStructLiteralWithSpread(bodyStr).spreadSource) {
+            this.structSpreadVars.set(
+              varName,
+              parseStructLiteralWithSpread(bodyStr).spreadSource!,
+            );
+            // ptr=-1 → "pointer lives in the local" (same as function-returned structs), so all
+            // field-access sites read via (local.get $var). The structSpreadMatch emit handler
+            // owns the assignment, so the heap pointer is written into the local at the let stmt.
+            this.structVars.set(varName, { def, ptr: -1 });
+            declaredLocals.push([varName, "i32"]);
+            locals.set(varName, "i32");
+            if (!locals.has("__rt_struct_ptr")) {
+              declaredLocals.push(["__rt_struct_ptr", "i32"]);
+              locals.set("__rt_struct_ptr", "i32");
+            }
+            continue;
           }
           // Parse field initializers using depth-0 field splitter (handles nested struct literals)
           const initFields: Record<string, string> = {};
@@ -15012,6 +15168,7 @@ class WasicTranspiler {
       this.typedArrayVars = new Map();
       this.structVars = new Map();
       this.structVarRuntimeInits = new Map();
+      this.structSpreadVars = new Map();
       this.classVars = new Map();
       this.nullableVarInnerType = new Map();
       this.catchVarNames = new Set();
@@ -15083,6 +15240,22 @@ class WasicTranspiler {
             // Phase 42: use depth-aware body extraction
             const openIdx2 = line.indexOf("{", line.indexOf("="));
             const bodyStr2 = openIdx2 !== -1 ? extractOuterObjectBody(line, openIdx2) : null;
+            // Phase 51.2: object spread at module scope — mirror the emitFunction pre-scan.
+            if (bodyStr2 !== null && parseStructLiteralWithSpread(bodyStr2).spreadSource) {
+              this.structSpreadVars.set(
+                varName2,
+                parseStructLiteralWithSpread(bodyStr2).spreadSource!,
+              );
+              // ptr=-1 → pointer lives in the local; field reads use (local.get $var).
+              this.structVars.set(varName2, { def: def2, ptr: -1 });
+              startLocals.set(varName2, "i32");
+              startDeclaredLocals.push([varName2, "i32"]);
+              if (!startLocals.has("__rt_struct_ptr")) {
+                startLocals.set("__rt_struct_ptr", "i32");
+                startDeclaredLocals.push(["__rt_struct_ptr", "i32"]);
+              }
+              continue;
+            }
             if (bodyStr2 !== null) {
               const rawFields2 = parseDepth0Fields(bodyStr2);
               for (const [fieldKey2, valStr2] of Object.entries(rawFields2)) {

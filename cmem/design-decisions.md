@@ -124,6 +124,17 @@ string-array element, and `Math.*`/`Number.*` handling all have such twins.
   `rawBody` that is a single physical line is split via `splitStmts` so multi-statement single-line
   bodies (`super(k); this.v = v;`) aren't mangled into one stub. Relies on comments being stripped
   before `parseClasses` (they are — `stripComments` runs at the top of `transpile`).
+- **Object spread `{ ...src, k: v }` (Phase 51.2)** — both struct-let pre-scans register the spread
+  var with **`ptr:-1`** (NOT `-3`). The 17 struct field-access sites only special-case `ptr === -1`
+  → `(local.get $var)`; a `-3` (heap) sentinel would make every read compute `(i32.const -3)`. The
+  spread var IS an i32 local holding the malloc'd pointer (same shape as a function-returned struct),
+  so `-1` is correct. The `structSpreadMatch` emit branch (in `emitStatement`, BEFORE the static
+  `structLetMatch`) owns the `local.set`, so it does not consult `sv.ptr`. `emitSpreadStructLiteral`
+  copies base fields BY NAME using the base's own offset/type (string fields copy ptr+len both words);
+  unset fields rely on zeroed bump-allocated memory. `parseStructLiteralWithSpread` excludes the
+  `...tok` from the override map so the shorthand-detection regex can't misfire on the spread source.
+  Single-physical-line literals only; string-field *overrides* are ptr-only (pre-existing
+  `emitRuntimeStructLiteral` limit — copies are fine).
 
 ## Tooling
 

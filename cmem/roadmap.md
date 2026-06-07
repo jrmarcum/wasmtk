@@ -84,8 +84,19 @@ not TS syntax, so it is orthogonal and ungated.)
    2026-06-05** (test `51_SingleLineClassBody`, suite 285→286): `parseClasses` now splits class members
    with a depth/string-aware `splitClassMemberLines` (so fields sharing a line with methods are parsed)
    and splits single-physical-line method bodies via `splitStmts`.
-2. **Object spread** `{...base, k: v}` — hardens struct field-copy + override codegen (high-frequency;
-   central to struct handling).
+2. **Object spread** `{...base, k: v}` — ✅ **DONE 2026-06-07** (test `51_ObjectSpread`, suite
+   287→288). `const r: T = { ...src, k: v }` builds the struct at runtime: copies every target field
+   from `src` by name (using the base's own offset/type; string fields copy both ptr+len words), then
+   applies the named/shorthand overrides; unset fields stay zero. New `parseStructLiteralWithSpread`
+   helper + `resolveStructBase`/`emitSpreadStructLiteral` in `src/wasic.ts`; `emitRuntimeStructLiteral`
+   delegates when a spread is present (non-spread path unchanged). Both struct-let pre-scans (function +
+   module) flag the var in `structSpreadVars` and register it with **ptr=-1** ("pointer lives in the
+   local," so every field-read site reads via `local.get`); a `structSpreadMatch` emit branch (before
+   the static struct-let handler) owns the assignment. Works for literal/runtime-var overrides, pure
+   copy, mixed i32/f64 fields, function-local + module-level, and chained spread (spread of a spread).
+   Known limits: single-physical-line literals only; string-field *overrides* still store ptr-only
+   (pre-existing `emitRuntimeStructLiteral` limitation — copies are fine); spread in `return {...}` /
+   call-arg position not wired (struct-let + array `push` contexts are).
 3. **Destructuring in function params** `f({x, y}: Vec2)`, then **nested destructuring**
    (`{a:{b}}`, `[[a,b],c]`) — hardens binding/offset paths, built on the layout validated in #2.
 4. **Utility types** — `Partial`/`Readonly`/`Record`/`Pick`/`Omit`/`NonNullable` first, then
@@ -171,8 +182,8 @@ kernel — `eval`/`new Function`, pervasive `any`, open prototype mutation — s
 
 ## TypeScript feature gaps compilable later (now scheduled — see "Prioritized execution order")
 
-Object spread `{...o, k:v}`, utility types (`Partial`/`Record`/…), destructuring in params,
-`Number.parseInt`/`parseFloat`, `instanceof` for class/DU tags, `in` operator, nested destructuring.
-As of 2026-06-03 these are no longer unscheduled — they are sequenced into **Phases 51–53** above
-(foundational subset gates the async + own-runtime tracks). Full analysis in CLAUDE.md
-§ "TypeScript Feature Gap Analysis".
+Utility types (`Partial`/`Record`/…), destructuring in params, `Number.parseInt`/`parseFloat`,
+`in` operator, nested destructuring. As of 2026-06-03 these are no longer unscheduled — they are
+sequenced into **Phases 51–53** above (foundational subset gates the async + own-runtime tracks).
+Done so far: `instanceof` (51.1, 2026-06-05) and **object spread `{...o, k:v}` (51.2, 2026-06-07)**.
+Full analysis in CLAUDE.md § "TypeScript Feature Gap Analysis".
