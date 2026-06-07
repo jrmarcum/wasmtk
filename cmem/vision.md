@@ -53,7 +53,7 @@ prototype with a Rust production implementation is a one-line manifest change.
 ┌─────────────────────────────────────────────────────────────┐
 │                   LANGUAGE COMPILER LAYER                   │
 │  wasic(TS) │ cargo-component(Rust) │ componentize-py(Python)│
-│  clang wasm32(C/C++) │ TinyGo(Go) │ dotnet wasi(C#) │ ...  │
+│  TinyGo(Go) │ zig(Zig) │ ...                               │
 └─────────────────────────────────────────────────────────────┘
          ↓               ↓               ↓              ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -65,7 +65,7 @@ prototype with a Rust production implementation is a one-line manifest change.
 ┌─────────────────────────────────────────────────────────────┐
 │                   HOST RUNTIME LAYER                        │
 │  universalWasmLoader(JS/TS) │ loader-rs │ loader-py         │
-│  loader-go │ loader-jvm │ loader-dotnet │ loader-c(header)  │
+│  loader-go │ loader-jvm │ loader-c(header)                 │
 │         (all implement the UniversalWasmLoader Spec)        │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -173,8 +173,7 @@ Additions scoped here (Stage 1):
 | `universalWasmLoader-py`     | Python              | wasmtime-py        | PyPI             |
 | `universalWasmLoader-go`     | Go                  | wazero             | pkg.go.dev       |
 | `universalWasmLoader-jvm`    | Java / Kotlin       | Chicory            | Maven Central    |
-| `universalWasmLoader-dotnet` | C# / .NET           | Wasmtime NuGet     | NuGet            |
-| `universalWasmLoader-c`      | C/C++/Zig/V/Julia   | wasmtime C API     | header-only      |
+| `universalWasmLoader-c`      | Zig/V/Julia         | wasmtime C API     | header-only      |
 
 Julia uses this loader via Julia's `ccall` FFI to the wasmtime C API — no separate
 Julia-specific repo is planned. Julia is Tier 3 (community-contributed or long-term).
@@ -189,7 +188,6 @@ Every loader exposes the same conceptual API in its language's idiom:
 
 // Go      → WasmImport("./module.wasm")
 // Java    → WasmImport.load("./module.wasm")
-// C#      → await WasmImport.LoadAsync("./module.wasm")
 ```
 
 All pass the same reference test suite defined in the spec.
@@ -269,9 +267,7 @@ WIT interfaces, composes components, and produces the final `app.wasm`.
 | TypeScript  | wasmtk wasic                             | Full (Phase 41 WIT)     | Tier 1          |
 | Rust        | wasmtk --lang=rust (init/initmod/modc/build/run/add/remove/list/fmt/clean → rsxtk) | Producer ✅ 2026-06-07 (delegates to rsxtk); bindgen deferred | Tier 1 |
 | Python      | componentize-py                          | Full                    | Tier 1          |
-| C / C++     | clang wasm32-wasi + wasm-tools wrap      | Via adapter             | Tier 1          |
 | Go          | wasmtk --lang=go (init/modc/run; TinyGo/std; modc→wasm library) | Producer v1 ✅ 2026-06-06; reactor library ✅ 2026-06-07; string/aggregate bindgen deferred | Tier 2 |
-| C# / .NET   | dotnet wasm/wasi                         | .NET 8+ experimental    | Tier 2          |
 | Zig         | wasmtk --lang=zig (init/modc/run; zig build-exe) | Producer ✅ 2026-06-07 (library + wasi program); bindgen deferred | Tier 2 |
 | Java/Kotlin | TeaVM or GraalVM                         | Limited                 | Tier 3          |
 | V           | v -os wasm                               | Basic                   | Tier 3          |
@@ -532,7 +528,7 @@ that the spec is implementable before committing to additional ports.
 - `[wasmtk]` section parser in wasmtk CLI
 - `wasmtk build` command — reads manifest, invokes per-language compilation
 - Language recipes: TypeScript (wasic), Rust (cargo-component), Python
-  (componentize-py), C (clang wasm32)
+  (componentize-py)
 - WIT validation — verify interface contracts across components before composition
 - `wasmtk compose` — wraps `wasm-tools compose` with WIT-aware wiring
 - `wasmtk run` — runs composed output via configured host runtime
@@ -548,8 +544,8 @@ that the spec is implementable before committing to additional ports.
 - `wasmtk port <component> --to <language>` — new language scaffold with same WIT
 - `wasmtk activate <component>` — swaps implementation, validates WIT compatibility
 - Incremental builds — source hashing, only rebuild what changed
-- Additional language recipes: Go, C#, Zig
-- Additional loaders: `universalWasmLoader-go`, `universalWasmLoader-jvm`, `universalWasmLoader-dotnet`, `universalWasmLoader-c`
+- Additional language recipes: Go, Zig
+- Additional loaders: `universalWasmLoader-go`, `universalWasmLoader-jvm`, `universalWasmLoader-c`
 
 ---
 
@@ -577,8 +573,7 @@ jrmarcum/
 ├── universalWasmLoader-py        ← Python port (Stage 2)
 ├── universalWasmLoader-go        ← Go port (Stage 4)
 ├── universalWasmLoader-jvm       ← Java/Kotlin port (Stage 4)
-├── universalWasmLoader-dotnet    ← C# port (Stage 4)
-└── universalWasmLoader-c         ← C/C++/Zig/V/Julia header (Stage 4)
+└── universalWasmLoader-c         ← Zig/V/Julia header (Stage 4)
 ```
 
 The spec in `universalWasmLoader/SPEC.md` is the single written contract that all

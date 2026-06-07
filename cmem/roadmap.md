@@ -118,7 +118,7 @@ nothing.
 
 ## Congruent polyglot-producer goal + ABI posture (added 2026-06-03 — full detail in [polyglot-producers.md](polyglot-producers.md))
 
-**Goal:** unify the **TS/JS, C, C++, Rust, Zig, Go** toolchains into one congruent wasm capability —
+**Goal:** unify the **TS/JS, Rust, Zig, Go** toolchains into one congruent wasm capability —
 heterogeneous *producers* converging on the homogeneous middle/back end wasmtk already owns (WASI-P1
 core-module output → bindgen ABI → binaryen-ts optimize → wasmmerge/wasmbundle link → wasmtk TS WASI
 host). Adding a language = adding a producer, not a toolchain.
@@ -127,8 +127,7 @@ host). Adding a language = adding a producer, not a toolchain.
 | --- | --- | --- |
 | **ABI forward-alignment (stay P1)** | Canonicalize the **in-memory boundary layout** + the **return convention** now (callee-allocated i32-ptr return + `cabi_post_<name>`; route all boundary allocs through `cabi_realloc`); keep P1 WASI imports behind a thin seam. Both P1-legal; makes future P2 a wrap, not a rewrite. | ⬜ **decided 2026-06-03**, not yet implemented. Independent of Phase 51; small near-term track. |
 | **Go producer (TinyGo)** | `tinygo build` → wasm → shared optimize/host path. Library-first; stdlib `go` heavier fallback. | ✅ **v1 SHIPPED 2026-06-06, refined 2026-06-07** via `--lang=go` (path defaults to cwd): `init` (scaffold a **wasm library** by default; `--go-target=wasm` for a browser project), `modc` (**WASI reactor library** by default — `-buildmode=c-shared`: no `_start`, exports `//go:wasmexport` funcs, callable via `wasmtk mod`/bindgen; `--go-target=wasm` for a browser module + `wasm_exec.js`), `run` (build wasip1 command + run; **auto-detects** a `.go` file or a dir with `go.mod`, no flag needed). `--go-runtime=tinygo`(default)/`std`. `src/gowasic.ts`. **wasm-opt:** real `wasm-opt` → TinyGo full (incl. goroutines); else passthrough shim + `-scheduler=none` + **binaryen-ts `-Oz`** (no external binaryen; goroutine-free). **2026-06-07 changes:** `wasic --lang=go` REMOVED; `modc --lang=go` flipped browser→reactor-library (the formerly-deferred reactor/library item, now DONE — Go analog of TS `modc`); required a `_initialize` fix in `wasmtk mod`/`run` (reactor exports trap otherwise) + a `syscall/js`-in-library-build hint. Verified `modc --lang=go` lib → `wasmtk mod lib.wasm add 2 3` → 5. **Still deferred:** Go string/aggregate **bindgen** host marshalling (needs ABI forward-alignment — Go's layout ≠ Canonical ABI); a *mergeable* Go leaf (alloc-free `wasm-unknown`) is feasible but not auto-wired. Fixture: `tests/go_fixtures/hello.go` (not auto-run — needs TinyGo). |
-| **asyncify pass in binaryen-ts** | Port binaryen's `--asyncify` pass into `@jrmarcum/binaryen-ts` so wasmtk can be TinyGo's `wasm-opt` for **goroutine** code too (no external binaryen at all). Today binaryen-ts has `-Oz` but NOT asyncify, so goroutine Go needs a real `wasm-opt` installed. | ⬜ **future (large)** — asyncify is one of binaryen's most complex whole-program passes (~1.5k LOC C++) with an exact ABI contract TinyGo depends on; do it properly upstream in binaryen-ts, not rushed. Unblocks goroutine Go on the binaryen-ts path. |
-| **C/C++ producer (Zig)** | `zig cc`/`zig c++` (bundled clang + libc-from-source) → `wasm32-wasi`, then through the shared optimize/host path. **ADR: no TS reimplementation of emscripten.** | ⬜ future producer track |
+| **asyncify pass in binaryen-ts** | Port binaryen's `--asyncify` pass into `@jrmarcum/binaryen-ts` so wasmtk can be TinyGo's `wasm-opt` for **goroutine** code too (no external binaryen at all). Today binaryen-ts has `-Oz` but NOT asyncify, so goroutine Go needs a real `wasm-opt` installed. | ⬜ **future (large)** — asyncify is one of binaryen's most complex whole-program passes (~1.5k LOC) with an exact ABI contract TinyGo depends on; do it properly upstream in binaryen-ts, not rushed. Unblocks goroutine Go on the binaryen-ts path. |
 | **Zig producer** | `zig build-exe` (cleanest native path) | ✅ **SHIPPED 2026-06-07** (`src/zigwasic.ts`, `--lang=zig`): `init` (wasm-library scaffold), `modc` (freestanding library, `--export=<name>` scanned + binaryen-ts `-Oz`), `run` (`wasm32-wasi` on wasmtk's TS host; auto-detects `.zig`). Comptime-guarded scaffold `main` (Zig analyzes `main` even with `-fno-entry`). See [polyglot-producers.md](polyglot-producers.md). |
 | **Rust producer** | Driver = **`rsxtk`** (owner's Rust WASM toolkit, crates.io `jrmarcum/rsxtk`). | ✅ **SHIPPED 2026-06-07** (`src/rustwasic.ts`, `--lang=rust`) — **delegates fully to rsxtk**: `init`/`initmod`/`modc`(→build wasm)/`build`(→build wasi)/`run`/`add`/`remove`/`list`/`fmt`/`clean`. Prereq `rustup target add wasm32-wasip1`. No WIT/bindgen yet (stays wasmtk's). Known rsxtk-side gap: `initmod` library + `build`/`mod` expects a `main` (rsxtk template lacks `[lib]`/crate-type — fix in rsxtk). `wasm32-wasip2` is the one native-P2 path — decide before mixing into a P1-merge flow. |
 | **P2 producer (real components)** | Embed component-type section + emit/wrap via `wasm-tools component new`; migrate WASI P1→`wasi:cli`/`wasi:io`. | ⬜ **deferred** — only pays off vs. a *native component-runtime* consumer (Wasmtime/WasmEdge/WAMR/Spin); JS-runtime consumers transpile P2 back to core wasm anyway. P1-core + terminal adapter covers the goal. |
@@ -140,7 +139,7 @@ merge-tier rewrite. wasmmerge merges P1 modules; never merge already-built *comp
 **Verified 2026-06-03:** wasmtk itself is NOT a P2 producer — it emits P1 core modules + sidecar
 `.wit` + host-side bindgen ABI ("bucket (b)"). Canonical ABI is partial (`cabi_realloc` exported;
 return side not canonical, no `cabi_post_return`). See [polyglot-producers.md](polyglot-producers.md)
-for the raw evidence and the Zig ADR.
+for the raw evidence.
 
 ## "TypeScript as a DLL" vision
 
@@ -160,7 +159,7 @@ Prefer `modc` over `wasic` for consumer-facing modules. The DLL model is complet
 WASM as the universal binary, WIT as the universal interface contract; any language → component;
 components compose regardless of source language; pixi manages toolchains, wasmtk manages WASM.
 Staged: Stage 1 `universalWasmLoader` (JS/TS reference loader + SPEC.md + InstancePool) is the
-current priority; Stages 2–5 add Rust/Python/Go/JVM/.NET loaders, `wasmtk build`/`compose` via
+current priority; Stages 2–5 add Rust/Python/Go/JVM loaders, `wasmtk build`/`compose` via
 pixi, registry + IDE integration.
 
 ## Out of scope without more WASM proposals

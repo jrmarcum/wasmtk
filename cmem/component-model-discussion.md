@@ -26,10 +26,8 @@ and the "TypeScript as a DLL" vision in [vision.md](vision.md).
 
 ## Tentative decisions (by the project owner, this thread)
 
-1. **Drop C/C++ from the producer set.** Keep **TS (existing), Go, Rust, Zig**. Rationale: each
-   has a single unambiguous module file extension (`.ts/.go/.rs/.zig`), so detection is 1:1 and
-   there is no `.h`/`.hpp` C-vs-C++ ambiguity to manage. (This reverses the C/C++-via-Zig ADR in
-   polyglot-producers.md — revisit that ADR if C/C++ is ever wanted again.)
+1. **Producer set = TS (existing), Go, Rust, Zig.** Each has a single unambiguous module file
+   extension (`.ts/.go/.rs/.zig`), so producer detection is 1:1.
 2. **`init`, `modc`, `wasic` take an explicit `--lang=<>`** for clarity/consistency. In a
    tasks-driven monorepo the flag is written **once per sub-project task**, so it is
    self-documenting, not repetitive friction (the earlier friction objection was about ad-hoc
@@ -223,7 +221,7 @@ already inside `host.out`, so they're not in this barrel.
 ## Related memory
 
 - [polyglot-producers.md](polyglot-producers.md) — producer tracks, ABI forward-alignment decision,
-  Go v1 shipped, the (now-reversed-in-this-thread) C/C++-via-Zig ADR.
+  Go v1 shipped.
 - [vision.md](vision.md) — full polyglot ecosystem + `[wasmtk.components]` pixi idea + universalWasmLoader.
 - [architecture.md](architecture.md) — wasic/modc/bindgen/hybrid, wasmmerge, Canonical ABI partial-alignment note.
 - [stdlib-bundling-brief.md](stdlib-bundling-brief.md) — capabilities + virtual `wasmtk:<cap>` tree-shake.

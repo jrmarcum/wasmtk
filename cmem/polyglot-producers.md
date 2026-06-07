@@ -1,4 +1,4 @@
-# Polyglot producer congruence + ABI / P2 posture (+ C/C++ Zig ADR)
+# Polyglot producer congruence + ABI / P2 posture
 
 > Added 2026-06-03. Authoritative, portable memory (this folder supersedes the gitignored
 > machine-local `CLAUDE.md`). Links: [architecture.md](architecture.md) (Canonical ABI / build
@@ -6,7 +6,7 @@
 
 ## Project goal — one congruent polyglot wasm capability
 
-**wasmtk's goal is to unify the TS/JS, C, C++, Rust, Zig, and Go toolchains into a single congruent
+**wasmtk's goal is to unify the TS/JS, Rust, Zig, and Go toolchains into a single congruent
 wasm build capability.** Point wasmtk at source in any of those languages and get a wasm artifact
 that flows through one shared downstream contract — not five disjoint toolchains bolted together,
 but heterogeneous *producers* converging on a homogeneous middle/back end wasmtk already owns.
@@ -53,14 +53,12 @@ Still distinguish `rsxtk` (a build/run **CLI toolkit**) from the planned `univer
 
 - **TS (typed subset):** `wasic` — direct TS → optimized WAT → wasm, no JS runtime. (existing)
 - **TS/JS (dynamic):** `javyc` — embedded Javy/QuickJS engine path. (existing)
-- **C / C++:** `zig cc` / `zig c++` — Zig's bundled clang + libc-built-from-source → `wasm32-wasi`.
-  (per ADR below)
 - **Zig:** `zig build-exe -target wasm32-wasi` (or freestanding). Cleanest native path.
 - **Rust:** build/run driver is **`rsxtk`** (jrmarcum's Rust WASM toolkit — see note below), which
   compiles Rust → `wasm32-wasip1` and runs it; underneath it's `rustc` `wasm32-wasip1` (WASI 0.1;
   the old `wasm32-wasi`, renamed in Rust 1.78, removed under the old name in 1.84). Use **Zig as the
-  linker / C cross-compiler** for crates with C deps (cargo-zigbuild pattern). rustc does its own
-  LLVM wasm codegen; Zig fills the C/link role.
+  linker** for crates with native deps (cargo-zigbuild pattern). rustc does its own LLVM wasm
+  codegen; Zig fills the link role.
 - **Go:** **TinyGo** `tinygo build -target=wasip1` → WASI P1 core module (canonical producer; small
   output, clean wasip1/reactor targets). Library/`modc` analog = reactor exports via
   `//go:wasmexport` (or `-buildmode=c-shared`), no `_start`. Stdlib `GOOS=wasip1 go build` is a
@@ -74,7 +72,6 @@ norm, not a per-toolchain gap:
 - **Zig:** stdlib still targets WASI P1; emits a single core module. P2 only via post-compile adapter
   (`wasm-tools component new --adapt wasi_snapshot_preview1.wasm`), scriptable in build.zig.
   (confirmed 2026-06-03)
-- **C / C++ (wasi-sdk / zig cc):** P1 core modules; same adapter step for P2.
 - **Rust:** the one exception — `wasm32-wasip2` is native P2 (tier-2 since Rust 1.82, Oct 2024).
   `wasm32-wasip1` is still P1 + adapter.
 - **Go (TinyGo):** primarily P1 (`-target=wasip1`), but recent TinyGo (~0.33+) also has a native
@@ -186,10 +183,10 @@ forward-alignment above already in place, this reduces to:
 3. Emit components directly, or shell out to `wasm-tools component new` as a terminal stage.
 4. Migrate WASI imports from P1 to `wasi:cli` / `wasi:io` 0.2 worlds, or ship the P1→P2 adapter.
 
-## Open scope question (shared with the ADR below)
+## Open scope question (shared with the Go ADR below)
 
 Producers ingest single translation units / crates cleanly; driving full existing build systems
-(configure/make/cmake/cargo with C deps) against the wasm target is the harder, less-bounded part.
+(cargo / `go.mod` with native deps) against the wasm target is the harder, less-bounded part.
 Decide per language how far wasmtk wraps the build system vs. ingests pre-built units.
 
 ## VERIFIED: native-producer mergeability — allocation is the gate, allocator-control is the differentiator (2026-06-07)
@@ -356,73 +353,6 @@ import it. Rust skips it (rsxtk optimizes).
 
 ---
 
-## ADR: C/C++ → wasm ingestion path — Zig toolchain, not an emscripten/TS reimplementation (2026-06-03)
-
-### Question
-
-Should emscripten (github.com/emscripten-core/emscripten) be reimplemented in TypeScript for
-inclusion in wasmtk, to give the toolkit a C/C++ → wasm capability?
-
-### Decision
-
-**No TS reimplementation of emscripten. Add a Zig-based compiler path** that vendors the Zig
-toolchain (`zig cc` / `wasm-ld` / build.zig) to ingest C/C++ (and Zig source) to wasm.
-
-### Why not reimplement emscripten in TS
-
-- Emscripten's pipeline: Clang (C/C++ → LLVM IR) → LLVM wasm backend → wasm-ld → Binaryen
-  (optimize/transform) → JS glue.
-- We already replaced the Binaryen box with **binaryen-ts**. That tier is tractable in TS because
-  wasm is a small, fully-specified IR. It does NOT move the needle on emscripten.
-- Emscripten's defining/irreplaceable component is the C/C++ **front end = Clang + LLVM**.
-  Reimplementing that in TS is categorically harder than binaryen-ts (parsing + semantic analysis of
-  C++), not "more of the same." No sane TS path exists.
-- The syslibs (musl, libc++) are NOT port targets — they are C source *compiled to* wasm. Even with a
-  TS front end they'd be compiler inputs, not TS ports.
-
-### Why Zig is the right route
-
-- `zig cc` is a bundled Clang; Zig builds libc from source per target (ships ~40 libcs), including
-  wasm targets. One compact toolchain supplies BOTH hard pieces: the C/C++ front end and the syslib
-  that compiles to wasm.
-- Proven role: cargo-zigbuild uses Zig as the portable C cross-compiler to ship code into
-  wasm32-wasi. We'd use it the same way.
-
-### Architectural fit (producer → optimize → host stays ours)
-
-- Producer: Zig emits **wasm32-wasi** modules (or freestanding where we supply imports).
-- Optimize: run output through **binaryen-ts** (`-Oz` / transforms) — same step wasic uses.
-- Host: wasmtk TS side is the **WASI host** (the `run` executor already lives there); **bindgen**
-  bridges the canonical ABI.
-- Net: only native dependency is the Zig binary at build time. Runtime stays TS/Deno.
-
-### Caveats / known friction
-
-1. `zig cc` is NOT a clean drop-in clang for wasm *linking*. wasm-only linker flags (export control,
-   `--import-undefined`, reactor vs. command `_initialize` model) are only partially supported via the
-   `zig cc` arg passthrough (see ziglang/zig #12126, #20636). → For precise import/export surface
-   control, drive the bundled `wasm-ld` directly or use the build.zig API instead of raw `zig cc`.
-2. Reintroduces a native toolchain dependency: Zig still uses the LLVM backend for wasm by default
-   (LLVM-independent path in progress). This departs from the pure-TS line that motivated
-   binaryen-ts — accepted as the pragmatic floor, analogous to keeping QuickJS for javyc's dynamic
-   path.
-3. Zig is pre-1.0 — pin a specific Zig version in the toolchain config; expect CLI/API churn.
-
-### Open question (decide early)
-
-`zig cc` compiles translation units; there is no `emconfigure`/`emmake` equivalent. Driving a large
-existing C project's configure/make/cmake against the wasm target is on us. Decide whether wasmtk
-wraps build-system invocation for the wasm target, or initially ingests only single translation units
-/ build.zig inputs.
-
-### Synergy note
-
-Existing TS→Zig mapping work (number→f64, string struct, GeneralPurposeAllocator / arena patterns)
-means a future option is for wasic to emit Zig for cases where hand-rolled WAT is painful, then let
-the Zig path lower to wasm. Separate axis from this ADR; revisit later.
-
----
-
 ## ADR: Go → wasm ingestion path — TinyGo producer, WASI-first, run via wasmtk host (2026-06-03)
 
 ### Origin
@@ -435,8 +365,7 @@ fold this into wasmtk as the **Go producer**.
 
 ### Decision (scope approved by owner 2026-06-03)
 
-Add a **TinyGo-based Go producer** to the congruent set (6th producer, after TS/JS, C, C++, Rust,
-Zig). Scope:
+Add a **TinyGo-based Go producer** to the congruent set (after TS/JS, Rust, Zig). Scope:
 
 - **TinyGo is the canonical producer** (`-target=wasip1`); stdlib `GOOS=wasip1 go build` is a heavier
   optional fallback (full runtime/GC → large binaries), not the default.
@@ -686,8 +615,8 @@ library by default). Browser `syscall/js` — shipped behind `--go-target=wasm`.
 4. **P2:** TinyGo can target `wasip2` natively (~0.33+) — treat like Rust's wasip2 (deliberate
    terminal path only; do not feed native-P2 output into the P1 merge tier).
 
-### Open question (shared with the C/C++ ADR)
+### Open question
 
 TinyGo compiles a Go module/package cleanly; driving larger Go build setups (cgo, build tags, vendored
-C deps) against the wasm target is the less-bounded part. Decide how far wasmtk wraps `go.mod`/build
+native deps) against the wasm target is the less-bounded part. Decide how far wasmtk wraps `go.mod`/build
 invocation vs. ingests a single package.
