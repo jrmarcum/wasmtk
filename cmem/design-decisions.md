@@ -173,6 +173,25 @@ string-array element, and `Math.*`/`Number.*` handling all have such twins.
   flat-tuple path emits byte-identical WAT to the pre-rewrite code (verified: zero tracked-`.wat`
   content changes), so only genuinely-new nested cases produce new bytes.
 
+- **Utility types (Phase 51.4)** — two source-level passes, NOT a new emit path. `expandUtilityTypes`
+  (BEFORE parseStructs) unwraps pass-through wrappers `Partial`/`Readonly`/`Required`/`NonNullable` →
+  inner type (balanced `<…>` via `matchAngleBracket`, loops for nesting). `expandStructUtilityTypes`
+  (AFTER parseStructs, needs the base def; BEFORE parseFunctions) synthesizes `Pick`/`Omit`/`Record`
+  structs. Load-bearing: (1) the inline synthetic name is `${Kind}_${args}` — MUST start with the
+  uppercase Kind letter, because struct-type detection everywhere keys on `[A-Z]\w*` (a `__`-prefixed
+  name silently fails to register/allocate → fields read 0). (2) `Pick`/`Omit` copy base StructFields
+  PRESERVING offsets + totalSize (so a base value is layout-compatible with the subset), `Record` packs
+  fresh. (3) `Record<string,V>` / non-literal keys → unresolved (dynamic map, out of scope). Pick/Omit
+  as interface *field* types aren't supported (parseStructs runs first); var/param/return/`type Alias`
+  positions are.
+- **console.log binary-op operand type from the LHS leading atom (`console_log.ts` `exprToWat`)** —
+  the `+`/`-`/… operand type is inferred from the LHS's leading atom: plain local, `var.field` (type via
+  `structLookup().type`), or `.length` (→i32). MUST stay conservative: if the remainder after the lead
+  atom starts with `[` `(` or `.` (i.e. `arr[i]`, `fn(...)`, `a.b.c`), fall back to the numeric default
+  so f64 array elements / call results aren't mis-typed i32. Without LHS-typing, i32 struct-field
+  arithmetic compiled to `f64.add` of i32 loads (see compiler-bugs.md). KNOWN-OPEN: `arr[i] + arr[j]`
+  in console.log still drops terms after the first (separate array-element-arithmetic bug).
+
 ## Tooling
 
 - `tsbundle` outputs **`.ts`** (`.bundled.ts`), an import inliner — NOT `deno bundle`/JavaScript.

@@ -934,6 +934,20 @@ function skipStringLiteral(s: string, i: number): number {
   return i;
 }
 
+/** Given s[openIdx] === "<", returns the index of the matching ">" respecting nested <...>.
+ *  Used by Phase 51.4 utility-type expansion (type positions only — no comparison operators). */
+function matchAngleBracket(s: string, openIdx: number): number {
+  let depth = 0;
+  for (let i = openIdx; i < s.length; i++) {
+    if (s[i] === "<") depth++;
+    else if (s[i] === ">") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
 /** Given s[openIdx] === "[", returns the index of the matching "]" respecting nested
  *  ()/[]/{} and string literals; -1 if unbalanced. */
 function findMatchingBracketAware(s: string, openIdx: number): number {
@@ -4078,6 +4092,98 @@ class WasicTranspiler {
       current = this.classInheritance.get(current);
     }
     return null;
+  }
+
+  /** Phase 51.4: pass-through utility types — `Partial<T>` / `Readonly<T>` / `Required<T>` /
+   *  `NonNullable<T>` resolve to their inner type `T` (all are layout-identical to `T` in wasic's
+   *  fixed-struct world; `NonNullable` additionally strips `| null` / `| undefined`). Pure source
+   *  text transform run BEFORE parseStructs so the unwrapped type flows through every parse pass.
+   *  Uses balanced `<…>` extraction and loops so nested wrappers (`Partial<Readonly<T>>`) collapse. */
+  private expandUtilityTypes(src: string): string {
+    const re = /\b(Partial|Readonly|Required|NonNullable)\s*</;
+    let guard = 0;
+    while (guard++ < 2000) {
+      const m = src.match(re);
+      if (!m || m.index === undefined) break;
+      const open = src.indexOf("<", m.index);
+      const close = matchAngleBracket(src, open);
+      if (close === -1) break;
+      let inner = src.slice(open + 1, close).trim();
+      if (m[1] === "NonNullable") {
+        inner = inner.replace(/\s*\|\s*(?:null|undefined)\b/g, "").trim();
+      }
+      src = src.slice(0, m.index) + inner + src.slice(close + 1);
+    }
+    return src;
+  }
+
+  /** Phase 51.4: build a synthetic StructDef for a `Pick`/`Omit`/`Record` utility type, or null if
+   *  it can't be resolved statically (unknown base, or a `Record` with non-literal keys like
+   *  `Record<string, V>`, which is a dynamic map — out of scope). Pick/Omit PRESERVE the base
+   *  field offsets + totalSize so a base-typed value is layout-compatible with the subset type. */
+  private buildUtilityStructDef(kind: string, argsStr: string, name: string): StructDef | null {
+    const keyNames = (s: string): string[] => [...s.matchAll(/["'](\w+)["']/g)].map((mm) => mm[1]);
+    if (kind === "Record") {
+      const ci = argsStr.indexOf(",");
+      if (ci === -1) return null;
+      const keys = keyNames(argsStr.slice(0, ci));
+      const valType = argsStr.slice(ci + 1).trim();
+      if (keys.length === 0) return null; // Record<string, V> / Record<number, V> — dynamic map
+      const fields: StructField[] = [];
+      let offset = 0;
+      for (const k of keys) {
+        const type = mapType(valType) as WatType;
+        const size = (type === "f64" || type === "i64" || type === "string") ? 8 : 4;
+        if (offset % size !== 0) offset = Math.ceil(offset / size) * size;
+        fields.push({ name: k, type, offset, size });
+        offset += size;
+      }
+      return { name, fields, totalSize: offset };
+    }
+    // Pick / Omit
+    const ci = argsStr.indexOf(",");
+    if (ci === -1) return null;
+    const baseName = argsStr.slice(0, ci).trim();
+    const baseDef = this.structDefs.get(baseName);
+    if (!baseDef) return null;
+    const keys = keyNames(argsStr.slice(ci + 1));
+    const isOmit = kind === "Omit";
+    const fields = baseDef.fields
+      .filter((f) => isOmit ? !keys.includes(f.name) : keys.includes(f.name))
+      .map((f) => ({ ...f }));
+    return { name, fields, totalSize: baseDef.totalSize };
+  }
+
+  /** Phase 51.4: resolve `Pick`/`Omit`/`Record` utility types into synthetic struct types. Runs
+   *  AFTER parseStructs (needs the base StructDef) and BEFORE parseFunctions. Two forms:
+   *  (1) `type Alias = Pick<T, K>;` → register the StructDef under `Alias`, strip the declaration;
+   *  (2) inline `Pick<T, K>` at a use site → register a synthetic `__Pick_T_K` and substitute it.
+   *  By now pass-through wrappers are already resolved, so the args never contain nested `<…>`. */
+  private expandStructUtilityTypes(): void {
+    // (1) `type Alias = Pick/Omit/Record<...>;`
+    this.src = this.src.replace(
+      /(?:export\s+)?type\s+(\w+)\s*=\s*(Pick|Omit|Record)\s*<([^<>]*)>\s*;?/g,
+      (_full, alias, kind, args) => {
+        const def = this.buildUtilityStructDef(kind, args, alias);
+        if (def) this.structDefs.set(alias, def);
+        return ""; // strip the declaration (Alias now resolves via structDefs)
+      },
+    );
+    // (2) inline `Pick/Omit/Record<...>` at use sites.
+    this.src = this.src.replace(
+      /\b(Pick|Omit|Record)\s*<([^<>]*)>/g,
+      (full, kind, args) => {
+        const sanitized = (args as string).replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "");
+        // Must start with an uppercase letter so struct-type detection (`[A-Z]\w*`) recognizes it.
+        const synth = `${kind}_${sanitized}`;
+        if (!this.structDefs.has(synth)) {
+          const def = this.buildUtilityStructDef(kind, args, synth);
+          if (!def) return full; // leave as-is (unresolved) rather than corrupt
+          this.structDefs.set(synth, def);
+        }
+        return synth;
+      },
+    );
   }
 
   /** Phase 51 (gap #2): desugar a class-instance array literal
@@ -15389,6 +15495,9 @@ class WasicTranspiler {
     // Also strip `type Alias = keyof T` declarations (they become the `string` type inline).
     this.src = this.src.replace(/:\s*keyof\s+\w+/g, ": string");
     this.src = this.src.replace(/(?:export\s+)?type\s+\w+\s*=\s*keyof\s+\w+\s*;?/gm, "");
+    // Phase 51.4: pass-through utility types (Partial/Readonly/Required/NonNullable) → inner type,
+    // before parseStructs so the unwrapped type is seen everywhere (incl. interface field types).
+    this.src = this.expandUtilityTypes(this.src);
     // Rewrite `const/let/var name = function(params): type { ... }` to `function name(params): type { ... }`
     // so parseFunctions() can recognize the pattern as a named function.
     this.src = this.src.replace(
@@ -15402,6 +15511,9 @@ class WasicTranspiler {
     this.parseStructs();
     this.parseClasses();
     this.parseIntersectionTypes(); // Phase 33: after parseStructs+parseClasses so constituent types are registered
+    // Phase 51.4: resolve Pick/Omit/Record into synthetic struct types. After parseStructs (needs the
+    // base StructDef) and before parseFunctions (so use sites in signatures/bodies see the synth name).
+    this.expandStructUtilityTypes();
     // Phase 51 (gap #2): desugar class-instance array literals into push() form. Must run AFTER
     // parseClasses (needs classDefs) and BEFORE parseFunctions/parseTopLevel collect bodies.
     this.expandClassInstanceArrayLiterals();

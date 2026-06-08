@@ -2144,12 +2144,24 @@ function exprToWat(
         ? `(if (result i32) ${lWat} (then ${rWat}) (else (i32.const 0)))`
         : `(if (result i32) ${lWat} (then (i32.const 1)) (else ${rWat}))`;
     }
-    // Infer i64 from LHS local type so i64 expressions don't get cast to f64
-    const lhsLocalType = /^\w+$/.test(lhs)
-      ? locals.get(lhs)
-      : /^\w+\.length$/.test(lhs)
+    // Infer the operand type from the LEADING atom of the LHS so i32/i64 arithmetic isn't cast to
+    // f64. Handles a plain local, `.length` (always i32), a struct/tuple field access `var.field`
+    // (type via structLookup), AND a compound LHS like `a.i + b.i + c.i` (whose leading atom drives
+    // the type). Without this, `console.log("x:", a.i + b.i)` on i32 struct fields emitted
+    // `f64.add` of i32 loads and failed to compile (pre-existing bug). The leading atom is only used
+    // when it's a simple var or var.field — `arr[i]` / `fn(...)` / `a.b.c` fall back to the numeric
+    // default so f64 array elements / call results aren't mis-typed as i32.
+    const leadM = lhs.match(/^(\w+)(?:\.(\w+))?/);
+    const restAfterLead = leadM ? lhs.slice(leadM[0].length).trimStart() : "";
+    const leadIsSimpleAtom = leadM !== null &&
+      (restAfterLead === "" || !/^[.[(]/.test(restAfterLead));
+    const lhsLocalType = !leadIsSimpleAtom || !leadM
+      ? undefined
+      : leadM[2] === "length"
       ? "i32" as const
-      : undefined;
+      : leadM[2]
+      ? (structLookup ? structLookup(leadM[1], leadM[2])?.type : undefined)
+      : locals.get(leadM[1]);
     const opType = alwaysI32
       ? "i32"
       : lhsLocalType === "i64"

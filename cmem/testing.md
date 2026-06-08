@@ -54,7 +54,7 @@ The full green pre-publish checklist actually run (2026-06-02):
 deno publish --dry-run --allow-dirty   # THE gate: type-check + slow-types + package — must pass
 deno lint main.ts src/                 # clean (18 files)
 deno fmt  --check main.ts src/         # clean as of 2026-06-02 (see design-decisions.md)
-deno run -A tests/wasi_tests.ts        # 291/291  (judges per-step EXIT CODE, not output — output-verify codegen changes manually)
+deno run -A tests/wasi_tests.ts        # 292/292  (judges per-step EXIT CODE, not output — output-verify codegen changes manually)
 deno run -A tests/bindgen_tests.ts     # 103/103
 deno run -A tests/jstyper_tests.ts     # 73/73
 ```

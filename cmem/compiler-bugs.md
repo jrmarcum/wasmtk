@@ -1,12 +1,29 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **No open bugs.** Phase 51 (2026-06-05) added
+Live record of bugs found + fixed. Newest first. **One known-open, low-priority bug:**
+`console.log("x:", arr[i] + arr[j])` (array-element arithmetic in console.log) drops everything after
+the first term — see the 2026-06-07 entry below; does not affect the 292/292 suite. Phase 51 (2026-06-05) added
 `instanceof`, closed three construction/parsing gaps it surfaced, and a follow-up workaround-audit
 fixed one more silent bug + added a loud `call_indirect`-in-merge guard; a 2026-06-07 follow-up added
-a companion `memory.grow`-in-merge guard (all below). The full suite is **291/291**
+a companion `memory.grow`-in-merge guard (all below). The full suite is **292/292**
 (Phase 51 added 8 `51_*` tests + `51_ObjectSpread` (51.2) + `51_ParamDestructuring` +
-`51_NestedDestructuring` + `51_NestedTuple` (51.3), 2026-06-07; was 279); the 2026-06-07 merge guard +
-Go-CLI changes add no tests and were validated against the 14 merge-dependent tests with no regression.
+`51_NestedDestructuring` + `51_NestedTuple` (51.3) + `51_UtilityTypes` (51.4), 2026-06-07; was 279);
+the 2026-06-07 merge guard + Go-CLI changes add no tests and were validated against the 14
+merge-dependent tests with no regression.
+
+## console.log i32 struct-field + struct-field arithmetic emitted f64.add — FIXED 2026-06-07
+
+Pre-existing (predates Phase 51.4; found while building the utility-types test). `console.log("x:",
+a.i + b.i)` where `a.i`/`b.i` are **i32 struct fields** — and 3-term `a + b + c` of i32 locals —
+emitted `f64.add` of `i32.load`s and failed to compile (`f64.add[0] expected f64, found i32...`). In
+`console_log.ts` `exprToWat`, the binary-op operand type (`lhsLocalType`) was inferred only for a plain
+`\w+` local or `\w+.length`; a struct field access `var.field` (and any compound LHS) fell through to
+the f64 numeric default. **Fixed** by inferring the type from the LHS's **leading atom** — plain var,
+`var.field` (via `structLookup().type`), or `.length` — conservatively skipping `arr[i]` / `fn(...)` /
+`a.b.c` (remainder begins with `[` `(` `.`) so f64 array elements / call results aren't mis-typed as
+i32. Purely additive (the broken pattern couldn't compile before, so no existing test used it → zero
+tracked-`.wat` changes). **Still OPEN (separate, out of scope):** `console.log("x:", arr[i] + arr[j])`
+returns only the first element (array-element arithmetic in console.log is dropped after the first term).
 
 ## Tuple positional-gap collapse in nested destructure rewrite — FIXED 2026-06-07 (pre-commit)
 

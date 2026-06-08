@@ -63,7 +63,10 @@ foundation-depth first, then by effort (quick wins first). Each item ships with 
 test. (The **ecosystem loader** track is the exception — it consumes the compiled `.wasm`/`.wit`/ABI,
 not TS syntax, so it is orthogonal and ungated.)
 
-### Phase 51 — Language hardening (GATES #5 async + own-runtime)
+### Phase 51 — Language hardening (GATES #5 async + own-runtime) — ✅ COMPLETE 2026-06-07
+
+All four items done: 51.1 `instanceof`, 51.2 object spread, 51.3 destructuring (param + nested object +
+nested tuple), 51.4 utility types. The async (#13) and own-runtime (#14) tracks are now unblocked.
 
 1. **`instanceof`** — ✅ **DONE 2026-06-05** (class tags). Runtime tag check when the module has
    inheritance (`tag(obj) ∈ {target + all subclasses}` via `findSubclasses`, read from offset 0);
@@ -127,12 +130,25 @@ not TS syntax, so it is orthogonal and ungated.)
    tests your change touches; a gap-collapse bug here (`splitBraceAwareCommas` drops empty elements →
    `[a, , c]` read the wrong index) passed the suite but was caught by output-diffing `21_*`. Fixed with
    `splitBraceAwareCommasKeepEmpty`.
-4. **Utility types** — `Partial`/`Readonly`/`Record`/`Pick`/`Omit`/`NonNullable` first, then
-   `Exclude`/`Extract`/`ReturnType`/`Parameters`. Source-level type-resolution hardening (Phase 36
-   style); after the value-level struct work since some interact with struct shapes.
-4. **Utility types** — `Partial`/`Readonly`/`Record`/`Pick`/`Omit`/`NonNullable` first, then
-   `Exclude`/`Extract`/`ReturnType`/`Parameters`. Source-level type-resolution hardening (Phase 36
-   style); after the value-level struct work since some interact with struct shapes.
+4. **Utility types** — ✅ **DONE 2026-06-07** (test `51_UtilityTypes`, suite 291→292). First batch
+   shipped: **`Partial`/`Readonly`/`Required`/`NonNullable`** are pass-through (resolve to the inner
+   type — all layout-identical in wasic's fixed-struct world; `NonNullable` also strips `| null`),
+   done by `expandUtilityTypes()` (source text transform with balanced `<…>` extraction, BEFORE
+   parseStructs, loops for nesting like `Partial<Readonly<T>>`). **`Pick`/`Omit`/`Record`** synthesize
+   struct types via `expandStructUtilityTypes()` (AFTER parseStructs, needs the base def): `Pick`/`Omit`
+   copy the base fields (subset / complement) PRESERVING offsets + totalSize so a base-typed value is
+   layout-compatible; `Record<"a"|"b", V>` builds a fresh struct keyed by the literal-union (open-key
+   `Record<string,V>` is a dynamic map → left unresolved). Both `type Alias = Pick<…>` (registered under
+   the alias, decl stripped) and inline use sites (synth `Pick_T_K` name — MUST start uppercase so
+   `[A-Z]\w*` struct-type detection fires) work. **Deferred (the "then" batch):**
+   `Exclude`/`Extract`/`ReturnType`/`Parameters` (union/function-type ops, niche in wasic). **Bonus fix
+   found via output-verification:** `console.log("x:", a.i + b.i)` on i32 **struct fields** (and 3-term
+   `a+b+c` of i32 locals) emitted `f64.add` of i32 loads → compile error; fixed in `console_log.ts` by
+   inferring the binary-op operand type from the LHS's **leading atom** (var / `var.field` via
+   `structLookup` / `.length`), conservatively skipping `arr[i]`/`fn()`/`a.b.c` so f64 elements aren't
+   mis-typed. Purely additive (no existing test could use the pattern — it didn't compile — so zero
+   tracked-`.wat` changes). NOTE: a SEPARATE pre-existing bug remains — `console.log("x:", arr[i] + arr[j])`
+   (array-element arithmetic) returns only the first element; out of scope here.
 
 ### Phase 52 — Leaf conveniences (NO downstream risk; opportunistic, never gating)
 
