@@ -864,6 +864,8 @@
     (local $userParts i32)
     (local $hostParts i32)
     (local $__iface_tmp i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $rawURL_ptr (i32.const 260))
       (local.set $rawURL_len (i32.const 45))
     (call $getScheme (local.get $rawURL_ptr) (local.get $rawURL_len))

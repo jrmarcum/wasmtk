@@ -281,6 +281,8 @@
   (func $sumArray (param $arr i32) (param $len i32) (result i32)
     (local $total i32)
     (local $i i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $total (i32.const 0))
     (local.set $i (i32.const 0))
     (block $break_0

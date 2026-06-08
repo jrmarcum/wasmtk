@@ -194,6 +194,17 @@ async function watToOptimisedWasm(
     parsed.destroy();
     const rawBytes = new Uint8Array(buffer);
 
+    // Binaryen's -Oz CoalesceLocals pass miscompiles try/catch catch-variable locals: it merges a
+    // catch-bound local (e.g. `$outerError`) with an outer string local whose live range spans the
+    // try, so the outer value reads back as the caught payload (verified: raw wabt output is correct,
+    // binaryen output is wrong — see 15_LexicalShadowing_Stress). Exception-using modules are rare,
+    // so we ship the (correct, slightly larger) un-optimized wabt binary for them. The marker is
+    // wasic's own exception tag, which only appears when a throw/try-catch is emitted.
+    if (watSource.includes("$__exn_tag")) {
+      await rt.writeFile(outPath, rawBytes);
+      return { success: true, outputPath: outPath, sizeBytes: rawBytes.length };
+    }
+
     // Step 2: Binaryen -Oz (shrinkLevel=2, optimizeLevel=2)
     const binMod = binaryen.readBinary(rawBytes);
     // Enable all features (incl. exceptions) so the optimizer preserves them.
@@ -5187,8 +5198,14 @@ class WasicTranspiler {
     // local.set/local.get into global.set/global.get so the write persists across function calls.
     if (this.moduleStringGlobals.has(varName)) {
       return inner
-        .replace(new RegExp(`\\(local\\.set \\$${varName}_(ptr|len)`, "g"), `(global.set $${varName}_$1`)
-        .replace(new RegExp(`\\(local\\.get \\$${varName}_(ptr|len)`, "g"), `(global.get $${varName}_$1`);
+        .replace(
+          new RegExp(`\\(local\\.set \\$${varName}_(ptr|len)`, "g"),
+          `(global.set $${varName}_$1`,
+        )
+        .replace(
+          new RegExp(`\\(local\\.get \\$${varName}_(ptr|len)`, "g"),
+          `(global.get $${varName}_$1`,
+        );
     }
     return inner;
   }
@@ -5289,6 +5306,32 @@ class WasicTranspiler {
                   continue;
                 }
               }
+              // padStart/padEnd in template: `${expr.padStart(n[, pad])}`. Receiver may be a string
+              // literal, var, or string-returning call (resolved via emitStringPtrLen). Single-arg
+              // form defaults the pad to a space. Captured into the $__str_op temp pair. Must come
+              // before the function-call handler so `toFixed(..).padStart(6)` isn't mis-parsed.
+              const padTmplM = e.match(/^(.+)\.(padStart|padEnd)\s*\((.+)\)$/);
+              if (padTmplM && parenDepthNeverNegative(padTmplM[3]!)) {
+                const recvPtrLen = this.emitStringPtrLen(padTmplM[1]!.trim(), locals);
+                if (recvPtrLen !== "(i32.const 0) (i32.const 0)") {
+                  this.needsStringExtHelpers = true;
+                  const helper = padTmplM[2] === "padStart" ? "$__str_pad_start" : "$__str_pad_end";
+                  const padArgs = this.splitArgs(padTmplM[3]!);
+                  const targetWat = this.emitExpr(padArgs[0]!.trim(), locals, "i32");
+                  let padStrLen: string;
+                  if (padArgs.length >= 2) {
+                    padStrLen = this.emitStringPtrLen(padArgs[1]!.trim(), locals);
+                  } else {
+                    const [po, pl] = this.allocString(" ");
+                    padStrLen = `(i32.const ${po}) (i32.const ${pl})`;
+                  }
+                  tmplStmts.push(`(call ${helper} ${recvPtrLen} ${targetWat} ${padStrLen})`);
+                  tmplStmts.push(`(local.set $__str_op_len)`);
+                  tmplStmts.push(`(local.set $__str_op_ptr)`);
+                  emitTmplConcat(`(local.get $__str_op_ptr)`, `(local.get $__str_op_len)`);
+                  continue;
+                }
+              }
               // String-returning function call in template
               const strFnM2 = e.match(/^(\w+)\s*\(/);
               const strFn2 = strFnM2
@@ -5345,12 +5388,13 @@ class WasicTranspiler {
       }
       return tmplStmts.join(`\n${ind}`);
     }
-    // VAR instanceof Error ? VAR.message : String(VAR) — idiomatic catch pattern.
-    // In wasic, all exceptions are stored as plain strings (ptr+len); e.message === e.
-    // The `instanceof Error` branch is always taken, so simplify to a direct copy.
+    // VAR instanceof Error ? VAR.message : <else> — idiomatic catch pattern.
+    // In wasic, all exceptions are stored as plain strings (ptr+len); e.message === e and
+    // `instanceof Error` is always true, so the THEN branch is always taken regardless of the
+    // else expression (String(VAR), `${VAR}`, etc.). Simplify to a direct ptr/len copy.
     {
       const errTernary = initExpr.match(
-        /^(\w+)\s+instanceof\s+Error\s*\?\s*\1\.message\s*:\s*String\s*\(\s*\1\s*\)\s*$/,
+        /^(\w+)\s+instanceof\s+Error\s*\?\s*\1\.message\s*:\s*.+$/,
       );
       if (errTernary) {
         const varE = errTernary[1]!;
@@ -5392,6 +5436,48 @@ class WasicTranspiler {
               `${ind})`,
             ].join("\n");
           }
+        }
+      }
+    }
+
+    // Call to a closure/funcref PARAM that returns a string (e.g. mapStr's `fn(arr[i])` where
+    // `fn: (s) => string`). The callee is a string-returning function called via call_indirect; its
+    // WAT body is void and writes the $__str_ret globals, which we then read into varName_ptr/len.
+    {
+      const indM = initExpr.match(/^(\w+)\s*\((.*)?\)\s*;?$/);
+      if (indM) {
+        const callee = indM[1]!;
+        const ftv = this.funcTypeVars.get(callee);
+        const ctv = this.closureTypedVars.get(callee);
+        if ((ftv && ftv.result === "string") || (ctv && ctv.result === "string")) {
+          const sig = (ftv ?? ctv)!;
+          const rawArgs = indM[2]?.trim() ?? "";
+          const argList = rawArgs ? this.splitArgs(rawArgs) : [];
+          const emittedArgs = argList.flatMap((a, idx) => {
+            const pt = (sig.params[idx] ?? "i32") as WatType;
+            if (pt === "string") return [this.emitStringPtrLen(a.trim(), locals)];
+            return [this.emitExpr(a.trim(), locals, pt)];
+          });
+          let callWat: string;
+          if (ftv) {
+            // funcType param: string result → void WAT fn, so the call_indirect type result is null.
+            const typeName = this.getOrCreateFuncType(sig.params as WatType[], null);
+            callWat = `(call_indirect (type ${typeName}) ${
+              emittedArgs.join(" ")
+            } (local.get $${callee}))`;
+          } else {
+            // capturing closure param: trampoline takes the closure struct ptr as the first arg.
+            const trampParams: WatType[] = ["i32" as WatType, ...(sig.params as WatType[])];
+            const typeName = this.getOrCreateFuncType(trampParams, null);
+            callWat = `(call_indirect (type ${typeName}) (local.get $${callee}) ${
+              emittedArgs.join(" ")
+            } (i32.load (local.get $${callee})))`;
+          }
+          return [
+            callWat,
+            `(local.set $${varName}_ptr (global.get $__str_ret_ptr))`,
+            `${ind}(local.set $${varName}_len (global.get $__str_ret_len))`,
+          ].join("\n");
         }
       }
     }
@@ -5715,6 +5801,15 @@ class WasicTranspiler {
     if (concatParts && concatParts.length >= 2) {
       this.needsStringOpHelpers = true;
       const stmts: string[] = [];
+      // Self-reference: the accumulator IS varName_ptr/len, so a part that reads varName AFTER the
+      // first (prepend, e.g. `r = h[i] + r`) would see the partially-built result. Save the OLD
+      // value into $__concat_self once, and substitute it for every varName part below. (Append —
+      // `s = s + x`, where varName is the FIRST part — is unaffected and keeps its existing path.)
+      const selfRefNonFirst = concatParts.slice(1).some((p) => p.trim() === varName);
+      if (selfRefNonFirst) {
+        stmts.push(`(local.set $__concat_self_ptr (local.get $${varName}_ptr))`);
+        stmts.push(`(local.set $__concat_self_len (local.get $${varName}_len))`);
+      }
       // Append ptr+len to the accumulator (varName_ptr/len). First part initializes; rest concat.
       let concatAccumHasValue = false;
       const concatAppend = (ptrWat: string, lenWat: string) => {
@@ -5732,6 +5827,11 @@ class WasicTranspiler {
       };
       // Append one concat part (may be a template literal, string var, literal, etc.)
       const appendConcatPart = (part: string) => {
+        // Self-referential part (the target var appearing in its own RHS): use the saved old value.
+        if (selfRefNonFirst && part.trim() === varName) {
+          concatAppend(`(local.get $__concat_self_ptr)`, `(local.get $__concat_self_len)`);
+          return;
+        }
         // Template literal: expand each segment as a concat operation
         if (part.startsWith("`") && part.endsWith("`")) {
           const tParts2 = this.splitTemplateLiteral(part.slice(1, -1));
@@ -5805,6 +5905,27 @@ class WasicTranspiler {
             concatAppend(`(local.get $__str_op_ptr)`, `(local.get $__str_op_len)`);
             return;
           }
+        }
+        // str[idx] in concat (string char subscript) — equivalent to charAt(idx). Build a 1-char
+        // string via $__str_char_code_at + malloc + store8 (same shape as fromCharCode), which
+        // avoids a multi-value capture so the concat accumulator stays well-formed.
+        const charSubCP = part.match(/^(\w+)\[(.+)\]$/);
+        if (
+          charSubCP &&
+          (locals.get(charSubCP[1]) === "string" || this.moduleStringConsts.has(charSubCP[1])) &&
+          !this.arrayVars.has(charSubCP[1])
+        ) {
+          this.needsStringExtHelpers = true;
+          const idxWat = this.emitArrayIndex(charSubCP[2].trim(), locals);
+          const sc = this.moduleStringConsts.get(charSubCP[1]);
+          const ptrW = sc ? `(i32.const ${sc[0]})` : `(local.get $${charSubCP[1]}_ptr)`;
+          const lenW = sc ? `(i32.const ${sc[1]})` : `(local.get $${charSubCP[1]}_len)`;
+          stmts.push(`(local.set $__str_op_ptr (call $__malloc (i32.const 1)))`);
+          stmts.push(
+            `(i32.store8 (local.get $__str_op_ptr) (call $__str_char_code_at ${ptrW} ${lenW} ${idxWat}))`,
+          );
+          concatAppend(`(local.get $__str_op_ptr)`, `(i32.const 1)`);
+          return;
         }
         // str.slice(start[, end]) in concat — capture multi-value return into temp pair
         const sliceCP = part.match(/^(\w+)\.slice\s*\((.+)\)$/);
@@ -6090,6 +6211,22 @@ class WasicTranspiler {
         }
       }
     }
+    // String char subscript: str[idx] where str is a PLAIN string var/const → the 1-char string
+    // at that index, via $__str_char_at (multi-value ptr,len). Must come before the string-array
+    // case (a plain string is not in arrayVars). Index may be any i32 expression (e.g. v % 16).
+    const strCharSub = expr.match(/^(\w+)\[(.+)\]$/);
+    if (
+      strCharSub &&
+      (locals.get(strCharSub[1]) === "string" || this.moduleStringConsts.has(strCharSub[1])) &&
+      !this.arrayVars.has(strCharSub[1])
+    ) {
+      this.needsStringExtHelpers = true;
+      const idxWat = this.emitArrayIndex(strCharSub[2].trim(), locals);
+      const sc = this.moduleStringConsts.get(strCharSub[1]);
+      const ptrW = sc ? `(i32.const ${sc[0]})` : `(local.get $${strCharSub[1]}_ptr)`;
+      const lenW = sc ? `(i32.const ${sc[1]})` : `(local.get $${strCharSub[1]}_len)`;
+      return `(call $__str_char_at ${ptrW} ${lenW} ${idxWat})`;
+    }
     // String array element access: arr[idx] where arr is string[] (isStringArr or elemType=string)
     const strArrBracket = expr.match(/^(\w+)\[([^\]]+)\]$/);
     if (strArrBracket) {
@@ -6133,6 +6270,28 @@ class WasicTranspiler {
         sliceSPLM[1]
       }_len) ${startWat} ${endWat})`;
     }
+    // str.padStart(n[, pad]) / str.padEnd(n[, pad]) — receiver may be a var, string literal, or
+    // string-returning call (via the recursive emitStringPtrLen). Single-arg form defaults the pad
+    // to a space. Returns the multi-value ($__str_pad_start/end) call (ptr, len).
+    const padSPLM = expr.match(/^(.+)\.(padStart|padEnd)\s*\((.+)\)$/);
+    if (padSPLM && parenDepthNeverNegative(padSPLM[3]!)) {
+      const recvPtrLen = this.emitStringPtrLen(padSPLM[1]!.trim(), locals);
+      if (recvPtrLen !== "(i32.const 0) (i32.const 0)") {
+        this.needsStringExtHelpers = true;
+        const helper = padSPLM[2] === "padStart" ? "$__str_pad_start" : "$__str_pad_end";
+        const padArgs = this.splitArgs(padSPLM[3]!);
+        const targetWat = this.emitExpr(padArgs[0]!.trim(), locals, "i32");
+        let padStrLen: string;
+        if (padArgs.length >= 2) {
+          padStrLen = this.emitStringPtrLen(padArgs[1]!.trim(), locals);
+        } else {
+          const [po, pl] = this.allocString(" ");
+          padStrLen = `(i32.const ${po}) (i32.const ${pl})`;
+        }
+        return `(call ${helper} ${recvPtrLen} ${targetWat} ${padStrLen})`;
+      }
+    }
+
     // str.toUpperCase() / str.toLowerCase() — plain string var OR string-array element receiver.
     // Returns the multi-value ($__str_to_upper/lower) call (ptr, len) for capture by the caller.
     const caseSPLM = expr.match(/^(\w+(?:\[[^\]]*\])?)\.(toUpperCase|toLowerCase)\s*\(\s*\)$/);
@@ -6457,6 +6616,17 @@ class WasicTranspiler {
     }
 
     // Phase 27: str.split(delim) → i32 pointer to string array (8-byte elements)
+    // `template`.split(sep) — receiver is a template literal (e.g. `${n}`.split(".") in toFixed).
+    // Materialize the receiver string into the $__str_op temp pair, then call $__str_split.
+    const tmplSplitMatch = expr.match(/^(`(?:[^`\\]|\\.)*`)\s*\.split\s*\((.+)\)$/);
+    if (tmplSplitMatch && parenDepthNeverNegative(tmplSplitMatch[2])) {
+      this.needsStringExtHelpers = true;
+      this.needsStringOpHelpers = true;
+      const recvAssign = this.emitStringAssign("__str_op", tmplSplitMatch[1]!, locals);
+      const delimPtrLen = this.emitStringPtrLen(tmplSplitMatch[2]!.trim(), locals);
+      return `(block (result i32) ${recvAssign} (call $__str_split (local.get $__str_op_ptr) (local.get $__str_op_len) ${delimPtrLen}))`;
+    }
+
     const splitMatch = expr.match(/^(\w+)\.split\s*\((.+)\)$/);
     if (
       splitMatch && locals.get(splitMatch[1]) === "string" && parenDepthNeverNegative(splitMatch[2])
@@ -9484,12 +9654,20 @@ class WasicTranspiler {
       let fim = line.match(/^(this|\w+)\.(\w+)\s*(\+\+|--)\s*;?$/);
       if (fim && recvKnown(fim[1])) {
         const op = fim[3] === "++" ? "+" : "-";
-        return this.emitStatement(`${fim[1]}.${fim[2]} = ${fim[1]}.${fim[2]} ${op} 1;`, locals, funcResult);
+        return this.emitStatement(
+          `${fim[1]}.${fim[2]} = ${fim[1]}.${fim[2]} ${op} 1;`,
+          locals,
+          funcResult,
+        );
       }
       fim = line.match(/^(\+\+|--)\s*(this|\w+)\.(\w+)\s*;?$/);
       if (fim && recvKnown(fim[2])) {
         const op = fim[1] === "++" ? "+" : "-";
-        return this.emitStatement(`${fim[2]}.${fim[3]} = ${fim[2]}.${fim[3]} ${op} 1;`, locals, funcResult);
+        return this.emitStatement(
+          `${fim[2]}.${fim[3]} = ${fim[2]}.${fim[3]} ${op} 1;`,
+          locals,
+          funcResult,
+        );
       }
       fim = line.match(/^(this|\w+)\.(\w+)\s*([+\-*/%&|^]|<<|>>|>>>)=\s*(.+?);?$/);
       if (fim && recvKnown(fim[1])) {
@@ -11661,6 +11839,51 @@ class WasicTranspiler {
         continue;
       }
 
+      // Single-line while WITHOUT braces: `while (cond) stmt` (e.g. `while (s.length < n) s += "0"`).
+      // The braced whileMatch below requires the line to end at the condition, so handle this first
+      // with a balanced-paren scan to split condition from the inline body statement.
+      if (/^while\s*\(/.test(line) && !line.replace(/;$/, "").endsWith("{")) {
+        const openIdx = line.indexOf("(");
+        let depth = 0;
+        let condEnd = -1;
+        for (let j = openIdx; j < line.length; j++) {
+          if (line[j] === "(") depth++;
+          else if (line[j] === ")" && --depth === 0) {
+            condEnd = j;
+            break;
+          }
+        }
+        const inlineBody = condEnd !== -1 ? line.slice(condEnd + 1).trim().replace(/;$/, "") : "";
+        if (condEnd !== -1 && inlineBody && inlineBody !== "{") {
+          const cond = line.slice(openIdx + 1, condEnd).trim();
+          const lbl = this.pendingLabel ?? String(this.loopCounter++);
+          this.pendingLabel = null;
+          const brk = `$break_${lbl}`;
+          const loop = `$loop_${lbl}`;
+          const cont = `$cont_${lbl}`;
+          this.controlStack.push({ breakLabel: brk, continueLabel: cont });
+          const condExpr = this.emitExpr(cond, locals, "i32");
+          const bodyWat = this.emitBlock(
+            WasicTranspiler.splitStmts(inlineBody),
+            locals,
+            funcResult,
+            indent + "      ",
+          );
+          this.controlStack.pop();
+          out.push(`${indent}(block ${brk}`);
+          out.push(`${indent}  (loop ${loop}`);
+          out.push(`${indent}    (br_if ${brk} (i32.eqz ${condExpr}))`);
+          out.push(`${indent}    (block ${cont}`);
+          out.push(bodyWat);
+          out.push(`${indent}    )`);
+          out.push(`${indent}    (br ${loop})`);
+          out.push(`${indent}  )`);
+          out.push(`${indent})`);
+          i++; // consumed exactly this one line (emitBlock advances i manually)
+          continue;
+        }
+      }
+
       // while (cond) {
       const whileMatch = line.match(/^while\s*\((.+)\)\s*\{?$/);
       if (whileMatch) {
@@ -11790,8 +12013,9 @@ class WasicTranspiler {
           } else {
             // Static array: compile-time address, known length. Elements start at ptr + 8
             // (past the 8-byte [length, capacity] header) — mirrors the arr[i] path (~line 6662).
-            elemLoadWat =
-              `(${loadOp} (i32.add (i32.const ${arrInfo.ptr + 8}) (i32.shl (local.get ${idxVar}) (i32.const ${shift}))))`;
+            elemLoadWat = `(${loadOp} (i32.add (i32.const ${
+              arrInfo.ptr + 8
+            }) (i32.shl (local.get ${idxVar}) (i32.const ${shift}))))`;
             lenWat = `(i32.const ${arrInfo.length})`;
           }
 
@@ -15156,12 +15380,24 @@ class WasicTranspiler {
       !locals.has("__str_op_ptr") &&
       fn.bodyLines.some((l) =>
         l.includes("String.fromCharCode(") || l.includes(".charAt(") || l.includes(".slice(") ||
-        l.includes(".at(") || l.includes(".toUpperCase(") || l.includes(".toLowerCase(")
+        l.includes(".split(") ||
+        l.includes(".padStart(") || l.includes(".padEnd(") ||
+        l.includes(".at(") || l.includes(".toUpperCase(") || l.includes(".toLowerCase(") ||
+        /\w\[[^\]]+\]\s*\+|\+\s*\w+\[/.test(l) // string char subscript in a concat: s[i] + …
       )
     ) {
       declaredLocals.push(["__str_op_ptr", "i32"], ["__str_op_len", "i32"]);
       locals.set("__str_op_ptr", "i32");
       locals.set("__str_op_len", "i32");
+    }
+    // Self-referential string concat prepend (`X = … + X`): pre-declare $__concat_self pair.
+    if (
+      !locals.has("__concat_self_ptr") &&
+      fn.bodyLines.some((l) => /(\w+)\s*=\s*.+\+\s*\1\b/.test(l))
+    ) {
+      declaredLocals.push(["__concat_self_ptr", "i32"], ["__concat_self_len", "i32"]);
+      locals.set("__concat_self_ptr", "i32");
+      locals.set("__concat_self_len", "i32");
     }
     // Phase 44: $__fn_tmp for function pointer array element dispatch: arr[idx]()
     if (
@@ -15271,14 +15507,28 @@ class WasicTranspiler {
     if (start === -1) return body;
     const group = body.slice(start);
     const head = group.slice(1).match(/^\s*([\w.$]+)/)?.[1] ?? "";
-    if (head !== "if") return body; // bare value expr / explicit return / loop / try — leave as-is
-    const afterHead = group.slice(group.indexOf(head) + head.length).trimStart();
-    if (afterHead.startsWith("(result")) return body; // already value-producing
-    const nodes = parseWatNodes(tokenizeWat(group), { i: 0 });
-    if (nodes.length !== 1) return body;
-    const valued = watNodeToValue(nodes[0], rt);
-    if (valued === null) return body; // not every branch returns — leave as-is (ill-typed input)
-    return body.slice(0, start) + serializeWat(valued);
+    // Terminal void `if` where every branch returns → rewrite into a value-producing
+    // `(if (result T) …)` (survives binaryen -Oz, which strips a bare trailing unreachable).
+    if (head === "if") {
+      const afterHead = group.slice(group.indexOf(head) + head.length).trimStart();
+      if (afterHead.startsWith("(result")) return body; // already value-producing
+      const nodes = parseWatNodes(tokenizeWat(group), { i: 0 });
+      if (nodes.length !== 1) return body;
+      const valued = watNodeToValue(nodes[0], rt);
+      if (valued === null) return body; // not every branch returns — leave as-is (ill-typed input)
+      return body.slice(0, start) + serializeWat(valued);
+    }
+    // Terminal void `block` — a `switch` statement compiles to nested blocks where every case
+    // returns/throws and the default ends in `(unreachable)`. The block leaves an empty stack, so a
+    // value-returning function needs an explicit `(unreachable)` after it to satisfy V8's strict
+    // fallthru validation. (binaryen -Oz strips a trailing unreachable, so this only matters on the
+    // exception-module path that skips binaryen — see watToOptimisedWasm.)
+    if (head === "block") {
+      const afterLabel = group.replace(/^\(\s*block\s*(?:\$[\w$]+)?/, "");
+      if (/^\s*\(result\b/.test(afterLabel)) return body; // value-producing block — leave as-is
+      return body.slice(0, start) + group + "\n      (unreachable)";
+    }
+    return body; // bare value expr / explicit return / loop / try — leave as-is
   }
 
   // -------------------------------------------------------------------------
@@ -16453,12 +16703,24 @@ class WasicTranspiler {
         !startLocals.has("__str_op_ptr") &&
         this.startBodyLines.some((l) =>
           l.includes("String.fromCharCode(") || l.includes(".charAt(") || l.includes(".slice(") ||
-          l.includes(".at(") || l.includes(".toUpperCase(") || l.includes(".toLowerCase(")
+          l.includes(".split(") ||
+          l.includes(".padStart(") || l.includes(".padEnd(") ||
+          l.includes(".at(") || l.includes(".toUpperCase(") || l.includes(".toLowerCase(") ||
+          /\w\[[^\]]+\]\s*\+|\+\s*\w+\[/.test(l) // string char subscript in a concat: s[i] + …
         )
       ) {
         startDeclaredLocals.push(["__str_op_ptr", "i32"], ["__str_op_len", "i32"]);
         startLocals.set("__str_op_ptr", "i32");
         startLocals.set("__str_op_len", "i32");
+      }
+      // Self-referential string concat prepend (`X = … + X`): pre-declare $__concat_self pair.
+      if (
+        !startLocals.has("__concat_self_ptr") &&
+        this.startBodyLines.some((l) => /(\w+)\s*=\s*.+\+\s*\1\b/.test(l))
+      ) {
+        startDeclaredLocals.push(["__concat_self_ptr", "i32"], ["__concat_self_len", "i32"]);
+        startLocals.set("__concat_self_ptr", "i32");
+        startLocals.set("__concat_self_len", "i32");
       }
       // Phase 44: $__fn_tmp for function pointer array element dispatch: arr[idx]()
       if (

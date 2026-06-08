@@ -411,6 +411,8 @@
     (local $nums i32)
     (local $total i32)
     (local $__iface_tmp i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $ints (call $__malloc (i32.const 24)))
       (i32.store (local.get $ints) (i32.const 4))
       (i32.store (i32.add (local.get $ints) (i32.const 8)) (i32.const 5))

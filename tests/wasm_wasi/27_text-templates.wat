@@ -755,6 +755,8 @@
     (local $rangeOut_len i32)
     (local $i f64)
     (local $__iface_tmp i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $t1_ptr (i32.const 260))
       (local.set $t1_len (i32.const 12))
         (i32.store (i32.const 0) (i32.const 132))

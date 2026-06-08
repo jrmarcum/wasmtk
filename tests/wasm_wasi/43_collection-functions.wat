@@ -6,6 +6,7 @@
   (global $__str_ret_ptr (mut i32) (i32.const 0))
   (global $__str_ret_len (mut i32) (i32.const 0))
   (type $ftype_i32_i32_r_i32 (func (param i32) (param i32) (result i32)))
+  (type $ftype_i32_i32_r_void (func (param i32) (param i32)))
   ;; Bump allocator — advances __heap_ptr and returns the old value
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
@@ -1108,7 +1109,9 @@
       (loop $loop_4
         (br_if $break_4 (i32.eqz (f64.lt (local.get $i) (f64.convert_i32_s (i32.load (local.get $arr))))))
         (block $cont_4
-          (;; string assignment from complex expression not yet supported: __str_push = fn(arr[i]);)
+          (call_indirect (type $ftype_i32_i32_r_void) (i32.load (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 3)))) (i32.load offset=4 (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 3)))) (local.get $fn))
+(local.set $__str_push_ptr (global.get $__str_ret_ptr))
+      (local.set $__str_push_len (global.get $__str_ret_len))
       (local.set $result (call $__dynarr_push_string (local.get $result) (local.get $__str_push_ptr) (local.get $__str_push_len)))
         )
         (local.set $i (f64.add (local.get $i) (f64.const 1)))

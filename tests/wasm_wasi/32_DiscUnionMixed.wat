@@ -384,6 +384,7 @@
       )
         (return (f64.const 0.0))
     )
+      (unreachable)
   )
   (func $_start (export "_start")
     (local $vi i32)

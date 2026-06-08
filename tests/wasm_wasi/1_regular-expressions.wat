@@ -713,7 +713,7 @@
       (loop $loop_0
         (br_if $break_0 (i32.eqz (f64.lt (local.get $i) (f64.convert_i32_s (local.get $prefix_len)))))
         (block $cont_0
-          (if (i32.ne (call $__str_cmp (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)) (i32.const 0))
+          (if (i32.ne (call $__str_cmp (call $__str_char_at (local.get $s_ptr) (local.get $s_len) (i32.trunc_f64_s (local.get $i))) (call $__str_char_at (local.get $prefix_ptr) (local.get $prefix_len) (i32.trunc_f64_s (local.get $i)))) (i32.const 0))
             (then
             (return (i32.const 0))
             )

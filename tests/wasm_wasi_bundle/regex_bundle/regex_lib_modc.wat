@@ -771,6 +771,8 @@
     (local $isRange i32)
     (local $hi i32)
     (local $__iface_tmp i32)
+    (local $__concat_self_ptr i32)
+    (local $__concat_self_len i32)
     (local.set $j (i32.add (local.get $pi) (i32.const 1)))
     (local.set $neg (i32.const 0))
     (if (i32.lt_s (local.get $j) (local.get $p_len))

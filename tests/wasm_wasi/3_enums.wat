@@ -251,6 +251,7 @@
         (call $proc_exit (i32.const 0))
       (unreachable)
     )
+      (unreachable)
   )
   (func $_start (export "_start")
     (local $ns i32)

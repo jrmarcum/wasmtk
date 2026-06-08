@@ -36,11 +36,11 @@ installed launcher prompts interactively (`Deno requests ffi access … [y/n/A]`
 invocation, which stalls the whole test run. (Regression history: a documented reinstall command here
 once omitted `--allow-ffi`; fixed 2026-06-08 by deferring to `deno task install`.)
 
-## Current pass counts (2026-06-03, wabt-ts 1.3.2 + binaryen-ts 1.3.3)
+## Current pass counts (2026-06-08, wabt-ts 1.3.2 + binaryen-ts 1.3.3)
 
 | Suite | Result |
 | --- | --- |
-| `tests/wasm_wasi` (full) | **287 / 287** (Phase 51 2026-06-05: 4 `instanceof` + 3 class-gap tests + `51_AtCharCodeChain` for the `s.at(i).charCodeAt(j)` silent-stub fix; single-line brace `if` form fixed 2026-06-03 added `48_SingleLineBraceIf`; see compiler-bugs.md) |
+| `tests/wasm_wasi` (full, HARDENED output-diff runner) | **292 / 292** (the 14 output-mismatch bugs the 2026-06-07 runner-hardening surfaced are ALL FIXED 2026-06-08 — see compiler-bugs.md; 6 tests carry `// @allow-output-diff` for documented float-precision / zero-sentinel divergences, incl. `1_values`) |
 | `bindgen_tests.ts` | **103 / 103** |
 | `jstyper_tests.ts` | **73 / 73** |
 | Capability pipelines `18c`–`18g` (Set/Map/Date/JSON/RegExp) + `18h` (virtual `wasmtk:` imports) | **6 / 6** |

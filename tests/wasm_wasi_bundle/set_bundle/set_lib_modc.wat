@@ -100,6 +100,8 @@
     (local $used i32)
     (local $mask i32)
     (local $idx i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $pre (local.get $h))
     (if (i32.gt_s (i32.mul (i32.add (i32.load (i32.add (i32.add (local.get $pre) (i32.const 8)) (i32.shl (i32.const 0) (i32.const 2)))) (i32.const 1)) (i32.const 2)) (i32.load (i32.add (i32.add (local.get $pre) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2)))))
       (then

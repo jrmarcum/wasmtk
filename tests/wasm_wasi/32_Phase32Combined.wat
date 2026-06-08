@@ -293,6 +293,7 @@
       )
         (return (f64.const 0.0))
     )
+      (unreachable)
   )
 
   (func $isCircle (param $s i32) (result i32)

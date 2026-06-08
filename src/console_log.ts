@@ -450,6 +450,16 @@ function parseSingleArg(
     return [{ kind: "literal", text: unescapeString(token.slice(1, -1)) }];
   }
 
+  // ── (N).toString(radix) on a literal number → constant-fold to the radix string (e.g.
+  // (14).toString(2) → "1110"). Runtime-value radix conversion is not yet supported.
+  const toStrRadixLit = token.match(/^\(?\s*(-?\d+)\s*\)?\s*\.toString\s*\(\s*(\d+)\s*\)$/);
+  if (toStrRadixLit) {
+    const radix = parseInt(toStrRadixLit[2]!, 10);
+    if (radix >= 2 && radix <= 36) {
+      return [{ kind: "literal", text: parseInt(toStrRadixLit[1]!, 10).toString(radix) }];
+    }
+  }
+
   // ── Numeric literal (compile-time constant → embed as string)
   if (/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(token)) {
     return [{ kind: "literal", text: String(Number(token)) }];
@@ -645,9 +655,12 @@ function parseSingleArg(
   // ── String-producing method call: receiver.toUpperCase()/toLowerCase()/trim()/slice()/...
   // (receiver may be a plain string var OR a string-array element arr[i]). Routed through wasic's
   // emitStringPtrLen via the resolver, which captures the ptr/len into temp locals.
+  // Receiver may be a var, string literal ("12".padStart), or a call (toFixed(..).padStart) — the
+  // resolver delegates to emitStringPtrLen and returns undefined for anything it can't resolve, so a
+  // permissive receiver pattern is safe (non-string tokens fall through to the handlers below).
   if (
     _stringExprResolver &&
-    /^(?:\w+(?:\[[^\]]*\])?)\.(toUpperCase|toLowerCase|trim|trimStart|trimEnd|trimLeft|trimRight|slice|charAt|substring|substr|replace|replaceAll|padStart|padEnd|repeat)\s*\(/
+    /^.+\.(toUpperCase|toLowerCase|trim|trimStart|trimEnd|trimLeft|trimRight|slice|charAt|substring|substr|replace|replaceAll|padStart|padEnd|repeat)\s*\(/
       .test(token)
   ) {
     const r = _stringExprResolver(token, locals);

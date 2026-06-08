@@ -203,7 +203,8 @@
       (catch $__exn_tag
         (local.set $r_len)
         (local.set $r_ptr)
-        (;; string assignment from complex expression not yet supported: msg = r instanceof Error ? r.message : `${r}`;)
+        (local.set $msg_ptr (local.get $r_ptr))
+      (local.set $msg_len (local.get $r_len))
             (i32.store (i32.const 0) (i32.const 132))
           (i32.store (i32.const 4) (i32.const 0))
           (i32.store8 (i32.const 132) (i32.const 82))

@@ -296,6 +296,8 @@
   )
 
   (func $sumPair (param $p i32) (result i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (return (i32.add (i32.load (i32.add (local.get $p) (i32.const 0))) (i32.load (i32.add (local.get $p) (i32.const 4)))))
   )
 

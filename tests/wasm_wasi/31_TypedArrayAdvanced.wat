@@ -305,6 +305,8 @@
     (local $i i32)
     (local $len i32)
     (local $j i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $total (i32.const 0))
     (local.set $i (i32.const 0))
     (local.set $len (i32.load (local.get $arr)))
