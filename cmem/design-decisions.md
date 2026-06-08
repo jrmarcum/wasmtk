@@ -4,6 +4,21 @@ Invariants and codegen rules that are easy to break in a refactor and must NOT b
 reverted. The exhaustive list (with line numbers) is in the legacy `CLAUDE.md`; this is the
 high-value subset.
 
+## Scanners / parsing correctness
+
+- **Bracket/paren/operator scanners MUST skip string & template literals.** `findBinaryOp` and the
+  `parseFunctions` multi-line array-literal body-joiner count `()`/`[]`/`{}` for depth; without masking
+  literal content, a literal containing `]` `)` `}` `[` `(` `{` corrupts depth — e.g. `s + "]"` failed
+  to find the top-level `+` (string concat → empty), and `let s = "["` looked like an unclosed array
+  (the next statement got joined onto it). Use module-level `buildStringLiteralMask(s)` (marks every
+  index inside a `"`/`'`/`` ` `` literal, escape-aware) and `netSquareBracketDepth(s)`. When adding or
+  refactoring ANY depth/operator scanner over user expressions, mask literals first. (Known still-latent:
+  the single-line-body `splitStmts` `;`-splitter has the same gap — fix if it ever surfaces.)
+- **The test runner compares OUTPUT, not just exit codes (2026-06-07).** See testing.md. A codegen
+  change can compile + run (exit 0) yet emit wrong output; the hardened `wasi_tests.ts` catches this.
+  Do NOT add `// @allow-output-diff` to silence a real mismatch — it's only for genuine wasic-vs-native
+  semantic divergences (float precision, zero-sentinel defaults).
+
 ## Numeric / codegen correctness
 
 - **`Math.round` = `floor(x + 0.5)`**, NOT `f64.nearest` (which is banker's rounding and gives

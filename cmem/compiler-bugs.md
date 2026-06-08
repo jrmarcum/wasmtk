@@ -1,8 +1,12 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **One known-open, low-priority bug:**
-`console.log("x:", arr[i] + arr[j])` (array-element arithmetic in console.log) drops everything after
-the first term — see the 2026-06-07 entry below; does not affect the 292/292 suite. Phase 51 (2026-06-05) added
+Live record of bugs found + fixed. Newest first. **⚠️ 14 KNOWN-OPEN output-mismatch bugs** surfaced
+2026-06-07 by hardening the test runner to compare TS-run vs WASM-run output (it previously checked
+only per-step exit codes, so wrong-output tests "passed"). Suite is now **278/292** under the hardened
+runner (5 tests legitimately diverge and carry `// @allow-output-diff`; **14 produce genuinely wrong
+output** — see "Runner-hardening audit" entry below for the full list + cluster breakdown). Two
+dominant root-cause scanner bugs were FIXED in the same pass (string-literal masking — see entry),
+recovering 12 of the original 31 mismatches. Phase 51 (2026-06-05) added
 `instanceof`, closed three construction/parsing gaps it surfaced, and a follow-up workaround-audit
 fixed one more silent bug + added a loud `call_indirect`-in-merge guard; a 2026-06-07 follow-up added
 a companion `memory.grow`-in-merge guard (all below). The full suite is **292/292**
@@ -10,6 +14,45 @@ a companion `memory.grow`-in-merge guard (all below). The full suite is **292/29
 `51_NestedDestructuring` + `51_NestedTuple` (51.3) + `51_UtilityTypes` (51.4), 2026-06-07; was 279);
 the 2026-06-07 merge guard + Go-CLI changes add no tests and were validated against the 14
 merge-dependent tests with no regression.
+
+## Runner-hardening audit (2026-06-07) — exit-code suite was masking wrong output
+
+**Test runner hardened (`tests/wasi_tests.ts`):** previously a test "passed" if compile / run-ts /
+run-wasm each exited 0 — it never compared the two runs' *output*. Now it captures both stdouts and
+fails on mismatch (`output-mismatch`), unless the test carries `// @allow-output-diff` (for the few
+whose wasic semantics legitimately differ from native TS). This exposed **31** wrong-output tests the
+green suite had been hiding (incl. `51_ClassInstanceArrayLiteral`, which "validated a fix" while
+printing `0 0 0`). Implementation note: capture only reads `output.stdout` when `stdout:"piped"` —
+reading it on an inherited stream throws "Cannot get 'stdout': not piped".
+
+**FIXED in the same pass — two scanner bugs (string-literal masking), recovered 12 of the 31.**
+Multiple bracket/paren-counting scanners did NOT skip string/template literals, so a literal
+containing `]` `)` `}` `[` `(` `{` corrupted depth tracking. (a) `findBinaryOp` — `s + "]"` failed to
+find the top-level `+` → string concat silently produced an empty string. (b) The `parseFunctions`
+multi-line array-literal **body-joiner** — `let s: string = "["` looked like an unclosed array, so the
+following statement got joined onto it and the whole thing fell to the "complex string assignment not
+supported" stub. Fix: new module-level `buildStringLiteralMask(s)` + `netSquareBracketDepth(s)`;
+`findBinaryOp` skips masked positions, the joiner uses the string-aware depth. (The single-line-body
+`splitStmts` splitter has the same latent bug but wasn't on the failing path — left for the cleanup.)
+
+**14 KNOWN-OPEN output-mismatch bugs (deferred to a scoped cleanup; checkpoint decision 2026-06-07).**
+By cluster:
+- **Exceptions/error string payloads (6):** `15_Exceptions` (catch returns `-1`→`0`), `15_recover`
+  (message empty), `15_LexicalShadowing_Stress` (catch-var shadow returns inner not outer),
+  `6b_custom-errors` (message → `260`, a pointer), `6b_errors` (message → `0`), `6b_SimpleStructs`.
+- **String (5):** `1_values` (`"go"+"lang"` in console.log prints the raw tokens — string-literal
+  concat in a console.log arg; also has a legit float-precision line so it can't just be allowlisted),
+  `1_channels` (empty), `27_line-filters` (string methods → `0`), `27_string-formatting`,
+  `43_collection-functions` (string-array elements print empty).
+- **Map (1):** `6b_mutexes` (`map[a:20000 b:10000]` → `map[a:0 b:0]`).
+- **for-of (1):** `26_ForOf` (`60` → `16`, plus extra lines).
+- **class-array-literal (1):** `51_ClassInstanceArrayLiteral` (`areas: 16 75 4` → `0 0 0`; the
+  array-literal-of-`new` desugar produces zeroed structs — the test was green-but-wrong).
+
+**5 legitimate divergences carry `// @allow-output-diff`** (NOT bugs): `45_random-numbers`,
+`7a_MathIntrinsics`, `7a_constants` (f64→string float precision), `48_ObjectDestructDefault`,
+`48_Phase48Combined` (zero-sentinel destructuring defaults). Also previously documented separate-open:
+`console.log("x:", arr[i] + arr[j])` array-element arithmetic drops terms after the first.
 
 ## console.log i32 struct-field + struct-field arithmetic emitted f64.add — FIXED 2026-06-07
 

@@ -934,6 +934,45 @@ function skipStringLiteral(s: string, i: number): number {
   return i;
 }
 
+/** Returns a boolean array marking every index of `s` that lies inside a string or template
+ *  literal (the surrounding quotes included), so depth/operator scanners can skip literal
+ *  content. Handles `"`, `'`, `` ` `` and `\` escapes. (A nested `${…}` inside a template is
+ *  treated as part of the literal — fine for top-level operator/bracket scanning.) */
+function buildStringLiteralMask(s: string): boolean[] {
+  const mask = new Array<boolean>(s.length).fill(false);
+  let q: string | null = null;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (q !== null) {
+      mask[i] = true;
+      if (c === "\\") {
+        if (i + 1 < s.length) mask[i + 1] = true;
+        i++;
+        continue;
+      }
+      if (c === q) q = null;
+    } else if (c === '"' || c === "'" || c === "`") {
+      q = c;
+      mask[i] = true;
+    }
+  }
+  return mask;
+}
+
+/** Net `[`…`]` depth of `s`, IGNORING brackets inside string/template literals. Used by the
+ *  multi-line array-literal body joiners — without skipping literals, a `let s = "["` was treated
+ *  as an unclosed array and the following statement got joined onto it (silently breaking it). */
+function netSquareBracketDepth(s: string): number {
+  const mask = buildStringLiteralMask(s);
+  let d = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (mask[i]) continue;
+    if (s[i] === "[") d++;
+    else if (s[i] === "]") d--;
+  }
+  return d;
+}
+
 /** Given s[openIdx] === "<", returns the index of the matching ">" respecting nested <...>.
  *  Used by Phase 51.4 utility-type expansion (type positions only — no comparison operators). */
 function matchAngleBracket(s: string, openIdx: number): number {
@@ -2275,21 +2314,16 @@ class WasicTranspiler {
         } else if (/^(?:var|let|const)\s+\w+/.test(l)) {
           // Join multi-line `const arr: T[] = [ ... ]` array literals into one line
           // so the arrPre regex (which requires closing ] on same line) can process them.
-          let arrDepth = 0;
-          for (const ch of l) {
-            if (ch === "[") arrDepth++;
-            else if (ch === "]") arrDepth--;
-          }
+          // String-literal-aware so `let s: string = "["` is NOT mistaken for an unclosed array
+          // (that bug joined the following statement onto it, silently breaking both).
+          let arrDepth = netSquareBracketDepth(l);
           if (arrDepth > 0) {
             let joined = l;
             while (arrDepth > 0 && li + 1 < rawLines.length) {
               li++;
               const next = rawLines[li];
               joined += " " + next;
-              for (const ch of next) {
-                if (ch === "[") arrDepth++;
-                else if (ch === "]") arrDepth--;
-              }
+              arrDepth += netSquareBracketDepth(next);
             }
             bodyLines.push(joined.replace(/\s+/g, " ").trim());
           } else {
@@ -8130,8 +8164,15 @@ class WasicTranspiler {
     // RHS ending in a call like `x !== f(i)`) was never counted, driving depth negative and
     // hiding the operator. Brackets are counted too (matching findDepth0LTR/findDepth0Keyword)
     // so an operator inside `arr[i+1]` is correctly treated as nested, not top-level.
+    //
+    // Positions inside string / template literals are MASKED so brackets, parens, and operators
+    // within a literal don't corrupt depth or match as operators — e.g. `s + "]"` must still find
+    // the top-level `+` even though the literal contains `]`. Without this, any string concat whose
+    // literal contained `]` `)` `}` `[` `(` `{` silently failed to parse and produced an empty string.
+    const inStr = buildStringLiteralMask(expr);
     const maxStart = expr.length - op.length;
     for (let i = expr.length - 1; i >= 0; i--) {
+      if (inStr[i]) continue;
       const ch = expr[i];
       if (ch === ")" || ch === "]") {
         depth++;

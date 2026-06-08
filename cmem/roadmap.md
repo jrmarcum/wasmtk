@@ -150,6 +150,17 @@ nested tuple), 51.4 utility types. The async (#13) and own-runtime (#14) tracks 
    tracked-`.wat` changes). NOTE: a SEPARATE pre-existing bug remains — `console.log("x:", arr[i] + arr[j])`
    (array-element arithmetic) returns only the first element; out of scope here.
 
+### Pre-Phase-52 correctness cleanup — 14 known-open output-mismatch bugs (deferred 2026-06-07)
+
+A pre-Phase-52 code audit + **test-runner hardening** (now diffs run-ts vs run-wasm OUTPUT, not just
+exit codes — see testing.md / compiler-bugs.md "Runner-hardening audit") revealed **31** tests that
+were green-but-wrong. **12 fixed** in that pass (two string-literal-masking scanner bugs), **5**
+allowlisted as legitimate divergences, **14 remain OPEN** and are deferred to a separate scoped effort
+(owner decision: checkpoint + commit the wins first). Clusters: exceptions/error string payloads (6),
+string ops/formatting (5), Go-style map printing (1), `for…of` (1), class-array-literal zeroed structs
+(1). Full list in compiler-bugs.md. These are genuine wrong-output bugs (not gating Phase 52, but
+worth clearing before relying on the suite for new work). Suite under the hardened runner: **278/292**.
+
 ### Phase 52 — Leaf conveniences (NO downstream risk; opportunistic, never gating)
 
 5. `void expr` → `(drop …)`; 6. chained assignment `a = b = c = 0`; 7. `in` operator (closed-world →

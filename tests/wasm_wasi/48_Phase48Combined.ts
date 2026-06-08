@@ -1,3 +1,4 @@
+// @allow-output-diff: wasic zero-sentinel destructuring defaults differ from native TS
 // Phase 48: combined test
 type i32 = number;
 type f64 = number;

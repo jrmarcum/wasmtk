@@ -20,16 +20,14 @@
 
 import { join, parse } from "jsr:@std/path";
 import { exists } from "jsr:@std/fs";
-import {
-  blue, bold, cyan, dim, green, magenta, red, yellow,
-} from "jsr:@std/fmt/colors";
+import { blue, bold, cyan, dim, green, magenta, red, yellow } from "jsr:@std/fmt/colors";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuration
 // ─────────────────────────────────────────────────────────────────────────────
 
 const WASMTK_BIN = "wasmtk";
-const targetDir  = Deno.args[0] ?? join(import.meta.dirname ?? Deno.cwd(), "wasm_wasi");
+const targetDir = Deno.args[0] ?? join(import.meta.dirname ?? Deno.cwd(), "wasm_wasi");
 // Optional second arg: regex filter applied to file basenames (e.g. "^01_" for phase 1)
 const fileFilter = Deno.args[1] ? new RegExp(Deno.args[1]) : null;
 
@@ -40,6 +38,7 @@ const fileFilter = Deno.args[1] ? new RegExp(Deno.args[1]) : null;
 interface StepResult {
   success: boolean;
   code: number;
+  stdout?: string; // captured stdout when `capture` is requested (for output comparison)
 }
 
 /**
@@ -58,15 +57,25 @@ async function runStep(
   cmd: string,
   args: string[],
   expectedFail = false,
+  capture = false,
 ): Promise<StepResult> {
   console.log(blue(`  [${label}]`), dim(`${cmd} ${args.join(" ")}`));
 
   try {
-    const { success, code } = await new Deno.Command(cmd, {
+    const output = await new Deno.Command(cmd, {
       args,
-      stdout: "inherit",
+      stdout: capture ? "piped" : "inherit",
       stderr: "inherit",
     }).output();
+    const { success, code } = output;
+
+    let captured: string | undefined;
+    if (capture) {
+      // Echo the captured stdout so the run stays visible, and keep it for comparison.
+      // (Only read .stdout when piped — accessing it on an inherited stream throws.)
+      await Deno.stdout.write(output.stdout);
+      captured = new TextDecoder().decode(output.stdout);
+    }
 
     if (success) {
       if (expectedFail) {
@@ -81,12 +90,34 @@ async function runStep(
         console.log(red(`  ✗ ${label} failed (exit code ${code})`));
       }
     }
-    return { success, code };
+    return { success, code, stdout: captured };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(red(`  ✗ ${label} error: ${msg}`));
     return { success: false, code: -1 };
   }
+}
+
+/** Normalize captured output for comparison: strip a trailing newline, normalize CRLF→LF,
+ *  and trim trailing whitespace on each line. */
+function normalizeOutput(s: string): string {
+  return s.replace(/\r\n/g, "\n").split("\n").map((l) => l.replace(/\s+$/, "")).join("\n")
+    .replace(/\n+$/, "");
+}
+
+/**
+ * Reads the first 10 lines of a .ts file for a `// @allow-output-diff[: reason]` marker. Tests
+ * whose wasic semantics legitimately diverge from native-TS execution (e.g. zero-sentinel
+ * destructuring defaults, float-formatting precision) opt out of run-ts vs run-wasm comparison.
+ */
+async function readAllowOutputDiff(tsPath: string): Promise<boolean> {
+  try {
+    const text = await Deno.readTextFile(tsPath);
+    for (const line of text.split("\n").slice(0, 10)) {
+      if (/\/\/\s*@allow-output-diff\b/.test(line)) return true;
+    }
+  } catch { /* ignore */ }
+  return false;
 }
 
 /**
@@ -131,8 +162,8 @@ async function readModcPrereq(tsPath: string): Promise<string | null> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface PipelineStep {
-  label: string;   // wasmtk sub-command (modc, wasic, wasmbundle, run, …)
-  args:  string[]; // full arg list passed to wasmtk (subcommand first)
+  label: string; // wasmtk sub-command (modc, wasic, wasmbundle, run, …)
+  args: string[]; // full arg list passed to wasmtk (subcommand first)
 }
 
 /**
@@ -155,8 +186,8 @@ async function readTestPipeline(tsPath: string): Promise<PipelineStep[] | null> 
       const m = line.match(/\/\/\s*@step\s+(\S+)\s*(.*)/);
       if (!m) continue;
       const subCmd = m[1];
-      const rest   = m[2]?.trim() ?? "";
-      const extra  = rest.length > 0 ? rest.split(/\s+/) : [];
+      const rest = m[2]?.trim() ?? "";
+      const extra = rest.length > 0 ? rest.split(/\s+/) : [];
       steps.push({ label: subCmd, args: [subCmd, ...extra] });
     }
     return steps.length > 0 ? steps : null;
@@ -206,7 +237,7 @@ async function startTestSuite() {
     if (
       entry.isFile &&
       entry.name.endsWith(".ts") &&
-      !entry.name.endsWith("_tests.ts") &&  // exclude wasi_tests.ts, mod_tests.ts, etc.
+      !entry.name.endsWith("_tests.ts") && // exclude wasi_tests.ts, mod_tests.ts, etc.
       (fileFilter === null || fileFilter.test(entry.name))
     ) {
       files.push(entry.name);
@@ -228,7 +259,7 @@ async function startTestSuite() {
 
   for (const file of files) {
     const { name } = parse(file);
-    const tsPath   = join(resolvedPath, file);
+    const tsPath = join(resolvedPath, file);
     const wasmPath = join(resolvedPath, `${name}.wasm`);
 
     console.log(yellow(bold(`── ${file}`)));
@@ -261,8 +292,7 @@ async function startTestSuite() {
 
     const expectFail = await readExpectedFailures(tsPath);
     // A step "passes" if it succeeded when not expected to fail, or failed when expected to fail.
-    const stepOk = (r: StepResult, step: string) =>
-      expectFail.has(step) ? !r.success : r.success;
+    const stepOk = (r: StepResult, step: string) => expectFail.has(step) ? !r.success : r.success;
 
     // ── Step 0: modc-prereq (Phase 18 — compile library before app) ──
     const prereqRel = await readModcPrereq(tsPath);
@@ -289,7 +319,7 @@ async function startTestSuite() {
       console.log(dim("  (skipping run-ts — .wasm imports require modc-prereq)"));
       runTs = { success: true, code: 0 };
     } else {
-      runTs = await runStep("run-ts", WASMTK_BIN, ["run", tsPath], expectFail.has("run-ts"));
+      runTs = await runStep("run-ts", WASMTK_BIN, ["run", tsPath], expectFail.has("run-ts"), true);
     }
 
     // ── Step 3: Run compiled WASM ─────────────────────────────────
@@ -305,23 +335,65 @@ async function startTestSuite() {
       console.log(red("  ✗ run-wasm: .wasm file not found after compile"));
       runWasm = { success: false, code: -1 };
     } else {
-      runWasm = await runStep("run-wasm", WASMTK_BIN, ["run", wasmPath], expectFail.has("run-wasm"));
+      runWasm = await runStep(
+        "run-wasm",
+        WASMTK_BIN,
+        ["run", wasmPath],
+        expectFail.has("run-wasm"),
+        true,
+      );
+    }
+
+    // ── Step 4: Compare run-ts vs run-wasm output ─────────────────
+    // The compiled WASM must reproduce the TS reference behavior. Only meaningful when both runs
+    // succeeded, no failure was expected, and the test didn't opt out via @allow-output-diff
+    // (used for the few tests whose wasic semantics legitimately differ from native TS, e.g.
+    // zero-sentinel destructuring defaults or float-formatting precision).
+    const allowDiff = await readAllowOutputDiff(tsPath);
+    let outputMatches = true;
+    const canCompare = prereqRel === null && expectFail.size === 0 &&
+      runTs.success && runWasm.success &&
+      runTs.stdout !== undefined && runWasm.stdout !== undefined;
+    if (canCompare && !allowDiff) {
+      if (normalizeOutput(runTs.stdout!) === normalizeOutput(runWasm.stdout!)) {
+        console.log(green("  ✓ output matches (run-ts == run-wasm)"));
+      } else {
+        outputMatches = false;
+        console.log(red("  ✗ output MISMATCH (run-ts != run-wasm):"));
+        const tsLines = normalizeOutput(runTs.stdout!).split("\n");
+        const wasmLines = normalizeOutput(runWasm.stdout!).split("\n");
+        const n = Math.max(tsLines.length, wasmLines.length);
+        let shown = 0;
+        for (let i = 0; i < n && shown < 6; i++) {
+          if (tsLines[i] !== wasmLines[i]) {
+            console.log(red(`      L${i + 1}  ts:   ${JSON.stringify(tsLines[i] ?? "")}`));
+            console.log(red(`      L${i + 1}  wasm: ${JSON.stringify(wasmLines[i] ?? "")}`));
+            shown++;
+          }
+        }
+      }
+    } else if (allowDiff && canCompare) {
+      console.log(dim("  (output-diff allowed via @allow-output-diff)"));
     }
 
     // ── File verdict ──────────────────────────────────────────────
-    const allPassed = prereq.success && stepOk(compile, "compile") && stepOk(runTs, "run-ts") && stepOk(runWasm, "run-wasm");
+    const allPassed = prereq.success && stepOk(compile, "compile") &&
+      stepOk(runTs, "run-ts") && stepOk(runWasm, "run-wasm") && outputMatches;
     if (allPassed) {
-      const note = expectFail.size > 0 ? dim(` (expected failures: ${[...expectFail].join(", ")})`) : "";
+      const note = expectFail.size > 0
+        ? dim(` (expected failures: ${[...expectFail].join(", ")})`)
+        : "";
       console.log(green(`✅ ${file} PASSED`) + note + "\n");
       passedCount++;
     } else {
       // List steps whose outcome didn't match expectations.
       const badSteps = (
         [
-          !prereq.success              && "modc-prereq",
-          !stepOk(compile, "compile")  && "compile",
-          !stepOk(runTs,   "run-ts")   && "run-ts",
+          !prereq.success && "modc-prereq",
+          !stepOk(compile, "compile") && "compile",
+          !stepOk(runTs, "run-ts") && "run-ts",
           !stepOk(runWasm, "run-wasm") && "run-wasm",
+          !outputMatches && "output-mismatch",
         ] as (string | false)[]
       ).filter((s): s is string => s !== false).join(", ");
       console.log(red(`❌ ${file} FAILED  [${badSteps}]\n`));

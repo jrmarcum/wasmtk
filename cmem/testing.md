@@ -54,7 +54,7 @@ The full green pre-publish checklist actually run (2026-06-02):
 deno publish --dry-run --allow-dirty   # THE gate: type-check + slow-types + package — must pass
 deno lint main.ts src/                 # clean (18 files)
 deno fmt  --check main.ts src/         # clean as of 2026-06-02 (see design-decisions.md)
-deno run -A tests/wasi_tests.ts        # 292/292  (judges per-step EXIT CODE, not output — output-verify codegen changes manually)
+deno run -A tests/wasi_tests.ts        # 278/292 (HARDENED 2026-06-07: now diffs run-ts vs run-wasm OUTPUT, not just exit codes). 14 known-open output-mismatch bugs remain (see compiler-bugs.md); 5 tests legitimately diverge and carry `// @allow-output-diff`. A test FAILS on `output-mismatch` unless it opts out.
 deno run -A tests/bindgen_tests.ts     # 103/103
 deno run -A tests/jstyper_tests.ts     # 73/73
 ```
@@ -64,6 +64,23 @@ the `deno.json` version and propagates it to `package.json` + `src/utils.ts` —
 re-publishing the same version (`1.6.2` was the last published; `bump` took it to `1.6.3`). Then
 `deno task publish` → `scripts/publish.ts` re-syncs the version, commits `bump version to vX.Y.Z`,
 tags it, and pushes; the tag triggers `publish.yml`.
+
+## Runner does OUTPUT comparison (hardened 2026-06-07)
+
+`wasi_tests.ts` runs each standard test as: compile → run-ts (native TS via `wasmtk run x.ts`) →
+run-wasm (`wasmtk run x.wasm`) → **compare the two outputs**. It captures both stdouts and fails the
+test with `output-mismatch` if they differ. BEFORE this, the runner only checked per-step **exit
+codes**, so a test that compiled and ran (exit 0) "passed" even when the WASM output was wrong — this
+masked dozens of real codegen bugs (see compiler-bugs.md "Runner-hardening audit"). **Lesson:** a
+green suite no longer requires manual output-verification, but historically it did — don't trust an
+old "NNN/NNN PASS" claim to mean correct output.
+
+Opt-out marker `// @allow-output-diff[: reason]` (in the first 10 lines) skips the output comparison
+for tests whose wasic semantics *legitimately* differ from native TS — currently float-formatting
+precision (`45_random-numbers`, `7a_MathIntrinsics`, `7a_constants`) and zero-sentinel destructuring
+defaults (`48_ObjectDestructDefault`, `48_Phase48Combined`). `@test-pipeline` and `@modc-prereq`
+tests skip the comparison (they self-check via traps / can't run-ts). Use the marker SPARINGLY — only
+for a genuine, documented semantic divergence, never to paper over a bug.
 
 ## Test populations in `tests/wasm_wasi/`
 

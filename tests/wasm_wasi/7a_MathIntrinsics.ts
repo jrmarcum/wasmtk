@@ -1,3 +1,4 @@
+// @allow-output-diff: float formatting precision (e.g. Math.SQRT2 prints 15 dp vs TS 17 sig digits) — accepted limitation
 type i32 = number;
 
 export function _start(): void {

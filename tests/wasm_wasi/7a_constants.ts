@@ -1,3 +1,4 @@
+// @allow-output-diff: float formatting precision vs native TS
 const s: string = "constant";
 console.log(s);
 
