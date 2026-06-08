@@ -677,6 +677,8 @@
     (local $__iface_tmp i32)
     (local $__tmpl_num_ptr i32)
     (local $__tmpl_num_len i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (call $__str_trim (local.get $msg_ptr) (local.get $msg_len))
       (local.set $trimmed_len)
       (local.set $trimmed_ptr)

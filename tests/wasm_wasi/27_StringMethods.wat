@@ -1143,6 +1143,8 @@
     (local $lo_ptr i32)
     (local $lo_len i32)
     (local $__iface_tmp i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $s_ptr (i32.const 327))
       (local.set $s_len (i32.const 11))
     (call $__str_to_upper (local.get $s_ptr) (local.get $s_len))

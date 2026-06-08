@@ -1019,6 +1019,8 @@
     (local $c_len i32)
     (local $d f64)
     (local $__iface_tmp i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $result (f64.const 0))
     (local.set $chars_ptr (i32.const 261))
       (local.set $chars_len (i32.const 16))

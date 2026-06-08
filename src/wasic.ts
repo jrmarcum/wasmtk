@@ -140,6 +140,7 @@ import {
   setInstanceofResolver,
   setStrCmpNeededCallback,
   setStringArrayAllocator,
+  setStringExprResolver,
   setStructLiteralAllocator,
   type StructFieldLookup,
   unescapeString,
@@ -1433,6 +1434,10 @@ class WasicTranspiler {
   private moduleGlobals = new Map<string, { type: WatType; mutable: boolean; initExpr: string }>();
   // Module-level string constants: varName → [dataOffset, byteLen] — pre-allocated in data section
   private moduleStringConsts = new Map<string, [number, number]>();
+  // Module-level MUTABLE string globals: varName → initial [ptr, len]. Emitted as a pair of
+  // mutable i32 globals ($name_ptr / $name_len) so a `let`/`var` string reassigned inside a
+  // function persists across calls (e.g. `let message = ""; send()` writes it, `receive()` reads).
+  private moduleStringGlobals = new Map<string, { ptr: number; len: number }>();
 
   // Phase 30: namespace names (populated by expandNamespaces before any parse pass)
   private namespaceDefs: Set<string> = new Set();
@@ -2914,6 +2919,17 @@ class WasicTranspiler {
           if (typeHere === "string") {
             const strVal = initExpr.slice(1, -1);
             const [offset, len] = this.allocString(strVal);
+            // A MUTABLE module-level string (`let`/`var`) referenced inside any function body
+            // must become a global pair so writes from one function are visible to another.
+            // A `const`, or a string only used in _start, stays an immutable data-section const.
+            const referencedInFn = keyword !== "const" &&
+              this.functions.some((f) =>
+                f.name !== "_start" && new RegExp(`\\b${name}\\b`).test(f.bodyLines.join("\n"))
+              );
+            if (referencedInFn) {
+              this.moduleStringGlobals.set(name, { ptr: offset, len });
+              continue; // drop the init line; the global declaration carries the initial value
+            }
             this.moduleStringConsts.set(name, [offset, len]);
           }
           remaining.push(line); // keep in startBodyLines for _start assignment
@@ -5166,6 +5182,22 @@ class WasicTranspiler {
     initExpr: string,
     locals: Map<string, WatType>,
   ): string {
+    const inner = this.emitStringAssignInner(varName, initExpr, locals);
+    // If the assignment TARGET is a mutable module-level string global, rewrite its ptr/len
+    // local.set/local.get into global.set/global.get so the write persists across function calls.
+    if (this.moduleStringGlobals.has(varName)) {
+      return inner
+        .replace(new RegExp(`\\(local\\.set \\$${varName}_(ptr|len)`, "g"), `(global.set $${varName}_$1`)
+        .replace(new RegExp(`\\(local\\.get \\$${varName}_(ptr|len)`, "g"), `(global.get $${varName}_$1`);
+    }
+    return inner;
+  }
+
+  private emitStringAssignInner(
+    varName: string,
+    initExpr: string,
+    locals: Map<string, WatType>,
+  ): string {
     this.stringVars.add(varName);
     // If this module-level string was pre-registered as a static const, invalidate it now
     // because the variable is being (re)assigned and is no longer a static constant.
@@ -5414,6 +5446,14 @@ class WasicTranspiler {
           `${ind}(local.set $${varName}_len (i32.const ${len}))`,
         ].join("\n");
       }
+    }
+
+    // Source is a mutable module-level string global — read via global.get
+    if (/^\w+$/.test(initExpr) && this.moduleStringGlobals.has(initExpr)) {
+      return [
+        `(local.set $${varName}_ptr (global.get $${initExpr}_ptr))`,
+        `${ind}(local.set $${varName}_len (global.get $${initExpr}_len))`,
+      ].join("\n");
     }
 
     // Another string variable
@@ -5975,6 +6015,10 @@ class WasicTranspiler {
       const [offset, len] = this.moduleStringConsts.get(expr)!;
       return `(i32.const ${offset}) (i32.const ${len})`;
     }
+    // Mutable module-level string global — read the ptr/len global pair
+    if (/^\w+$/.test(expr) && this.moduleStringGlobals.has(expr)) {
+      return `(global.get $${expr}_ptr) (global.get $${expr}_len)`;
+    }
     // varName.message — Error catch variable; .message is the string itself
     const dotMsgMatch = expr.match(/^(\w+)\.message$/);
     if (dotMsgMatch && locals.get(dotMsgMatch[1]) === "string") {
@@ -5996,7 +6040,7 @@ class WasicTranspiler {
           f.name === structFieldSPLM[2] && f.type === "string"
         );
         if (field) {
-          const baseWat = sv.ptr === -1
+          const baseWat = sv.ptr < 0
             ? `(local.get $${structFieldSPLM[1]})`
             : `(i32.const ${sv.ptr})`;
           return `(i32.load offset=${field.offset} ${baseWat}) (i32.load offset=${
@@ -6089,6 +6133,25 @@ class WasicTranspiler {
         sliceSPLM[1]
       }_len) ${startWat} ${endWat})`;
     }
+    // str.toUpperCase() / str.toLowerCase() — plain string var OR string-array element receiver.
+    // Returns the multi-value ($__str_to_upper/lower) call (ptr, len) for capture by the caller.
+    const caseSPLM = expr.match(/^(\w+(?:\[[^\]]*\])?)\.(toUpperCase|toLowerCase)\s*\(\s*\)$/);
+    if (caseSPLM) {
+      const recv = caseSPLM[1]!;
+      const helper = caseSPLM[2] === "toUpperCase" ? "$__str_to_upper" : "$__str_to_lower";
+      let ptrLen: string | null = null;
+      if (/^\w+$/.test(recv) && locals.get(recv) === "string") {
+        ptrLen = `(local.get $${recv}_ptr) (local.get $${recv}_len)`;
+      } else if (recv.includes("[")) {
+        const inner = this.emitStringPtrLen(recv, locals); // string-array element arr[i]
+        if (inner !== "(i32.const 0) (i32.const 0)") ptrLen = inner;
+      }
+      if (ptrLen) {
+        this.needsStringExtHelpers = true;
+        return `(call ${helper} ${ptrLen})`;
+      }
+    }
+
     // Call to a string-returning function: emit void call then read globals
     const callM = expr.match(/^(\w+)\s*\((.*)?\)$/);
     if (callM) {
@@ -7036,7 +7099,7 @@ class WasicTranspiler {
             : field.type === "i64"
             ? "i64.load"
             : "i32.load";
-          const baseWat = sv.ptr === -1
+          const baseWat = sv.ptr < 0
             ? `(local.get $${structFieldMatch[1]})`
             : `(i32.const ${sv.ptr})`;
           return `(${loadOp} (i32.add ${baseWat} (i32.const ${field.offset})))`;
@@ -7060,7 +7123,7 @@ class WasicTranspiler {
               : innerField.type === "i64"
               ? "i64.load"
               : "i32.load";
-            const baseWat = sv.ptr === -1
+            const baseWat = sv.ptr < 0
               ? `(local.get $${chainedFieldMatch[1]})`
               : `(i32.const ${sv.ptr})`;
             const outerPtrWat =
@@ -7844,7 +7907,7 @@ class WasicTranspiler {
           const du = this.discUnionDefs.get(sv.def.name);
           if (du && du.discriminant === fieldN) {
             const tagIdx = du.variants.find((v) => v.tag === lit)?.tagIndex ?? -1;
-            const baseWat = sv.ptr === -1 ? `(local.get $${varN})` : `(i32.const ${sv.ptr})`;
+            const baseWat = sv.ptr < 0 ? `(local.get $${varN})` : `(i32.const ${sv.ptr})`;
             const loadWat = `(i32.load ${baseWat})`;
             const eqOp = (op === "!=" || op === "!==") ? "i32.ne" : "i32.eq";
             return `(${eqOp} ${loadWat} (i32.const ${tagIdx}))`;
@@ -8326,6 +8389,24 @@ class WasicTranspiler {
     locals: Map<string, WatType>,
     funcResult: WatType | null,
   ): string {
+    // Block-scope correction: a struct-typed var can be re-declared in a sibling block with a
+    // DIFFERENT struct type. The pre-scan registers structVars globally (last declaration wins),
+    // so an earlier block's field access would resolve against the wrong type. Re-register the
+    // var's def to match THIS declaration's annotation as it is emitted (emission is sequential).
+    // Scoped to function-call / runtime inits (ptr=-1); static-literal ptrs are per-occurrence and
+    // owned by their own emit path, so they are left untouched.
+    {
+      const sdm = line.match(/^(?:const|let|var)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*(.+)$/);
+      if (sdm) {
+        const declDef = this.structDefs.get(sdm[2]);
+        const cur = this.structVars.get(sdm[1]);
+        const rhs = sdm[3].trim();
+        if (declDef && cur && cur.def !== declDef && cur.ptr === -1 && /^\w+\s*\(/.test(rhs)) {
+          this.structVars.set(sdm[1], { def: declDef, ptr: -1 });
+        }
+      }
+    }
+
     // return expr;
     if (line.startsWith("return")) {
       const expr = line.replace(/^return\s*/, "").replace(/;$/, "").trim();
@@ -8941,7 +9022,7 @@ class WasicTranspiler {
         const sv = this.structVars.get(eqM[1]);
         if (sv) {
           const pattern = line.slice(openIdx, closeIdx + 1);
-          const baseWat = sv.ptr === -1 ? `(local.get $${eqM[1]})` : `(i32.const ${sv.ptr})`;
+          const baseWat = sv.ptr < 0 ? `(local.get $${eqM[1]})` : `(i32.const ${sv.ptr})`;
           return this.emitDestructurePattern(pattern, baseWat, sv.def, locals).join("\n      ");
         }
       }
@@ -9050,7 +9131,7 @@ class WasicTranspiler {
           return "";
         }
         const pattern = line.slice(openIdx, closeIdx + 1);
-        const baseWat = sv.ptr === -1 ? `(local.get $${eqM[1]})` : `(i32.const ${sv.ptr})`;
+        const baseWat = sv.ptr < 0 ? `(local.get $${eqM[1]})` : `(i32.const ${sv.ptr})`;
         return this.emitDestructurePattern(pattern, baseWat, sv.def, locals).join("\n      ");
       }
     }
@@ -9393,6 +9474,33 @@ class WasicTranspiler {
     }
 
     // Struct field write: p.field = value
+    // Desugar field ++/-- and compound-assign (recv.field OP= val) on a struct/class field
+    // (or this.field, or a static ClassName.field) into the plain `recv.field = recv.field OP val`
+    // form, which the struct/class/static write handlers below already support. Without this,
+    // `c.a++` and `c.b += 5` fell through to a comment-stub and the mutation was silently dropped.
+    {
+      const recvKnown = (r: string): boolean =>
+        r === "this" || this.classVars.has(r) || this.structVars.has(r) || this.classDefs.has(r);
+      let fim = line.match(/^(this|\w+)\.(\w+)\s*(\+\+|--)\s*;?$/);
+      if (fim && recvKnown(fim[1])) {
+        const op = fim[3] === "++" ? "+" : "-";
+        return this.emitStatement(`${fim[1]}.${fim[2]} = ${fim[1]}.${fim[2]} ${op} 1;`, locals, funcResult);
+      }
+      fim = line.match(/^(\+\+|--)\s*(this|\w+)\.(\w+)\s*;?$/);
+      if (fim && recvKnown(fim[2])) {
+        const op = fim[1] === "++" ? "+" : "-";
+        return this.emitStatement(`${fim[2]}.${fim[3]} = ${fim[2]}.${fim[3]} ${op} 1;`, locals, funcResult);
+      }
+      fim = line.match(/^(this|\w+)\.(\w+)\s*([+\-*/%&|^]|<<|>>|>>>)=\s*(.+?);?$/);
+      if (fim && recvKnown(fim[1])) {
+        return this.emitStatement(
+          `${fim[1]}.${fim[2]} = ${fim[1]}.${fim[2]} ${fim[3]} (${fim[4]});`,
+          locals,
+          funcResult,
+        );
+      }
+    }
+
     const structWriteMatch = line.match(/^(\w+)\.(\w+)\s*=\s*(.+?);?$/);
     if (structWriteMatch) {
       // Class instance field write (takes priority)
@@ -9458,7 +9566,7 @@ class WasicTranspiler {
             : field.type === "i64"
             ? "i64.store"
             : "i32.store";
-          const baseWat = sv.ptr === -1
+          const baseWat = sv.ptr < 0
             ? `(local.get $${structWriteMatch[1]})`
             : `(i32.const ${sv.ptr})`;
           const valWat = this.emitExpr(structWriteMatch[3], locals, field.type);
@@ -9877,6 +9985,16 @@ class WasicTranspiler {
     }
 
     // Simple assignment (no let/const)
+    // Reassignment to a mutable module-level string global: message = expr (target not a local).
+    // emitStringAssign's wrapper rewrites the ptr/len local.set into global.set.
+    const strGlobAssign = line.match(/^(\w+)\s*=\s*(.+?);?$/);
+    if (
+      strGlobAssign && this.moduleStringGlobals.has(strGlobAssign[1]) &&
+      !locals.has(strGlobAssign[1])
+    ) {
+      return this.emitStringAssign(strGlobAssign[1], strGlobAssign[2].trim(), locals);
+    }
+
     const assignMatch = line.match(/^(\w+)\s*=\s*(.+?);?$/);
     if (
       assignMatch &&
@@ -10248,11 +10366,20 @@ class WasicTranspiler {
               const innerDef = this.structDefs.get(outerField.structType);
               const innerField = innerDef?.fields.find((fi) => fi.name === fn);
               if (innerField) {
-                const outerBaseWat = outerSv.ptr === -1
+                const outerBaseWat = outerSv.ptr < 0
                   ? `(local.get $${outerVarName})`
                   : `(i32.const ${outerSv.ptr})`;
                 const outerPtrWat =
                   `(i32.load (i32.add ${outerBaseWat} (i32.const ${outerField.offset})))`;
+                // String leaf field: 8-byte [ptr, len] at innerField.offset — return both so
+                // console.log prints the string, not the raw pointer (mirrors the top-level path).
+                if (innerField.type === "string") {
+                  return {
+                    type: "string",
+                    watLoad: `(i32.load offset=${innerField.offset} ${outerPtrWat})`,
+                    watLoadLen: `(i32.load offset=${innerField.offset + 4} ${outerPtrWat})`,
+                  };
+                }
                 const innerLoadOp = innerField.type === "f64"
                   ? "f64.load"
                   : innerField.type === "i64"
@@ -10371,7 +10498,7 @@ class WasicTranspiler {
         const f = sv.def.fields.find((fi) => fi.name === fn);
         if (!f) return undefined;
         if (f.type === "string") {
-          const baseWat = sv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${sv.ptr})`;
+          const baseWat = sv.ptr < 0 ? `(local.get $${vn})` : `(i32.const ${sv.ptr})`;
           return {
             type: "string",
             watLoad: `(i32.load offset=${f.offset} ${baseWat})`,
@@ -10379,7 +10506,7 @@ class WasicTranspiler {
           };
         }
         const loadOp = f.type === "f64" ? "f64.load" : f.type === "i64" ? "i64.load" : "i32.load";
-        const baseWat = sv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${sv.ptr})`;
+        const baseWat = sv.ptr < 0 ? `(local.get $${vn})` : `(i32.const ${sv.ptr})`;
         return {
           type: f.type,
           watLoad: `(${loadOp} (i32.add ${baseWat} (i32.const ${f.offset})))`,
@@ -10389,6 +10516,23 @@ class WasicTranspiler {
         const result = this.emitExpr(token, locals, "i32");
         if (result === "(unreachable)" || result.startsWith("(;?")) return undefined;
         // Determine return type from the expression
+        // Phase 47: arr[idx].method(args) — resolve the element class's method return type
+        // so console.log formats the result correctly (emitExpr already does vtable dispatch).
+        const amc = token.match(/^(\w+)\[([^\]]*)\]\.(\w+)\s*\(/);
+        if (amc) {
+          const aInfo = this.arrayVars.get(amc[1]!);
+          const stn = aInfo?.structTypeName ??
+            (aInfo && aInfo.elemType !== "f64" && aInfo.elemType !== "i32" &&
+                aInfo.elemType !== "i64"
+              ? aInfo.elemType
+              : undefined);
+          if (stn && this.classDefs.has(stn)) {
+            const mfn = this.resolveMethodFunc(stn, amc[3]!);
+            const mdef = mfn ? this.functions.find((f) => f.name === mfn) : undefined;
+            const retType = (mdef?.result ?? "i32") as WatType;
+            return { type: retType as string, wat: this.emitExpr(token, locals, retType) };
+          }
+        }
         const m2 = token.match(/^(?:this|\w+)\.(\w+)\s*\(/);
         if (m2) {
           const receiver2 = token.match(/^(\w+)\./)?.[1] ?? "";
@@ -10448,6 +10592,10 @@ class WasicTranspiler {
       for (const [k, [offset, len]] of this.moduleStringConsts) {
         globalsMap.set(k, `string:${offset}:${len}`);
       }
+      // Add mutable module string globals encoded as "strglobal:name"
+      for (const k of this.moduleStringGlobals.keys()) {
+        globalsMap.set(k, `strglobal:${k}`);
+      }
       const closureVarLookupFn: ClosureVarLookup = (name) => {
         const sig = this.closureTypedVars.get(name);
         if (!sig) return undefined;
@@ -10471,6 +10619,17 @@ class WasicTranspiler {
         if (!m || !this.classDefs.has(m[1]!)) return undefined;
         return this.emitExpr(tok, locs as Map<string, WatType>, "i32");
       });
+      // String-producing method calls (s.toUpperCase(), arr[i].toLowerCase(), …): resolve to a
+      // ptr/len pair via emitStringPtrLen, captured into $__str_op_len (ptrWat runs the call and
+      // leaves ptr; lenWat reads the captured len — both consumers evaluate ptrWat first).
+      setStringExprResolver((tok, locs) => {
+        const w = this.emitStringPtrLen(tok, locs as Map<string, WatType>);
+        if (w === "(i32.const 0) (i32.const 0)") return undefined;
+        return {
+          ptrWat: `(block (result i32) ${w} (local.set $__str_op_len))`,
+          lenWat: `(local.get $__str_op_len)`,
+        };
+      });
       const segments = parseConsoleLogArgs(
         logMatch[1],
         locals as Map<string, string>,
@@ -10489,6 +10648,7 @@ class WasicTranspiler {
       setStrCmpNeededCallback(undefined);
       setFuncTableLookup(undefined);
       setInstanceofResolver(undefined);
+      setStringExprResolver(undefined);
       const { statements, needsHelpers, needsStrGather, needsArrPrintHelper, needsJoinHelper } =
         emitConsoleLog(segments, allocator, "    ", 1, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
@@ -10575,11 +10735,20 @@ class WasicTranspiler {
               const innerDef = this.structDefs.get(outerField.structType);
               const innerField = innerDef?.fields.find((fi) => fi.name === fn);
               if (innerField) {
-                const outerBaseWat = outerSv.ptr === -1
+                const outerBaseWat = outerSv.ptr < 0
                   ? `(local.get $${outerVarName})`
                   : `(i32.const ${outerSv.ptr})`;
                 const outerPtrWat =
                   `(i32.load (i32.add ${outerBaseWat} (i32.const ${outerField.offset})))`;
+                // String leaf field: 8-byte [ptr, len] at innerField.offset — return both so
+                // console.log prints the string, not the raw pointer (mirrors the top-level path).
+                if (innerField.type === "string") {
+                  return {
+                    type: "string",
+                    watLoad: `(i32.load offset=${innerField.offset} ${outerPtrWat})`,
+                    watLoadLen: `(i32.load offset=${innerField.offset + 4} ${outerPtrWat})`,
+                  };
+                }
                 const innerLoadOp = innerField.type === "f64"
                   ? "f64.load"
                   : innerField.type === "i64"
@@ -10698,7 +10867,7 @@ class WasicTranspiler {
         const f = sv.def.fields.find((fi) => fi.name === fn);
         if (!f) return undefined;
         if (f.type === "string") {
-          const baseWat = sv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${sv.ptr})`;
+          const baseWat = sv.ptr < 0 ? `(local.get $${vn})` : `(i32.const ${sv.ptr})`;
           return {
             type: "string",
             watLoad: `(i32.load offset=${f.offset} ${baseWat})`,
@@ -10706,7 +10875,7 @@ class WasicTranspiler {
           };
         }
         const loadOp = f.type === "f64" ? "f64.load" : f.type === "i64" ? "i64.load" : "i32.load";
-        const baseWat = sv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${sv.ptr})`;
+        const baseWat = sv.ptr < 0 ? `(local.get $${vn})` : `(i32.const ${sv.ptr})`;
         return {
           type: f.type,
           watLoad: `(${loadOp} (i32.add ${baseWat} (i32.const ${f.offset})))`,
@@ -10715,6 +10884,23 @@ class WasicTranspiler {
       const dotCallLookupFnErr: DotCallLookup = (token) => {
         const result = this.emitExpr(token, locals, "i32");
         if (result === "(unreachable)" || result.startsWith("(;?")) return undefined;
+        // Phase 47: arr[idx].method(args) — resolve the element class's method return type
+        // so console.log formats the result correctly (emitExpr already does vtable dispatch).
+        const amc = token.match(/^(\w+)\[([^\]]*)\]\.(\w+)\s*\(/);
+        if (amc) {
+          const aInfo = this.arrayVars.get(amc[1]!);
+          const stn = aInfo?.structTypeName ??
+            (aInfo && aInfo.elemType !== "f64" && aInfo.elemType !== "i32" &&
+                aInfo.elemType !== "i64"
+              ? aInfo.elemType
+              : undefined);
+          if (stn && this.classDefs.has(stn)) {
+            const mfn = this.resolveMethodFunc(stn, amc[3]!);
+            const mdef = mfn ? this.functions.find((f) => f.name === mfn) : undefined;
+            const retType = (mdef?.result ?? "i32") as WatType;
+            return { type: retType as string, wat: this.emitExpr(token, locals, retType) };
+          }
+        }
         const m2 = token.match(/^(?:this|\w+)\.(\w+)\s*\(/);
         if (m2) {
           const receiver2 = token.match(/^(\w+)\./)?.[1] ?? "";
@@ -10765,6 +10951,9 @@ class WasicTranspiler {
       for (const [k, [offset, len]] of this.moduleStringConsts) {
         globalsMapErr.set(k, `string:${offset}:${len}`);
       }
+      for (const k of this.moduleStringGlobals.keys()) {
+        globalsMapErr.set(k, `strglobal:${k}`);
+      }
       const closureVarLookupFnErr: ClosureVarLookup = (name) => {
         const sig = this.closureTypedVars.get(name);
         if (!sig) return undefined;
@@ -10788,6 +10977,17 @@ class WasicTranspiler {
         if (!m || !this.classDefs.has(m[1]!)) return undefined;
         return this.emitExpr(tok, locs as Map<string, WatType>, "i32");
       });
+      // String-producing method calls (s.toUpperCase(), arr[i].toLowerCase(), …): resolve to a
+      // ptr/len pair via emitStringPtrLen, captured into $__str_op_len (ptrWat runs the call and
+      // leaves ptr; lenWat reads the captured len — both consumers evaluate ptrWat first).
+      setStringExprResolver((tok, locs) => {
+        const w = this.emitStringPtrLen(tok, locs as Map<string, WatType>);
+        if (w === "(i32.const 0) (i32.const 0)") return undefined;
+        return {
+          ptrWat: `(block (result i32) ${w} (local.set $__str_op_len))`,
+          lenWat: `(local.get $__str_op_len)`,
+        };
+      });
       const segments = parseConsoleLogArgs(
         errMatch[2],
         locals as Map<string, string>,
@@ -10806,6 +11006,7 @@ class WasicTranspiler {
       setStrCmpNeededCallback(undefined);
       setFuncTableLookup(undefined);
       setInstanceofResolver(undefined);
+      setStringExprResolver(undefined);
       const {
         statements,
         needsHelpers,
@@ -11587,9 +11788,10 @@ class WasicTranspiler {
               ? `(i32.const ${arrInfo.length})`
               : `(i32.load (local.get $${arrName}))`;
           } else {
-            // Static array: compile-time address, known length
+            // Static array: compile-time address, known length. Elements start at ptr + 8
+            // (past the 8-byte [length, capacity] header) — mirrors the arr[i] path (~line 6662).
             elemLoadWat =
-              `(${loadOp} (i32.add (i32.const ${arrInfo.ptr}) (i32.shl (local.get ${idxVar}) (i32.const ${shift}))))`;
+              `(${loadOp} (i32.add (i32.const ${arrInfo.ptr + 8}) (i32.shl (local.get ${idxVar}) (i32.const ${shift}))))`;
             lenWat = `(i32.const ${arrInfo.length})`;
           }
 
@@ -14954,7 +15156,7 @@ class WasicTranspiler {
       !locals.has("__str_op_ptr") &&
       fn.bodyLines.some((l) =>
         l.includes("String.fromCharCode(") || l.includes(".charAt(") || l.includes(".slice(") ||
-        l.includes(".at(")
+        l.includes(".at(") || l.includes(".toUpperCase(") || l.includes(".toLowerCase(")
       )
     ) {
       declaredLocals.push(["__str_op_ptr", "i32"], ["__str_op_len", "i32"]);
@@ -16251,7 +16453,7 @@ class WasicTranspiler {
         !startLocals.has("__str_op_ptr") &&
         this.startBodyLines.some((l) =>
           l.includes("String.fromCharCode(") || l.includes(".charAt(") || l.includes(".slice(") ||
-          l.includes(".at(")
+          l.includes(".at(") || l.includes(".toUpperCase(") || l.includes(".toLowerCase(")
         )
       ) {
         startDeclaredLocals.push(["__str_op_ptr", "i32"], ["__str_op_len", "i32"]);
@@ -16311,6 +16513,13 @@ class WasicTranspiler {
         return `  (global $${name} ${typeDecl} ${initWat})`;
       },
     );
+    // Mutable module-level string globals: one (mut i32) for the ptr, one for the len.
+    for (const [name, { ptr, len }] of this.moduleStringGlobals) {
+      moduleGlobalDecls.push(
+        `  (global $${name}_ptr (mut i32) (i32.const ${ptr}))`,
+        `  (global $${name}_len (mut i32) (i32.const ${len}))`,
+      );
+    }
 
     // Stage 0 / Canonical ABI: export cabi_realloc when any exported function has string params or
     // string returns. The host uses cabi_realloc(0,0,1,n) to allocate param buffers and

@@ -396,7 +396,7 @@
     (block $break_1
       (loop $loop_1
         (br_if $break_1 (i32.ge_u (local.get $__forof_idx) (i32.const 3)))
-        (local.set $n (i32.load (i32.add (i32.const 260) (i32.shl (local.get $__forof_idx) (i32.const 2)))))
+        (local.set $n (i32.load (i32.add (i32.const 268) (i32.shl (local.get $__forof_idx) (i32.const 2)))))
         (block $cont_1
           (global.set $total (i32.add (global.get $total) (local.get $n)))
         )
@@ -448,7 +448,7 @@
     (block $break_3
       (loop $loop_3
         (br_if $break_3 (i32.ge_u (local.get $__forof_idx) (i32.const 3)))
-        (local.set $v (i32.load (i32.add (i32.const 280) (i32.shl (local.get $__forof_idx) (i32.const 2)))))
+        (local.set $v (i32.load (i32.add (i32.const 288) (i32.shl (local.get $__forof_idx) (i32.const 2)))))
         (block $cont_3
               (i32.store (i32.const 0) (i32.const 132))
           (i32.store (i32.const 4) (call $__i32_to_str (local.get $v) (i32.const 132)))
@@ -469,7 +469,7 @@
     (block $break_4
       (loop $loop_4
         (br_if $break_4 (i32.ge_u (local.get $__forof_idx) (i32.const 3)))
-        (local.set $fv (f64.load (i32.add (i32.const 300) (i32.shl (local.get $__forof_idx) (i32.const 3)))))
+        (local.set $fv (f64.load (i32.add (i32.const 308) (i32.shl (local.get $__forof_idx) (i32.const 3)))))
         (block $cont_4
           (global.set $fsum (f64.add (global.get $fsum) (local.get $fv)))
         )
@@ -491,7 +491,7 @@
     (block $break_5
       (loop $loop_5
         (br_if $break_5 (i32.ge_u (local.get $__forof_idx) (i32.const 5)))
-        (local.set $d (i32.load (i32.add (i32.const 332) (i32.shl (local.get $__forof_idx) (i32.const 2)))))
+        (local.set $d (i32.load (i32.add (i32.const 340) (i32.shl (local.get $__forof_idx) (i32.const 2)))))
         (block $cont_5
           (if (i32.eq (local.get $d) (i32.const 3))
             (then
@@ -518,7 +518,7 @@
     (block $break_6
       (loop $loop_6
         (br_if $break_6 (i32.ge_u (local.get $__forof_idx) (i32.const 6)))
-        (local.set $e (i32.load (i32.add (i32.const 360) (i32.shl (local.get $__forof_idx) (i32.const 2)))))
+        (local.set $e (i32.load (i32.add (i32.const 368) (i32.shl (local.get $__forof_idx) (i32.const 2)))))
         (block $cont_6
           (if (i32.ne (i32.rem_s (local.get $e) (i32.const 2)) (i32.const 0))
             (then

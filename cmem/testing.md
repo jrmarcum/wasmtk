@@ -16,12 +16,25 @@ deno run ... tests/jstyper_tests.ts     # jstyper unit
 ```
 
 **CRITICAL:** the runner invokes the **globally installed** `wasmtk` (`WASMTK_BIN = "wasmtk"`).
-After editing anything in `src/` or `deno.json` you MUST reinstall before the suite reflects it:
+After editing anything in `src/` or `deno.json` you MUST reinstall before the suite reflects it.
+**Always reinstall via the `install` task** — it is the single source of truth for the permission
+flag set, so the launcher can never drift:
 
 ```bash
-deno install -g --allow-read --allow-write --allow-run --allow-env --allow-net \
+deno task install
+```
+
+The task (in `deno.json`) expands to:
+
+```bash
+deno install -g --allow-run --allow-read --allow-write --allow-env --allow-ffi --allow-net \
   --config deno.json --force -n wasmtk main.ts
 ```
+
+⚠️ Do NOT hand-write the `deno install` line — **`--allow-ffi` is required**. If it is omitted, the
+installed launcher prompts interactively (`Deno requests ffi access … [y/n/A]`) on every `wasmtk`
+invocation, which stalls the whole test run. (Regression history: a documented reinstall command here
+once omitted `--allow-ffi`; fixed 2026-06-08 by deferring to `deno task install`.)
 
 ## Current pass counts (2026-06-03, wabt-ts 1.3.2 + binaryen-ts 1.3.3)
 

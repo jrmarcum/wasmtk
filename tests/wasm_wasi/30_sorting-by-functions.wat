@@ -2,7 +2,7 @@
   (import "wasi_snapshot_preview1" "proc_exit" (func $proc_exit (param i32)))
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
   (memory (export "memory") 2)
-  (global $__heap_ptr (mut i32) (i32.const 389))
+  (global $__heap_ptr (mut i32) (i32.const 390))
   (global $__str_ret_ptr (mut i32) (i32.const 0))
   (global $__str_ret_len (mut i32) (i32.const 0))
   ;; Bump allocator — advances __heap_ptr and returns the old value
@@ -440,9 +440,43 @@
   (func $strArrStr (param $arr i32) 
     (local $s_ptr i32)
     (local $s_len i32)
+    (local $i f64)
     (local $__ret_str_ptr i32)
     (local $__ret_str_len i32)
-    (;; string assignment from complex expression not yet supported: s = "["; for (let i: number = 0; i < arr.length; i++) { if (i > 0) s += " "; s += arr[i]; } return s + "]";)
+    (local.set $s_ptr (i32.const 260))
+      (local.set $s_len (i32.const 1))
+    (local.set $i (f64.const 0))
+    (block $break_0
+      (loop $loop_0
+        (br_if $break_0 (i32.eqz (f64.lt (local.get $i) (f64.convert_i32_s (i32.load (local.get $arr))))))
+        (block $cont_0
+          (if (f64.gt (local.get $i) (f64.const 0))
+            (then
+            (local.set $s_ptr (local.get $s_ptr))
+      (local.set $s_len (local.get $s_len))
+      (call $__str_concat (local.get $s_ptr) (local.get $s_len) (i32.const 261) (i32.const 1))
+      (local.set $s_len)
+      (local.set $s_ptr)
+            )
+          )
+          (local.set $s_ptr (local.get $s_ptr))
+      (local.set $s_len (local.get $s_len))
+      (call $__str_concat (local.get $s_ptr) (local.get $s_len) (i32.load (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 3)))) (i32.load offset=4 (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 3)))))
+      (local.set $s_len)
+      (local.set $s_ptr)
+        )
+        (local.set $i (f64.add (local.get $i) (f64.const 1)))
+        (br $loop_0)
+      )
+    )
+    (local.set $__ret_str_ptr (local.get $s_ptr))
+      (local.set $__ret_str_len (local.get $s_len))
+      (call $__str_concat (local.get $__ret_str_ptr) (local.get $__ret_str_len) (i32.const 262) (i32.const 1))
+      (local.set $__ret_str_len)
+      (local.set $__ret_str_ptr)
+      (global.set $__str_ret_ptr (local.get $__ret_str_ptr))
+      (global.set $__str_ret_len (local.get $__ret_str_len))
+      (return)
   )
 
   (func $sortByLen (param $arr i32) 
@@ -451,15 +485,15 @@
     (local $tmp_ptr i32)
     (local $tmp_len i32)
     (local.set $i (f64.const 0))
-    (block $break_0
-      (loop $loop_0
-        (br_if $break_0 (i32.eqz (f64.lt (local.get $i) (f64.sub (f64.convert_i32_s (i32.load (local.get $arr))) (f64.const 1)))))
-        (block $cont_0
+    (block $break_1
+      (loop $loop_1
+        (br_if $break_1 (i32.eqz (f64.lt (local.get $i) (f64.sub (f64.convert_i32_s (i32.load (local.get $arr))) (f64.const 1)))))
+        (block $cont_1
           (local.set $j (f64.const 0))
-          (block $break_1
-            (loop $loop_1
-              (br_if $break_1 (i32.eqz (f64.lt (local.get $j) (f64.sub (f64.sub (f64.convert_i32_s (i32.load (local.get $arr))) (f64.const 1)) (local.get $i)))))
-              (block $cont_1
+          (block $break_2
+            (loop $loop_2
+              (br_if $break_2 (i32.eqz (f64.lt (local.get $j) (f64.sub (f64.sub (f64.convert_i32_s (i32.load (local.get $arr))) (f64.const 1)) (local.get $i)))))
+              (block $cont_2
                 (if (i32.gt_s (i32.load offset=4 (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $j)) (i32.const 3)))) (i32.load offset=4 (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (i32.trunc_f64_s (f64.add (local.get $j) (f64.const 1))) (i32.const 3)))))
                   (then
                   (local.set $tmp_ptr (i32.load (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $j)) (i32.const 3)))))
@@ -472,12 +506,12 @@
                 )
               )
               (local.set $j (f64.add (local.get $j) (f64.const 1)))
-              (br $loop_1)
+              (br $loop_2)
             )
           )
         )
         (local.set $i (f64.add (local.get $i) (f64.const 1)))
-        (br $loop_0)
+        (br $loop_1)
       )
     )
   )
@@ -487,15 +521,15 @@
     (local $j f64)
     (local $tmp i32)
     (local.set $i (f64.const 0))
-    (block $break_2
-      (loop $loop_2
-        (br_if $break_2 (i32.eqz (f64.lt (local.get $i) (f64.sub (f64.convert_i32_s (i32.load (local.get $arr))) (f64.const 1)))))
-        (block $cont_2
+    (block $break_3
+      (loop $loop_3
+        (br_if $break_3 (i32.eqz (f64.lt (local.get $i) (f64.sub (f64.convert_i32_s (i32.load (local.get $arr))) (f64.const 1)))))
+        (block $cont_3
           (local.set $j (f64.const 0))
-          (block $break_3
-            (loop $loop_3
-              (br_if $break_3 (i32.eqz (f64.lt (local.get $j) (f64.sub (f64.sub (f64.convert_i32_s (i32.load (local.get $arr))) (f64.const 1)) (local.get $i)))))
-              (block $cont_3
+          (block $break_4
+            (loop $loop_4
+              (br_if $break_4 (i32.eqz (f64.lt (local.get $j) (f64.sub (f64.sub (f64.convert_i32_s (i32.load (local.get $arr))) (f64.const 1)) (local.get $i)))))
+              (block $cont_4
                 (if (f64.gt (f64.load (i32.add (i32.load (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $j)) (i32.const 2)))) (i32.const 8))) (f64.load (i32.add (i32.load (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (i32.trunc_f64_s (f64.add (local.get $j) (f64.const 1))) (i32.const 2)))) (i32.const 8))))
                   (then
                   (local.set $tmp (i32.load (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $j)) (i32.const 2)))))
@@ -505,12 +539,12 @@
                 )
               )
               (local.set $j (f64.add (local.get $j) (f64.const 1)))
-              (br $loop_3)
+              (br $loop_4)
             )
           )
         )
         (local.set $i (f64.add (local.get $i) (f64.const 1)))
-        (br $loop_2)
+        (br $loop_3)
       )
     )
   )
@@ -523,7 +557,7 @@
     (local $__iface_tmp i32)
     (local $__tmpl_num_ptr i32)
     (local $__tmpl_num_len i32)
-    (local.set $fruits (i32.const 275))
+    (local.set $fruits (i32.const 277))
     (call $sortByLen (local.get $fruits))
         (i32.store (i32.const 0) (i32.const 132))
           (i32.store (i32.const 4) (i32.const 0))
@@ -537,49 +571,53 @@
             (i32.const 0)
             (i32.const 1)
             (i32.const 128)))
-    (local.set $people (i32.const 366))
+    (local.set $people (i32.const 368))
     (call $sortPersonsByAge (local.get $people))
     (local.set $pStr_ptr (i32.const 260))
       (local.set $pStr_len (i32.const 1))
     (local.set $i (f64.const 0))
-    (block $break_4
-      (loop $loop_4
-        (br_if $break_4 (i32.eqz (f64.lt (local.get $i) (f64.convert_i32_s (i32.const 3)))))
-        (block $cont_4
+    (block $break_5
+      (loop $loop_5
+        (br_if $break_5 (i32.eqz (f64.lt (local.get $i) (f64.convert_i32_s (i32.const 3)))))
+        (block $cont_5
           (if (f64.gt (local.get $i) (f64.const 0))
             (then
             (local.set $pStr_ptr (local.get $pStr_ptr))
       (local.set $pStr_len (local.get $pStr_len))
-      (call $__str_concat (local.get $pStr_ptr) (local.get $pStr_len) (i32.const 386) (i32.const 1))
+      (call $__str_concat (local.get $pStr_ptr) (local.get $pStr_len) (i32.const 261) (i32.const 1))
       (local.set $pStr_len)
       (local.set $pStr_ptr)
             )
           )
           (local.set $pStr_ptr (local.get $pStr_ptr))
       (local.set $pStr_len (local.get $pStr_len))
-      (call $__str_concat (local.get $pStr_ptr) (local.get $pStr_len) (i32.const 387) (i32.const 1))
+      (call $__str_concat (local.get $pStr_ptr) (local.get $pStr_len) (i32.const 388) (i32.const 1))
       (local.set $pStr_len)
       (local.set $pStr_ptr)
-      (call $__str_concat (local.get $pStr_ptr) (local.get $pStr_len) (i32.load offset=0 (i32.load (i32.add (i32.add (i32.const 366) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 2))))) (i32.load offset=4 (i32.load (i32.add (i32.add (i32.const 366) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 2))))))
+      (call $__str_concat (local.get $pStr_ptr) (local.get $pStr_len) (i32.load offset=0 (i32.load (i32.add (i32.add (i32.const 368) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 2))))) (i32.load offset=4 (i32.load (i32.add (i32.add (i32.const 368) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 2))))))
       (local.set $pStr_len)
       (local.set $pStr_ptr)
-      (call $__str_concat (local.get $pStr_ptr) (local.get $pStr_len) (i32.const 386) (i32.const 1))
+      (call $__str_concat (local.get $pStr_ptr) (local.get $pStr_len) (i32.const 261) (i32.const 1))
       (local.set $pStr_len)
       (local.set $pStr_ptr)
       (local.set $__tmpl_num_ptr (call $__malloc (i32.const 32)))
-      (local.set $__tmpl_num_len (call $__f64_to_str (f64.load (i32.add (i32.load (i32.add (i32.add (i32.const 366) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 2)))) (i32.const 8))) (local.get $__tmpl_num_ptr)))
+      (local.set $__tmpl_num_len (call $__f64_to_str (f64.load (i32.add (i32.load (i32.add (i32.add (i32.const 368) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 2)))) (i32.const 8))) (local.get $__tmpl_num_ptr)))
       (call $__str_concat (local.get $pStr_ptr) (local.get $pStr_len) (local.get $__tmpl_num_ptr) (local.get $__tmpl_num_len))
       (local.set $pStr_len)
       (local.set $pStr_ptr)
-      (call $__str_concat (local.get $pStr_ptr) (local.get $pStr_len) (i32.const 388) (i32.const 1))
+      (call $__str_concat (local.get $pStr_ptr) (local.get $pStr_len) (i32.const 389) (i32.const 1))
       (local.set $pStr_len)
       (local.set $pStr_ptr)
         )
         (local.set $i (f64.add (local.get $i) (f64.const 1)))
-        (br $loop_4)
+        (br $loop_5)
       )
     )
-    (;; string assignment from complex expression not yet supported: pStr = pStr + "]";)
+    (local.set $pStr_ptr (local.get $pStr_ptr))
+      (local.set $pStr_len (local.get $pStr_len))
+      (call $__str_concat (local.get $pStr_ptr) (local.get $pStr_len) (i32.const 262) (i32.const 1))
+      (local.set $pStr_len)
+      (local.set $pStr_ptr)
         (i32.store (i32.const 0) (i32.const 132))
           (i32.store (i32.const 4) (i32.const 0))
           (call $__str_gather (local.get $pStr_ptr) (local.get $pStr_len) (i32.const 132))
@@ -594,18 +632,19 @@
     (call $proc_exit (i32.const 0))
   )
   (data (i32.const 260) "\5b")
-  (data (i32.const 261) "\70\65\61\63\68")
-  (data (i32.const 266) "\6b\69\77\69")
-  (data (i32.const 270) "\61\70\70\6c\65")
-  (data (i32.const 323) "\41\6c\69\63\65")
-  (data (i32.const 344) "\45\76\65")
-  (data (i32.const 363) "\42\6f\62")
-  (data (i32.const 386) "\20")
-  (data (i32.const 387) "\7b")
-  (data (i32.const 388) "\7d")
-  (data (i32.const 275) "\03\00\00\00\03\00\00\00\05\01\00\00\05\00\00\00\0a\01\00\00\04\00\00\00\0e\01\00\00\05\00\00\00")
-  (data (i32.const 307) "\43\01\00\00\05\00\00\00\00\00\00\00\00\00\39\40")
-  (data (i32.const 328) "\58\01\00\00\03\00\00\00\00\00\00\00\00\00\00\40")
-  (data (i32.const 347) "\6b\01\00\00\03\00\00\00\00\00\00\00\00\80\41\40")
-  (data (i32.const 366) "\03\00\00\00\03\00\00\00\33\01\00\00\48\01\00\00\5b\01\00\00")
+  (data (i32.const 261) "\20")
+  (data (i32.const 262) "\5d")
+  (data (i32.const 263) "\70\65\61\63\68")
+  (data (i32.const 268) "\6b\69\77\69")
+  (data (i32.const 272) "\61\70\70\6c\65")
+  (data (i32.const 325) "\41\6c\69\63\65")
+  (data (i32.const 346) "\45\76\65")
+  (data (i32.const 365) "\42\6f\62")
+  (data (i32.const 388) "\7b")
+  (data (i32.const 389) "\7d")
+  (data (i32.const 277) "\03\00\00\00\03\00\00\00\07\01\00\00\05\00\00\00\0c\01\00\00\04\00\00\00\10\01\00\00\05\00\00\00")
+  (data (i32.const 309) "\45\01\00\00\05\00\00\00\00\00\00\00\00\00\39\40")
+  (data (i32.const 330) "\5a\01\00\00\03\00\00\00\00\00\00\00\00\00\00\40")
+  (data (i32.const 349) "\6d\01\00\00\03\00\00\00\00\00\00\00\00\80\41\40")
+  (data (i32.const 368) "\03\00\00\00\03\00\00\00\35\01\00\00\4a\01\00\00\5d\01\00\00")
 )

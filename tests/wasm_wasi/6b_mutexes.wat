@@ -317,10 +317,10 @@
         (block $cont_0
           (if (i32.eqz (call $__str_cmp (local.get $name_ptr) (local.get $name_len) (i32.const 260) (i32.const 1)))
             (then
-            (;; c.a++;;)
+            (f64.store (i32.add (local.get $c) (i32.const 0)) (f64.add (f64.load (i32.add (local.get $c) (i32.const 0))) (f64.const 1)))
             )
             (else
-            (;; c.b++;;)
+            (f64.store (i32.add (local.get $c) (i32.const 8)) (f64.add (f64.load (i32.add (local.get $c) (i32.const 8))) (f64.const 1)))
             )
           )
         )

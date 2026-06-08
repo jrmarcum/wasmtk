@@ -241,6 +241,23 @@ export function setInstanceofResolver(
   _instanceofResolver = fn;
 }
 
+/** Resolve a string-producing expression (e.g. `s.toUpperCase()`, `arr[i].toUpperCase()`) to a
+ *  ptr/len WAT pair via wasic's emitStringPtrLen (captured into temp locals). Set by wasic.ts
+ *  around parseConsoleLogArgs. Returns undefined when the token isn't a handled string expr. */
+let _stringExprResolver:
+  | ((token: string, locals: Map<string, string>) => { ptrWat: string; lenWat: string } | undefined)
+  | undefined = undefined;
+export function setStringExprResolver(
+  fn:
+    | ((
+      token: string,
+      locals: Map<string, string>,
+    ) => { ptrWat: string; lenWat: string } | undefined)
+    | undefined,
+): void {
+  _stringExprResolver = fn;
+}
+
 /** Callback to resolve an array variable by name: returns its element type, base ptr, and length.
  *  ptr=-1 means runtime local (param). ptr=-2 means dynamic heap array (local with 8-byte header).
  *  dynamic=true means the array has a [length, capacity] header at its pointer. */
@@ -423,13 +440,13 @@ function parseSingleArg(
     );
   }
 
-  // ── Double-quoted string literal
-  if (token.startsWith('"') && token.endsWith('"')) {
+  // ── Double-quoted string literal (must be ONE complete literal, not `"a" + "b"`)
+  if (isWholeStringLiteral(token, '"')) {
     return [{ kind: "literal", text: unescapeString(token.slice(1, -1)) }];
   }
 
   // ── Single-quoted string literal
-  if (token.startsWith("'") && token.endsWith("'")) {
+  if (isWholeStringLiteral(token, "'")) {
     return [{ kind: "literal", text: unescapeString(token.slice(1, -1)) }];
   }
 
@@ -508,6 +525,15 @@ function parseSingleArg(
           kind: "strvar" as const,
           ptrLocal: `__strconst_ptr_${offset}`,
           lenLocal: `__strconst_len_${len}`,
+        }];
+      }
+      // Mutable module-level string global encoded as "strglobal:name" → read the ptr/len pair
+      if (gType.startsWith("strglobal:")) {
+        const gname = gType.slice("strglobal:".length);
+        return [{
+          kind: "strexpr" as const,
+          ptrWat: `(global.get $${gname}_ptr)`,
+          lenWat: `(global.get $${gname}_len)`,
         }];
       }
       const wat = `(global.get $${token})`;
@@ -616,11 +642,23 @@ function parseSingleArg(
     }
   }
 
+  // ── String-producing method call: receiver.toUpperCase()/toLowerCase()/trim()/slice()/...
+  // (receiver may be a plain string var OR a string-array element arr[i]). Routed through wasic's
+  // emitStringPtrLen via the resolver, which captures the ptr/len into temp locals.
+  if (
+    _stringExprResolver &&
+    /^(?:\w+(?:\[[^\]]*\])?)\.(toUpperCase|toLowerCase|trim|trimStart|trimEnd|trimLeft|trimRight|slice|charAt|substring|substr|replace|replaceAll|padStart|padEnd|repeat)\s*\(/
+      .test(token)
+  ) {
+    const r = _stringExprResolver(token, locals);
+    if (r) return [{ kind: "strexpr" as const, ptrWat: r.ptrWat, lenWat: r.lenWat }];
+  }
+
   // ── Dot-call expression: receiver.method(args) or this.method(args) — class/static calls
   // Skip Math.* and Number.* tokens — they have their own dedicated handlers below.
   if (
     dotCallLookup && !token.startsWith("Math.") && !token.startsWith("Number.") &&
-    /^(?:this|\w+)\.(\w+)\s*\(/.test(token)
+    /^(?:this|\w+(?:\[[^\]]*\])?)\.(\w+)\s*\(/.test(token)
   ) {
     const result = dotCallLookup(token);
     if (result) {
@@ -2192,6 +2230,21 @@ function exprToWat(
  * Scanning right-to-left ensures left-associative grouping (a-b-c → (a-b)-c).
  * Guards prevent shorter operators matching inside longer ones (e.g. & inside &&).
  */
+/** True if `token` is exactly ONE quoted string literal delimited by `q`, i.e. the closing
+ *  quote is the final character with no earlier *unescaped* `q` in between. So `"abc"` →
+ *  true, but `"a" + "b"` → false (an earlier closing quote), routing it to the concat path. */
+function isWholeStringLiteral(token: string, q: string): boolean {
+  if (token.length < 2 || token[0] !== q || token[token.length - 1] !== q) return false;
+  for (let i = 1; i < token.length - 1; i++) {
+    if (token[i] === "\\") {
+      i++;
+      continue;
+    }
+    if (token[i] === q) return false;
+  }
+  return true;
+}
+
 function findTopLevelOp(expr: string, op: string): number {
   let depth = 0;
   for (let i = expr.length - op.length; i >= 0; i--) {
