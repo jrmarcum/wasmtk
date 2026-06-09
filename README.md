@@ -959,7 +959,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 > parsed as 0** (every merged-`mathlib` constant was encoded as 0, recovering all four
 > `38_*` Math tests). Under that toolchain, with the Stage 0.6 allocator-unification pass
 > and all five Tier-1 stdlib capabilities (Stage 0.7 — Set/Map/Date/JSON/RegExp)
-> in place, **the full `tests/wasm_wasi` suite is 287/287** (`core_`
+> in place, **the full `tests/wasm_wasi` suite is 293/293** (`core_`
 > 33/33, jstyper 73/73, bindgen **103/103**; Phase 51 — 2026-06-05 — added `instanceof` plus 7
 > `51_*` tests, including fixes for module-level class instances, class-instance array literals,
 > and single-physical-line class/constructor bodies; `48_SingleLineBraceIf` was the
@@ -971,7 +971,13 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 > and the modc unused-`fd_write`-import bug were also fixed; Date development fixed
 > two merge-path codegen bugs; JSON development fixed four more; the RegExp merge bug
 > was fixed 2026-06-02 by making wasic short-circuit `&&`/`||`, and the library workaround
-> was removed — see Stage 0.7 below.) See CLAUDE.md
+> was removed — see Stage 0.7 below.) **On 2026-06-07 the test runner was hardened to compare
+> run-ts vs run-wasm OUTPUT (not just exit codes); the 14 wrong-output bugs it surfaced — across
+> exceptions/error strings, string formatting, struct-field mutation, `for…of`, and class-array
+> literals — were ALL FIXED 2026-06-08, restoring three capabilities to correct output:
+> module-level mutable string globals, `console.log` of string-method results
+> (`s.toUpperCase()`), and closure/funcref string returns. A follow-up hazard audit fixed four
+> more latent issues.** See CLAUDE.md
 > § "Pluggable wabt + binaryen backends" for the encoder-bug table. The per-phase
 > historical counts are preserved as a record of when each phase first reached
 > green; they should not be read as a live-system invariant.**

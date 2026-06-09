@@ -40,7 +40,7 @@ once omitted `--allow-ffi`; fixed 2026-06-08 by deferring to `deno task install`
 
 | Suite | Result |
 | --- | --- |
-| `tests/wasm_wasi` (full, HARDENED output-diff runner) | **292 / 292** (the 14 output-mismatch bugs the 2026-06-07 runner-hardening surfaced are ALL FIXED 2026-06-08 — see compiler-bugs.md; 6 tests carry `// @allow-output-diff` for documented float-precision / zero-sentinel divergences, incl. `1_values`) |
+| `tests/wasm_wasi` (full, HARDENED output-diff runner) | **293 / 293** (the 14 output-mismatch bugs the 2026-06-07 runner-hardening surfaced are ALL FIXED 2026-06-08 — see compiler-bugs.md; +`26_ForOfSingleLine` from the 2026-06-08 hazard-audit. 6 tests carry `// @allow-output-diff` for documented float-precision / zero-sentinel divergences, incl. `1_values`) |
 | `bindgen_tests.ts` | **103 / 103** |
 | `jstyper_tests.ts` | **73 / 73** |
 | Capability pipelines `18c`–`18g` (Set/Map/Date/JSON/RegExp) + `18h` (virtual `wasmtk:` imports) | **6 / 6** |
@@ -67,7 +67,7 @@ The full green pre-publish checklist actually run (2026-06-02):
 deno publish --dry-run --allow-dirty   # THE gate: type-check + slow-types + package — must pass
 deno lint main.ts src/                 # clean (18 files)
 deno fmt  --check main.ts src/         # clean as of 2026-06-02 (see design-decisions.md)
-deno run -A tests/wasi_tests.ts        # 278/292 (HARDENED 2026-06-07: now diffs run-ts vs run-wasm OUTPUT, not just exit codes). 14 known-open output-mismatch bugs remain (see compiler-bugs.md); 5 tests legitimately diverge and carry `// @allow-output-diff`. A test FAILS on `output-mismatch` unless it opts out.
+deno run -A tests/wasi_tests.ts        # 293/293 (HARDENED 2026-06-07: now diffs run-ts vs run-wasm OUTPUT, not just exit codes). No open bugs as of 2026-06-08 (the 14 output-mismatch bugs are all fixed — see compiler-bugs.md); 6 tests legitimately diverge and carry `// @allow-output-diff`. A test FAILS on `output-mismatch` unless it opts out.
 deno run -A tests/bindgen_tests.ts     # 103/103
 deno run -A tests/jstyper_tests.ts     # 73/73
 ```

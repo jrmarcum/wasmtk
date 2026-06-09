@@ -100,7 +100,7 @@ under npm:wabt + npm:binaryen: 446/446 tests passing (2026-05-25; 270 wasic +
 Go-by-Example + 103 bindgen + 73 jstyper). **Under the current dual JSR /compat
 stack (`jsr:@jrmarcum/wabt-ts@^1.3.2/compat` +
 `jsr:@jrmarcum/binaryen-ts@^1.3.3/compat`):** the full `tests/wasm_wasi`
-suite is **292/292** (`core_` 33/33), jstyper 73/73, and **bindgen 103/103** (Phase 51, 2026-06-05,
+suite is **293/293** (`core_` 33/33), jstyper 73/73, and **bindgen 103/103** (Phase 51, 2026-06-05,
 added `instanceof` + 7 `51_*` tests, incl. the 3 class-construction-gap fixes; `51_ObjectSpread` (51.2)
 + `51_ParamDestructuring` + `51_NestedDestructuring` + `51_NestedTuple` (51.3) + `51_UtilityTypes`
 (51.4) added 2026-06-07; `48_SingleLineBraceIf` was the single-line-brace-`if` regression added
@@ -330,7 +330,7 @@ wrapper) — were all filed and fixed upstream by 1.2.9. See CLAUDE.md §
 - ✅ `src/binaryen.ts` wrapper handles CJS-default vs ES-namespace asymmetry
 - ✅ Call-site shape preserved (upstream-npm-shaped API works against both backends)
 - ✅ Wasic-side patch: explicit `inlineExport: false` on `.toText(...)` calls (wabt-ts/compat's default differs from npm:wabt's)
-- ✅ Full wasic suite: **260/270 PASS (96.3%)** under dual /compat 1.2.9 — historical snapshot; the 10 then-failing tests (9 wasic-side codegen + 1 binaryen-ts `-Oz` interaction) have all since been fixed (suite is now **287/287**; see compiler-bugs.md / testing.md)
+- ✅ Full wasic suite: **260/270 PASS (96.3%)** under dual /compat 1.2.9 — historical snapshot; the 10 then-failing tests (9 wasic-side codegen + 1 binaryen-ts `-Oz` interaction) have all since been fixed (suite is now **293/293**; see compiler-bugs.md / testing.md)
 - ✅ Switching back to `npm:wabt` / `npm:binaryen` is a one-line deno.json change — both backends remain supported as fallbacks
 
 ---

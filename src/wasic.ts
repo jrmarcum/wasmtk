@@ -5591,7 +5591,10 @@ class WasicTranspiler {
 
     // Phase 49: str.at(n) → (ptr + normIdx, 1) — supports negative indices
     const strAtAssignM = initExpr.match(/^(\w+)\.at\s*\((.+)\)$/);
-    if (strAtAssignM && locals.get(strAtAssignM[1]) === "string") {
+    if (
+      strAtAssignM && locals.get(strAtAssignM[1]) === "string" &&
+      parenDepthNeverNegative(strAtAssignM[2])
+    ) {
       const strName = strAtAssignM[1];
       const nWat = this.emitExpr(strAtAssignM[2].trim(), locals, "i32");
       const ptrW = "(local.get $" + strName + "_ptr)";
@@ -5606,7 +5609,10 @@ class WasicTranspiler {
 
     // Phase 27: str.charAt(i) → (ptr+i, 1) string
     const charAtMatch = initExpr.match(/^(\w+)\.charAt\s*\((.+)\)$/);
-    if (charAtMatch && locals.get(charAtMatch[1]) === "string") {
+    if (
+      charAtMatch && locals.get(charAtMatch[1]) === "string" &&
+      parenDepthNeverNegative(charAtMatch[2])
+    ) {
       this.needsStringExtHelpers = true;
       const idxWat = this.emitExpr(charAtMatch[2].trim(), locals, "i32");
       return [
@@ -5684,7 +5690,10 @@ class WasicTranspiler {
 
     // Phase 27: str.replace(old, new) / str.replaceAll(old, new)
     const replaceAllMatch = initExpr.match(/^(\w+)\.(replaceAll|replace)\s*\((.+)\)$/);
-    if (replaceAllMatch && locals.get(replaceAllMatch[1]) === "string") {
+    if (
+      replaceAllMatch && locals.get(replaceAllMatch[1]) === "string" &&
+      parenDepthNeverNegative(replaceAllMatch[3])
+    ) {
       const allArgs = this.splitArgs(replaceAllMatch[3]);
       if (allArgs.length === 2) {
         this.needsStringExtHelpers = true;
@@ -5706,7 +5715,9 @@ class WasicTranspiler {
 
     // Phase 27: str.padStart(targetLen, pad) / str.padEnd(targetLen, pad)
     const padMatch = initExpr.match(/^(\w+)\.(padStart|padEnd)\s*\((.+)\)$/);
-    if (padMatch && locals.get(padMatch[1]) === "string") {
+    if (
+      padMatch && locals.get(padMatch[1]) === "string" && parenDepthNeverNegative(padMatch[3])
+    ) {
       const allArgs = this.splitArgs(padMatch[3]);
       if (allArgs.length === 2) {
         this.needsStringExtHelpers = true;
@@ -5725,7 +5736,10 @@ class WasicTranspiler {
 
     // Phase 27: str.repeat(n)
     const repeatMatch = initExpr.match(/^(\w+)\.repeat\s*\((.+)\)$/);
-    if (repeatMatch && locals.get(repeatMatch[1]) === "string") {
+    if (
+      repeatMatch && locals.get(repeatMatch[1]) === "string" &&
+      parenDepthNeverNegative(repeatMatch[2])
+    ) {
       this.needsStringExtHelpers = true;
       const nWat = this.emitExpr(repeatMatch[2].trim(), locals, "i32");
       return [
@@ -5786,7 +5800,7 @@ class WasicTranspiler {
 
     // String.fromCharCode(n) — allocate 1-byte heap string from char code
     const fccDirect = initExpr.match(/^String\.fromCharCode\s*\((.+)\)$/);
-    if (fccDirect) {
+    if (fccDirect && parenDepthNeverNegative(fccDirect[1])) {
       const argWat = this.emitExpr(fccDirect[1].trim(), locals, "i32");
       return [
         `(local.set $${varName}_ptr (call $__malloc (i32.const 1)))`,
@@ -5869,7 +5883,7 @@ class WasicTranspiler {
         }
         // String.fromCharCode(n) in concat — 1-byte heap-allocated char
         const fccCP = part.match(/^String\.fromCharCode\s*\((.+)\)$/);
-        if (fccCP) {
+        if (fccCP && parenDepthNeverNegative(fccCP[1])) {
           const argWat = this.emitExpr(fccCP[1].trim(), locals, "i32");
           stmts.push(`(local.set $__str_op_ptr (call $__malloc (i32.const 1)))`);
           stmts.push(`(i32.store8 (local.get $__str_op_ptr) ${argWat})`);
@@ -5878,7 +5892,7 @@ class WasicTranspiler {
         }
         // Phase 49: str.at(n) in concat — supports negative indices
         const strAtCP = part.match(/^(\w+)\.at\s*\((.+)\)$/);
-        if (strAtCP && locals.get(strAtCP[1]) === "string") {
+        if (strAtCP && locals.get(strAtCP[1]) === "string" && parenDepthNeverNegative(strAtCP[2])) {
           const strName = strAtCP[1];
           const nWat = this.emitExpr(strAtCP[2].trim(), locals, "i32");
           const ptrW = "(local.get $" + strName + "_ptr)";
@@ -5890,7 +5904,7 @@ class WasicTranspiler {
         }
         // str.charAt(idx) in concat — single-char substring via $__str_char_at
         const caCP = part.match(/^(\w+)\.charAt\s*\((.+)\)$/);
-        if (caCP) {
+        if (caCP && parenDepthNeverNegative(caCP[2])) {
           const strN = caCP[1], idxRaw = caCP[2];
           const isLocal = locals.get(strN) === "string";
           const strConst = this.moduleStringConsts.get(strN);
@@ -5911,7 +5925,7 @@ class WasicTranspiler {
         // avoids a multi-value capture so the concat accumulator stays well-formed.
         const charSubCP = part.match(/^(\w+)\[(.+)\]$/);
         if (
-          charSubCP &&
+          charSubCP && parenDepthNeverNegative(charSubCP[2]) &&
           (locals.get(charSubCP[1]) === "string" || this.moduleStringConsts.has(charSubCP[1])) &&
           !this.arrayVars.has(charSubCP[1])
         ) {
@@ -6176,7 +6190,7 @@ class WasicTranspiler {
           f.name === structFieldSPLM[2] && f.type === "string"
         );
         if (field) {
-          const baseWat = cv.ptr === -1
+          const baseWat = cv.ptr < 0
             ? `(local.get $${structFieldSPLM[1]})`
             : `(i32.const ${cv.ptr})`;
           return `(i32.load offset=${field.offset} ${baseWat}) (i32.load offset=${
@@ -6216,7 +6230,7 @@ class WasicTranspiler {
     // case (a plain string is not in arrayVars). Index may be any i32 expression (e.g. v % 16).
     const strCharSub = expr.match(/^(\w+)\[(.+)\]$/);
     if (
-      strCharSub &&
+      strCharSub && parenDepthNeverNegative(strCharSub[2]) &&
       (locals.get(strCharSub[1]) === "string" || this.moduleStringConsts.has(strCharSub[1])) &&
       !this.arrayVars.has(strCharSub[1])
     ) {
@@ -6245,7 +6259,9 @@ class WasicTranspiler {
     }
     // Phase 49: str.at(n) — returns (ptr+normIdx, 1) inline for use in str comparisons
     const strAtSPLM = expr.match(/^(\w+)\.at\s*\((.+)\)$/);
-    if (strAtSPLM && locals.get(strAtSPLM[1]) === "string") {
+    if (
+      strAtSPLM && locals.get(strAtSPLM[1]) === "string" && parenDepthNeverNegative(strAtSPLM[2])
+    ) {
       const strName = strAtSPLM[1];
       const nWat = this.emitExpr(strAtSPLM[2].trim(), locals, "i32");
       const ptrW = "(local.get $" + strName + "_ptr)";
@@ -6522,7 +6538,10 @@ class WasicTranspiler {
     // String method calls returning i32 (can appear in any expression context)
     // str.indexOf(sub[, start]) → i32 offset or -1
     const strIndexOfMatch = expr.match(/^(\w+)\.indexOf\s*\((.+)\)$/);
-    if (strIndexOfMatch && locals.get(strIndexOfMatch[1]) === "string") {
+    if (
+      strIndexOfMatch && locals.get(strIndexOfMatch[1]) === "string" &&
+      parenDepthNeverNegative(strIndexOfMatch[2])
+    ) {
       this.needsStringOpHelpers = true;
       // Split sub from optional start position, preserving quoted strings
       const rawArgs = strIndexOfMatch[2].trim();
@@ -6545,7 +6564,10 @@ class WasicTranspiler {
     }
     // str.includes(sub) → i32 bool (1 = found, 0 = not found)
     const strIncludesMatch = expr.match(/^(\w+)\.includes\s*\((.+)\)$/);
-    if (strIncludesMatch && locals.get(strIncludesMatch[1]) === "string") {
+    if (
+      strIncludesMatch && locals.get(strIncludesMatch[1]) === "string" &&
+      parenDepthNeverNegative(strIncludesMatch[2])
+    ) {
       this.needsStringOpHelpers = true;
       const subPtrLen = this.emitStringPtrLen(strIncludesMatch[2].trim(), locals);
       return `(i32.ne (call $__str_indexof (local.get $${strIncludesMatch[1]}_ptr) (local.get $${
@@ -7246,7 +7268,7 @@ class WasicTranspiler {
             : field.type === "i64"
             ? "i64.load"
             : "i32.load";
-          const baseWat = cv.ptr === -1
+          const baseWat = cv.ptr < 0
             ? `(local.get $${structFieldMatch[1]})`
             : `(i32.const ${cv.ptr})`;
           return `(${loadOp} (i32.add ${baseWat} (i32.const ${field.offset})))`;
@@ -7254,7 +7276,7 @@ class WasicTranspiler {
         // Phase 29: getter dispatch
         const getter = cd?.methods.find((m) => m.isGetter && m.name === structFieldMatch[2]);
         if (getter) {
-          const baseWat = cv.ptr === -1
+          const baseWat = cv.ptr < 0
             ? `(local.get $${structFieldMatch[1]})`
             : `(i32.const ${cv.ptr})`;
           return `(call $${cv.className}_get_${structFieldMatch[2]} ${baseWat})`;
@@ -7535,7 +7557,7 @@ class WasicTranspiler {
     // isNaN(x) → f64.ne x x (NaN is the only value not equal to itself)
     {
       const isNaNM = expr.match(/^isNaN\s*\((.+)\)$/);
-      if (isNaNM) {
+      if (isNaNM && parenDepthNeverNegative(isNaNM[1])) {
         const argWat = this.emitExpr(isNaNM[1].trim(), locals, "f64");
         return `(f64.ne ${argWat} ${argWat})`;
       }
@@ -7663,7 +7685,7 @@ class WasicTranspiler {
           `${cv.className}_${methodName}`;
         const fn = this.functions.find((f) => f.name === funcName);
         if (fn) {
-          const baseWat = cv.ptr === -1 ? `(local.get $${receiver})` : `(i32.const ${cv.ptr})`;
+          const baseWat = cv.ptr < 0 ? `(local.get $${receiver})` : `(i32.const ${cv.ptr})`;
           const emittedArgs = args.flatMap((a, i) => {
             const pt = fn.params[i + 1]?.type ?? defaultType;
             return [this.emitExpr(a, locals, pt)];
@@ -9156,7 +9178,7 @@ class WasicTranspiler {
           if (tdef) {
             const blist = tupleFieldDestructStmt[1].split(",").map((b) => b.trim());
             const stmts: string[] = [];
-            const baseWat = cv.ptr === -1 ? `(local.get $${recv})` : `(i32.const ${cv.ptr})`;
+            const baseWat = cv.ptr < 0 ? `(local.get $${recv})` : `(i32.const ${cv.ptr})`;
             for (let i = 0; i < blist.length; i++) {
               const b = blist[i];
               if (b === "" || b.startsWith("...")) continue;
@@ -10610,7 +10632,7 @@ class WasicTranspiler {
           const f = cd?.struct.fields.find((fi) => fi.name === fn);
           if (f) {
             if (f.type === "string") {
-              const baseWat = cv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
+              const baseWat = cv.ptr < 0 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
               return {
                 type: "string",
                 watLoad: `(i32.load offset=${f.offset} ${baseWat})`,
@@ -10622,7 +10644,7 @@ class WasicTranspiler {
               : f.type === "i64"
               ? "i64.load"
               : "i32.load";
-            const baseWat = cv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
+            const baseWat = cv.ptr < 0 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
             return {
               type: f.type,
               watLoad: `(${loadOp} (i32.add ${baseWat} (i32.const ${f.offset})))`,
@@ -10634,7 +10656,7 @@ class WasicTranspiler {
             const getFuncName = `${cv.className}_get_${fn}`;
             const getFn = this.functions.find((gf) => gf.name === getFuncName);
             const retType = getFn?.result ?? "f64";
-            const baseWat = cv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
+            const baseWat = cv.ptr < 0 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
             return { type: retType, watLoad: `(call $${getFuncName} ${baseWat})` };
           }
         }
@@ -10979,7 +11001,7 @@ class WasicTranspiler {
           const f = cd?.struct.fields.find((fi) => fi.name === fn);
           if (f) {
             if (f.type === "string") {
-              const baseWat = cv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
+              const baseWat = cv.ptr < 0 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
               return {
                 type: "string",
                 watLoad: `(i32.load offset=${f.offset} ${baseWat})`,
@@ -10991,7 +11013,7 @@ class WasicTranspiler {
               : f.type === "i64"
               ? "i64.load"
               : "i32.load";
-            const baseWat = cv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
+            const baseWat = cv.ptr < 0 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
             return {
               type: f.type,
               watLoad: `(${loadOp} (i32.add ${baseWat} (i32.const ${f.offset})))`,
@@ -11003,7 +11025,7 @@ class WasicTranspiler {
             const getFuncName = `${cv.className}_get_${fn}`;
             const getFn = this.functions.find((gf) => gf.name === getFuncName);
             const retType = getFn?.result ?? "f64";
-            const baseWat = cv.ptr === -1 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
+            const baseWat = cv.ptr < 0 ? `(local.get $${vn})` : `(i32.const ${cv.ptr})`;
             return { type: retType, watLoad: `(call $${getFuncName} ${baseWat})` };
           }
         }
@@ -11119,6 +11141,12 @@ class WasicTranspiler {
             if (field2?.funcType) {
               return { type: (field2.funcType.result ?? "i32") as string, wat: result };
             }
+          }
+          // Boolean-returning array methods: every, some, includes (mirror of dotCallLookupFn)
+          if (
+            ["every", "some", "includes"].includes(methodName2) && this.arrayVars.has(receiver2)
+          ) {
+            return { type: "bool", wat: result };
           }
         }
         return { type: "i32", wat: result };
@@ -11322,7 +11350,7 @@ class WasicTranspiler {
           `${cv.className}_${methodName}`;
         const fn = this.functions.find((f) => f.name === funcName);
         if (fn) {
-          const baseWat = cv.ptr === -1 ? `(local.get $${receiver})` : `(i32.const ${cv.ptr})`;
+          const baseWat = cv.ptr < 0 ? `(local.get $${receiver})` : `(i32.const ${cv.ptr})`;
           const emittedArgs = args.flatMap((a, i) => {
             const pt = fn.params[i + 1]?.type ?? ("i32" as WatType);
             return [this.emitExpr(a, locals, pt)];
@@ -11914,7 +11942,7 @@ class WasicTranspiler {
       // Phase 26: for...of loop — for (const/let item of arr) { ... }
       // Must come before the inlined-for and regular-for handlers so "of" isn't split as init;cond;update.
       if (/^for\s*\(\s*(?:const|let)\s+\w+\s+of\s+\w+\s*\)/.test(line)) {
-        const forOfM = line.match(/^for\s*\(\s*(?:const|let)\s+(\w+)\s+of\s+(\w+)\s*\)\s*(\{.*)?$/);
+        const forOfM = line.match(/^for\s*\(\s*(?:const|let)\s+(\w+)\s+of\s+(\w+)\s*\)\s*(.*)$/);
         if (forOfM) {
           const itemName = forOfM[1];
           const arrName = forOfM[2];
@@ -11932,8 +11960,9 @@ class WasicTranspiler {
             forOfBody = body;
             i += consumed + 1;
           } else {
+            // Brace-less single-line body: `for (const x of arr) stmt;`
+            forOfBody = WasicTranspiler.splitStmts(inlinePart);
             i++;
-            continue;
           }
 
           const arrInfo = this.arrayVars.get(arrName);

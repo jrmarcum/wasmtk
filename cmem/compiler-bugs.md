@@ -1,12 +1,38 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 292/292**
-(`bindgen` 103/103, `jstyper` 73/73) as of **2026-06-08**. The 14 output-mismatch bugs that the
+Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 293/293**
+(`bindgen` 103/103, `jstyper` 73/73) as of **2026-06-08** (the +1 over 292 is the
+`26_ForOfSingleLine` regression test from the hazard audit — see "Proactive hazard-audit fixes" below). The 14 output-mismatch bugs that the
 2026-06-07 runner-hardening surfaced are **ALL FIXED 2026-06-08** — see the "14 output-mismatch
 bugs ALL FIXED" entry directly below for the per-cluster root causes. Earlier: Phase 51 (2026-06-05)
 added `instanceof`, closed three construction/parsing gaps, and a follow-up workaround-audit fixed
 one silent bug + added a loud `call_indirect`-in-merge guard; a 2026-06-07 follow-up added a
 companion `memory.grow`-in-merge guard.
+
+## Proactive hazard-audit fixes (2026-06-08, suite 292→293)
+
+A codebase sweep for latent workarounds / fallthroughs found four issues; all fixed (zero
+regressions, `src/wasic.ts` + `src/console_log.ts`):
+
+1. **Brace-less single-line `for…of` dropped its body** — `for (const x of arr) stmt;` (no braces):
+   the `forOfM` regex required `(\{.*)?$`, so the brace-less form hit `else { i++; continue }` and the
+   body was silently skipped (same class as the single-line-`while` bug). Fixed: regex now captures
+   any inline tail `(.*)$`, and the non-brace tail is split via `splitStmts` as the body. Regression
+   test `26_ForOfSingleLine.ts`. (Other single-line forms — `if`/`while`/`for(;;)` — were already OK.)
+2. **`console.error(arr.every/some/includes(...))` printed `1`/`0` not `true`/`false`** — the
+   boolean-returning-array-method branch existed in `dotCallLookupFn` (console.log) but was missing
+   from its `dotCallLookupFnErr` twin (a parallel-path-drift miss). Mirrored the branch. (No suite
+   test — console.error goes to stderr, which the runner doesn't diff; verified manually.)
+3. **`cv.ptr === -1` → `cv.ptr < 0`** at 12 class-instance field/method base-computation sites — the
+   exact fix applied to structs (`sv.ptr < 0`) but never mirrored to `classVars`. Currently harmless
+   (verified: `classVars` only holds `-1` or a static `allocStructData` ptr, never the `-3` heap
+   sentinel) but future-proofs against a class heap-alloc path.
+4. **Greedy `(.+)` arg-capture guards extended** — `indexOf`/`includes`/`at`/`charAt`/`replace`/
+   `padStart`/`repeat`/`fromCharCode` (and the new string-char-subscript / `isNaN` handlers) now carry
+   the documented `parenDepthNeverNegative(args)` guard, matching `charCodeAt`/`startsWith`/`split`/
+   `slice`. Behaviour-preserving for balanced args; an over-greedy match (a swallowed following `)`)
+   now falls through instead of mis-emitting. Added a `parenDepthNeverNegative` helper to
+   `console_log.ts` (mirrors wasic's) for the console.log-arg `at`/`isNaN` handlers.
 
 ## The 14 output-mismatch bugs — ALL FIXED 2026-06-08
 

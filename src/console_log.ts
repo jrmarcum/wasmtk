@@ -760,7 +760,10 @@ function parseSingleArg(
 
   // ── Phase 49: str.at(n) — character at index, supporting negative indices
   const strAtConsoleM = token.match(/^(\w+)\.at\s*\((.+)\)$/);
-  if (strAtConsoleM && locals.get(strAtConsoleM[1]) === "string") {
+  if (
+    strAtConsoleM && locals.get(strAtConsoleM[1]) === "string" &&
+    parenDepthNeverNegative(strAtConsoleM[2])
+  ) {
     const strName = strAtConsoleM[1];
     const rawN = strAtConsoleM[2].trim();
     const nNum = /^-?\d+$/.test(rawN) ? parseInt(rawN, 10) : null;
@@ -819,7 +822,7 @@ function parseSingleArg(
   // ── Global isNaN(x) — must precede callMatch to avoid (call $isNaN ...)
   {
     const gIsNaNM = token.match(/^isNaN\s*\((.+)\)$/);
-    if (gIsNaNM) {
+    if (gIsNaNM && parenDepthNeverNegative(gIsNaNM[1])) {
       const aW = exprToWat(
         gIsNaNM[1].trim(),
         locals,
@@ -1576,7 +1579,7 @@ function exprToWat(
   // Global isNaN(x) → f64.ne x x
   {
     const globalIsNaNEWat = expr.match(/^isNaN\s*\((.+)\)$/);
-    if (globalIsNaNEWat) {
+    if (globalIsNaNEWat && parenDepthNeverNegative(globalIsNaNEWat[1])) {
       const argWat = exprToWat(
         globalIsNaNEWat[1].trim(),
         locals,
@@ -2254,6 +2257,20 @@ function isWholeStringLiteral(token: string, q: string): boolean {
       continue;
     }
     if (token[i] === q) return false;
+  }
+  return true;
+}
+
+/** True if scanning `s` never drives `()`/`[]` depth below zero — i.e. a greedy `(.+)` arg capture
+ *  didn't swallow a following `)`/`]`. Mirrors wasic.ts's guard so method handlers can fall through
+ *  on an over-greedy match (e.g. `s.at(i) === t.at(j)`) instead of mis-emitting. */
+function parenDepthNeverNegative(s: string): boolean {
+  let d = 0;
+  for (const ch of s) {
+    if (ch === "(" || ch === "[") d++;
+    else if (ch === ")" || ch === "]") {
+      if (--d < 0) return false;
+    }
   }
   return true;
 }

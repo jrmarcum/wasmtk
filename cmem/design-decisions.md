@@ -54,9 +54,24 @@ high-value subset.
   `expandInlineBraceChain` must re-emit trailing statements after the brace chain as siblings rather
   than dropping them. Multi-line bodies (single statement per line) are unaffected. Regression:
   `tests/wasm_wasi/48_SingleLineBraceIf.ts` (`// deno-fmt-ignore-file` keeps the single-line forms).
-- **Greedy single-call handlers** (`charCodeAt`/`startsWith`/`endsWith`/`split`, and the `.slice`
-  family) must guard their greedy `(.+)` arg with `parenDepthNeverNegative(arg)` so a following
-  binary operator isn't swallowed. Reserve `[^)]+` only when nesting is provably impossible.
+- **Greedy single-call handlers** (`charCodeAt`/`startsWith`/`endsWith`/`split`/`.slice` family, plus
+  `indexOf`/`includes`/`at`/`charAt`/`replace`/`padStart`/`repeat`/`fromCharCode`/string-char-subscript/
+  `isNaN` — extended 2026-06-08) must guard their greedy `(.+)` arg with `parenDepthNeverNegative(arg)`
+  so a following binary operator isn't swallowed. Reserve `[^)]+` only when nesting is provably
+  impossible. `console_log.ts` has its own `parenDepthNeverNegative` (mirrors wasic's) for the
+  console.log-arg `at`/`isNaN` handlers.
+- **Struct/class field-base sentinel: use `.ptr < 0`, not `=== -1`.** Both `structVars` (`sv`) and
+  `classVars` (`cv`) field/method base computations choose `(local.get $var)` for ptr `< 0` and
+  `(i32.const ptr)` for ptr `≥ 0`. `-1` = param/runtime-local, `-3` = heap-malloc'd struct literal
+  (runtime fields); both must read via `local.get`. `cv` only holds `-1`/static today (no class
+  heap-alloc), but the `< 0` form keeps the two paths consistent and future-proof (mirrors the struct
+  fix; reverting `cv` to `=== -1` would re-open the 6b_SimpleStructs class of bug if class heap-alloc
+  is ever added). The array sentinel `-2` is never a struct/class `ptr`.
+- **Brace-less single-line control flow** (`if`/`while`/`for…of`/`for(;;)` with `stmt;` and no braces)
+  is handled in `emitBlock` by capturing the inline tail and `splitStmts`-ing it as the body. The
+  `for…of` form was a gap (fixed 2026-06-08). NOTE: `emitBlock`'s `while (i < lines.length)` loop
+  advances `i` MANUALLY — every handler that `continue`s a single consumed line MUST `i++` first, or
+  it infinite-loops (heap-OOM during compile). The braced multi-line forms use `i += consumed + 1`.
 - **String-literal regexes are escape-aware** `"((?:[^"\\]|\\.)*)"` at the statement/expression
   sites (`emitStringPtrLen`, `emitStringAssign`, module-const detection). `allocString` →
   `unescapeString` decodes. (The `console_log.ts` console.log-arg path is still un-escaped.)
