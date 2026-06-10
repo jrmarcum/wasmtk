@@ -40,7 +40,7 @@ once omitted `--allow-ffi`; fixed 2026-06-08 by deferring to `deno task install`
 
 | Suite | Result |
 | --- | --- |
-| `tests/wasm_wasi` (full, HARDENED output-diff runner) | **296 / 296** (the 14 output-mismatch bugs the 2026-06-07 runner-hardening surfaced are ALL FIXED 2026-06-08 — see compiler-bugs.md; +`26_ForOfSingleLine` from the hazard audit, +`16_MethodCallBinaryOp` & `6d_ConsoleLogArrayArith` from the pre-bump audit. 6 tests carry `// @allow-output-diff` for documented float-precision / zero-sentinel divergences, incl. `1_values`) |
+| `tests/wasm_wasi` (full, HARDENED output-diff runner) | **298 / 298** (the 14 output-mismatch bugs the 2026-06-07 runner-hardening surfaced are ALL FIXED 2026-06-08 — see compiler-bugs.md; +`26_ForOfSingleLine` from the hazard audit; +`16_MethodCallBinaryOp`, `6d_ConsoleLogArrayArith`, `48_ToStringRadix`, `9_ChainedNewAndMultiStmt`, `27_StringMethodAssignFromArrayElem` from the pre-bump audit + remaining-items pass. 6 tests carry `// @allow-output-diff` for documented float-precision / zero-sentinel divergences, incl. `1_values`) |
 | `bindgen_tests.ts` | **103 / 103** |
 | `jstyper_tests.ts` | **73 / 73** |
 | Capability pipelines `18c`–`18g` (Set/Map/Date/JSON/RegExp) + `18h` (virtual `wasmtk:` imports) | **6 / 6** |

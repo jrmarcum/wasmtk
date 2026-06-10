@@ -1091,6 +1091,31 @@ function zeroOf(t: WatType): string {
   return t === "f64" ? "(f64.const 0)" : t === "f32" ? "(f32.const 0)" : `(${t}.const 0)`;
 }
 
+/** True if `line` has a top-level `;` (bracket+string-aware over `()[]{}`) with non-whitespace
+ *  content AFTER it — i.e. a genuine multi-statement line (`a; b`), NOT a single statement, a
+ *  trailing-`;` statement, or an array/object-literal fragment (`const x = [`, `{ a: 1 },`). Used
+ *  to decide whether a module-level line should be split via splitStmts (which only tracks `(){}`
+ *  and would corrupt `[`-fragments). */
+function hasMultipleTopLevelStatements(line: string): boolean {
+  let d = 0;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"' || c === "'" || c === "`") {
+      const q = c;
+      i++;
+      while (i < line.length && line[i] !== q) {
+        if (line[i] === "\\") i++;
+        i++;
+      }
+      continue;
+    }
+    if (c === "(" || c === "[" || c === "{") d++;
+    else if (c === ")" || c === "]" || c === "}") d--;
+    else if (c === ";" && d === 0 && line.slice(i + 1).trim().length > 0) return true;
+  }
+  return false;
+}
+
 /** Returns true if no prefix of s has more ')'/']' than '('/'[' — guards greedy regex matches. */
 function parenDepthNeverNegative(s: string): boolean {
   let d = 0;
@@ -2788,14 +2813,26 @@ class WasicTranspiler {
           line.startsWith("export {")
         ) continue;
 
-        // Pattern 4: bare top-level statement → goes into _start
-        this.startBodyLines.push(line);
-        // Phase 26: if this statement opens a block (for/while/if/etc.), track depth
-        // so that inner body lines and closing braces are included in startBodyLines.
+        // Pattern 4: bare top-level statement → goes into _start.
+        // Phase 26: if this statement opens a block (for/while/if/etc.), track depth so inner body
+        // lines and closing braces are included in startBodyLines.
         const netOpen = opens - closes;
         if (netOpen > 0) {
+          this.startBodyLines.push(line);
           depth = netOpen;
           collectBlock = true;
+        } else if (hasMultipleTopLevelStatements(line)) {
+          // Genuine multi-statement line (`const a = 1; const b = 2;`) — split string-aware so each
+          // becomes its own _start statement. Gated by hasMultipleTopLevelStatements (a depth-0,
+          // bracket+string-aware `;` with content after it) so an array-literal FRAGMENT like
+          // `const people: Person[] = [` or `{ name: "Alice" },` (which splitStmts would corrupt —
+          // it tracks only `(){}` not `[]` and appends a stray `;` to incomplete lines) is left
+          // intact for joinMultilineArrayLiterals to reassemble.
+          for (const s of WasicTranspiler.splitStmts(line)) {
+            if (s.trim().length > 0) this.startBodyLines.push(s);
+          }
+        } else {
+          this.startBodyLines.push(line);
         }
       } else {
         // Inside a function/block body
@@ -5993,6 +6030,20 @@ class WasicTranspiler {
       return stmts.join(`\n${ind}`);
     }
 
+    // Last resort before the stub: emitStringPtrLen handles many string-valued forms the earlier
+    // branches don't (string method on an array element `words[0].toUpperCase()`, `.slice()`,
+    // `.padStart()`, `.at()`, `.toString(radix)`, etc.). It returns the `(i32.const 0) (i32.const 0)`
+    // sentinel when it can't, so we only use a genuine result. The two stack values are (ptr, len);
+    // pop len then ptr. Works for both two-expr and single multi-value-call results.
+    const splm = this.emitStringPtrLen(initExpr, locals);
+    if (splm !== "(i32.const 0) (i32.const 0)" && !splm.includes("(;")) {
+      return [
+        `${splm}`,
+        `${ind}(local.set $${varName}_len)`,
+        `${ind}(local.set $${varName}_ptr)`,
+      ].join("\n");
+    }
+
     return `(;; string assignment from complex expression not yet supported: ${varName} = ${initExpr};)`;
   }
 
@@ -7651,6 +7702,54 @@ class WasicTranspiler {
       // Known function name used as a value → funcref table index
       if (this.functions.find((f) => f.name === expr)) {
         return `(i32.const ${this.getFuncTableIdx(expr)})`;
+      }
+    }
+
+    // Chained `new ClassName(ctorArgs).method(methodArgs)` — construct a fresh instance, then call a
+    // method on it. (Must precede the bare `new` handler, whose guard rejects this anyway.)
+    {
+      const ncHead = expr.match(/^new\s+([A-Z]\w*)\s*\(/);
+      if (ncHead) {
+        const openIdx = expr.indexOf("(", ncHead[0].length - 1);
+        let d = 0;
+        let ctorEnd = -1;
+        for (let j = openIdx; j < expr.length; j++) {
+          if (expr[j] === "(") d++;
+          else if (expr[j] === ")" && --d === 0) {
+            ctorEnd = j;
+            break;
+          }
+        }
+        const tail = ctorEnd !== -1 ? expr.slice(ctorEnd + 1).trim() : "";
+        const methodM = tail.match(/^\.\s*(\w+)\s*\((.*)\)$/);
+        const ncCd = this.classDefs.get(ncHead[1]!);
+        // Guard the greedy method-args capture so a compound expr like `new A(x).m() + new B(y).m()`
+        // (where the capture would grab `) + new B(y).m(`) falls through to the binary-op loop.
+        if (ctorEnd !== -1 && methodM && parenDepthNeverNegative(methodM[2]!) && ncCd) {
+          const mFn = this.resolveMethodFunc(ncHead[1]!, methodM[1]!) ??
+            `${ncHead[1]}_${methodM[1]}`;
+          const mDef = this.functions.find((f) => f.name === mFn);
+          const retType = (mDef?.result ?? "i32") as WatType | null;
+          // String-returning chains use the globals side-channel — out of scope here.
+          if (retType !== null && retType !== "string") {
+            const ptr = this.allocStructData(ncCd.struct, {}, this.classTags.get(ncHead[1]!));
+            const ctorName = `${ncHead[1]}_constructor`;
+            const ctorFn = this.functions.find((f) => f.name === ctorName);
+            const ctorArgs = expr.slice(openIdx + 1, ctorEnd).trim();
+            const ctorEmitted = (ctorArgs ? this.splitArgs(ctorArgs) : []).map((a, i) =>
+              this.emitExpr(a, locals, ctorFn?.params[i + 1]?.type ?? ("i32" as WatType))
+            );
+            const ctorCall = ctorFn
+              ? `(call $${ctorName} (i32.const ${ptr}) ${ctorEmitted.join(" ")})`.trim()
+              : "";
+            const mArgs = methodM[2]!.trim();
+            const mEmitted = (mArgs ? this.splitArgs(mArgs) : []).map((a, i) =>
+              this.emitExpr(a, locals, mDef?.params[i + 1]?.type ?? ("i32" as WatType))
+            );
+            const mCall = `(call $${mFn} (i32.const ${ptr}) ${mEmitted.join(" ")})`.trim();
+            return `(block (result ${watBaseType(retType)}) ${ctorCall} ${mCall})`;
+          }
+        }
       }
     }
 

@@ -1,7 +1,43 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 296/296**
+Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 298/298**
 (`bindgen` 103/103, `jstyper` 73/73) as of **2026-06-08**.
+
+## Remaining-items pass — chained new().method(), module-level multi-statement lines, string-assign delegation (2026-06-08)
+
+Cleared the low-severity items the pre-bump audit had left (suite 296→298). Two MORE real
+silently-wrong bugs surfaced + fixed in the process:
+
+1. **Chained `new ClassName(...).method(...)`** (`src/wasic.ts` `emitExpr`) — had no handler (stubbed
+   to 0). Added a balanced-scan handler (find the ctor's matching `)`, then `.method(args)`): allocate
+   the struct, call the constructor, call the method on the fresh pointer → `(block (result T) ctorCall
+   methodCall)`. Guarded the method-args capture with `parenDepthNeverNegative` so `new A(x).m() + new
+   B(y).m()` falls through to the binary-op loop. console.log routes `new`-led tokens through
+   `dotCallLookup`→`emitExpr`. String-returning chains out of scope. Works in assign/return/binary-op/
+   console.log. Regression: `9_ChainedNewAndMultiStmt`.
+2. **Module-level multi-statement single physical line** (`const a = 1; const b = 2;`) — `parseTopLevel`
+   pushed it as ONE _start statement. Now split via `splitStmts`, BUT gated by a new
+   `hasMultipleTopLevelStatements` helper (a depth-0, bracket+string-aware `;` with content after it) so
+   an array/object-literal FRAGMENT (`const x = [`, `{ name: "a" },`) is NOT split — splitStmts tracks
+   only `(){}` not `[]` and would append a stray `;` / split at struct `}`, corrupting multi-line array
+   literals (caught a 30_sorting / 6b_testing regression before it shipped). Regression in the same test.
+3. **i32/i64 module-global arithmetic in console.log emitted `f64.add`** (surfaced by #2; pre-existing).
+   `console.log(a + b)` where `a`/`b` are i32 module globals → type error / wrong, because the
+   `leadType` routing in `parseSingleArg` AND `exprToWat` consulted only `locals`, never the `globals`
+   map. **Fix:** `locals.get(id) ?? globals?.get(id)` in both. Covered by `9_ChainedNewAndMultiStmt`.
+4. **`emitStringAssign` complex-expr stub narrowed** — added an `emitStringPtrLen` last-resort before
+   the stub, so a string METHOD on an array element in an assignment (`const u = words[0].toUpperCase()`)
+   now resolves instead of stubbing to empty. Regression: `27_StringMethodAssignFromArrayElem`.
+   STILL feature-gaps (hit the now-narrower stub, not regressions): `arr.join(sep)` as a *value* (no
+   value-returning string-array join helper exists — only the console.log gather-scratch numeric join),
+   and `.slice()`/`.at()` on a bracket receiver in an assignment (those handlers take only `\w+`).
+5. **`relocateDataPtrs` (wasmmerge) — assessed, intentionally NOT changed.** The range heuristic
+   (`dataLo<=n<dataHi → shift`) could over-relocate an arithmetic constant coincidentally inside a
+   string-bearing merged lib's data range. Analysis: leaves have `dataHi=0` (no relocation); the only
+   string-bearing merged caps (JSON/RegExp) use ASCII/small arithmetic constants (`<260`, below
+   `DATA_PTR_THRESHOLD` → never relocated), so NONE are at risk — empirically confirmed (all capability
+   pipelines 18c–18h pass). An exact (context-parsing) rewrite risks the OPPOSITE bug (under-relocating
+   genuine pointers) on a working merge path for a theoretical, unobserved failure — left documented.
 
 ## Pre-bump audit — greedy method/new in binary ops + console.log array arithmetic (2026-06-08)
 
@@ -33,10 +69,11 @@ before bumping wasmtk found two REAL silently-wrong-output bugs (both fixed; sui
    Regression: `48_ToStringRadix`.
 
 The agents' dead-code scan found NONE (the only "unused" symbols — `compileWat`/`compileWasiTs` — are
-documented public API). Lower-severity remaining items (kept as known limitations, not silently-wrong
-on common input): the `emitStringAssign` complex-expression stub (mostly benign per the silent-stub
-audit), the `relocateDataPtrs` range heuristic (merge-path, very rare), chained `new X(...).method()`
-inside a binary op, and a module-level multi-statement single physical line.
+documented public API). The lower-severity items this audit flagged were then ALL addressed in the
+"Remaining-items pass" entry above (chained `new().method()`, module-level multi-statement lines, the
+string-assign stub narrowing, and the `relocateDataPtrs` assessment). Only two narrow FEATURE gaps
+remain (not regressions): `arr.join(sep)` as a value, and `.slice()`/`.at()` on a bracket receiver in
+an assignment.
 
 (Earlier this day, the `26_ForOfSingleLine` test was added by the hazard audit — see "Proactive
 hazard-audit fixes" below.) The 14 output-mismatch bugs that the

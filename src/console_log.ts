@@ -667,6 +667,23 @@ function parseSingleArg(
     if (r) return [{ kind: "strexpr" as const, ptrWat: r.ptrWat, lenWat: r.lenWat }];
   }
 
+  // ── Chained `new ClassName(...).method(...)` (possibly inside a binary op): route through
+  // dotCallLookup, which delegates to wasic's emitExpr (it owns the new+method-chain handler and the
+  // binary-op loop). Returns undefined for anything emitExpr can't resolve, so it's safe.
+  if (dotCallLookup && /^new\s+[A-Z]\w*\s*\(/.test(token)) {
+    const r = dotCallLookup(token);
+    if (r) {
+      const k = r.type === "f64" || r.type === "f32"
+        ? "f64expr" as const
+        : r.type === "i64"
+        ? "i64expr" as const
+        : r.type === "bool"
+        ? "boolexpr" as const
+        : "i32expr" as const;
+      return [{ kind: k, wat: r.wat }];
+    }
+  }
+
   // ── Dot-call expression: receiver.method(args) or this.method(args) — class/static calls
   // Skip Math.* and Number.* tokens — they have their own dedicated handlers below.
   if (
@@ -1308,7 +1325,11 @@ function parseSingleArg(
   // an f64 expression, not i32). Plain (non-array) leads keep their declared local type.
   const leadId = token.match(/^(\w+)/)?.[1];
   const leadArr = leadId ? arrayLookup?.(leadId) : undefined;
-  const leadType = leadArr ? leadArr.elemType : (leadId ? locals.get(leadId) : undefined);
+  // A lead atom may be a function-local OR a module GLOBAL (e.g. `const a: i32 = 1` at module scope
+  // → `console.log(a + b)`); consult both, else `a + b` of i32 globals would default to f64.add.
+  const leadType = leadArr
+    ? leadArr.elemType
+    : (leadId ? (locals.get(leadId) ?? globals?.get(leadId)) : undefined);
   if (leadType === "i64") {
     return [{
       kind: "i64expr",
@@ -2244,7 +2265,8 @@ function exprToWat(
       ? "i32" as const
       : leadM[2]
       ? (structLookup ? structLookup(leadM[1], leadM[2])?.type : undefined)
-      : locals.get(leadM[1]);
+      // plain lead atom: a function-local OR a module global (`a + b` of i32 globals must be i32.add).
+      : (locals.get(leadM[1]) ?? globals?.get(leadM[1]));
     const opType = alwaysI32
       ? "i32"
       : lhsLocalType === "i64"
