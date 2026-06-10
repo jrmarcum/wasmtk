@@ -12,7 +12,7 @@ number v1, 2026-05-31 — first capability to take *string* input across the mer
 **`RegExp`** leaf matcher (backtracking; v1 = literals/`.`/classes/`\d\w\s`/`*+?`/`^$`, 2026-05-31)
 — see §7-#3/§7c/§7d. **No Tier-1 capabilities remain.** Open: §7-#4 feature-level tree-shake
 wiring, §7-#5 Promise/async, §7-#6 hybrid type-routing, §6/§7-#7 kernel-scope decision. Backend
-on `wabt-ts@^1.3.2/compat` + `binaryen-ts@^1.3.3/compat`. Date surfaced+fixed two merge-path bugs
+on `wabt-ts@^1.3.2/compat` + `binaryen-ts@^1.3.5/compat`. Date surfaced+fixed two merge-path bugs
 (§7b); JSON four more (§7c); RegExp surfaced a merge bug (OOB-`charCodeAt` in a non-short-circuit
 `&&`) that is now **fixed (2026-06-02)** by making wasic short-circuit `&&`/`||` — the library
 workaround was removed — §7d. **All 7 long-standing test failures

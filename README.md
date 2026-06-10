@@ -953,7 +953,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 > **Test-count taglines in this table are historical snapshots under `npm:wabt` +
 > `npm:binaryen` (last full-suite validation 2026-05-25: 446/446 PASS). The current
 > wasmtk dependencies are `jsr:@jrmarcum/wabt-ts@^1.3.2/compat` and
-> `jsr:@jrmarcum/binaryen-ts@^1.3.3/compat` (dual JSR-native TS ecosystem). wabt-ts
+> `jsr:@jrmarcum/binaryen-ts@^1.3.5/compat` (dual JSR-native TS ecosystem). wabt-ts
 > 1.3.0 fixed a folded `(call …)`-before-`(return …)` encoder bug (recovering
 > `15_panic`, `18_Multi-Scope`), and **wabt-ts 1.3.1 fixed hex-float literals being
 > parsed as 0** (every merged-`mathlib` constant was encoded as 0, recovering all four
@@ -977,7 +977,10 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 > literals — were ALL FIXED 2026-06-08, restoring three capabilities to correct output:
 > module-level mutable string globals, `console.log` of string-method results
 > (`s.toUpperCase()`), and closure/funcref string returns. A follow-up hazard audit fixed four
-> more latent issues.** See CLAUDE.md
+> more latent issues. The two try/catch cases were a `binaryen-ts` `-Oz` CoalesceLocals bug
+> (catch-variable locals coalesced with outer locals live across the try); it was fixed upstream in
+> binaryen-ts 1.3.4 (EH-aware CFG), so exception-using modules are now fully `-Oz`-optimized again
+> (the interim "skip the optimizer for exception modules" workaround was removed).** See CLAUDE.md
 > § "Pluggable wabt + binaryen backends" for the encoder-bug table. The per-phase
 > historical counts are preserved as a record of when each phase first reached
 > green; they should not be read as a live-system invariant.**

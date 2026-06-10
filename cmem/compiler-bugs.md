@@ -1,8 +1,45 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 293/293**
-(`bindgen` 103/103, `jstyper` 73/73) as of **2026-06-08** (the +1 over 292 is the
-`26_ForOfSingleLine` regression test from the hazard audit — see "Proactive hazard-audit fixes" below). The 14 output-mismatch bugs that the
+Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 296/296**
+(`bindgen` 103/103, `jstyper` 73/73) as of **2026-06-08**.
+
+## Pre-bump audit — greedy method/new in binary ops + console.log array arithmetic (2026-06-08)
+
+A "dead code / workarounds / bugs / fallthroughs" sweep (3 parallel scan agents + reproduction)
+before bumping wasmtk found two REAL silently-wrong-output bugs (both fixed; suite 293→296):
+
+1. **`a.method() + b.method()` / `new A(x) OP new B(y)` mis-compiled** (`src/wasic.ts` `emitExpr`).
+   The `dotCallExprMatch` / `newMatch` / `superDotExprMatch` greedy `([\s\S]*)` args capture consumed
+   across the operator — e.g. `a.unwrap() + b.unwrap()` matched receiver `a`, method `unwrap`, args
+   `) + b.unwrap(` → a broken call. (Tests had WORKED AROUND this by hoisting `const av = a.unwrap()`
+   temporaries — see 16_NestedMonomorphization.) **Fix:** `parenDepthNeverNegative(args)` guard on all
+   three, so the compound expr falls through to the binary-op loop (which emits each operand
+   correctly). Regression: `16_MethodCallBinaryOp`. (Narrower still-open: chained
+   `new X(...).method()` in a binary op has no handler; a module-level multi-statement single physical
+   line isn't split — both rare.)
+2. **`console.log("x:", arr[i] + arr[j])` dropped terms** (`src/console_log.ts`) — was a documented
+   KNOWN-OPEN. The greedy `arr[idx]` regex in `parseSingleArg` AND `exprToWat` captured `0] + arr[1`
+   as the index and emitted one mangled access. **Fix:** bracket-balance-guard the index in both
+   (nullify on unbalanced), so it falls through to the binary-op loop; and infer the op type from the
+   array's ELEMENT type (the lead `arr` is an i32 pointer) so i32[]→`i32.add`, f64[]→`f64.add`.
+   Regression: `6d_ConsoleLogArrayArith`.
+
+3. **Runtime `n.toString(radix)` stubbed to 0** (only literal `(14).toString(2)` was folded). **Fixed**
+   2026-06-08: new `$__i32_to_str_radix(val, radix, buf)→len` helper in `getHelperWat` (base 2..36,
+   digit→char `0-9`/`a-z`, sign-magnitude for negatives) + handlers in `emitStringAssign`,
+   `emitStringPtrLen` (via the `$__str_op` temp pair; `.toString(` added to the prologue + the
+   console.log string-expr resolver regex), and `inferExprType`. Works across assignment / direct
+   console.log / template literal / string-returning function / runtime radix. Value truncated to i32.
+   Regression: `48_ToStringRadix`.
+
+The agents' dead-code scan found NONE (the only "unused" symbols — `compileWat`/`compileWasiTs` — are
+documented public API). Lower-severity remaining items (kept as known limitations, not silently-wrong
+on common input): the `emitStringAssign` complex-expression stub (mostly benign per the silent-stub
+audit), the `relocateDataPtrs` range heuristic (merge-path, very rare), chained `new X(...).method()`
+inside a binary op, and a module-level multi-statement single physical line.
+
+(Earlier this day, the `26_ForOfSingleLine` test was added by the hazard audit — see "Proactive
+hazard-audit fixes" below.) The 14 output-mismatch bugs that the
 2026-06-07 runner-hardening surfaced are **ALL FIXED 2026-06-08** — see the "14 output-mismatch
 bugs ALL FIXED" entry directly below for the per-cluster root causes. Earlier: Phase 51 (2026-06-05)
 added `instanceof`, closed three construction/parsing gaps, and a follow-up workaround-audit fixed
@@ -80,12 +117,23 @@ fixed, grouped by root cause (suite 278/292 → **292/292**, zero regressions; `
   generalized the catch-ternary regex to any else branch (the then is always taken in wasic). (b) The
   other two are a **binaryen `-Oz` CoalesceLocals bug** that miscompiles try/catch catch-variable
   locals (coalesces a catch var with an outer local live across the try). VERIFIED: raw wabt output is
-  correct, binaryen output is wrong. Fix: `watToOptimisedWasm` **skips binaryen** for modules that use
-  exceptions (marker: `$__exn_tag`) — rare, ships the correct un-optimized wabt binary. This exposed a
-  latent **terminal-`block`-fallthru** bug (a `switch` where every case returns/throws leaves an empty
-  stack at the function end → V8 strict-validation reject; binaryen used to mask it) — `3_enums`
-  regressed; fixed by extending `fixTerminalFallthru` to append `(unreachable)` after a terminal void
-  block (harmless when binaryen runs — it strips trailing unreachable).
+  correct, binaryen output is wrong. Interim fix: `watToOptimisedWasm` **skips binaryen** for modules
+  that use exceptions (marker: `$__exn_tag`) — rare, ships the correct un-optimized wabt binary. This
+  exposed a latent **terminal-`block`-fallthru** bug (a `switch` where every case returns/throws leaves
+  an empty stack at the function end → V8 strict-validation reject; binaryen used to mask it) —
+  `3_enums` regressed; fixed by extending `fixTerminalFallthru` to append `(unreachable)` after a
+  terminal void block (harmless when binaryen runs — it strips trailing unreachable). **PROPER FIX
+  (2026-06-08): the binaryen-ts CoalesceLocals bug is fixed upstream in `binaryen-ts@1.3.4`** — an
+  EH-aware CFG (`src/passes/cfg.ts`): a `try` pushes its catch entries onto a handler stack while its
+  body is visited; throwing instructions (`throw`/`rethrow`, `call`/`call_indirect`) link to the
+  enclosing handlers, and a throwing `call` splits the block so a wrapping `local.set` can't strip a
+  handler-live local. **INTEGRATED 2026-06-08:** `deno.json` bumped `^1.3.3`→`^1.3.5` (binaryen-ts
+  shipped the fix in 1.3.4, plus more fixes in 1.3.5) and the `$__exn_tag` skip was **REMOVED** from
+  `watToOptimisedWasm` — exception modules now get full `-Oz` and correct output (full suite
+  **293/293**, bindgen 103/103, jstyper 73/73; publish gate clean). `fixTerminalFallthru`'s
+  terminal-block `(unreachable)` case was KEPT (independent V8-strict-validation fix, not part of the
+  workaround). The binaryen-ts fix + its 2 regression tests live in `../binaryen-ts` (suite 308→310);
+  see that repo's `CLAUDE.md` § "Fix log — CoalesceLocals".
 - **`27_string-formatting`** — a multi-feature stress test; fixes: **toHex** (`r = h[v%16] + r`) needed
   a string-char-subscript concat handler (`$__str_char_code_at` + malloc + store8, the fromCharCode
   shape) AND a **self-referential-concat** fix (`r` appearing as a non-first concat part was read

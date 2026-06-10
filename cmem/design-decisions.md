@@ -216,11 +216,24 @@ string-array element, and `Math.*`/`Number.*` handling all have such twins.
   positions are.
 - **console.log binary-op operand type from the LHS leading atom (`console_log.ts` `exprToWat`)** —
   the `+`/`-`/… operand type is inferred from the LHS's leading atom: plain local, `var.field` (type via
-  `structLookup().type`), or `.length` (→i32). MUST stay conservative: if the remainder after the lead
-  atom starts with `[` `(` or `.` (i.e. `arr[i]`, `fn(...)`, `a.b.c`), fall back to the numeric default
-  so f64 array elements / call results aren't mis-typed i32. Without LHS-typing, i32 struct-field
-  arithmetic compiled to `f64.add` of i32 loads (see compiler-bugs.md). KNOWN-OPEN: `arr[i] + arr[j]`
-  in console.log still drops terms after the first (separate array-element-arithmetic bug).
+  `structLookup().type`), `.length` (→i32), OR — for an array-element-led operand `arr[…]` — the
+  array's ELEMENT type via `arrayLookup` (the lead atom `arr` is an i32 pointer, so the element type
+  is what matters; keying on the lead atom covers compound LHS like `arr[0] + arr[1]` too). Without
+  LHS-typing, i32 struct-field arithmetic compiled to `f64.add` of i32 loads. **FIXED 2026-06-08:**
+  `console.log("x:", arr[i] + arr[j])` (array-element arithmetic) — previously the greedy `arr[idx]`
+  regex captured `0] + arr[1` and emitted one mangled access (dropping terms). Now the bracket index
+  is `parenDepthNeverNegative`-guarded in BOTH `parseSingleArg` and `exprToWat`, so the expression
+  falls through to the binary-op loop, which infers the op type from the array element type
+  (i32[]→`i32.add`, f64[]→`f64.add`). Regression: `6d_ConsoleLogArrayArith`.
+- **Greedy `dotCallExprMatch` / `newMatch` / `superDotExprMatch` in `emitExpr` are guarded** (FIXED
+  2026-06-08). `a.method() + b.method()`, `new A(x) OP new B(y)`, `super.m() OP x` — the greedy
+  `([\s\S]*)` args capture used to consume across the operator (e.g. `a.unwrap() + b.unwrap()` →
+  receiver `a`, args `) + b.unwrap(`), so tests had to hoist `const av = a.unwrap()` temporaries
+  (16_NestedMonomorphization). Now each carries a `parenDepthNeverNegative(args)` guard so the
+  compound expression falls through to the binary-op loop. Regression: `16_MethodCallBinaryOp`.
+  (Still-open, narrower: chained `new X(...).method()` inside a binary op has no handler; and a
+  module-level multi-statement single physical line `const a = ...; const b = ...;` isn't split —
+  both rare.)
 
 ## Tooling
 

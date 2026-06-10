@@ -270,6 +270,74 @@
     (i32.sub (local.get $end) (local.get $orig))
   )
 
+  ;; ── i32 → string in an arbitrary radix (2..36), e.g. (14).toString(2) = "1110" ──
+  ;; Mirrors $__i32_to_str but with a parameterised base + digit→char (0-9→'0'+d, 10-35→'a'+d-10).
+  ;; Negative values get a leading '-' and unsigned magnitude digits (JS sign-magnitude semantics).
+  (func $__i32_to_str_radix (param $val i32) (param $radix i32) (param $buf i32) (result i32)
+    (local $start i32)
+    (local $end i32)
+    (local $tmp i32)
+    (local $ch i32)
+    (local $swap i32)
+    (local $orig i32)
+    (local $d i32)
+    (local.set $orig (local.get $buf))
+    (local.set $start (local.get $buf))
+    ;; clamp radix to [2,36] (JS RangeError otherwise; fall back to base 10)
+    (if (i32.or (i32.lt_s (local.get $radix) (i32.const 2)) (i32.gt_s (local.get $radix) (i32.const 36)))
+      (then (local.set $radix (i32.const 10)))
+    )
+    ;; Zero
+    (if (i32.eqz (local.get $val))
+      (then
+        (i32.store8 (local.get $buf) (i32.const 48))
+        (return (i32.const 1))
+      )
+    )
+    ;; Negative → leading '-' then magnitude
+    (if (i32.lt_s (local.get $val) (i32.const 0))
+      (then
+        (i32.store8 (local.get $buf) (i32.const 45))
+        (local.set $buf (i32.add (local.get $buf) (i32.const 1)))
+        (local.set $start (local.get $buf))
+        (local.set $val (i32.sub (i32.const 0) (local.get $val)))
+      )
+    )
+    (local.set $end (local.get $buf))
+    ;; Write digits in reverse
+    (block $done
+      (loop $loop
+        (br_if $done (i32.eqz (local.get $val)))
+        (local.set $d (i32.rem_u (local.get $val) (local.get $radix)))
+        (i32.store8
+          (local.get $end)
+          (if (result i32) (i32.lt_u (local.get $d) (i32.const 10))
+            (then (i32.add (i32.const 48) (local.get $d)))
+            (else (i32.add (i32.const 87) (local.get $d)))
+          )
+        )
+        (local.set $val (i32.div_u (local.get $val) (local.get $radix)))
+        (local.set $end (i32.add (local.get $end) (i32.const 1)))
+        (br $loop)
+      )
+    )
+    ;; Reverse digit bytes in-place
+    (local.set $tmp (local.get $start))
+    (local.set $ch (i32.sub (local.get $end) (i32.const 1)))
+    (block $rdone
+      (loop $rloop
+        (br_if $rdone (i32.ge_u (local.get $tmp) (local.get $ch)))
+        (local.set $swap (i32.load8_u (local.get $tmp)))
+        (i32.store8 (local.get $tmp) (i32.load8_u (local.get $ch)))
+        (i32.store8 (local.get $ch) (local.get $swap))
+        (local.set $tmp (i32.add (local.get $tmp) (i32.const 1)))
+        (local.set $ch (i32.sub (local.get $ch) (i32.const 1)))
+        (br $rloop)
+      )
+    )
+    (i32.sub (local.get $end) (local.get $orig))
+  )
+
   ;; ── f64 powers of 10 helper (used by $__f64_to_str shortening loop) ─────────
   (func $__pow10_f64 (param $n i32) (result f64)
     (if (i32.le_s (local.get $n) (i32.const 0))  (then (return (f64.const 1))))

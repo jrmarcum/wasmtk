@@ -99,7 +99,7 @@ capabilities — `Set<i32>` + `Map<i32,i32>` + `JSON` shared-heap libraries + th
 under npm:wabt + npm:binaryen: 446/446 tests passing (2026-05-25; 270 wasic +
 Go-by-Example + 103 bindgen + 73 jstyper). **Under the current dual JSR /compat
 stack (`jsr:@jrmarcum/wabt-ts@^1.3.2/compat` +
-`jsr:@jrmarcum/binaryen-ts@^1.3.3/compat`):** the full `tests/wasm_wasi`
+`jsr:@jrmarcum/binaryen-ts@^1.3.5/compat`):** the full `tests/wasm_wasi`
 suite is **293/293** (`core_` 33/33), jstyper 73/73, and **bindgen 103/103** (Phase 51, 2026-06-05,
 added `instanceof` + 7 `51_*` tests, incl. the 3 class-construction-gap fixes; `51_ObjectSpread` (51.2)
 + `51_ParamDestructuring` + `51_NestedDestructuring` + `51_NestedTuple` (51.3) + `51_UtilityTypes`

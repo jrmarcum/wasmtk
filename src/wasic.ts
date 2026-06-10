@@ -194,16 +194,11 @@ async function watToOptimisedWasm(
     parsed.destroy();
     const rawBytes = new Uint8Array(buffer);
 
-    // Binaryen's -Oz CoalesceLocals pass miscompiles try/catch catch-variable locals: it merges a
-    // catch-bound local (e.g. `$outerError`) with an outer string local whose live range spans the
-    // try, so the outer value reads back as the caught payload (verified: raw wabt output is correct,
-    // binaryen output is wrong — see 15_LexicalShadowing_Stress). Exception-using modules are rare,
-    // so we ship the (correct, slightly larger) un-optimized wabt binary for them. The marker is
-    // wasic's own exception tag, which only appears when a throw/try-catch is emitted.
-    if (watSource.includes("$__exn_tag")) {
-      await rt.writeFile(outPath, rawBytes);
-      return { success: true, outputPath: outPath, sizeBytes: rawBytes.length };
-    }
+    // (Exception-using modules used to skip Binaryen here, working around a `-Oz` CoalesceLocals
+    // bug that miscompiled try/catch catch-variable locals. That bug is fixed upstream in
+    // binaryen-ts 1.3.4 via an EH-aware CFG, so the skip was removed 2026-06-08 — exception modules
+    // now get full `-Oz` again. `fixTerminalFallthru`'s terminal-block `(unreachable)` case stays —
+    // it's an independent V8-strict-validation fix, not part of the workaround.)
 
     // Step 2: Binaryen -Oz (shrinkLevel=2, optimizeLevel=2)
     const binMod = binaryen.readBinary(rawBytes);
@@ -1152,7 +1147,7 @@ function inferInitType(
   // 2b. string-producing expressions
   if (e.startsWith('"') || e.startsWith("'")) return "string"; // string literal or concat
   if (/^String\s*\(/.test(e)) return "string"; // String(n)
-  if (/^\w+\.toString\s*\(\s*\)$/.test(e)) return "string"; // n.toString()
+  if (/^\w+\.toString\s*\(.*\)$/.test(e)) return "string"; // n.toString() / n.toString(radix)
   // str.slice(...) — only if receiver is a known string var (checked at call sites; hint here)
   const sliceLeadId = e.match(/^(\w+)\.slice\s*\(/)?.[1];
   if (sliceLeadId && locals.get(sliceLeadId) === "string") return "string";
@@ -5751,6 +5746,23 @@ class WasicTranspiler {
       ].join("\n");
     }
 
+    // n.toString(radix) → malloc + $__i32_to_str_radix (runtime base 2..36; value truncated to i32).
+    // Must precede the no-arg toString below (whose regex would not match a non-empty arg anyway).
+    const toStrRadixM = initExpr.match(/^(\w+)\.toString\s*\(\s*(.+)\s*\)$/);
+    if (toStrRadixM) {
+      const srcName = toStrRadixM[1]!;
+      const srcType = locals.get(srcName) ?? this.moduleGlobals.get(srcName)?.type;
+      if (srcType === "i32" || srcType === "f64") {
+        this.needsNumericHelpers = true;
+        const valWat = this.emitExpr(srcName, locals, "i32");
+        const radixWat = this.emitExpr(toStrRadixM[2]!.trim(), locals, "i32");
+        return [
+          `(local.set $${varName}_ptr (call $__malloc (i32.const 36)))`,
+          `${ind}(local.set $${varName}_len (call $__i32_to_str_radix ${valWat} ${radixWat} (local.get $${varName}_ptr)))`,
+        ].join("\n");
+      }
+    }
+
     // n.toString() → malloc 32 bytes, call $__i32_to_str / $__f64_to_str
     const toStrMatch = initExpr.match(/^(\w+)\.toString\s*\(\s*\)$/);
     if (toStrMatch) {
@@ -6285,6 +6297,22 @@ class WasicTranspiler {
       return `(call $__str_slice (local.get $${sliceSPLM[1]}_ptr) (local.get $${
         sliceSPLM[1]
       }_len) ${startWat} ${endWat})`;
+    }
+    // n.toString(radix) — numeric var/global with a radix arg → $__i32_to_str_radix into the
+    // $__str_op temp pair, returned as (ptr, len). (No-arg n.toString() is a different, single-value
+    // string elsewhere.) Value is truncated to i32.
+    const toStrRadixSPLM = expr.match(/^(\w+)\.toString\s*\(\s*(.+)\s*\)$/);
+    if (toStrRadixSPLM) {
+      const sName = toStrRadixSPLM[1]!;
+      const sType = locals.get(sName) ?? this.moduleGlobals.get(sName)?.type;
+      if (sType === "i32" || sType === "f64") {
+        this.needsNumericHelpers = true;
+        const valWat = this.emitExpr(sName, locals, "i32");
+        const radixWat = this.emitExpr(toStrRadixSPLM[2]!.trim(), locals, "i32");
+        return `(block (result i32) (local.set $__str_op_ptr (call $__malloc (i32.const 36))) ` +
+          `(local.set $__str_op_len (call $__i32_to_str_radix ${valWat} ${radixWat} (local.get $__str_op_ptr))) ` +
+          `(local.get $__str_op_ptr)) (local.get $__str_op_len)`;
+      }
     }
     // str.padStart(n[, pad]) / str.padEnd(n[, pad]) — receiver may be a var, string literal, or
     // string-returning call (via the recursive emitStringPtrLen). Single-arg form defaults the pad
@@ -7626,9 +7654,11 @@ class WasicTranspiler {
       }
     }
 
-    // new ClassName(args) — allocate static struct + call constructor
+    // new ClassName(args) — allocate static struct + call constructor.
+    // Guard the greedy args capture so a compound expr like `new A(x) + new B(y)` (where the
+    // capture would grab `x) + new B(y`) falls through to the binary-op loop instead of mis-parsing.
     const newMatch = expr.match(/^new\s+([A-Z]\w*)\s*\(([\s\S]*)\)$/);
-    if (newMatch) {
+    if (newMatch && parenDepthNeverNegative(newMatch[2])) {
       const ctorClassName = newMatch[1];
       const argsStr = newMatch[2].trim();
       const cd = this.classDefs.get(ctorClassName);
@@ -7652,7 +7682,9 @@ class WasicTranspiler {
 
     // Phase 47: super.method(args) in non-constructor method body (expression form)
     const superDotExprMatch = expr.match(/^super\.(\w+)\s*\((.*)\)$/);
-    if (superDotExprMatch && this.currentMethodClass) {
+    if (
+      superDotExprMatch && parenDepthNeverNegative(superDotExprMatch[2]) && this.currentMethodClass
+    ) {
       const sdMethod = superDotExprMatch[1];
       const sdArgsRaw = superDotExprMatch[2].trim();
       const sdParent = this.classInheritance.get(this.currentMethodClass);
@@ -7669,9 +7701,12 @@ class WasicTranspiler {
       }
     }
 
-    // instance.method(args) or ClassName.staticMethod(args) dot-call in expression position
+    // instance.method(args) or ClassName.staticMethod(args) dot-call in expression position.
+    // Guard the greedy args capture so a compound expr like `a.unwrap() + b.unwrap()` (where the
+    // capture would grab `) + b.unwrap(`) falls through to the binary-op loop instead of mis-parsing
+    // into a broken call. (Previously, tests worked around this by hoisting `const av = a.unwrap()`.)
     const dotCallExprMatch = expr.match(/^(\w+)\.(\w+)\s*\(([\s\S]*)\)$/);
-    if (dotCallExprMatch) {
+    if (dotCallExprMatch && parenDepthNeverNegative(dotCallExprMatch[3])) {
       const receiver = dotCallExprMatch[1];
       const methodName = dotCallExprMatch[2];
       const argsStr = dotCallExprMatch[3].trim();
@@ -15410,7 +15445,7 @@ class WasicTranspiler {
       fn.bodyLines.some((l) =>
         l.includes("String.fromCharCode(") || l.includes(".charAt(") || l.includes(".slice(") ||
         l.includes(".split(") ||
-        l.includes(".padStart(") || l.includes(".padEnd(") ||
+        l.includes(".padStart(") || l.includes(".padEnd(") || l.includes(".toString(") ||
         l.includes(".at(") || l.includes(".toUpperCase(") || l.includes(".toLowerCase(") ||
         /\w\[[^\]]+\]\s*\+|\+\s*\w+\[/.test(l) // string char subscript in a concat: s[i] + …
       )
@@ -16733,7 +16768,7 @@ class WasicTranspiler {
         this.startBodyLines.some((l) =>
           l.includes("String.fromCharCode(") || l.includes(".charAt(") || l.includes(".slice(") ||
           l.includes(".split(") ||
-          l.includes(".padStart(") || l.includes(".padEnd(") ||
+          l.includes(".padStart(") || l.includes(".padEnd(") || l.includes(".toString(") ||
           l.includes(".at(") || l.includes(".toUpperCase(") || l.includes(".toLowerCase(") ||
           /\w\[[^\]]+\]\s*\+|\+\s*\w+\[/.test(l) // string char subscript in a concat: s[i] + …
         )

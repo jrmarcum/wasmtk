@@ -660,7 +660,7 @@ function parseSingleArg(
   // permissive receiver pattern is safe (non-string tokens fall through to the handlers below).
   if (
     _stringExprResolver &&
-    /^.+\.(toUpperCase|toLowerCase|trim|trimStart|trimEnd|trimLeft|trimRight|slice|charAt|substring|substr|replace|replaceAll|padStart|padEnd|repeat)\s*\(/
+    /^.+\.(toUpperCase|toLowerCase|trim|trimStart|trimEnd|trimLeft|trimRight|slice|charAt|substring|substr|replace|replaceAll|padStart|padEnd|repeat|toString)\s*\(/
       .test(token)
   ) {
     const r = _stringExprResolver(token, locals);
@@ -958,7 +958,12 @@ function parseSingleArg(
   }
 
   // ── Array element access: arr[idx]
-  const bracketMatch = token.match(/^(\w+)\[(.+)\]$/);
+  // Guard the greedy index capture: `arr[0] + arr[1]` would match as index `0] + arr[1` (unbalanced
+  // brackets), and the branches below would emit a single mangled access — dropping the `+ arr[1]`.
+  // Nullify on an unbalanced index so the whole expression falls through to the binary-op-aware
+  // exprToWat routing below (which handles array-element arithmetic correctly).
+  let bracketMatch = token.match(/^(\w+)\[(.+)\]$/);
+  if (bracketMatch && !parenDepthNeverNegative(bracketMatch[2])) bracketMatch = null;
   // Phase 23: tuple element access t[N] where N is a numeric index → struct field _N
   if (bracketMatch && structLookup && /^\d+$/.test(bracketMatch[2])) {
     const fi = structLookup(bracketMatch[1], `_${bracketMatch[2]}`);
@@ -1297,9 +1302,14 @@ function parseSingleArg(
       }
     }
   }
-  // Infer i64 / i32 / f64 from the leading identifier's declared type
+  // Infer i64 / i32 / f64 from the leading identifier's declared type. For a compound expression
+  // led by an ARRAY variable (e.g. `arr[0] + arr[1]`), `locals.get(arr)` is the i32 POINTER type, not
+  // the element type — so consult arrayLookup and route by the ELEMENT type (an f64[] element sum is
+  // an f64 expression, not i32). Plain (non-array) leads keep their declared local type.
   const leadId = token.match(/^(\w+)/)?.[1];
-  if (leadId && locals.get(leadId) === "i64") {
+  const leadArr = leadId ? arrayLookup?.(leadId) : undefined;
+  const leadType = leadArr ? leadArr.elemType : (leadId ? locals.get(leadId) : undefined);
+  if (leadType === "i64") {
     return [{
       kind: "i64expr",
       wat: exprToWat(
@@ -1314,7 +1324,7 @@ function parseSingleArg(
       ),
     }];
   }
-  if (leadId && (locals.get(leadId) === "i32" || locals.get(leadId) === "bool")) {
+  if (leadType === "i32" || leadType === "bool") {
     return [{
       kind: "i32expr",
       wat: exprToWat(
@@ -1499,8 +1509,11 @@ function exprToWat(
     if (locals.get(dotLenM[1]) === "i32") return `(i32.load (local.get $${dotLenM[1]}))`;
   }
 
-  // Array element read: arr[idx]
-  const bracketM = expr.match(/^(\w+)\[(.+)\]$/);
+  // Array element read: arr[idx]. Guard the greedy index capture so `arr[0] + arr[1]` (index would
+  // capture `0] + arr[1`) falls through to the binary-op loop below instead of emitting one mangled
+  // access (mirrors emitExpr in wasic.ts, which already guards this).
+  let bracketM = expr.match(/^(\w+)\[(.+)\]$/);
+  if (bracketM && !parenDepthNeverNegative(bracketM[2])) bracketM = null;
   // Phase 23: tuple element access t[N] → struct field _N
   if (bracketM && structLookup && /^\d+$/.test(bracketM[2])) {
     const fi = structLookup(bracketM[1], `_${bracketM[2]}`);
@@ -2209,7 +2222,23 @@ function exprToWat(
     const restAfterLead = leadM ? lhs.slice(leadM[0].length).trimStart() : "";
     const leadIsSimpleAtom = leadM !== null &&
       (restAfterLead === "" || !/^[.[(]/.test(restAfterLead));
-    const lhsLocalType = !leadIsSimpleAtom || !leadM
+    // Array-element operand led by `arr[…]`: the type follows the array's ELEMENT type (the lead
+    // atom `arr` itself is an i32 pointer, so the generic lead-atom path below would mis-type it).
+    // Keying on the lead atom (not the whole LHS) also covers a COMPOUND left operand like
+    // `arr[0] + arr[1]` (3-term sums), where the LHS isn't a single bracket access. This makes
+    // `console.log("x:", arr[0] + arr[1])` emit `i32.add` for an i32[] / `f64.add` for an f64[]
+    // instead of defaulting to f64 (which produced wrong output or a type error).
+    const leadArrElem = (leadM && leadM[2] === undefined && restAfterLead.startsWith("["))
+      ? arrayLookup?.(leadM[1])?.elemType
+      : undefined;
+    const lhsArrNumType =
+      (leadArrElem === "i32" || leadArrElem === "i64" || leadArrElem === "f64" ||
+          leadArrElem === "f32")
+        ? leadArrElem
+        : undefined;
+    const lhsLocalType = lhsArrNumType
+      ? lhsArrNumType
+      : !leadIsSimpleAtom || !leadM
       ? undefined
       : leadM[2] === "length"
       ? "i32" as const
@@ -2861,6 +2890,74 @@ export function getHelperWat(): string {
       )
     )
     ;; Return total length (including leading '-' if any)
+    (i32.sub (local.get $end) (local.get $orig))
+  )
+
+  ;; ── i32 → string in an arbitrary radix (2..36), e.g. (14).toString(2) = "1110" ──
+  ;; Mirrors $__i32_to_str but with a parameterised base + digit→char (0-9→'0'+d, 10-35→'a'+d-10).
+  ;; Negative values get a leading '-' and unsigned magnitude digits (JS sign-magnitude semantics).
+  (func $__i32_to_str_radix (param $val i32) (param $radix i32) (param $buf i32) (result i32)
+    (local $start i32)
+    (local $end i32)
+    (local $tmp i32)
+    (local $ch i32)
+    (local $swap i32)
+    (local $orig i32)
+    (local $d i32)
+    (local.set $orig (local.get $buf))
+    (local.set $start (local.get $buf))
+    ;; clamp radix to [2,36] (JS RangeError otherwise; fall back to base 10)
+    (if (i32.or (i32.lt_s (local.get $radix) (i32.const 2)) (i32.gt_s (local.get $radix) (i32.const 36)))
+      (then (local.set $radix (i32.const 10)))
+    )
+    ;; Zero
+    (if (i32.eqz (local.get $val))
+      (then
+        (i32.store8 (local.get $buf) (i32.const 48))
+        (return (i32.const 1))
+      )
+    )
+    ;; Negative → leading '-' then magnitude
+    (if (i32.lt_s (local.get $val) (i32.const 0))
+      (then
+        (i32.store8 (local.get $buf) (i32.const 45))
+        (local.set $buf (i32.add (local.get $buf) (i32.const 1)))
+        (local.set $start (local.get $buf))
+        (local.set $val (i32.sub (i32.const 0) (local.get $val)))
+      )
+    )
+    (local.set $end (local.get $buf))
+    ;; Write digits in reverse
+    (block $done
+      (loop $loop
+        (br_if $done (i32.eqz (local.get $val)))
+        (local.set $d (i32.rem_u (local.get $val) (local.get $radix)))
+        (i32.store8
+          (local.get $end)
+          (if (result i32) (i32.lt_u (local.get $d) (i32.const 10))
+            (then (i32.add (i32.const 48) (local.get $d)))
+            (else (i32.add (i32.const 87) (local.get $d)))
+          )
+        )
+        (local.set $val (i32.div_u (local.get $val) (local.get $radix)))
+        (local.set $end (i32.add (local.get $end) (i32.const 1)))
+        (br $loop)
+      )
+    )
+    ;; Reverse digit bytes in-place
+    (local.set $tmp (local.get $start))
+    (local.set $ch (i32.sub (local.get $end) (i32.const 1)))
+    (block $rdone
+      (loop $rloop
+        (br_if $rdone (i32.ge_u (local.get $tmp) (local.get $ch)))
+        (local.set $swap (i32.load8_u (local.get $tmp)))
+        (i32.store8 (local.get $tmp) (i32.load8_u (local.get $ch)))
+        (i32.store8 (local.get $ch) (local.get $swap))
+        (local.set $tmp (i32.add (local.get $tmp) (i32.const 1)))
+        (local.set $ch (i32.sub (local.get $ch) (i32.const 1)))
+        (br $rloop)
+      )
+    )
     (i32.sub (local.get $end) (local.get $orig))
   )
 

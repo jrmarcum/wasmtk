@@ -22,12 +22,16 @@ in `deno.json`; no source change needed.
 | Specifier | npm (legacy) | JSR (jrmarcum ecosystem) |
 | --- | --- | --- |
 | `"wabt"` | `npm:wabt@^1.0.36` | `jsr:@jrmarcum/wabt-ts@^1.3.2/compat` |
-| `"binaryen"` | `npm:binaryen@^116.0.0` | `jsr:@jrmarcum/binaryen-ts@^1.3.3/compat` |
+| `"binaryen"` | `npm:binaryen@^116.0.0` | `jsr:@jrmarcum/binaryen-ts@^1.3.5/compat` |
 
-**Current (2026-06-02):** `wabt-ts@^1.3.2/compat` + `binaryen-ts@^1.3.3/compat`. The `/compat`
+**Current (2026-06-08):** `wabt-ts@^1.3.2/compat` + `binaryen-ts@^1.3.5/compat`. The `/compat`
 subpaths mirror the upstream-npm shape so call sites stay backend-agnostic. **binaryen-ts must
-stay ≥ 1.3.2** (1.3.2 fixed a merge-path optimizer miscompile on division-heavy merged code;
-reverting below re-introduces it with no wasmtk-side workaround). wabt-ts 1.3.0 fixed a
+stay ≥ 1.3.4** — 1.3.2 fixed a merge-path optimizer miscompile on division-heavy merged code, and
+**1.3.4 fixed the `-Oz` CoalesceLocals EH bug** (try/catch catch-variable locals were coalesced with
+outer locals live across the try → wrong output; an EH-aware CFG fixed it). 1.3.4 let wasmtk REMOVE
+its "skip Binaryen for exception (`$__exn_tag`) modules" workaround, so exception code is `-Oz`'d
+again (suite 293/293 with it removed). Reverting below 1.3.4 re-introduces both bugs with no
+wasmtk-side workaround. wabt-ts 1.3.0 fixed a
 folded-`(call)`-before-`(return)` encoder bug (recovered `15_panic`, `18_Multi-Scope`); **wabt-ts
 1.3.1 fixed hex-float literals being parsed as 0** (`parseF*LiteralBits` used JS `parseFloat`,
 which can't read `0x1.…p±N` notation — every merged-`mathlib` constant encoded as 0). 1.3.1
