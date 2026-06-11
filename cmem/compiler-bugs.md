@@ -1,7 +1,7 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 298/298**
-(`bindgen` 103/103, `jstyper` 73/73) as of **2026-06-08**.
+Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 299/299**
+(`bindgen` 103/103, `jstyper` 73/73) as of **2026-06-09**.
 
 ## Remaining-items pass — chained new().method(), module-level multi-statement lines, string-assign delegation (2026-06-08)
 
@@ -31,13 +31,23 @@ silently-wrong bugs surfaced + fixed in the process:
    STILL feature-gaps (hit the now-narrower stub, not regressions): `arr.join(sep)` as a *value* (no
    value-returning string-array join helper exists — only the console.log gather-scratch numeric join),
    and `.slice()`/`.at()` on a bracket receiver in an assignment (those handlers take only `\w+`).
-5. **`relocateDataPtrs` (wasmmerge) — assessed, intentionally NOT changed.** The range heuristic
-   (`dataLo<=n<dataHi → shift`) could over-relocate an arithmetic constant coincidentally inside a
-   string-bearing merged lib's data range. Analysis: leaves have `dataHi=0` (no relocation); the only
-   string-bearing merged caps (JSON/RegExp) use ASCII/small arithmetic constants (`<260`, below
-   `DATA_PTR_THRESHOLD` → never relocated), so NONE are at risk — empirically confirmed (all capability
-   pipelines 18c–18h pass). An exact (context-parsing) rewrite risks the OPPOSITE bug (under-relocating
-   genuine pointers) on a working merge path for a theoretical, unobserved failure — left documented.
+5. **`relocateDataPtrs` (wasmmerge) — FIXED (2026-06-09).** The range heuristic (`dataLo<=n<dataHi →
+   shift`) over-relocated an arithmetic constant that coincidentally lands inside a merged lib's
+   static-data range. Grounding in real merged WAT settled the design: (a) the merged module body is
+   disassembled to FLAT/stack form (`i32.const N` then its consumer on the next line); (b) a genuine
+   data pointer DOES appear in value position (MathLibrary: `i32.const 0 / i32.const 260 / i32.store`
+   stores the version-string pointer), so an "address-position only" walk would UNDER-relocate it — an
+   exact pointer/arithmetic split is impossible from WAT text. **The one safe signal:** a data pointer
+   is NEVER the rhs operand of a pure arithmetic/bitwise/shift op. So the fix scans flat form and, for
+   each in-range `i32.const N`, looks at the NEXT instruction token (the stack consumer): if it's in
+   `ARITH_NEVER_PTR` (`i32.mul/div/rem/and/or/xor/shl/shr/rotl/rotr`) the constant is left alone;
+   every other consumer (store/load/add/sub/call, `(data …)` offset) still relocates, so NO genuine
+   pointer is ever dropped. `add`/`sub`/comparison stay relocated (a pointer legitimately appears as
+   `base±offset`; over-relocation there is far rarer and undisambiguable without dataflow). Proven both
+   directions: the new regression FAILS under the old relocate-all heuristic (`x % 271` → `271→531` →
+   wrong) and PASSES with the fix, while the banner string pointer still relocates (`260→520`).
+   Regression: `18i_RelocArithmeticConstant` (`@test-pipeline`, trap-on-failure). Zero change to any
+   current merge (all in-range pointers were in non-arith positions). See design-decisions.md.
 
 ## Pre-bump audit — greedy method/new in binary ops + console.log array arithmetic (2026-06-08)
 
@@ -69,11 +79,11 @@ before bumping wasmtk found two REAL silently-wrong-output bugs (both fixed; sui
    Regression: `48_ToStringRadix`.
 
 The agents' dead-code scan found NONE (the only "unused" symbols — `compileWat`/`compileWasiTs` — are
-documented public API). The lower-severity items this audit flagged were then ALL addressed in the
+documented public API). The lower-severity items this audit flagged were then ALL fixed in the
 "Remaining-items pass" entry above (chained `new().method()`, module-level multi-statement lines, the
-string-assign stub narrowing, and the `relocateDataPtrs` assessment). Only two narrow FEATURE gaps
-remain (not regressions): `arr.join(sep)` as a value, and `.slice()`/`.at()` on a bracket receiver in
-an assignment.
+string-assign stub narrowing, and — 2026-06-09 — the `relocateDataPtrs` over-relocation). Only two
+narrow FEATURE gaps remain (not regressions): `arr.join(sep)` as a value, and `.slice()`/`.at()` on a
+bracket receiver in an assignment.
 
 (Earlier this day, the `26_ForOfSingleLine` test was added by the hazard audit — see "Proactive
 hazard-audit fixes" below.) The 14 output-mismatch bugs that the

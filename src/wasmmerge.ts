@@ -597,14 +597,70 @@ export function mergeWasmWat(
 
   /**
    * Shift i32.const values that lie within this module's own static-data range
-   * [dataLo, dataHi) by dataReloc. These are genuine static-data pointers; arithmetic
-   * literals (which live outside the data range) are left alone.
+   * [dataLo, dataHi) by dataReloc — these are static-data pointers that must move with the
+   * relocated data segment. The range scoping alone can still over-relocate an ARITHMETIC
+   * literal that coincidentally lands in [dataLo, dataHi). An exact pointer/arithmetic split
+   * is impossible from WAT text (a data pointer can appear in value position — e.g.
+   * `(i32.store (i32.const 0) (i32.const 260))` stores a string pointer — indistinguishable
+   * from a stored integer). But a data pointer is NEVER the in-range constant operand of a
+   * pure arithmetic / bitwise / shift instruction (`x * N`, `x % N`, `x & N`, `x << N`, …),
+   * so excluding those is safe (never drops a real pointer) and removes the most common
+   * arithmetic false positives. add/sub/comparison/store-value/data-offset stay relocated:
+   * a pointer legitimately appears there (base±offset, stored ptr, segment offset), so
+   * relocating them is conservative — over-relocation there is far rarer and can't be
+   * disambiguated without dataflow. Implemented as a comment/string-safe s-expression walk
+   * that checks each (i32.const N)'s ENCLOSING operator.
    */
+  const ARITH_NEVER_PTR = new Set([
+    "i32.mul",
+    "i32.div_s",
+    "i32.div_u",
+    "i32.rem_s",
+    "i32.rem_u",
+    "i32.and",
+    "i32.or",
+    "i32.xor",
+    "i32.shl",
+    "i32.shr_s",
+    "i32.shr_u",
+    "i32.rotl",
+    "i32.rotr",
+  ]);
   function relocateDataPtrs(text: string): string {
     if (dataReloc === 0 || dataHi === 0) return text;
-    return text.replace(/\bi32\.const\s+(\d+)\b/g, (match, numStr) => {
+    // The merged module body is disassembled to FLAT (stack) form — `i32.const N` then its CONSUMER
+    // instruction on the following line. So the disambiguating signal is the next instruction token:
+    // if it is a pure arithmetic / bitwise / shift op the const is that op's rhs operand and is
+    // therefore arithmetic (a data pointer is never `% * & << …`'s rhs) → leave it. Any other consumer
+    // (store/load/add/sub/call, or a `(data …)` segment offset whose next token is the data string)
+    // keeps relocating, so no genuine pointer is ever dropped. Only whitespace/comments are skipped
+    // between the constant and its consumer (flat form has no intervening parens).
+    return text.replace(/\bi32\.const\s+(-?\d+)\b/g, (match, numStr: string, offset: number) => {
       const n = parseInt(numStr);
-      return n >= dataLo && n < dataHi ? `i32.const ${n + dataReloc}` : match;
+      if (!(n >= dataLo && n < dataHi)) return match;
+      let p = offset + match.length;
+      while (p < text.length) {
+        const c = text[p];
+        if (/\s/.test(c!)) {
+          p++;
+          continue;
+        }
+        if (c === ";" && text[p + 1] === ";") {
+          while (p < text.length && text[p] !== "\n") p++;
+          continue;
+        }
+        if (c === "(" && text[p + 1] === ";") {
+          p += 2;
+          while (p < text.length && !(text[p] === ";" && text[p + 1] === ")")) p++;
+          p += 2;
+          continue;
+        }
+        break;
+      }
+      let q = p;
+      while (q < text.length && !/[\s()]/.test(text[q]!)) q++;
+      const nextTok = text.slice(p, q);
+      return ARITH_NEVER_PTR.has(nextTok) ? match : `i32.const ${n + dataReloc}`;
     });
   }
 

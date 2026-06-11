@@ -160,7 +160,7 @@ exceptions/error string payloads, string ops/formatting, struct-field mutation, 
 literal — full root-cause list in compiler-bugs.md). A follow-up hazard audit (2026-06-08) fixed 4
 more latent issues: brace-less single-line `for…of` (dropped body), `console.error` bool-array-method
 formatting, the class-instance `ptr<0` sentinel, and extended the greedy-regex `parenDepthNeverNegative`
-guards. Suite under the hardened runner: **293/293** (no open bugs), bindgen 103/103, jstyper 73/73.
+guards. Suite under the hardened runner: **299/299** (no open bugs), bindgen 103/103, jstyper 73/73.
 
 ### Phase 52 — Leaf conveniences (NO downstream risk; opportunistic, never gating)
 

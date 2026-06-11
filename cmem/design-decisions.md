@@ -93,7 +93,17 @@ high-value subset.
   `local.get 0` + `i32.add`, and NO calls/loads/stores. The once-each rule is what keeps a
   `global += param; return global` accumulator from being mis-dropped.
 - **`relocateDataPtrs`** relocates only `i32.const` values inside the merged module's own `(data …)`
-  address extent — never blanket-shift every `>= 260`, or arithmetic constants get corrupted.
+  address extent (`[dataLo, dataHi)`) — never blanket-shift every `>= 260`, or arithmetic constants
+  get corrupted. **AND (2026-06-09) within that range it skips any in-range `i32.const` whose NEXT
+  instruction token (the merged body is FLAT/stack form) is a pure arithmetic/bitwise/shift op
+  (`ARITH_NEVER_PTR` = `i32.mul/div_s/div_u/rem_s/rem_u/and/or/xor/shl/shr_s/shr_u/rotl/rotr`).** A
+  data pointer is never the rhs of those ops, so this never drops a real pointer; it fixes
+  over-relocation of an arithmetic constant that coincidentally lands in the data range (e.g. `x %
+  271` when the lib's data is `[260, 301)`). Do NOT switch to an "address-position only" rule —
+  a genuine pointer can appear in VALUE position (`i32.const 0 / i32.const 260 / i32.store` stores a
+  string pointer), so that would under-relocate. `add`/`sub`/comparison/store/load/`(data …)` offset
+  all keep relocating (conservative). Regression: `18i_RelocArithmeticConstant`. Tradeoff rationale +
+  full proof: compiler-bugs.md "Remaining-items pass" item 5.
 - **Imported-function logical signatures** come from the sibling `.wit` (string params hide as
   `i32 i32` in the raw `.wasm`); `applyWitSig` overlays them so string args expand to ptr+len.
 - **`.toText({ inlineExport: false })`** must be passed explicitly at every disassembly site in

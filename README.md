@@ -959,7 +959,7 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 > parsed as 0** (every merged-`mathlib` constant was encoded as 0, recovering all four
 > `38_*` Math tests). Under that toolchain, with the Stage 0.6 allocator-unification pass
 > and all five Tier-1 stdlib capabilities (Stage 0.7 — Set/Map/Date/JSON/RegExp)
-> in place, **the full `tests/wasm_wasi` suite is 293/293** (`core_`
+> in place, **the full `tests/wasm_wasi` suite is 299/299** (`core_`
 > 33/33, jstyper 73/73, bindgen **103/103**; Phase 51 — 2026-06-05 — added `instanceof` plus 7
 > `51_*` tests, including fixes for module-level class instances, class-instance array literals,
 > and single-physical-line class/constructor bodies; `48_SingleLineBraceIf` was the
@@ -981,7 +981,15 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 > (catch-variable locals coalesced with outer locals live across the try); it was fixed upstream in
 > binaryen-ts 1.3.4 (EH-aware CFG), so exception-using modules are now fully `-Oz`-optimized again
 > (the interim "skip the optimizer for exception modules" workaround was removed).** See CLAUDE.md
-> § "Pluggable wabt + binaryen backends" for the encoder-bug table. The per-phase
+> § "Pluggable wabt + binaryen backends" for the encoder-bug table. **A 2026-06-08/09
+> pre-bump audit + remaining-items pass then fixed several more silently-wrong cases and
+> added a capability: method/`new` calls on both sides of a binary operator
+> (`a.m() + b.m()`, `new A() + new B()`), array-element and i32 module-global arithmetic
+> inside `console.log`, chained `new X(...).method()`, runtime `n.toString(radix)`, and a
+> string method on an array element in an assignment (`const u = words[0].toUpperCase()`);
+> it also hardened the merge-time data-pointer relocation so an arithmetic constant that
+> coincidentally lands in a merged library's data range is no longer corrupted. The suite
+> is now 299/299 under binaryen-ts 1.3.5.** The per-phase
 > historical counts are preserved as a record of when each phase first reached
 > green; they should not be read as a live-system invariant.**
 
