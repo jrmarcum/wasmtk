@@ -36,11 +36,11 @@ installed launcher prompts interactively (`Deno requests ffi access … [y/n/A]`
 invocation, which stalls the whole test run. (Regression history: a documented reinstall command here
 once omitted `--allow-ffi`; fixed 2026-06-08 by deferring to `deno task install`.)
 
-## Current pass counts (2026-06-08, wabt-ts 1.3.2 + binaryen-ts 1.3.5)
+## Current pass counts (2026-06-12, wabt-ts 1.3.2 + binaryen-ts 1.3.5)
 
 | Suite | Result |
 | --- | --- |
-| `tests/wasm_wasi` (full, HARDENED output-diff runner) | **299 / 299** (the 14 output-mismatch bugs the 2026-06-07 runner-hardening surfaced are ALL FIXED 2026-06-08 — see compiler-bugs.md; +`26_ForOfSingleLine` from the hazard audit; +`16_MethodCallBinaryOp`, `6d_ConsoleLogArrayArith`, `48_ToStringRadix`, `9_ChainedNewAndMultiStmt`, `27_StringMethodAssignFromArrayElem`, `18i_RelocArithmeticConstant` from the pre-bump audit + remaining-items pass. 6 tests carry `// @allow-output-diff` for documented float-precision / zero-sentinel divergences, incl. `1_values`) |
+| `tests/wasm_wasi` (full, HARDENED output-diff runner) | **306 / 306** (305 + `15_ElseChainForms` added 2026-06-12 — regression for the brace-less/single-line-braced else-chain drop bug the pre-publish hardening surfaced; see compiler-bugs.md. Earlier: 6 Phase 52 tests added 2026-06-11; the 14 output-mismatch bugs the 2026-06-07 runner-hardening surfaced are ALL FIXED 2026-06-08; 6 tests carry `// @allow-output-diff` for documented float-precision / zero-sentinel divergences, incl. `1_values`) |
 | `bindgen_tests.ts` | **103 / 103** |
 | `jstyper_tests.ts` | **73 / 73** |
 | Capability pipelines `18c`–`18g` (Set/Map/Date/JSON/RegExp) + `18h` (virtual `wasmtk:` imports) | **6 / 6** |
@@ -67,7 +67,7 @@ The full green pre-publish checklist actually run (2026-06-02):
 deno publish --dry-run --allow-dirty   # THE gate: type-check + slow-types + package — must pass
 deno lint main.ts src/                 # clean (18 files)
 deno fmt  --check main.ts src/         # clean as of 2026-06-02 (see design-decisions.md)
-deno run -A tests/wasi_tests.ts        # 299/299 (HARDENED 2026-06-07: now diffs run-ts vs run-wasm OUTPUT, not just exit codes). No open bugs as of 2026-06-08 (the 14 output-mismatch bugs are all fixed — see compiler-bugs.md); 6 tests legitimately diverge and carry `// @allow-output-diff`. A test FAILS on `output-mismatch` unless it opts out.
+deno run -A tests/wasi_tests.ts        # 306/306 as of 2026-06-12. HARDENED 2026-06-07: diffs run-ts vs run-wasm OUTPUT, not just exit codes. No open bugs; 6 tests legitimately diverge and carry `// @allow-output-diff`. A test FAILS on `output-mismatch` unless it opts out.
 deno run -A tests/bindgen_tests.ts     # 103/103
 deno run -A tests/jstyper_tests.ts     # 73/73
 ```

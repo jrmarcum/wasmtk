@@ -1,7 +1,61 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 299/299**
-(`bindgen` 103/103, `jstyper` 73/73) as of **2026-06-09**.
+Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 306/306**
+(`bindgen` 103/103, `jstyper` 73/73) as of **2026-06-12**.
+
+## Pre-publish hardening pass — else-chain drop bug + silent-fall-through diagnostics (2026-06-12)
+
+A pre-bump audit (workarounds / dead code / silent fall-throughs) added **unsupported-feature
+diagnostics** to the emitter's terminal "give-up" fallbacks, and that immediately surfaced a **real,
+latent codegen bug**:
+
+1. **Brace-less AND single-line-braced `else` / `else if` after a SINGLE-LINE `if` were silently
+   DROPPED** (`src/wasic.ts` `emitBlock`). `if (c) s; else if (c2) s2; else sN;` and
+   `if (c) { s } else if (c2) { s2 } else { sN }` (each branch on its own line) compiled with only the
+   first branch — every `else`/`else if` after it vanished. Proven with a minimal repro: TS `10 20 30 99`
+   vs WASM `10 0 0 0`. The if-handler's else-detection only recognised a few braced multi-line forms;
+   a single-line if (brace-less `inlineBody` or single-line-braced `singleLineBlock`) followed by these
+   self-contained else lines matched none of them, so they fell through to the statement stream and were
+   stubbed. **Latent** because the suite's inputs never exercised the dropped branches (e.g. `27_base64`
+   `rem===2`, a RegExp lib's escape table). **Fix:** before the inlineBody/singleLineBlock branching,
+   detect a following self-contained else chain (`WasicTranspiler.isSelfContainedElse`), assemble the
+   if-body + the whole chain into one inline string (brace-less bodies braced via `braceifyElseLine`),
+   and feed it to the existing `expandInlineBraceChain` → canonical braced multi-line form the proven
+   else/else-if machinery handles. An OPEN braced else (`else {` continuing on later lines) is left to
+   the existing machinery. Regression test `15_ElseChainForms.ts` (suite 305→306). NOTE: `deno fmt`
+   de-braces single-statement bodies, so the single-line-braced form is tested with non-trivial bodies
+   (a nested `if`) that fmt keeps inline.
+2. **`x instanceof Error` (a BUILT-IN, not a user class)** reached the `emitExpr` terminal stub (→ silent
+   0). The Phase-51 `instanceof` handler only fires for `classDefs` entries. **Fix:** added a branch for
+   non-user-class RHS — wasic models caught exceptions as strings, so the idiomatic
+   `if (e instanceof Error)` catch-narrow resolves to **1** for the Error family
+   (`Error`/`TypeError`/`RangeError`/…), **0** for other unmodelled built-ins. Compile-time constant.
+
+**The hardening itself (kept, all green):** four terminal "give-up" fallbacks now record a diagnostic
+(which aborts the compile via the existing `warnings` gate) instead of silently emitting `0` / the empty
+string: `emitExpr` (unsupported expression), `emitStatement` (unsupported statement), `emitStringAssign`
+(unsupported string assignment), and `emitStringPtrLen` (unsupported string expression — kills the
+silent-empty-string class, incl. the dangerous case where a string `===` silently compares against `""`
+and flips a branch). Speculative / guarded probe sites that recover gracefully are wrapped in a new
+`quietEmit()` (a depth counter `emitDiagSuppressDepth`) so only the ~20 *unguarded* sentinel callers
+turn into hard errors. The `emitStatement` diagnostic skips clearly-non-statement fragments of
+multi-line constructs that are parsed as a whole elsewhere (DU type-alias `|` continuations, and
+array/object/struct-literal element lines — `"success",`, `{ type: "add", value: 15 }`, bare `404`).
+See design-decisions.md "Terminal emit diagnostics".
+
+**Dead code removed (same pass):** `allocStringNoLog` (byte-identical to `allocString`) collapsed into
+`allocString`; the orphaned, in-repo-unused modules `src/runner.ts` + `src/args.ts` and
+`utils.ts:checkIsLibrary` deleted, along with their `deno.json` `./runner` / `./args` exports (a
+breaking removal of two unused public subpaths). Also Phase-52 follow-ups: `void c.bump()` (void
+dot-call) emitted invalid `(drop (call $void))` → call-shaped `void` exprs now route through the
+statement emitter; the chained-assignment `=` scan is now string/template-aware.
+
+## Phase 52 (2026-06-11) — leaf conveniences
+
+Phase 52 surfaced one pre-existing gap, now fixed: `console.log("s.length:", s.length)` on a STRING var
+returned 0 — `console_log.ts dotLenMatch` only handled array `.length`; added a string-`.length`
+branch (UTF-8 byte length) for local strings / module string consts / string globals (also fixed
+the same direct-print path for `fromCharCode` strings).
 
 ## Remaining-items pass — chained new().method(), module-level multi-statement lines, string-assign delegation (2026-06-08)
 
@@ -413,8 +467,9 @@ that `expandInlineBraceChain` alone fixed this was inaccurate; `cmem/` is author
 
 All 7 of the previously-"known pre-existing" failures are now fixed; as of 2026-06-02 the full
 `tests/wasm_wasi` was **278/278** (the 7 fixes brought it to 277/277; the new `18h` virtual-
-capability test added the 278th). (Current count is **279/279** — the 2026-06-03 single-line-brace
-`if` fix added `48_SingleLineBraceIf`; see the top section.) They were two unrelated root causes:
+capability test added the 278th). (By 2026-06-03 it was **279/279** — the single-line-brace
+`if` fix added `48_SingleLineBraceIf`; the live count is at the top of this file — **306/306**.)
+They were two unrelated root causes:
 
 ### (a) Value-fallthru codegen — `5e_MixedSignatures`, `19_NestedDiscriminantUnions`, `19_VariantMaximumMemoryAlignment` (fixed in wasic)
 
@@ -530,7 +585,7 @@ t.charCodeAt(ti + count)) === 1` **directly in the `while` `br_if`** (the exact 
 ## The 7 formerly-known test failures — ALL FIXED 2026-06-02
 
 These failed for a long time but are **now all passing** (full suite 278/278 as of 2026-06-02;
-**279/279** currently). Kept here as a
+live count at the top of this file — **306/306**). Kept here as a
 pointer; full root-cause writeups are in the "FIXED — the 7 long-standing test failures" section at
 the top of this file.
 

@@ -1068,18 +1068,18 @@
       end
     end)
   (func $json_lib_modc__fn8 (param i32 i32) (result i32)
-    (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
+    (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $json_lib_modc_global1
-    local.tee 12
+    local.tee 11
     i32.const 1
-    local.tee 13
+    local.tee 12
     i32.add
     global.set $json_lib_modc_global1
     global.get $json_lib_modc_global1
-    local.tee 14
+    local.tee 13
     local.set 2
     i32.const 1
-    local.tee 15
+    local.tee 14
     local.set 3
     block  ;; label = @1
       loop  ;; label = @2
@@ -1131,12 +1131,12 @@
       end
     end
     global.get $json_lib_modc_global1
-    local.tee 16
+    local.tee 15
     local.set 3
     local.get 3
-    local.tee 17
+    local.tee 16
     local.get 2
-    local.tee 18
+    local.tee 17
     i32.sub
     local.set 4
     i32.const 8
@@ -1150,7 +1150,7 @@
     i32.const 0
     local.set 6
     local.get 2
-    local.tee 19
+    local.tee 18
     local.set 2
     block  ;; label = @1
       loop  ;; label = @2
@@ -1172,7 +1172,7 @@
             if  ;; label = @5
               block  ;; label = @6
                 local.get 2
-                local.tee 8
+                local.tee 7
                 i32.const 1
                 i32.add
                 local.set 2
@@ -1180,13 +1180,72 @@
                 local.get 1
                 local.get 2
                 call $json_lib_modc__fn2
-                local.set 7
-                local.get 7
+                local.set 4
+                local.get 4
                 i32.const 110
                 i32.eq
                 if  ;; label = @7
                   i32.const 10
                   local.set 4
+                else
+                  local.get 4
+                  i32.const 116
+                  i32.eq
+                  if  ;; label = @8
+                    i32.const 9
+                    local.set 4
+                  else
+                    local.get 4
+                    i32.const 114
+                    i32.eq
+                    if  ;; label = @9
+                      i32.const 13
+                      local.set 4
+                    else
+                      local.get 4
+                      i32.const 98
+                      i32.eq
+                      if  ;; label = @10
+                        i32.const 8
+                        local.set 4
+                      else
+                        local.get 4
+                        i32.const 102
+                        i32.eq
+                        if  ;; label = @11
+                          i32.const 12
+                          local.set 4
+                        else
+                          local.get 4
+                          i32.const 34
+                          i32.eq
+                          if  ;; label = @12
+                            i32.const 34
+                            local.set 4
+                          else
+                            local.get 4
+                            i32.const 92
+                            i32.eq
+                            if  ;; label = @13
+                              i32.const 92
+                              local.set 4
+                            else
+                              local.get 4
+                              i32.const 47
+                              i32.eq
+                              if  ;; label = @14
+                                i32.const 47
+                                local.set 4
+                              else
+                                local.get 4
+                                local.set 4
+                              end
+                            end
+                          end
+                        end
+                      end
+                    end
+                  end
                 end
               end
             end
@@ -1198,14 +1257,14 @@
             local.get 4
             i32.store8
             local.get 6
-            local.tee 9
+            local.tee 8
             i32.const 1
-            local.tee 10
+            local.tee 9
             i32.add
             local.set 6
             local.get 2
-            local.tee 11
-            local.get 10
+            local.tee 10
+            local.get 9
             i32.add
             local.set 2
           end
@@ -1214,15 +1273,15 @@
       end
     end
     local.get 3
-    local.tee 20
+    local.tee 19
     i32.const 1
-    local.tee 21
+    local.tee 20
     i32.add
     global.set $json_lib_modc_global1
     local.get 6
     global.set $json_lib_modc_global2
     local.get 5
-    local.tee 22
+    local.tee 21
     return)
   (func $json_lib_modc__fn9 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32)
@@ -1399,6 +1458,11 @@
                   if  ;; label = @8
                     i32.const 0
                     local.set 4
+                  else
+                    global.get $json_lib_modc_global1
+                    i32.const 1
+                    i32.add
+                    global.set $json_lib_modc_global1
                   end
                 end
               end
@@ -1500,6 +1564,11 @@
                       if  ;; label = @10
                         i32.const 0
                         local.set 4
+                      else
+                        global.get $json_lib_modc_global1
+                        i32.const 1
+                        i32.add
+                        global.set $json_lib_modc_global1
                       end
                     end
                   end

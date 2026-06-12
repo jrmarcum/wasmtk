@@ -605,7 +605,7 @@
       (local.set $empty_len)
       (local.set $empty_ptr)
         (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (call $__f64_to_str (;? empty.length ;) (f64.const 0) (i32.const 132)))
+          (i32.store (i32.const 4) (call $__i32_to_str (local.get $empty_len) (i32.const 132)))
           (i32.store8 (i32.add (i32.const 132) (i32.load (i32.const 4))) (i32.const 10))
           (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
           (drop (call $fd_write

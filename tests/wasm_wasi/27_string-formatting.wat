@@ -672,6 +672,42 @@
     (local.get $arr)
   )
 
+  ;; ── str_from_codepoint: UTF-8 encode a single code point into a fresh buffer ──
+  ;; Returns (ptr, len). Handles the full U+0000..U+10FFFF range (1–4 bytes).
+  (func $__str_from_codepoint (param $cp i32) (result i32 i32)
+    (local $p i32)
+    (local.set $p (call $__malloc (i32.const 4)))
+    (if (i32.lt_u (local.get $cp) (i32.const 0x80))
+      (then
+        (i32.store8 (local.get $p) (local.get $cp))
+        (return (local.get $p) (i32.const 1))))
+    (if (i32.lt_u (local.get $cp) (i32.const 0x800))
+      (then
+        (i32.store8 (local.get $p)
+          (i32.or (i32.const 0xC0) (i32.shr_u (local.get $cp) (i32.const 6))))
+        (i32.store8 offset=1 (local.get $p)
+          (i32.or (i32.const 0x80) (i32.and (local.get $cp) (i32.const 0x3F))))
+        (return (local.get $p) (i32.const 2))))
+    (if (i32.lt_u (local.get $cp) (i32.const 0x10000))
+      (then
+        (i32.store8 (local.get $p)
+          (i32.or (i32.const 0xE0) (i32.shr_u (local.get $cp) (i32.const 12))))
+        (i32.store8 offset=1 (local.get $p)
+          (i32.or (i32.const 0x80) (i32.and (i32.shr_u (local.get $cp) (i32.const 6)) (i32.const 0x3F))))
+        (i32.store8 offset=2 (local.get $p)
+          (i32.or (i32.const 0x80) (i32.and (local.get $cp) (i32.const 0x3F))))
+        (return (local.get $p) (i32.const 3))))
+    (i32.store8 (local.get $p)
+      (i32.or (i32.const 0xF0) (i32.shr_u (local.get $cp) (i32.const 18))))
+    (i32.store8 offset=1 (local.get $p)
+      (i32.or (i32.const 0x80) (i32.and (i32.shr_u (local.get $cp) (i32.const 12)) (i32.const 0x3F))))
+    (i32.store8 offset=2 (local.get $p)
+      (i32.or (i32.const 0x80) (i32.and (i32.shr_u (local.get $cp) (i32.const 6)) (i32.const 0x3F))))
+    (i32.store8 offset=3 (local.get $p)
+      (i32.or (i32.const 0x80) (i32.and (local.get $cp) (i32.const 0x3F))))
+    (local.get $p) (i32.const 4)
+  )
+
   ;; ── i32 → decimal string ──────────────────────────────────────────────────
   ;; Writes the decimal representation of $val at $buf, returns byte count.
   (func $__i32_to_str (param $val i32) (param $buf i32) (result i32)

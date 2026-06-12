@@ -668,6 +668,42 @@
     (i32.store (local.get $arr) (local.get $count))
     (local.get $arr)
   )
+
+  ;; ── str_from_codepoint: UTF-8 encode a single code point into a fresh buffer ──
+  ;; Returns (ptr, len). Handles the full U+0000..U+10FFFF range (1–4 bytes).
+  (func $__str_from_codepoint (param $cp i32) (result i32 i32)
+    (local $p i32)
+    (local.set $p (call $__malloc (i32.const 4)))
+    (if (i32.lt_u (local.get $cp) (i32.const 0x80))
+      (then
+        (i32.store8 (local.get $p) (local.get $cp))
+        (return (local.get $p) (i32.const 1))))
+    (if (i32.lt_u (local.get $cp) (i32.const 0x800))
+      (then
+        (i32.store8 (local.get $p)
+          (i32.or (i32.const 0xC0) (i32.shr_u (local.get $cp) (i32.const 6))))
+        (i32.store8 offset=1 (local.get $p)
+          (i32.or (i32.const 0x80) (i32.and (local.get $cp) (i32.const 0x3F))))
+        (return (local.get $p) (i32.const 2))))
+    (if (i32.lt_u (local.get $cp) (i32.const 0x10000))
+      (then
+        (i32.store8 (local.get $p)
+          (i32.or (i32.const 0xE0) (i32.shr_u (local.get $cp) (i32.const 12))))
+        (i32.store8 offset=1 (local.get $p)
+          (i32.or (i32.const 0x80) (i32.and (i32.shr_u (local.get $cp) (i32.const 6)) (i32.const 0x3F))))
+        (i32.store8 offset=2 (local.get $p)
+          (i32.or (i32.const 0x80) (i32.and (local.get $cp) (i32.const 0x3F))))
+        (return (local.get $p) (i32.const 3))))
+    (i32.store8 (local.get $p)
+      (i32.or (i32.const 0xF0) (i32.shr_u (local.get $cp) (i32.const 18))))
+    (i32.store8 offset=1 (local.get $p)
+      (i32.or (i32.const 0x80) (i32.and (i32.shr_u (local.get $cp) (i32.const 12)) (i32.const 0x3F))))
+    (i32.store8 offset=2 (local.get $p)
+      (i32.or (i32.const 0x80) (i32.and (i32.shr_u (local.get $cp) (i32.const 6)) (i32.const 0x3F))))
+    (i32.store8 offset=3 (local.get $p)
+      (i32.or (i32.const 0x80) (i32.and (local.get $cp) (i32.const 0x3F))))
+    (local.get $p) (i32.const 4)
+  )
   (func $isWord (param $c i32) (result i32)
     (if (if (result i32) (i32.ge_s (local.get $c) (i32.const 48)) (then (i32.le_s (local.get $c) (i32.const 57))) (else (i32.const 0)))
       (then
@@ -813,10 +849,36 @@
                     )
                   )
                   )
+                  (else
+                  (if (i32.eq (local.get $e) (i32.const 119))
+                    (then
+                    (if (i32.eq (call $isWord (local.get $c)) (i32.const 1))
+                      (then
+                      (local.set $found (i32.const 1))
+                      )
+                    )
+                    )
+                    (else
+                    (if (i32.eq (local.get $e) (i32.const 115))
+                      (then
+                      (if (i32.eq (call $isSpace (local.get $c)) (i32.const 1))
+                        (then
+                        (local.set $found (i32.const 1))
+                        )
+                      )
+                      )
+                      (else
+                      (if (i32.eq (local.get $c) (local.get $e))
+                        (then
+                        (local.set $found (i32.const 1))
+                        )
+                      )
+                      )
+                    )
+                    )
+                  )
+                  )
                 )
-                (;; else if (e === 119) { if (isWord(c) === 1) found = 1; };)
-                (;; else if (e === 115) { if (isSpace(c) === 1) found = 1; };)
-                (;; else { if (c === e) found = 1; };)
                 (local.set $j (i32.add (local.get $j) (i32.const 2)))
                 )
                 (else

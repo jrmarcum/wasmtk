@@ -941,6 +941,42 @@
                         i32.const 1
                         local.set 6
                       end
+                    else
+                      local.get 8
+                      i32.const 119
+                      i32.eq
+                      if  ;; label = @10
+                        local.get 3
+                        call $regex_lib_modc__fn3
+                        i32.const 1
+                        i32.eq
+                        if  ;; label = @11
+                          i32.const 1
+                          local.set 6
+                        end
+                      else
+                        local.get 8
+                        i32.const 115
+                        i32.eq
+                        if  ;; label = @11
+                          local.get 3
+                          call $regex_lib_modc__fn4
+                          i32.const 1
+                          i32.eq
+                          if  ;; label = @12
+                            i32.const 1
+                            local.set 6
+                          end
+                        else
+                          local.get 3
+                          local.get 8
+                          i32.eq
+                          if  ;; label = @12
+                            i32.const 1
+                            local.set 6
+                          end
+                        end
+                      end
                     end
                     local.get 4
                     local.tee 11

@@ -1429,6 +1429,22 @@ class WasicTranspiler {
   get warnings(): readonly string[] {
     return this.diagnostics;
   }
+  // When > 0, the terminal "give-up" fallbacks in emitExpr / emitStringPtrLen suppress their
+  // unsupported-feature diagnostic. Used to wrap SPECULATIVE / guarded calls — sites that probe
+  // the emitter and recover gracefully when it returns a stub/sentinel (so a fallback there is
+  // expected, not a hard error). Every other caller passes the stub straight through, so its
+  // terminal fallback DOES record a diagnostic (which aborts the compile — better than silently
+  // emitting 0 / the empty string). Use the quietEmit() wrapper to scope a suppression.
+  private emitDiagSuppressDepth = 0;
+  /** Runs `fn` with terminal emit diagnostics suppressed (for speculative/guarded probes). */
+  private quietEmit<T>(fn: () => T): T {
+    this.emitDiagSuppressDepth++;
+    try {
+      return fn();
+    } finally {
+      this.emitDiagSuppressDepth--;
+    }
+  }
   // Enum member name lookup: "EnumName.MemberName" → i32 value
   private enumValues: Map<string, number> = new Map();
   // Phase 29: string-valued enum members: "EnumName.MemberName" → string value
@@ -2109,6 +2125,70 @@ class WasicTranspiler {
       return out;
     }
     return out;
+  }
+
+  /**
+   * True when `line` is a SELF-CONTAINED `else` / `else if` continuation that fits entirely on one
+   * line — either brace-less (`else stmt;`, `else if (c) stmt;`) or a balanced single-line braced
+   * block (`else { … }`, `else if (c) { … }`). Returns FALSE for an OPEN braced else (`else {` /
+   * `else if (c) {` whose body continues on following lines) so the existing multi-line machinery
+   * handles it. Used to recover an else chain that follows a single-line `if` (which the if-handler
+   * would otherwise silently drop — the brace-less and single-line-braced forms both leaked).
+   */
+  private static isSelfContainedElse(line: string): boolean {
+    const t = line.trim();
+    if (!/^else\b/.test(t)) return false;
+    let rest = t.replace(/^else\s*/, "");
+    if (/^if\s*\(/.test(rest)) {
+      const openIdx = rest.indexOf("(");
+      let depth = 0, condEnd = -1;
+      for (let j = openIdx; j < rest.length; j++) {
+        if (rest[j] === "(") depth++;
+        else if (rest[j] === ")" && --depth === 0) {
+          condEnd = j;
+          break;
+        }
+      }
+      if (condEnd === -1) return false;
+      rest = rest.slice(condEnd + 1).trim();
+    }
+    if (rest === "") return false; // `else if (c)` with no body — malformed
+    if (rest.startsWith("{")) {
+      // Self-contained only if the braces balance within this single line.
+      let d = 0;
+      for (const ch of rest) {
+        if (ch === "{") d++;
+        else if (ch === "}") d--;
+      }
+      return d === 0;
+    }
+    return true; // brace-less `else stmt` / `else if (c) stmt`
+  }
+
+  /**
+   * Normalises a self-contained else line (see isSelfContainedElse) to braced form so it can be
+   * appended to an inline chain fed to expandInlineBraceChain: `else if (c) stmt` →
+   * `else if (c) { stmt }`, `else stmt` → `else { stmt }`; already-braced forms pass through.
+   */
+  private static braceifyElseLine(line: string): string {
+    const t = line.trim();
+    let rest = t.replace(/^else\s*/, "");
+    let condPart = "";
+    if (/^if\s*\(/.test(rest)) {
+      const openIdx = rest.indexOf("(");
+      let depth = 0, condEnd = -1;
+      for (let j = openIdx; j < rest.length; j++) {
+        if (rest[j] === "(") depth++;
+        else if (rest[j] === ")" && --depth === 0) {
+          condEnd = j;
+          break;
+        }
+      }
+      condPart = `if (${rest.slice(openIdx + 1, condEnd).trim()}) `;
+      rest = rest.slice(condEnd + 1).trim();
+    }
+    const body = rest.startsWith("{") ? rest : `{ ${rest} }`;
+    return `else ${condPart}${body}`;
   }
 
   /**
@@ -4419,7 +4499,7 @@ class WasicTranspiler {
       if (field.type === "string") {
         // String field: 8-byte pair [ptr i32][len i32]. Allocate string after the struct.
         const strVal = raw.replace(/^["']|["']$/g, ""); // strip surrounding quotes
-        const [strPtr, strLen] = this.allocStringNoLog(strVal);
+        const [strPtr, strLen] = this.allocString(strVal);
         view.setInt32(field.offset, strPtr, true);
         view.setInt32(field.offset + 4, strLen, true);
       } else if (field.structType && raw.startsWith("{")) {
@@ -4842,17 +4922,146 @@ class WasicTranspiler {
     return entry;
   }
 
-  /** Allocates a string in the data section (historically distinct from allocString, which
-   *  used to set hasConsoleLog; now identical — retained for the throw-message call sites). */
-  private allocStringNoLog(raw: string): [number, number] {
-    const msg = unescapeString(raw); // process escape sequences from source code
-    const existing = this.dataMap.get(msg);
+  /** Allocates an ALREADY-DECODED string (no escape processing). Used for compile-time
+   *  computed strings such as String.fromCodePoint(...) whose characters must be UTF-8
+   *  encoded verbatim — running unescapeString on them could re-interpret a produced
+   *  backslash/quote as an escape sequence. */
+  private allocStringDecoded(s: string): [number, number] {
+    const existing = this.dataMap.get(s);
     if (existing) return existing;
-    const bytes = new TextEncoder().encode(msg);
+    const bytes = new TextEncoder().encode(s);
     const entry: [number, number] = [this.dataOffset, bytes.length];
-    this.dataMap.set(msg, entry);
+    this.dataMap.set(s, entry);
     this.dataOffset += bytes.length;
     return entry;
+  }
+
+  /** Phase 52.9: evaluate a String.fromCodePoint argument as a compile-time code point.
+   *  Returns the integer code point for a decimal/hex literal in the valid Unicode range,
+   *  or null if the argument is a runtime expression / out of range. */
+  private constCodePoint(a: string): number | null {
+    const t = a.trim();
+    let n: number;
+    if (/^-?\d+$/.test(t)) n = parseInt(t, 10);
+    else if (/^0[xX][0-9a-fA-F]+$/.test(t)) n = parseInt(t, 16);
+    else return null;
+    if (n < 0 || n > 0x10FFFF) return null; // String.fromCodePoint would throw
+    return n;
+  }
+
+  /** Phase 52.8: source pre-pass — rewrite `Array.from([…])` → `[…]` and `Array.of(…)` → `[…]`.
+   *  Array.from of an array literal is exactly that literal; Array.of(a,b,c) is [a,b,c]. Uses a
+   *  string-aware balanced-bracket scan (so brackets inside string elements don't confuse it) and
+   *  recurses into the rewritten argument so nested Array.from/of are also expanded. Array.from of
+   *  anything other than a literal array (an iterable / a {length} form) is left untouched. */
+  private expandArrayFromOf(src: string): string {
+    // True when `s` is a single array literal whose opening `[` is closed by its final char.
+    const isWholeBracket = (s: string): boolean => {
+      if (!s.startsWith("[")) return false;
+      let d = 0, inS = false, inD = false, inB = false;
+      for (let p = 0; p < s.length; p++) {
+        const c = s[p];
+        if (inS) {
+          if (c === "\\") p++;
+          else if (c === "'") inS = false;
+          continue;
+        }
+        if (inD) {
+          if (c === "\\") p++;
+          else if (c === '"') inD = false;
+          continue;
+        }
+        if (inB) {
+          if (c === "\\") p++;
+          else if (c === "`") inB = false;
+          continue;
+        }
+        if (c === "'") inS = true;
+        else if (c === '"') inD = true;
+        else if (c === "`") inB = true;
+        else if (c === "[" || c === "(" || c === "{") d++;
+        else if (c === "]" || c === ")" || c === "}") {
+          d--;
+          if (d === 0) return p === s.length - 1;
+        }
+      }
+      return false;
+    };
+    let out = "";
+    let i = 0;
+    while (i < src.length) {
+      const fromHit = src.startsWith("Array.from", i);
+      const ofHit = !fromHit && src.startsWith("Array.of", i);
+      // Reject a match that is part of a longer identifier (e.g. `MyArray.from`).
+      const prevOk = i === 0 || !/[\w$]/.test(src[i - 1]);
+      if ((fromHit || ofHit) && prevOk) {
+        const kw = fromHit ? "Array.from" : "Array.of";
+        let j = i + kw.length;
+        while (j < src.length && /\s/.test(src[j])) j++;
+        if (src[j] === "(") {
+          let depth = 0, end = -1, inS = false, inD = false, inB = false;
+          for (let k = j; k < src.length; k++) {
+            const c = src[k];
+            if (inS) {
+              if (c === "\\") k++;
+              else if (c === "'") inS = false;
+              continue;
+            }
+            if (inD) {
+              if (c === "\\") k++;
+              else if (c === '"') inD = false;
+              continue;
+            }
+            if (inB) {
+              if (c === "\\") k++;
+              else if (c === "`") inB = false;
+              continue;
+            }
+            if (c === "'") inS = true;
+            else if (c === '"') inD = true;
+            else if (c === "`") inB = true;
+            else if (c === "(" || c === "[" || c === "{") depth++;
+            else if (c === ")" || c === "]" || c === "}") {
+              depth--;
+              if (depth === 0) {
+                end = k;
+                break;
+              }
+            }
+          }
+          if (end !== -1) {
+            const inner = src.slice(j + 1, end).trim();
+            if (ofHit) {
+              out += "[" + this.expandArrayFromOf(inner) + "]";
+              i = end + 1;
+              continue;
+            }
+            if (isWholeBracket(inner)) {
+              out += this.expandArrayFromOf(inner);
+              i = end + 1;
+              continue;
+            }
+          }
+        }
+      }
+      out += src[i];
+      i++;
+    }
+    return out;
+  }
+
+  /** Phase 52.7: does the struct/class type of `objName` declare a field named `field`?
+   *  Returns true/false when the variable's type is known, or null when it isn't (so the
+   *  `in` operator can fall through rather than emit a wrong constant). */
+  private structHasField(objName: string, field: string): boolean | null {
+    const sv = this.structVars.get(objName);
+    if (sv) return sv.def.fields.some((f) => f.name === field);
+    const cv = this.classVars.get(objName);
+    if (cv) {
+      const cd = this.classDefs.get(cv.className);
+      if (cd) return cd.struct.fields.some((f) => f.name === field);
+    }
+    return null;
   }
 
   /** Allocates a static numeric array in the data section with an 8-byte header.
@@ -5344,7 +5553,9 @@ class WasicTranspiler {
               // before the function-call handler so `toFixed(..).padStart(6)` isn't mis-parsed.
               const padTmplM = e.match(/^(.+)\.(padStart|padEnd)\s*\((.+)\)$/);
               if (padTmplM && parenDepthNeverNegative(padTmplM[3]!)) {
-                const recvPtrLen = this.emitStringPtrLen(padTmplM[1]!.trim(), locals);
+                const recvPtrLen = this.quietEmit(() =>
+                  this.emitStringPtrLen(padTmplM[1]!.trim(), locals)
+                );
                 if (recvPtrLen !== "(i32.const 0) (i32.const 0)") {
                   this.needsStringExtHelpers = true;
                   const helper = padTmplM[2] === "padStart" ? "$__str_pad_start" : "$__str_pad_end";
@@ -5388,7 +5599,7 @@ class WasicTranspiler {
                 continue;
               }
               // General fallback: struct field access, struct array field access, etc.
-              const ptrLenTmplFallback = this.emitStringPtrLen(e, locals);
+              const ptrLenTmplFallback = this.quietEmit(() => this.emitStringPtrLen(e, locals));
               if (ptrLenTmplFallback !== "(i32.const 0) (i32.const 0)") {
                 const [pWtf, lWtf] = splitTwoWatExprs(ptrLenTmplFallback);
                 emitTmplConcat(pWtf, lWtf);
@@ -5858,6 +6069,32 @@ class WasicTranspiler {
       ].join("\n");
     }
 
+    // Phase 52.9: String.fromCodePoint(...) — UTF-8 encode the code point(s) into a string.
+    const fcpDirect = initExpr.match(/^String\.fromCodePoint\s*\((.+)\)$/);
+    if (fcpDirect && parenDepthNeverNegative(fcpDirect[1])) {
+      const cpArgs = this.splitArgs(fcpDirect[1]);
+      const cpConsts = cpArgs.map((a) => this.constCodePoint(a));
+      if (cpConsts.length > 0 && cpConsts.every((c) => c !== null)) {
+        // All compile-time constants → static UTF-8 string allocated in the data section.
+        const s = String.fromCodePoint(...(cpConsts as number[]));
+        const [offset, len] = this.allocStringDecoded(s);
+        return [
+          `(local.set $${varName}_ptr (i32.const ${offset}))`,
+          `${ind}(local.set $${varName}_len (i32.const ${len}))`,
+        ].join("\n");
+      }
+      // Single runtime arg → call the UTF-8 encoder helper (returns ptr,len multi-value).
+      if (cpArgs.length === 1) {
+        this.needsStringExtHelpers = true;
+        const argWat = this.emitExpr(cpArgs[0].trim(), locals, "i32");
+        return [
+          `(call $__str_from_codepoint ${argWat})`,
+          `${ind}(local.set $${varName}_len)`,
+          `${ind}(local.set $${varName}_ptr)`,
+        ].join("\n");
+      }
+    }
+
     // String concatenation: flatten the binary + tree and reduce left-to-right
     // e.g. a + " " + b  →  result = concat(a, " "); result = concat(result, b)
     const concatParts = this.flattenStringConcat(initExpr, locals);
@@ -5907,7 +6144,7 @@ class WasicTranspiler {
               const eCC = seg.value.trim();
               const eTypeCC = this.inferExprType(eCC, locals);
               if (eTypeCC === "string") {
-                const ptrLenCC = this.emitStringPtrLen(eCC, locals);
+                const ptrLenCC = this.quietEmit(() => this.emitStringPtrLen(eCC, locals));
                 if (ptrLenCC !== "(i32.const 0) (i32.const 0)") {
                   const [pW, lW] = splitTwoWatExprs(ptrLenCC);
                   concatAppend(pW, lW);
@@ -5938,6 +6175,27 @@ class WasicTranspiler {
           stmts.push(`(i32.store8 (local.get $__str_op_ptr) ${argWat})`);
           concatAppend(`(local.get $__str_op_ptr)`, `(i32.const 1)`);
           return;
+        }
+        // Phase 52.9: String.fromCodePoint(...) in concat
+        const fcpCP = part.match(/^String\.fromCodePoint\s*\((.+)\)$/);
+        if (fcpCP && parenDepthNeverNegative(fcpCP[1])) {
+          const cpArgs = this.splitArgs(fcpCP[1]);
+          const cpConsts = cpArgs.map((a) => this.constCodePoint(a));
+          if (cpConsts.length > 0 && cpConsts.every((c) => c !== null)) {
+            const s = String.fromCodePoint(...(cpConsts as number[]));
+            const [off, ln] = this.allocStringDecoded(s);
+            concatAppend(`(i32.const ${off})`, `(i32.const ${ln})`);
+            return;
+          }
+          if (cpArgs.length === 1) {
+            this.needsStringExtHelpers = true;
+            const argWat = this.emitExpr(cpArgs[0].trim(), locals, "i32");
+            stmts.push(`(call $__str_from_codepoint ${argWat})`);
+            stmts.push(`(local.set $__str_op_len)`);
+            stmts.push(`(local.set $__str_op_ptr)`);
+            concatAppend(`(local.get $__str_op_ptr)`, `(local.get $__str_op_len)`);
+            return;
+          }
         }
         // Phase 49: str.at(n) in concat — supports negative indices
         const strAtCP = part.match(/^(\w+)\.at\s*\((.+)\)$/);
@@ -6013,7 +6271,7 @@ class WasicTranspiler {
           }
         }
         // Non-template: use emitStringPtrLen (handles vars, literals, struct fields, array elems, fn calls)
-        const simple = this.emitStringPtrLen(part, locals);
+        const simple = this.quietEmit(() => this.emitStringPtrLen(part, locals));
         if (simple !== "(i32.const 0) (i32.const 0)") {
           const [pW, lW] = splitTwoWatExprs(simple);
           concatAppend(pW, lW);
@@ -6035,7 +6293,7 @@ class WasicTranspiler {
     // `.padStart()`, `.at()`, `.toString(radix)`, etc.). It returns the `(i32.const 0) (i32.const 0)`
     // sentinel when it can't, so we only use a genuine result. The two stack values are (ptr, len);
     // pop len then ptr. Works for both two-expr and single multi-value-call results.
-    const splm = this.emitStringPtrLen(initExpr, locals);
+    const splm = this.quietEmit(() => this.emitStringPtrLen(initExpr, locals));
     if (splm !== "(i32.const 0) (i32.const 0)" && !splm.includes("(;")) {
       return [
         `${splm}`,
@@ -6044,6 +6302,9 @@ class WasicTranspiler {
       ].join("\n");
     }
 
+    this.diagnostics.push(
+      `Unsupported string assignment: ${varName} = ${initExpr.slice(0, 80)}`,
+    );
     return `(;; string assignment from complex expression not yet supported: ${varName} = ${initExpr};)`;
   }
 
@@ -6082,8 +6343,9 @@ class WasicTranspiler {
       strMethodM &&
       (locals.get(strMethodM[1]) === "string" || this.moduleStringConsts.has(strMethodM[1]))
     ) return true;
-    // String.fromCharCode(n) — always produces a string
+    // String.fromCharCode(n) / String.fromCodePoint(n) — always produce a string
     if (/^String\.fromCharCode\s*\(/.test(e)) return true;
+    if (/^String\.fromCodePoint\s*\(/.test(e)) return true;
     // Call to a string-returning function
     const callM = e.match(/^(\w+)\s*\(/);
     if (callM && this.functions.find((f) => f.name === callM[1] && f.result === "string")) {
@@ -6370,7 +6632,7 @@ class WasicTranspiler {
     // to a space. Returns the multi-value ($__str_pad_start/end) call (ptr, len).
     const padSPLM = expr.match(/^(.+)\.(padStart|padEnd)\s*\((.+)\)$/);
     if (padSPLM && parenDepthNeverNegative(padSPLM[3]!)) {
-      const recvPtrLen = this.emitStringPtrLen(padSPLM[1]!.trim(), locals);
+      const recvPtrLen = this.quietEmit(() => this.emitStringPtrLen(padSPLM[1]!.trim(), locals));
       if (recvPtrLen !== "(i32.const 0) (i32.const 0)") {
         this.needsStringExtHelpers = true;
         const helper = padSPLM[2] === "padStart" ? "$__str_pad_start" : "$__str_pad_end";
@@ -6397,7 +6659,7 @@ class WasicTranspiler {
       if (/^\w+$/.test(recv) && locals.get(recv) === "string") {
         ptrLen = `(local.get $${recv}_ptr) (local.get $${recv}_len)`;
       } else if (recv.includes("[")) {
-        const inner = this.emitStringPtrLen(recv, locals); // string-array element arr[i]
+        const inner = this.quietEmit(() => this.emitStringPtrLen(recv, locals)); // string-array element arr[i]
         if (inner !== "(i32.const 0) (i32.const 0)") ptrLen = inner;
       }
       if (ptrLen) {
@@ -6425,6 +6687,12 @@ class WasicTranspiler {
           : `(call $${callee})`;
         return `${callExpr} (global.get $__str_ret_ptr) (global.get $__str_ret_len)`;
       }
+    }
+    // Sentinel: this string form is unsupported. Callers that recover gracefully wrap the call in
+    // quietEmit(); for everyone else, record a diagnostic so the unsupported string expression
+    // aborts the compile rather than silently becoming the empty string (e.g. a wrong `===` result).
+    if (this.emitDiagSuppressDepth === 0) {
+      this.diagnostics.push(`Unsupported string expression: ${expr.slice(0, 80)}`);
     }
     return `(i32.const 0) (i32.const 0)`;
   }
@@ -6536,6 +6804,33 @@ class WasicTranspiler {
         }
       }
       if (isWrapped) return this.emitExpr(expr.slice(1, -1), locals, defaultType);
+    }
+
+    // Phase 52.8: Array.isArray(x) — closed-world compile-time constant. True when x is a
+    // known array/typed-array variable, false otherwise.
+    {
+      const isArrM = expr.match(/^Array\.isArray\s*\((.+)\)$/);
+      if (isArrM && parenDepthNeverNegative(isArrM[1])) {
+        const arg = isArrM[1].trim();
+        const known = this.arrayVars.has(arg) || this.moduleArrayVars.has(arg) ||
+          this.typedArrayVars.has(arg);
+        return `(i32.const ${known ? 1 : 0})`;
+      }
+    }
+
+    // Phase 52.7: `"field" in obj` — closed-world compile-time membership test. Resolved to
+    // 1/0 when obj's struct/class type is known and the key is a string literal.
+    {
+      const inIdx = this.findDepth0Keyword(expr, " in ");
+      if (inIdx !== -1) {
+        const keyRaw = expr.slice(0, inIdx).trim();
+        const objName = expr.slice(inIdx + 4).trim();
+        const km = keyRaw.match(/^["'](.+)["']$/);
+        if (km && /^\w+$/.test(objName)) {
+          const has = this.structHasField(objName, km[1]);
+          if (has !== null) return `(i32.const ${has ? 1 : 0})`;
+        }
+      }
     }
 
     // Bigint literal: 42n → (i64.const 42)
@@ -8528,6 +8823,31 @@ class WasicTranspiler {
       }
     }
 
+    // instanceof with a NON-user-class (a built-in like Error / TypeError). wasic models caught
+    // exceptions as plain strings, so the idiomatic `e instanceof Error` (narrow a catch variable
+    // before reading `.message`) is treated as TRUE for the Error family; other unmodelled built-ins
+    // resolve to FALSE. Resolved at compile time. (Mirrors the `instanceof Error ? …` ternary path.)
+    {
+      const instBM = expr.match(/^(.+?)\s+instanceof\s+(\w+)$/);
+      if (instBM && !this.classDefs.has(instBM[2]!)) {
+        const ERR_FAMILY = new Set([
+          "Error",
+          "TypeError",
+          "RangeError",
+          "SyntaxError",
+          "EvalError",
+          "ReferenceError",
+          "URIError",
+          "AggregateError",
+        ]);
+        const resWat = `(i32.const ${ERR_FAMILY.has(instBM[2]!) ? 1 : 0})`;
+        const ctxBase = watBaseType(defaultType as WatType);
+        if (ctxBase === "f64") return `(f64.convert_i32_s ${resWat})`;
+        if (ctxBase === "i64") return `(i64.extend_i32_s ${resWat})`;
+        return resWat;
+      }
+    }
+
     // Inline arrow literal still present — liftInlineArrows() couldn't lift it
     if (expr.includes("=>")) {
       this.diagnostics.push(
@@ -8539,6 +8859,11 @@ class WasicTranspiler {
     // Fallback: emit a comment and a zero so compilation succeeds.
     // Escape (;  and ;) inside expr to avoid malformed WAT nested block comments.
     // Also add a trailing space so a bare ( at the end of expr can't merge with ;) to form (;.
+    // Record a diagnostic so an unhandled expression aborts the compile instead of silently
+    // evaluating to 0 — UNLESS we're inside a speculative/guarded probe (see emitDiagSuppressDepth).
+    if (this.emitDiagSuppressDepth === 0) {
+      this.diagnostics.push(`Unsupported expression: ${expr.slice(0, 80)}`);
+    }
     const safeExpr = expr.replace(/\(;/g, "( ;").replace(/;\)/g, "; )") + " ";
     return `(;? ${safeExpr};) ${zeroOf(defaultType)}`;
   }
@@ -8729,6 +9054,85 @@ class WasicTranspiler {
         const rhs = sdm[3].trim();
         if (declDef && cur && cur.def !== declDef && cur.ptr === -1 && /^\w+\s*\(/.test(rhs)) {
           this.structVars.set(sdm[1], { def: declDef, ptr: -1 });
+        }
+      }
+    }
+
+    // Phase 52.5: `void expr;` — evaluate expr for its side effects, discard the result.
+    {
+      const voidStmtM = line.match(/^void\s+(.+?)\s*;?$/);
+      if (voidStmtM) {
+        const ve = voidStmtM[1].trim();
+        // A call expression (named / dot-call `c.bump()` / closure call) → emit as a plain call
+        // statement: the call runs and the statement emitter drops any result itself, so we never
+        // emit an invalid `(drop (call $void_fn))`. A leading `(` means a parenthesised value
+        // expression (e.g. `void (a + b)`), not a call, so that path is excluded.
+        const looksLikeCall = !ve.startsWith("(") && /\)\s*$/.test(ve) &&
+          /[\w\])]\s*\(/.test(ve) && parenDepthNeverNegative(ve);
+        if (looksLikeCall) return this.emitStatement(ve + ";", locals, funcResult);
+        // Otherwise a plain value expression → evaluate and drop. String expressions have no single
+        // droppable value, so run them as a statement instead.
+        const vt = this.inferExprType(ve, locals);
+        if (vt === "string") return this.emitStatement(ve + ";", locals, funcResult);
+        return `(drop ${this.emitExpr(ve, locals, vt ?? "i32")})`;
+      }
+    }
+
+    // Phase 52.6: chained assignment `a = b = c = 0` — rightmost value propagates leftward.
+    // Detected by ≥2 top-level plain `=` (not ==/===/=>/!=/<=/>=/compound). Every target except
+    // the final RHS must be a bare identifier. Lowered to a sequence reusing the normal assignment
+    // emitter: c = 0; b = c; a = b (rightmost assigned first so each reads the freshly-set value).
+    {
+      const eqPos: number[] = [];
+      let depth = 0, inS = false, inD = false, inB = false;
+      for (let p = 0; p < line.length; p++) {
+        const c = line[p];
+        if (inS) {
+          if (c === "\\") p++;
+          else if (c === "'") inS = false;
+          continue;
+        }
+        if (inD) {
+          if (c === "\\") p++;
+          else if (c === '"') inD = false;
+          continue;
+        }
+        if (inB) {
+          if (c === "\\") p++;
+          else if (c === "`") inB = false;
+          continue;
+        }
+        if (c === "'") inS = true;
+        else if (c === '"') inD = true;
+        else if (c === "`") inB = true;
+        else if (c === "(" || c === "[" || c === "{") depth++;
+        else if (c === ")" || c === "]" || c === "}") depth--;
+        else if (c === "=" && depth === 0) {
+          const prev = line[p - 1], next = line[p + 1];
+          if (next === "=" || prev === "=" || next === ">") continue; // ==, ===, =>
+          if (prev && "+-*/%&|^<>!".includes(prev)) continue; // compound or comparison
+          eqPos.push(p);
+        }
+      }
+      if (eqPos.length >= 2) {
+        const targets: string[] = [];
+        let segStart = 0;
+        for (let t = 0; t < eqPos.length; t++) {
+          targets.push(line.slice(segStart, eqPos[t]).trim());
+          segStart = eqPos[t] + 1;
+        }
+        const rhs = line.slice(segStart).replace(/;$/, "").trim();
+        if (targets.every((t) => /^\w+$/.test(t)) && rhs.length > 0) {
+          const stmts: string[] = [];
+          stmts.push(
+            this.emitStatement(`${targets[targets.length - 1]} = ${rhs};`, locals, funcResult),
+          );
+          for (let t = targets.length - 2; t >= 0; t--) {
+            stmts.push(
+              this.emitStatement(`${targets[t]} = ${targets[t + 1]};`, locals, funcResult),
+            );
+          }
+          return stmts.join("\n      ");
         }
       }
     }
@@ -8957,13 +9361,13 @@ class WasicTranspiler {
       // throw new Error("msg") or throw new Error('msg')
       const newErrMatch = throwExpr.match(/^new\s+Error\s*\(\s*["']([^"']*)["']\s*\)$/);
       if (newErrMatch) {
-        const [ptr, len] = this.allocStringNoLog(newErrMatch[1]);
+        const [ptr, len] = this.allocString(newErrMatch[1]);
         return throwExnTag(ptr, len);
       }
       // throw "literal" or throw 'literal'
       const strLitMatch = throwExpr.match(/^["']([^"']*)["']$/);
       if (strLitMatch) {
-        const [ptr, len] = this.allocStringNoLog(strLitMatch[1]);
+        const [ptr, len] = this.allocString(strLitMatch[1]);
         return throwExnTag(ptr, len);
       }
       // throw someVar (string variable — ptr/len locals)
@@ -9973,7 +10377,7 @@ class WasicTranspiler {
         // push/unshift on string arrays — need 3-param helper (arr, ptr, len)
         if ((method === "push" || method === "unshift") && isStrArr) {
           this.dynArrHelpers.add("push_string");
-          const simpleResult = this.emitStringPtrLen(argsStr, locals);
+          const simpleResult = this.quietEmit(() => this.emitStringPtrLen(argsStr, locals));
           if (simpleResult !== "(i32.const 0) (i32.const 0)") {
             const [ptrWat, lenWat] = splitTwoWatExprs(simpleResult);
             const callExpr = `(call $__dynarr_push_string ${getExpr} ${ptrWat} ${lenWat})`;
@@ -10599,7 +11003,7 @@ class WasicTranspiler {
       // Phase 5h: chained call console.log(factoryFn().method()) — parseSingleArg cannot handle
       // these (callMatch greedily mis-parses the args), so emit directly as i32.
       if (logSingleArg.match(/^(\w+)\s*\(.*\)\.(\w+)\s*\(.*\)$/)) {
-        const chainedWat = this.emitExpr(logSingleArg, locals, "i32");
+        const chainedWat = this.quietEmit(() => this.emitExpr(logSingleArg, locals, "i32"));
         if (!chainedWat.startsWith("(;?") && chainedWat !== "(unreachable)") {
           this.needsNumericHelpers = true;
           const chainedSegs: LogSegment[] = [
@@ -10847,7 +11251,7 @@ class WasicTranspiler {
         };
       };
       const dotCallLookupFn: DotCallLookup = (token) => {
-        const result = this.emitExpr(token, locals, "i32");
+        const result = this.quietEmit(() => this.emitExpr(token, locals, "i32"));
         if (result === "(unreachable)" || result.startsWith("(;?")) return undefined;
         // Determine return type from the expression
         // Phase 47: arr[idx].method(args) — resolve the element class's method return type
@@ -10957,7 +11361,7 @@ class WasicTranspiler {
       // ptr/len pair via emitStringPtrLen, captured into $__str_op_len (ptrWat runs the call and
       // leaves ptr; lenWat reads the captured len — both consumers evaluate ptrWat first).
       setStringExprResolver((tok, locs) => {
-        const w = this.emitStringPtrLen(tok, locs as Map<string, WatType>);
+        const w = this.quietEmit(() => this.emitStringPtrLen(tok, locs as Map<string, WatType>));
         if (w === "(i32.const 0) (i32.const 0)") return undefined;
         return {
           ptrWat: `(block (result i32) ${w} (local.set $__str_op_len))`,
@@ -11216,7 +11620,7 @@ class WasicTranspiler {
         };
       };
       const dotCallLookupFnErr: DotCallLookup = (token) => {
-        const result = this.emitExpr(token, locals, "i32");
+        const result = this.quietEmit(() => this.emitExpr(token, locals, "i32"));
         if (result === "(unreachable)" || result.startsWith("(;?")) return undefined;
         // Phase 47: arr[idx].method(args) — resolve the element class's method return type
         // so console.log formats the result correctly (emitExpr already does vtable dispatch).
@@ -11321,7 +11725,7 @@ class WasicTranspiler {
       // ptr/len pair via emitStringPtrLen, captured into $__str_op_len (ptrWat runs the call and
       // leaves ptr; lenWat reads the captured len — both consumers evaluate ptrWat first).
       setStringExprResolver((tok, locs) => {
-        const w = this.emitStringPtrLen(tok, locs as Map<string, WatType>);
+        const w = this.quietEmit(() => this.emitStringPtrLen(tok, locs as Map<string, WatType>));
         if (w === "(i32.const 0) (i32.const 0)") return undefined;
         return {
           ptrWat: `(block (result i32) ${w} (local.set $__str_op_len))`,
@@ -11741,6 +12145,24 @@ class WasicTranspiler {
       }
     }
 
+    // Terminal fallback: an unrecognised statement would otherwise be silently dropped. Record a
+    // diagnostic (which aborts the compile) for anything that looks like a real statement, so a
+    // genuine unsupported statement fails loudly instead of vanishing. Skip lines that are clearly
+    // NOT executable statements but stray fragments of a multi-line construct (a discriminated-union
+    // type-alias continuation, or an element/field line of a multi-line array / object / struct
+    // literal that is parsed as a whole elsewhere) — and blank / bare-`;` / comment-only lines.
+    {
+      const t = line.trim();
+      const isNonStatementFragment = t === "" || t === ";" || t.startsWith("//") ||
+        t.startsWith("|") || // DU type-alias union continuation: `| { kind: "circle"; … }`
+        t.endsWith(",") || // array/object element fragment: `"success",`
+        /^\{.*\}[,;]?$/.test(t) || // bare object-literal fragment: `{ type: "add", value: 15 }`
+        /^-?\d+(\.\d+)?[,;]?$/.test(t) || // bare numeric element: `404`
+        /^["'`].*["'`][,;]?$/.test(t); // bare string element: `"failure"`
+      if (!isNonStatementFragment) {
+        this.diagnostics.push(`Unsupported statement: ${t.slice(0, 80)}`);
+      }
+    }
     return `(;; ${line};)`;
   }
 
@@ -11865,6 +12287,27 @@ class WasicTranspiler {
             : null;
         let ifBody: string[];
         let terminator = "";
+        // A single-line `if` (brace-less `if (c) s;` OR single-line-braced `if (c) { s }`) may be
+        // followed by a self-contained `else` / `else if` chain on the NEXT lines. The else-detection
+        // further below only recognises a few braced forms, so without this BOTH the brace-less and
+        // single-line-braced else branches were silently DROPPED. Assemble the if-body and the whole
+        // chain into one inline string and feed it to expandInlineBraceChain, which produces the
+        // canonical braced multi-line form the multi-line else / else-if machinery handles. An OPEN
+        // braced else (`else {` continuing on later lines) is left to the existing machinery.
+        if (
+          (inlineBody || singleLineBlock) && i + 1 < lines.length &&
+          WasicTranspiler.isSelfContainedElse(lines[i + 1])
+        ) {
+          let combined = inlineBody ? `{ ${inlineBody} }` : singleLineBlock!.trim();
+          let k = i + 1;
+          while (k < lines.length && WasicTranspiler.isSelfContainedElse(lines[k])) {
+            combined += " " + WasicTranspiler.braceifyElseLine(lines[k]);
+            k++;
+          }
+          const expanded = WasicTranspiler.expandInlineBraceChain(combined);
+          lines.splice(i, k - i, `if (${cond}) {`, ...expanded);
+          continue;
+        }
         if (inlineBody) {
           // Single-line if: body is the inline statement (no braces)
           ifBody = [inlineBody];
@@ -12503,7 +12946,7 @@ class WasicTranspiler {
             if (switchType === "string") {
               // Compare string variable against a string literal case value
               const caseStr = v.replace(/^["']|["']$/g, "");
-              const [casePtr, caseLen] = this.allocStringNoLog(caseStr);
+              const [casePtr, caseLen] = this.allocString(caseStr);
               return `(i32.eq (call $__str_cmp ${switchValPtrWat} ${switchValLenWat} (i32.const ${casePtr}) (i32.const ${caseLen})) (i32.const 0))`;
             }
             if (switchType === "f64") {
@@ -14560,6 +15003,42 @@ class WasicTranspiler {
     (local.set $count (i32.add (local.get $count) (i32.const 1)))
     (i32.store (local.get $arr) (local.get $count))
     (local.get $arr)
+  )
+
+  ;; ── str_from_codepoint: UTF-8 encode a single code point into a fresh buffer ──
+  ;; Returns (ptr, len). Handles the full U+0000..U+10FFFF range (1–4 bytes).
+  (func $__str_from_codepoint (param $cp i32) (result i32 i32)
+    (local $p i32)
+    (local.set $p (call $__malloc (i32.const 4)))
+    (if (i32.lt_u (local.get $cp) (i32.const 0x80))
+      (then
+        (i32.store8 (local.get $p) (local.get $cp))
+        (return (local.get $p) (i32.const 1))))
+    (if (i32.lt_u (local.get $cp) (i32.const 0x800))
+      (then
+        (i32.store8 (local.get $p)
+          (i32.or (i32.const 0xC0) (i32.shr_u (local.get $cp) (i32.const 6))))
+        (i32.store8 offset=1 (local.get $p)
+          (i32.or (i32.const 0x80) (i32.and (local.get $cp) (i32.const 0x3F))))
+        (return (local.get $p) (i32.const 2))))
+    (if (i32.lt_u (local.get $cp) (i32.const 0x10000))
+      (then
+        (i32.store8 (local.get $p)
+          (i32.or (i32.const 0xE0) (i32.shr_u (local.get $cp) (i32.const 12))))
+        (i32.store8 offset=1 (local.get $p)
+          (i32.or (i32.const 0x80) (i32.and (i32.shr_u (local.get $cp) (i32.const 6)) (i32.const 0x3F))))
+        (i32.store8 offset=2 (local.get $p)
+          (i32.or (i32.const 0x80) (i32.and (local.get $cp) (i32.const 0x3F))))
+        (return (local.get $p) (i32.const 3))))
+    (i32.store8 (local.get $p)
+      (i32.or (i32.const 0xF0) (i32.shr_u (local.get $cp) (i32.const 18))))
+    (i32.store8 offset=1 (local.get $p)
+      (i32.or (i32.const 0x80) (i32.and (i32.shr_u (local.get $cp) (i32.const 12)) (i32.const 0x3F))))
+    (i32.store8 offset=2 (local.get $p)
+      (i32.or (i32.const 0x80) (i32.and (i32.shr_u (local.get $cp) (i32.const 6)) (i32.const 0x3F))))
+    (i32.store8 offset=3 (local.get $p)
+      (i32.or (i32.const 0x80) (i32.and (local.get $cp) (i32.const 0x3F))))
+    (local.get $p) (i32.const 4)
   )`.trimEnd();
   }
 
@@ -15542,7 +16021,8 @@ class WasicTranspiler {
     if (
       !locals.has("__str_op_ptr") &&
       fn.bodyLines.some((l) =>
-        l.includes("String.fromCharCode(") || l.includes(".charAt(") || l.includes(".slice(") ||
+        l.includes("String.fromCharCode(") || l.includes("String.fromCodePoint(") ||
+        l.includes(".charAt(") || l.includes(".slice(") ||
         l.includes(".split(") ||
         l.includes(".padStart(") || l.includes(".padEnd(") || l.includes(".toString(") ||
         l.includes(".at(") || l.includes(".toUpperCase(") || l.includes(".toLowerCase(") ||
@@ -16182,6 +16662,11 @@ class WasicTranspiler {
       /Array\.from\(\s*\{\s*length\s*:\s*([^}]+?)\s*\}\s*,\s*\(\s*\)\s*=>\s*\[\]\s*\)/g,
       (_full, lenExpr) => `__arr_from_2d__(${lenExpr.trim()})`,
     );
+    // Phase 52.8: Array.from([…]) and Array.of(…) → plain array literal. Runs AFTER the 2D
+    // sentinel above so the {length:N} form is already consumed. Array.from of an array literal
+    // is just that literal; Array.of(a,b,c) is [a,b,c]. (Array.from of an iterable other than a
+    // literal array is out of scope — no runtime iterator protocol in wasic.)
+    this.src = this.expandArrayFromOf(this.src);
     // Phase 51.3: desugar destructuring function params into a synthetic param + injected
     // `const { … } = __pd` binding. Must run BEFORE parseFunctions so the binding is collected
     // into the function body, and after parseStructs/parseClasses so synthetic params resolve.
@@ -16865,7 +17350,8 @@ class WasicTranspiler {
       if (
         !startLocals.has("__str_op_ptr") &&
         this.startBodyLines.some((l) =>
-          l.includes("String.fromCharCode(") || l.includes(".charAt(") || l.includes(".slice(") ||
+          l.includes("String.fromCharCode(") || l.includes("String.fromCodePoint(") ||
+          l.includes(".charAt(") || l.includes(".slice(") ||
           l.includes(".split(") ||
           l.includes(".padStart(") || l.includes(".padEnd(") || l.includes(".toString(") ||
           l.includes(".at(") || l.includes(".toUpperCase(") || l.includes(".toLowerCase(") ||

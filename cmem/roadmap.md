@@ -162,11 +162,37 @@ more latent issues: brace-less single-line `for…of` (dropped body), `console.e
 formatting, the class-instance `ptr<0` sentinel, and extended the greedy-regex `parenDepthNeverNegative`
 guards. Suite under the hardened runner: **299/299** (no open bugs), bindgen 103/103, jstyper 73/73.
 
-### Phase 52 — Leaf conveniences (NO downstream risk; opportunistic, never gating)
+### Phase 52 — Leaf conveniences (NO downstream risk) — ✅ COMPLETE 2026-06-11
 
-5. `void expr` → `(drop …)`; 6. chained assignment `a = b = c = 0`; 7. `in` operator (closed-world →
-compile-time `1`/`0`); 8. `Array.from([…])` / `Array.of(…)` / `Array.isArray(x)`;
-9. `String.fromCodePoint(n)`. Nothing builds on these, so they cannot introduce later bugs.
+All five shipped (suite 299→305, all output-verified ts-run == wasm-run; bindgen 103/103,
+jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` / `52_ArrayFromOf` /
+`52_StringFromCodePoint` / `52_Phase52Combined`. All in `src/wasic.ts` unless noted.
+
+5. **`void expr;`** → evaluate for side effects, discard. Statement handler at the top of
+   `emitStatement`: a void/string-returning call is re-emitted as a plain call statement (the call
+   still runs; a string result has no single droppable value); a numeric result is `(drop …)`; a
+   non-call expr is `(drop (emitExpr …))`.
+6. **Chained assignment `a = b = c = 0`** — `emitStatement` detects ≥2 top-level plain `=` (skipping
+   `==`/`===`/`=>`/`!=`/`<=`/`>=`/compound), requires every target to be a bare identifier, then lowers
+   to `c = 0; b = c; a = b` (rightmost first) reusing the normal assignment emitter (handles
+   locals/globals/strings/types for free). Declaration-form chains (`let a = b = 0`) intentionally bail.
+7. **`"field" in obj`** — closed-world compile-time `1`/`0` in `emitExpr` (via `findDepth0Keyword(" in ")`
+   + new `structHasField` resolving struct/class fields from `structVars`/`classVars`). Returns null →
+   falls through when the type/key is unknown. Print direct in `console.log` not wired (route via a
+   `boolean` local or an `if` condition — both go through `emitExpr`).
+8. **`Array.from([…])` / `Array.of(…)`** — source pre-pass `expandArrayFromOf` (string-aware balanced
+   scan, runs right after the `Array.from({length})` 2D sentinel) rewrites them to plain array literals
+   (`[…]`); recurses so nested forms expand. `Array.from` of anything other than a literal array is left
+   untouched. **`Array.isArray(x)`** — `emitExpr` closed-world const: `1` iff x ∈
+   arrayVars/moduleArrayVars/typedArrayVars, else `0`.
+9. **`String.fromCodePoint(...)`** — UTF-8 encodes code point(s). Constant args → static data string
+   (`allocStringDecoded`, no unescape; via new `constCodePoint` validator covering decimal/hex in the
+   valid Unicode range). Single runtime arg → new `$__str_from_codepoint` WAT helper (1–4 byte UTF-8,
+   multi-value ptr,len). Wired into `emitStringAssign`, the concat path, `isStringExpr`, and the two
+   `$__str_op` prologue temp-pair detectors. Bonus: console_log.ts `dotLenMatch` now handles string
+   `.length` (UTF-8 byte length) for local strings / module string consts / string globals — a
+   pre-existing gap that also affected `fromCharCode` strings. NOTE multi-byte: wasic `.length` is
+   UTF-8 byte count, TS `.length` is UTF-16 units (the test only `.length`-checks ASCII).
 
 ### Phase 53 — Standalone built-ins (user-value; schedule on demand, not foundational)
 
@@ -244,5 +270,13 @@ kernel — `eval`/`new Function`, pervasive `any`, open prototype mutation — s
 Utility types (`Partial`/`Record`/…), destructuring in params, `Number.parseInt`/`parseFloat`,
 `in` operator, nested destructuring. As of 2026-06-03 these are no longer unscheduled — they are
 sequenced into **Phases 51–53** above (foundational subset gates the async + own-runtime tracks).
-Done so far: `instanceof` (51.1, 2026-06-05) and **object spread `{...o, k:v}` (51.2, 2026-06-07)**.
+Done so far: **Phase 51 COMPLETE** (`instanceof` + object spread + param/nested destructuring +
+utility types) and **Phase 52 COMPLETE 2026-06-11** (`void` / chained assignment / `in` /
+`Array.from`-`of`-`isArray` / `String.fromCodePoint`). A **pre-publish hardening pass (2026-06-12)**
+then made the emitter's terminal "give-up" fallbacks record a diagnostic (abort) instead of silently
+emitting `0`/`""` — which surfaced + FIXED a real latent bug (brace-less / single-line-braced `else`
+chains after a single-line `if` were dropped; regression `15_ElseChainForms`), plus `instanceof
+<built-in>` and dead-code/orphaned-module removal. Suite **306/306**, bindgen 103/103,
+jstyper 73/73. Remaining: **Phase 53** (`Number.parseInt`/`parseFloat`, >2-deep interface
+inheritance) + the big tracks (#12 loader, #13 async, #14 own runtime).
 Full analysis in CLAUDE.md § "TypeScript Feature Gap Analysis".

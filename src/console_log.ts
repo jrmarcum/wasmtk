@@ -1099,17 +1099,28 @@ function parseSingleArg(
   // ── Array .length: dynamic → runtime i32 load from header; static → compile-time constant
   const dotLenMatch = token.match(/^(\w+)\.length$/);
   if (dotLenMatch) {
-    const arrInfo = arrayLookup?.(dotLenMatch[1]);
+    const lenName = dotLenMatch[1];
+    const arrInfo = arrayLookup?.(lenName);
     if (arrInfo) {
-      const getOp = arrInfo.isGlobal
-        ? `(global.get $${dotLenMatch[1]})`
-        : `(local.get $${dotLenMatch[1]})`;
+      const getOp = arrInfo.isGlobal ? `(global.get $${lenName})` : `(local.get $${lenName})`;
       const wat = arrInfo.dynamic ? `(i32.load ${getOp})` : `(i32.const ${arrInfo.length})`;
       return [{ kind: "i32expr", wat }];
     }
+    // String .length (UTF-8 byte length): local string, module string const, or string global.
+    if (locals.get(lenName) === "string") {
+      return [{ kind: "i32expr", wat: `(local.get $${lenName}_len)` }];
+    }
+    const gt = globals?.get(lenName);
+    if (gt?.startsWith("string:")) {
+      return [{ kind: "i32expr", wat: `(i32.const ${Number(gt.split(":")[2])})` }];
+    }
+    if (gt?.startsWith("strglobal:")) {
+      const gn = gt.slice("strglobal:".length);
+      return [{ kind: "i32expr", wat: `(global.get $${gn}_len)` }];
+    }
     // Phase 12: i32 local holding a dynamic array pointer — load length from header
-    if (locals.get(dotLenMatch[1]) === "i32") {
-      return [{ kind: "i32expr", wat: `(i32.load (local.get $${dotLenMatch[1]}))` }];
+    if (locals.get(lenName) === "i32") {
+      return [{ kind: "i32expr", wat: `(i32.load (local.get $${lenName}))` }];
     }
   }
 

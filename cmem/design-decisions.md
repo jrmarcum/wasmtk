@@ -224,6 +224,61 @@ string-array element, and `Math.*`/`Number.*` handling all have such twins.
   fresh. (3) `Record<string,V>` / non-literal keys → unresolved (dynamic map, out of scope). Pick/Omit
   as interface *field* types aren't supported (parseStructs runs first); var/param/return/`type Alias`
   positions are.
+- **Phase 52 leaf conveniences (2026-06-11)** — five small features; the load-bearing invariants:
+  (1) **`void expr;`** + **chained assignment `a = b = c = 0`** handlers sit at the TOP of
+  `emitStatement`, BEFORE the `return` handler and BEFORE the simple-assignment matchers (which would
+  otherwise grab `a = (b = c = 0)`). The chain detector counts top-level plain `=` (skipping
+  `==`/`===`/`=>`/`!=`/`<=`/`>=`/compound via a prev/next-char check), requires EVERY target to be a
+  bare `\w+`, and lowers to `c=0; b=c; a=b` (rightmost first) reusing the normal assignment emitter —
+  do NOT special-case types/strings/globals here, the reuse handles them. Declaration-form chains
+  (`let a = b = 0`) intentionally bail (target `let a` isn't `/^\w+$/`). (2) **`"field" in obj`** and
+  **`Array.isArray(x)`** are closed-world COMPILE-TIME constants resolved in `emitExpr` (NOT
+  `console_log.ts` — direct `console.log("x" in o)` / `console.log(Array.isArray(a))` are not wired;
+  route via a `boolean` local or an `if` condition, both of which go through `emitExpr`). `in` uses
+  `findDepth0Keyword(" in ")` + `structHasField` (structVars→def.fields, classVars→classDefs.struct.fields;
+  returns null → fall through when unknown). (3) **`Array.from([…])` / `Array.of(…)`** are a SOURCE
+  pre-pass (`expandArrayFromOf`, string-aware balanced scan) that MUST run AFTER the
+  `Array.from({length:N}, () => [])` 2D sentinel rewrite (so the `{length}` form is consumed first);
+  it rewrites only a literal-array argument (non-literal `Array.from(iterable)` is left untouched) and
+  recurses into the rewritten arg for nesting. (4) **`String.fromCodePoint(...)`** — constant args go
+  through `allocStringDecoded` (NOT `allocString`): the produced characters are already final and must
+  NOT be re-run through `unescapeString` (a produced `\`/quote would be misread). `constCodePoint`
+  validates decimal/hex in the 0..0x10FFFF range; out-of-range/runtime falls to the
+  `$__str_from_codepoint` WAT helper (1–4 byte UTF-8, multi-value ptr,len, gated by
+  `needsStringExtHelpers`). Wired in `emitStringAssign`, the concat `appendConcatPart` path,
+  `isStringExpr`, and BOTH `$__str_op` prologue temp-pair detectors (function + startBodyLines).
+  (5) **console_log.ts `dotLenMatch` now resolves STRING `.length`** (UTF-8 byte length) for local
+  strings (`local.get $x_len`), module string consts (`i32.const <len>`), and string globals
+  (`global.get $g_len`) — it previously only handled array `.length` (so `console.log("s.length:",
+  s.length)` printed 0 for any string var, `fromCharCode` included). NOTE multi-byte: wasic `.length`
+  is the UTF-8 BYTE count, TS `.length` is UTF-16 units — only ASCII results are `.length`-comparable.
+- **Else chains after a single-line `if` (2026-06-12, `emitBlock`)** — a single-line `if` (brace-less
+  `inlineBody` OR single-line-braced `singleLineBlock`) followed by a self-contained `else`/`else if`
+  chain on the NEXT lines used to DROP every branch after the first (the else-detection only matched a
+  few braced multi-line forms). FIX, placed BEFORE the inlineBody/singleLineBlock branching: if
+  `WasicTranspiler.isSelfContainedElse(lines[i+1])`, assemble the if-body + the whole chain into one
+  inline string (`braceifyElseLine` braces brace-less bodies), feed to `expandInlineBraceChain` →
+  canonical braced multi-line form, splice + `continue`. `isSelfContainedElse` returns FALSE for an OPEN
+  braced `else {` (body continues on later lines) so the existing multi-line machinery still owns those.
+  Do NOT remove this — the brace-less and single-line-braced else forms silently miscompile without it
+  (regression `15_ElseChainForms`). `instanceof` with a non-user-class (built-in) RHS resolves at
+  compile time: Error-family → 1 (wasic models caught exceptions as strings, so `e instanceof Error`
+  catch-narrowing is true), other built-ins → 0.
+- **Terminal emit diagnostics (silent-fall-through hardening, 2026-06-12)** — the four terminal
+  "give-up" fallbacks (`emitExpr` unsupported expr, `emitStatement` unsupported stmt, `emitStringAssign`
+  unsupported string assign, `emitStringPtrLen` unsupported string expr → its `(i32.const 0) (i32.const
+  0)` sentinel) now `this.diagnostics.push(...)`, which ABORTS the compile (the `warnings` gate in
+  `compileWasiTs`/`compileLibTs`) instead of silently emitting `0` / the empty string. **Invariant:**
+  SPECULATIVE / guarded probe sites that recover gracefully when they get a stub/sentinel MUST wrap the
+  call in `quietEmit(() => …)` (a depth counter `emitDiagSuppressDepth`; the terminal push is skipped
+  while > 0). There are ~13 such wrapped sites (10 sentinel-guarded `emitStringPtrLen` callers + 3
+  `emitExpr` probes that inspect the result for `(;?`/`(unreachable)`); every OTHER caller passes the
+  stub straight through and so DOES get the hard error. The `emitStatement` diagnostic additionally
+  skips clearly-non-statement fragments of multi-line constructs parsed elsewhere (lines starting with
+  `|` = DU type-alias union continuations; element fragments ending in `,`; bare object-literal /
+  numeric / string element lines). When adding a new caller of `emitExpr`/`emitStringPtrLen` that probes
+  for failure, wrap it in `quietEmit`; when adding a new terminal fallback, decide whether silent-wrong
+  or a diagnostic is correct (default: diagnostic).
 - **console.log binary-op operand type from the LHS leading atom (`console_log.ts` `exprToWat`)** —
   the `+`/`-`/… operand type is inferred from the LHS's leading atom: plain local, `var.field` (type via
   `structLookup().type`), `.length` (→i32), OR — for an array-element-led operand `arr[…]` — the

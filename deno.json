@@ -1,13 +1,11 @@
 {
   "name": "@jrmarcum/wasmtk",
-  "version": "1.6.5",
+  "version": "1.7.0",
   "description": "A polyglot WASM toolkit for Deno: Run, inspect, and convert WASM/WAT and WASI modules with high compatibility.",
   "license": "MIT",
   "exports": {
     ".": "./main.ts",
     "./utils": "./src/utils.ts",
-    "./runner": "./src/runner.ts",
-    "./args": "./src/args.ts",
     "./javyc": "./src/javyc.ts",
     "./wasic": "./src/wasic.ts",
     "./modc": "./src/modc.ts",

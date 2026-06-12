@@ -33,7 +33,7 @@ interface WabtModule {
 }
 
 /** The current version of the wasmtk toolkit. */
-export const VERSION = "1.6.5";
+export const VERSION = "1.7.0";
 
 let wasiInstance: WebAssembly.Instance | undefined;
 
@@ -338,7 +338,7 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
 /**
  * Directly calls a named exported function from a WASM module regardless of
  * whether the module also exports _start. This is the backend for the `mod`
- * command and deliberately skips the checkIsLibrary gate used by runWasi.
+ * command and deliberately skips the library/_start gate used by runWasi.
  *
  * @param path   - Path to the .wasm or .wat file.
  * @param fnName - Name of the exported function to call.
@@ -444,20 +444,6 @@ export async function showInfo(path: string): Promise<void> {
     module.dispose();
   } catch (err) {
     console.error("❌ Info error: " + err);
-  }
-}
-
-/**
- * Inspects a module to determine if it is a library (no _start function).
- * @param path - Path to the module.
- */
-export async function checkIsLibrary(path: string): Promise<boolean> {
-  try {
-    const bytes = await getWasmBytes(path);
-    const mod = await WebAssembly.compile(bytes as BufferSource);
-    return !WebAssembly.Module.exports(mod).some((e) => e.name === "_start");
-  } catch {
-    return false;
   }
 }
 

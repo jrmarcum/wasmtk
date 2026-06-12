@@ -429,7 +429,7 @@
             (i32.const 0)
             (i32.const 1)
             (i32.const 128)))
-        (if (;? error instanceof Error ;) (i32.const 0)
+        (if (i32.const 1)
           (then
               (i32.store (i32.const 0) (i32.const 132))
           (i32.store (i32.const 4) (i32.const 0))

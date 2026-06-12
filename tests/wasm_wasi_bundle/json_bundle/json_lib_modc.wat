@@ -669,6 +669,42 @@
     (i32.store (local.get $arr) (local.get $count))
     (local.get $arr)
   )
+
+  ;; ── str_from_codepoint: UTF-8 encode a single code point into a fresh buffer ──
+  ;; Returns (ptr, len). Handles the full U+0000..U+10FFFF range (1–4 bytes).
+  (func $__str_from_codepoint (param $cp i32) (result i32 i32)
+    (local $p i32)
+    (local.set $p (call $__malloc (i32.const 4)))
+    (if (i32.lt_u (local.get $cp) (i32.const 0x80))
+      (then
+        (i32.store8 (local.get $p) (local.get $cp))
+        (return (local.get $p) (i32.const 1))))
+    (if (i32.lt_u (local.get $cp) (i32.const 0x800))
+      (then
+        (i32.store8 (local.get $p)
+          (i32.or (i32.const 0xC0) (i32.shr_u (local.get $cp) (i32.const 6))))
+        (i32.store8 offset=1 (local.get $p)
+          (i32.or (i32.const 0x80) (i32.and (local.get $cp) (i32.const 0x3F))))
+        (return (local.get $p) (i32.const 2))))
+    (if (i32.lt_u (local.get $cp) (i32.const 0x10000))
+      (then
+        (i32.store8 (local.get $p)
+          (i32.or (i32.const 0xE0) (i32.shr_u (local.get $cp) (i32.const 12))))
+        (i32.store8 offset=1 (local.get $p)
+          (i32.or (i32.const 0x80) (i32.and (i32.shr_u (local.get $cp) (i32.const 6)) (i32.const 0x3F))))
+        (i32.store8 offset=2 (local.get $p)
+          (i32.or (i32.const 0x80) (i32.and (local.get $cp) (i32.const 0x3F))))
+        (return (local.get $p) (i32.const 3))))
+    (i32.store8 (local.get $p)
+      (i32.or (i32.const 0xF0) (i32.shr_u (local.get $cp) (i32.const 18))))
+    (i32.store8 offset=1 (local.get $p)
+      (i32.or (i32.const 0x80) (i32.and (i32.shr_u (local.get $cp) (i32.const 12)) (i32.const 0x3F))))
+    (i32.store8 offset=2 (local.get $p)
+      (i32.or (i32.const 0x80) (i32.and (i32.shr_u (local.get $cp) (i32.const 6)) (i32.const 0x3F))))
+    (i32.store8 offset=3 (local.get $p)
+      (i32.or (i32.const 0x80) (i32.and (local.get $cp) (i32.const 0x3F))))
+    (local.get $p) (i32.const 4)
+  )
   ;; Dynamic array grow_i32: malloc new block of newcap elements, copy data, return new ptr.
   (func $__dynarr_grow_i32 (param $arr i32) (param $newcap i32) (result i32)
     (local $newptr i32)
@@ -826,15 +862,59 @@
               (then
               (local.set $c (i32.const 10))
               )
+              (else
+              (if (i32.eq (local.get $e) (i32.const 116))
+                (then
+                (local.set $c (i32.const 9))
+                )
+                (else
+                (if (i32.eq (local.get $e) (i32.const 114))
+                  (then
+                  (local.set $c (i32.const 13))
+                  )
+                  (else
+                  (if (i32.eq (local.get $e) (i32.const 98))
+                    (then
+                    (local.set $c (i32.const 8))
+                    )
+                    (else
+                    (if (i32.eq (local.get $e) (i32.const 102))
+                      (then
+                      (local.set $c (i32.const 12))
+                      )
+                      (else
+                      (if (i32.eq (local.get $e) (i32.const 34))
+                        (then
+                        (local.set $c (i32.const 34))
+                        )
+                        (else
+                        (if (i32.eq (local.get $e) (i32.const 92))
+                          (then
+                          (local.set $c (i32.const 92))
+                          )
+                          (else
+                          (if (i32.eq (local.get $e) (i32.const 47))
+                            (then
+                            (local.set $c (i32.const 47))
+                            )
+                            (else
+                            (local.set $c (local.get $e))
+                            )
+                          )
+                          )
+                        )
+                        )
+                      )
+                      )
+                    )
+                    )
+                  )
+                  )
+                )
+                )
+              )
+              )
             )
-            (;; else if (e === 116) c = 9;;)
-            (;; else if (e === 114) c = 13;;)
-            (;; else if (e === 98) c = 8;;)
-            (;; else if (e === 102) c = 12;;)
-            (;; else if (e === 34) c = 34;;)
-            (;; else if (e === 92) c = 92;;)
-            (;; else if (e === 47) c = 47;;)
-            (;; else c = e;;)
             )
           )
           (i32.store8 (i32.add (i32.add (local.get $buf) (i32.const 8)) (local.get $j)) (local.get $c))
@@ -926,8 +1006,10 @@
                 (then
                 (local.set $gf (i32.const 0))
                 )
+                (else
+                (global.set $pos (i32.add (global.get $pos) (i32.const 1)))
+                )
               )
-              (;; else pos = pos + 1;;)
               )
             )
           )
@@ -967,8 +1049,10 @@
                   (then
                   (local.set $ge (i32.const 0))
                   )
+                  (else
+                  (global.set $pos (i32.add (global.get $pos) (i32.const 1)))
+                  )
                 )
-                (;; else pos = pos + 1;;)
                 )
               )
             )
