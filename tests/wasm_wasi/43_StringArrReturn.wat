@@ -1144,6 +1144,8 @@
     (local $rWords i32)
     (local $longWords i32)
     (local $__iface_tmp i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $words (i32.const 281))
     (local.set $rWords (call $strFilter (local.get $words) (i32.const 0)))
     (local.set $longWords (call $strFilter (local.get $words) (i32.const 1)))

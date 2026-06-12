@@ -7223,7 +7223,14 @@ class WasicTranspiler {
         // Runtime vtable dispatch: read class tag at offset 0, dispatch to matching method
         const amcSubs = this.findSubclasses(amcStn);
         amcSubs.sort((a, b) => (this.classTags.get(a) ?? 0) - (this.classTags.get(b) ?? 0));
-        if (amcSubs.length === 0) return `(i32.const 0)`;
+        if (amcSubs.length === 0) {
+          // No concrete subclass found for the element's declared type — a mis-registered class
+          // hierarchy. Fail loud rather than silently dispatching to 0.
+          this.diagnostics.push(
+            `No subclass found for '${amcStn}.${amcMatch[3]}()' element method dispatch`,
+          );
+          return `(i32.const 0)`;
+        }
         if (amcSubs.length === 1) return amcEmitCall(amcSubs[0]);
         const amcBaseFunc = this.resolveMethodFunc(amcStn, amcMethod);
         const amcBaseFnDef = amcBaseFunc
@@ -9079,9 +9086,9 @@ class WasicTranspiler {
     }
 
     // Phase 52.6: chained assignment `a = b = c = 0` — rightmost value propagates leftward.
-    // Detected by ≥2 top-level plain `=` (not ==/===/=>/!=/<=/>=/compound). Every target except
-    // the final RHS must be a bare identifier. Lowered to a sequence reusing the normal assignment
-    // emitter: c = 0; b = c; a = b (rightmost assigned first so each reads the freshly-set value).
+    // Detected by ≥2 top-level plain `=` (not ==/===/=>/!=/<=/>=/compound). Every target must be an
+    // assignable lvalue (identifier / member / element). Lowered to a sequence reusing the normal
+    // assignment emitter: c = 0; b = c; a = b (rightmost assigned first so each reads the fresh value).
     {
       const eqPos: number[] = [];
       let depth = 0, inS = false, inD = false, inB = false;
@@ -9122,7 +9129,12 @@ class WasicTranspiler {
           segStart = eqPos[t] + 1;
         }
         const rhs = line.slice(segStart).replace(/;$/, "").trim();
-        if (targets.every((t) => /^\w+$/.test(t)) && rhs.length > 0) {
+        // Each target must be an assignable lvalue: a bare identifier, a member access (`p.x`,
+        // `this.x`), or an element access (`arr[i]`). The lowering re-emits `target = source` per
+        // step, so any lvalue the normal assignment paths handle works.
+        const isLValue = (t: string) =>
+          /^\w+$/.test(t) || /^\w+\.\w+$/.test(t) || /^\w+\[[^\]]*\]$/.test(t);
+        if (targets.every(isLValue) && rhs.length > 0) {
           const stmts: string[] = [];
           stmts.push(
             this.emitStatement(`${targets[targets.length - 1]} = ${rhs};`, locals, funcResult),
@@ -16026,7 +16038,11 @@ class WasicTranspiler {
         l.includes(".split(") ||
         l.includes(".padStart(") || l.includes(".padEnd(") || l.includes(".toString(") ||
         l.includes(".at(") || l.includes(".toUpperCase(") || l.includes(".toLowerCase(") ||
-        /\w\[[^\]]+\]\s*\+|\+\s*\w+\[/.test(l) // string char subscript in a concat: s[i] + …
+        /\w\[[^\]]+\]\s*\+|\+\s*\w+\[/.test(l) || // string char subscript in a concat: s[i] + …
+        // console.log/error/warn with a string-equality op: the comparison may route a non-trivial
+        // operand (`a === getName()`, `a === obj.f`, `a === s.slice(…)`) through the string-expr
+        // resolver, which captures len into $__str_op_len.
+        (/\bconsole\.(log|error|warn)\b/.test(l) && /===|!==|==|!=/.test(l))
       )
     ) {
       declaredLocals.push(["__str_op_ptr", "i32"], ["__str_op_len", "i32"]);
@@ -17355,7 +17371,10 @@ class WasicTranspiler {
           l.includes(".split(") ||
           l.includes(".padStart(") || l.includes(".padEnd(") || l.includes(".toString(") ||
           l.includes(".at(") || l.includes(".toUpperCase(") || l.includes(".toLowerCase(") ||
-          /\w\[[^\]]+\]\s*\+|\+\s*\w+\[/.test(l) // string char subscript in a concat: s[i] + …
+          /\w\[[^\]]+\]\s*\+|\+\s*\w+\[/.test(l) || // string char subscript in a concat: s[i] + …
+          // console.* with a string-equality op may route a non-trivial operand through the
+          // string-expr resolver (captures len into $__str_op_len).
+          (/\bconsole\.(log|error|warn)\b/.test(l) && /===|!==|==|!=/.test(l))
         )
       ) {
         startDeclaredLocals.push(["__str_op_ptr", "i32"], ["__str_op_len", "i32"]);

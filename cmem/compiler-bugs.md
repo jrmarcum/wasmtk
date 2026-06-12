@@ -1,7 +1,49 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 306/306**
+Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 307/307**
 (`bindgen` 103/103, `jstyper` 73/73) as of **2026-06-12**.
+
+## console.log string/numeric comparison fixes + member-target chained assignment (2026-06-12)
+
+The remaining audit items (the console_log.ts silent-wrong stubs the wasic-side hardening didn't
+reach — console_log has no `diagnostics` channel). Root cause was a single broad bug plus a few
+gaps. Suite 306→307 (regression `27_ConsoleLogStringCompare`; `52_ChainedAssignment` extended).
+
+1. **`findTopLevelOp` skipped the trailing `op.length` characters (`src/console_log.ts`).** It
+   started the depth scan at `i = expr.length - op.length`, so a RHS ending in `)` / `]` (a function
+   call, `.slice(…)`, any parenthesised tail) left that closing bracket uncounted → paren depth went
+   NEGATIVE → the operator was never matched at depth 0 → the WHOLE comparison/expression silently
+   fell through to the numeric/terminal path. E.g. `console.log("x", a === getName())` and even
+   `a.length === getName().length` returned the wrong boolean. This is the SAME bug class as the
+   documented wasic-side `findBinaryOp` fix. **Fix:** scan the FULL string from the end (counting
+   trailing `)`/`]`) and only test for an op match at valid start positions (`i <= maxStart`).
+   Broad impact — every console.log operator/comparison whose RHS ends in `)`.
+2. **`console.log` string `===`/`!==` only handled local/literal/array-element operands** — a
+   fn-call (`a === getName()`), struct field (`a === p.name`), slice (`a === s.slice(0,3)`) or method
+   (`"BOB" === a.toUpperCase()`) operand silently compared against the **empty string** (wrong
+   boolean). **Fix:** `getStrPL` (and the string-ternary `getStrPtrLen`) now fall back to the existing
+   `_stringExprResolver` bridge → wasic's `emitStringPtrLen`. Wired the resolver-temp declaration:
+   broadened the `$__str_op_ptr/len` prologue trigger to fire on a `console.*` line with a
+   string-equality op.
+3. **String `!==`/`!=` in console.log was INVERTED** (`src/console_log.ts`) — it returned true for
+   EQUAL strings (`(i32.ne (i32.eqz cmp) 0)`). `$__str_cmp` returns 0 when equal, so `!==` must be
+   `(i32.ne cmp 0)`. Pre-existing; affected every string `!==` in console.log.
+4. **String `.length` as a comparison/arithmetic OPERAND fell to the exprToWat terminal → 0**
+   (`src/console_log.ts`). The earlier (Phase 52) string-`.length` fix was only in `parseSingleArg`;
+   `exprToWat` (used for operands) had only the array-`.length` branch. Added the string-`.length`
+   branch there, plus a general `<stringExpr>.length` handler (`getName().length`, `s.slice(…).length`)
+   via the resolver's len word.
+5. **Member/element-target chained assignment** `p.x = z = 5`, `arr[i] = w = 9` (`emitBlock`/`emitStatement`
+   chain handler). Previously only bare-identifier targets were lowered; member/element targets bailed
+   (→ silent-wrong, then abort after the hardening). **Fix:** accept any assignable lvalue
+   (`\w+`, `\w+.\w+`, `\w+[…]`); the per-step lowering reuses the normal assignment emitter.
+6. **`arr[i].method()` empty vtable dispatch** now records a diagnostic (fail-loud) instead of
+   silently dispatching to `(i32.const 0)` when a class hierarchy is mis-registered (niche).
+
+**Documented limitation (NOT fixed — too risky pre-publish):** `console.log` of a **5th+ numeric arg
+in per-iov mode** prints `"?"` (a VISIBLE marker, not silent-wrong). Raising `SCRATCH_SLOTS` shifts
+`DATA_BASE` (260), which is hardcoded in `wasic.ts` and is the **wasmmerge `DATA_PTR_THRESHOLD`** —
+load-bearing for data-pointer relocation. Left as-is.
 
 ## Pre-publish hardening pass — else-chain drop bug + silent-fall-through diagnostics (2026-06-12)
 
@@ -468,7 +510,7 @@ that `expandInlineBraceChain` alone fixed this was inaccurate; `cmem/` is author
 All 7 of the previously-"known pre-existing" failures are now fixed; as of 2026-06-02 the full
 `tests/wasm_wasi` was **278/278** (the 7 fixes brought it to 277/277; the new `18h` virtual-
 capability test added the 278th). (By 2026-06-03 it was **279/279** — the single-line-brace
-`if` fix added `48_SingleLineBraceIf`; the live count is at the top of this file — **306/306**.)
+`if` fix added `48_SingleLineBraceIf`; the live count is at the top of this file — **307/307**.)
 They were two unrelated root causes:
 
 ### (a) Value-fallthru codegen — `5e_MixedSignatures`, `19_NestedDiscriminantUnions`, `19_VariantMaximumMemoryAlignment` (fixed in wasic)
@@ -585,7 +627,7 @@ t.charCodeAt(ti + count)) === 1` **directly in the `while` `br_if`** (the exact 
 ## The 7 formerly-known test failures — ALL FIXED 2026-06-02
 
 These failed for a long time but are **now all passing** (full suite 278/278 as of 2026-06-02;
-live count at the top of this file — **306/306**). Kept here as a
+live count at the top of this file — **307/307**). Kept here as a
 pointer; full root-cause writeups are in the "FIXED — the 7 long-standing test failures" section at
 the top of this file.
 

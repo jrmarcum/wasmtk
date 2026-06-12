@@ -32,6 +32,12 @@ high-value subset.
 - **`findBinaryOp`** scans the FULL string for paren/bracket depth and only matches at valid op
   positions (`i <= maxStart`). Reverting to start-at-`maxStart` re-hides operators whose RHS ends
   in `)`. Counts `()` and `[]`.
+- **`findTopLevelOp` (`console_log.ts`) has the SAME rule (fixed 2026-06-12).** It must scan the FULL
+  string from the end (counting trailing `)`/`]`) and only test for an op match at `i <= maxStart`.
+  It previously started at `length - op.length`, skipping the trailing chars, so any console.log
+  comparison/expression whose RHS ends in `)` (a call, `.slice(…)`, etc.) drove depth negative, the
+  operator was never found, and the whole expr silently fell through to the numeric/terminal path
+  (wrong boolean / 0). Mirror of the `findBinaryOp` fix — do not revert either.
 - **Value-fallthru rewrite** (`emitFunction` → `fixTerminalFallthru`): a value-returning function
   whose body ends in a STATEMENT-level (void) `if/else` where every path `return`s leaves an empty
   stack at the implicit function end — wabt/binaryen accept it, **V8 strict-validation rejects it**
@@ -228,10 +234,12 @@ string-array element, and `Math.*`/`Number.*` handling all have such twins.
   (1) **`void expr;`** + **chained assignment `a = b = c = 0`** handlers sit at the TOP of
   `emitStatement`, BEFORE the `return` handler and BEFORE the simple-assignment matchers (which would
   otherwise grab `a = (b = c = 0)`). The chain detector counts top-level plain `=` (skipping
-  `==`/`===`/`=>`/`!=`/`<=`/`>=`/compound via a prev/next-char check), requires EVERY target to be a
-  bare `\w+`, and lowers to `c=0; b=c; a=b` (rightmost first) reusing the normal assignment emitter —
-  do NOT special-case types/strings/globals here, the reuse handles them. Declaration-form chains
-  (`let a = b = 0`) intentionally bail (target `let a` isn't `/^\w+$/`). (2) **`"field" in obj`** and
+  `==`/`===`/`=>`/`!=`/`<=`/`>=`/compound via a prev/next-char check, string/template-aware), requires
+  EVERY target to be an assignable lvalue (`\w+` / `\w+.\w+` member / `\w+[…]` element — extended
+  2026-06-12 from bare-identifier-only so `p.x = z = 5` and `arr[i] = w = 9` work), and lowers to
+  `c=0; b=c; a=b` (rightmost first) reusing the normal assignment emitter — do NOT special-case
+  types/strings/globals here, the reuse handles them. Declaration-form chains (`let a = b = 0`)
+  intentionally bail (target `let a` isn't an lvalue). (2) **`"field" in obj`** and
   **`Array.isArray(x)`** are closed-world COMPILE-TIME constants resolved in `emitExpr` (NOT
   `console_log.ts` — direct `console.log("x" in o)` / `console.log(Array.isArray(a))` are not wired;
   route via a `boolean` local or an `if` condition, both of which go through `emitExpr`). `in` uses
@@ -290,6 +298,16 @@ string-array element, and `Math.*`/`Number.*` handling all have such twins.
   is `parenDepthNeverNegative`-guarded in BOTH `parseSingleArg` and `exprToWat`, so the expression
   falls through to the binary-op loop, which infers the op type from the array element type
   (i32[]→`i32.add`, f64[]→`f64.add`). Regression: `6d_ConsoleLogArrayArith`.
+- **console.log string comparison non-trivial operands (`console_log.ts`, 2026-06-12)** — `getStrPL`
+  (string `===`/`!==`) and the string-ternary `getStrPtrLen` resolve fn-call / struct-field / slice /
+  method operands via the `_stringExprResolver` bridge → wasic `emitStringPtrLen` (captures len into
+  `$__str_op_len`). Without it those operands silently compared against `""`. The resolver-temp is
+  declared by broadening the `$__str_op_ptr/len` prologue trigger to a `console.*` line with a
+  string-equality op. **String `!==` is `(i32.ne cmp 0)`** (`$__str_cmp` returns 0 for equal) — the old
+  `(i32.ne (i32.eqz cmp) 0)` was inverted. String `.length` as an OPERAND is handled in `exprToWat`'s
+  `dotLenM` (not just `parseSingleArg`), plus a general `<stringExpr>.length` via the resolver's len
+  word. Regression: `27_ConsoleLogStringCompare`. KNOWN LIMIT: 5th+ numeric arg in per-iov mode prints
+  `"?"` (SCRATCH_SLOTS=4; raising it shifts `DATA_BASE`/260 = wasmmerge `DATA_PTR_THRESHOLD`).
 - **Greedy `dotCallExprMatch` / `newMatch` / `superDotExprMatch` in `emitExpr` are guarded** (FIXED
   2026-06-08). `a.method() + b.method()`, `new A(x) OP new B(y)`, `super.m() OP x` — the greedy
   `([\s\S]*)` args capture used to consume across the operator (e.g. `a.unwrap() + b.unwrap()` →

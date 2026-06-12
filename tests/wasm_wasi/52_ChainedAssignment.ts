@@ -24,3 +24,20 @@ function f(): i32 {
   return p + q + r; // 12
 }
 console.log("f:", f()); // 12
+
+// Member- and element-target chained assignment (lvalue targets).
+interface Pt {
+  x: i32;
+  y: i32;
+}
+const pt: Pt = { x: 0, y: 0 };
+let mz: i32 = 0;
+pt.x = mz = 5;
+console.log("pt.x:", pt.x); // 5
+console.log("mz:", mz); // 5
+
+const arr: i32[] = [0, 0, 0];
+let ew: i32 = 0;
+arr[1] = ew = 9;
+console.log("arr[1]:", arr[1]); // 9
+console.log("ew:", ew); // 9

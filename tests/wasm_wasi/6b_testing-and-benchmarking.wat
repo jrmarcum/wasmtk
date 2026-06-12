@@ -187,6 +187,8 @@
     (local $__iface_tmp i32)
     (local $__tmpl_num_ptr i32)
     (local $__tmpl_num_len i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $labels (i32.const 278))
     (local.set $tests (i32.const 446))
         (i32.store (i32.const 0) (i32.const 474))

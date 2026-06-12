@@ -1277,6 +1277,10 @@ function parseSingleArg(
               const [p, l] = allocString(s.text);
               return [`(i32.const ${p})`, `(i32.const ${l})`];
             }
+            // Any other string-valued branch (slice / method / call that parseSingleArg didn't
+            // surface as a strvar/strexpr): resolve via emitStringPtrLen rather than emit empty.
+            const r = _stringExprResolver?.(part.trim(), locals);
+            if (r) return [r.ptrWat, r.lenWat];
             return ["(i32.const 0)", "(i32.const 0)"];
           };
           const [thenPtr, thenLen] = getStrPtrLen(thenPart);
@@ -1537,8 +1541,28 @@ function exprToWat(
       const getOp2 = ai.isGlobal ? `(global.get $${dotLenM[1]})` : `(local.get $${dotLenM[1]})`;
       return ai.dynamic ? `(i32.load ${getOp2})` : `(i32.const ${ai.length})`;
     }
+    // String .length (UTF-8 byte length): local string, module string const, or string global.
+    // Without this, a string `.length` used as a comparison/arithmetic operand (it reaches exprToWat,
+    // not parseSingleArg) fell through to the terminal stub → 0.
+    if (locals.get(dotLenM[1]) === "string") return `(local.get $${dotLenM[1]}_len)`;
+    const glt = globals?.get(dotLenM[1]);
+    if (glt?.startsWith("string:")) return `(i32.const ${Number(glt.split(":")[2])})`;
+    if (glt?.startsWith("strglobal:")) {
+      return `(global.get $${glt.slice("strglobal:".length)}_len)`;
+    }
     // Phase 12: i32 local holding a dynamic array pointer
     if (locals.get(dotLenM[1]) === "i32") return `(i32.load (local.get $${dotLenM[1]}))`;
+  }
+
+  // `<stringExpr>.length` where the receiver is a non-trivial string expression — a string-returning
+  // call `getName().length`, a slice `s.slice(0,3).length`, a method result, etc. Resolve the
+  // receiver via the string-expr resolver and take the length word (run the ptr side so it captures
+  // len into $__str_op_len, drop the ptr, then read len). Only fires when the receiver resolves to a
+  // string; numeric/other receivers fall through.
+  const exprLenM = expr.match(/^(.+)\.length$/);
+  if (exprLenM && !/^\w+$/.test(exprLenM[1].trim())) {
+    const r = _stringExprResolver?.(exprLenM[1].trim(), locals);
+    if (r) return `(block (result i32) (drop ${r.ptrWat}) ${r.lenWat})`;
   }
 
   // Array element read: arr[idx]. Guard the greedy index capture so `arr[0] + arr[1]` (index would
@@ -2173,15 +2197,25 @@ function exprToWat(
           return [`(i32.load ${addr})`, `(i32.load offset=4 ${addr})`];
         }
       }
+      // Any other string-valued form (string-returning call `fn()`, struct field `obj.f`,
+      // `s.slice(...)`, `s.toUpperCase()`, …): delegate to wasic's emitStringPtrLen via the resolver.
+      // Without this, such operands silently compared against the empty string → wrong boolean
+      // (e.g. `a === getName()` printed false when true). The resolver captures len into
+      // $__str_op_len, so a console.* line with a string-equality op pre-declares that temp.
+      const resolved = _stringExprResolver?.(e, locals);
+      if (resolved) return [resolved.ptrWat, resolved.lenWat];
       return [`(i32.const 0)`, `(i32.const 0)`];
     };
     const [lPtr, lLen] = getStrPL(strLhs);
     const [rPtr, rLen] = getStrPL(strRhs);
     _strCmpNeeded?.();
+    // $__str_cmp returns 0 when the strings are equal (strcmp semantics). `===`/`==` → 1 iff equal
+    // (i32.eqz); `!==`/`!=` → 1 iff NOT equal (cmp ≠ 0). The old `!==` form was inverted — it
+    // returned true for EQUAL strings.
     const cmpCall = `(call $__str_cmp ${lPtr} ${lLen} ${rPtr} ${rLen})`;
     return (strOp === "===" || strOp === "==")
       ? `(i32.eqz ${cmpCall})`
-      : `(i32.ne (i32.eqz ${cmpCall}) (i32.const 0))`;
+      : `(i32.ne ${cmpCall} (i32.const 0))`;
   }
 
   // Binary operators — ascending precedence order (lowest first = outermost grouping).
@@ -2339,11 +2373,17 @@ function parenDepthNeverNegative(s: string): boolean {
 
 function findTopLevelOp(expr: string, op: string): number {
   let depth = 0;
-  for (let i = expr.length - op.length; i >= 0; i--) {
+  // Scan the FULL string from the end so trailing ) / ] (e.g. a RHS ending in a call or
+  // `.slice(…)`) are counted toward depth; only test for an op match at valid start positions
+  // (i <= maxStart). Starting at `length - op.length` skipped those trailing chars, so an
+  // expression like `a === s.slice(0, 3)` drove depth negative and the `===` was never found
+  // at depth 0 → the comparison silently fell through to the numeric/terminal path.
+  const maxStart = expr.length - op.length;
+  for (let i = expr.length - 1; i >= 0; i--) {
     const ch = expr[i];
     if (ch === ")" || ch === "]") depth++;
     else if (ch === "(" || ch === "[") depth--;
-    if (depth === 0 && expr.slice(i, i + op.length) === op) {
+    if (depth === 0 && i <= maxStart && expr.slice(i, i + op.length) === op) {
       const after = expr[i + op.length] ?? "";
       const before = i > 0 ? expr[i - 1] : "";
       if (op === "<" && (after === "=" || after === "<")) continue;

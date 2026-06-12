@@ -276,7 +276,9 @@ utility types) and **Phase 52 COMPLETE 2026-06-11** (`void` / chained assignment
 then made the emitter's terminal "give-up" fallbacks record a diagnostic (abort) instead of silently
 emitting `0`/`""` — which surfaced + FIXED a real latent bug (brace-less / single-line-braced `else`
 chains after a single-line `if` were dropped; regression `15_ElseChainForms`), plus `instanceof
-<built-in>` and dead-code/orphaned-module removal. Suite **306/306**, bindgen 103/103,
+<built-in>` and dead-code/orphaned-module removal, then a console.log comparison fix pass
+(findTopLevelOp paren-tail bug + string ===/!== operands + member-target chained assignment).
+Suite **307/307**, bindgen 103/103,
 jstyper 73/73. Remaining: **Phase 53** (`Number.parseInt`/`parseFloat`, >2-deep interface
 inheritance) + the big tracks (#12 loader, #13 async, #14 own runtime).
 Full analysis in CLAUDE.md § "TypeScript Feature Gap Analysis".
