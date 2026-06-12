@@ -1,5 +1,15 @@
 # Roadmap, phase status & vision
 
+## Release status (2026-06-12)
+
+**Version 1.7.0** is bumped (`deno.json` / `package.json` / `src/utils.ts`), committed, and **pushed
+to GitHub `main`** (commits `d602a072d` Phase 52 + hardening, `96e9d7f30` console.log comparison fixes)
+— but the **JSR release is HELD by owner decision** (the `v1.7.0` tag has NOT been pushed, so the
+`publish.yml` GitHub Action has not run). To release when ready: `deno task publish` (tags `v1.7.0` +
+pushes the tag → Action publishes `@jrmarcum/wasmtk@1.7.0` to JSR with provenance). Suite **307/307**,
+bindgen 103/103, jstyper 73/73; fmt/lint/`publish --dry-run` clean. The publish is the only pending
+outward-facing step; everything else for 1.7.0 is done and on `main`.
+
 ## Compiler phase status
 
 All **50 phases complete** plus sub-phases 5e/5f/5g/5h/6d/12b/13b. Full per-phase implementation

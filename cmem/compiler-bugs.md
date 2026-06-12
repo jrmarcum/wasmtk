@@ -339,8 +339,11 @@ the f64 numeric default. **Fixed** by inferring the type from the LHS's **leadin
 `var.field` (via `structLookup().type`), or `.length` — conservatively skipping `arr[i]` / `fn(...)` /
 `a.b.c` (remainder begins with `[` `(` `.`) so f64 array elements / call results aren't mis-typed as
 i32. Purely additive (the broken pattern couldn't compile before, so no existing test used it → zero
-tracked-`.wat` changes). **Still OPEN (separate, out of scope):** `console.log("x:", arr[i] + arr[j])`
-returns only the first element (array-element arithmetic in console.log is dropped after the first term).
+tracked-`.wat` changes). **`console.log("x:", arr[i] + arr[j])` returning only the first element —
+now FIXED 2026-06-12** as a side effect of the `findTopLevelOp` full-scan fix: the old scan skipped
+the trailing `]` of `arr[j]`, so the top-level `+` was never found at depth 0 and the expression fell
+through. With the full-string scan the `+` is found; array-element arithmetic (i32 + f64, literal and
+variable indices) is correct (verified directly).
 
 ## Tuple positional-gap collapse in nested destructure rewrite — FIXED 2026-06-07 (pre-commit)
 

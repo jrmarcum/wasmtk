@@ -39,6 +39,33 @@ When the owner says **"update the project memory"** (or any clear synonym — "u
 
 This is the durable contract for this repo. Any agent reading this file is expected to honor it.
 
+### The "look for code issues" trigger (binding on every agent)
+
+When the owner says **"look for code issues"** (or a clear synonym — "code audit", "audit the code",
+"hunt for bugs"), perform a **comprehensive code audit** for things that may cause future problems —
+covering **both tested AND untested code paths**:
+
+1. **Workarounds / temporary hacks** — `TODO`/`FIXME`/`HACK`, version-gated shims, anything described
+   as a stopgap; verify still-needed vs. stale/removable.
+2. **Dead code** — unused private methods / module functions / fields / flags, duplicate helpers,
+   unreachable branches, orphaned exports. Verify each with a grep before reporting.
+3. **Bugs** — silently-wrong codegen, inverted logic, type-inference gaps, off-by-one / scanner bugs
+   (esp. operator/bracket scanners that skip the string tail — see the `findBinaryOp` /
+   `findTopLevelOp` invariants in `design-decisions.md`).
+4. **Fall-throughs** — the compiler's worst failure mode: an unhandled input emitting a comment-stub
+   + a bare `0` / empty string instead of erroring. Enumerate every terminal "give-up" path and
+   assess whether a plausible valid input could reach it and be silently miscompiled; prefer
+   converting silent-wrong to a hard `diagnostics` error (guarding speculative probes with
+   `quietEmit`), and beware false positives from benign multi-line-construct fragments.
+
+Fan out parallel read-only investigators per category when the surface is large (`src/wasic.ts` is
+~16k lines). Report findings with `file:line` + severity; then triage and fix the safe/clear ones,
+validating the full suite stays green (output-diff, not just exit codes — see `testing.md`). The
+goal is durability: catch issues that won't surface in today's tests but will bite a future change.
+
+This is a durable contract for this repo. (If you prefer a less ambiguous keyword than "look for code
+issues", "code audit" / "audit the code" work identically.)
+
 ## Files
 
 | File | What it holds |
@@ -50,7 +77,7 @@ This is the durable contract for this repo. Any agent reading this file is expec
 | [compiler-bugs.md](compiler-bugs.md) | Live bug log — **NO OPEN BUGS** (suite **307/307**, bindgen 103/103, jstyper 73/73). **Pre-publish hardening (2026-06-12):** terminal emit "give-up" fallbacks now record a diagnostic (abort) instead of silently emitting `0`/`""` (guarded probes use `quietEmit`); this surfaced + FIXED a real latent bug — brace-less AND single-line-braced `else`/`else if` after a single-line `if` were silently DROPPED (`emitBlock`; regression `15_ElseChainForms`); plus `instanceof <built-in>` (Error family→1) and dead-code removal (`allocStringNoLog`, orphaned `runner.ts`/`args.ts`/`checkIsLibrary` + their `deno.json` exports). **console.log comparison fixes (2026-06-12):** `findTopLevelOp` paren-tail bug (RHS ending in `)` hid the operator → silent-wrong); string ===/!== fn/field/slice/method operands (compared vs `""`); string `!==` inversion; string `.length` as an operand; member/element-target chained assignment (`p.x = z = 5`); regression `27_ConsoleLogStringCompare`. Pre-bump audit + remaining-items pass (2026-06-08/09) fixed: greedy method/`new` in binary ops (`a.m()+b.m()`, `new A()+new B()`), console.log array-element + i32-global arithmetic, chained `new X().method()`, runtime `n.toString(radix)`, module-level multi-statement lines, string-method-on-array-elem assignment, and the **wasmmerge `relocateDataPtrs`** arithmetic-constant over-relocation (now skips pure-arith-op operands; regression `18i`). **The 14 output-mismatch bugs the 2026-06-07 runner-hardening surfaced are ALL FIXED 2026-06-08**, plus a follow-up hazard audit fixed 4 latent issues (brace-less for…of, console.error bool formatting, class `ptr<0` sentinel, extended greedy-regex guards). (console.log `arr[i].method()`/string-methods/string-literal-concat; for-of static `+8`; struct-field `++`/`+=`; nested-string-struct-field + struct-redecl scope; heap-struct `ptr<0` base; module mutable string globals; closure/funcref string returns; `instanceof Error` catch-ternary; **binaryen `-Oz` skips exception modules** (CoalesceLocals miscompiles catch-var locals) + terminal-`block` fallthru `(unreachable)`; 27_string-formatting char-subscript/self-ref-concat/single-line-while/split-on-template/padStart-in-templates/toString-radix). Earlier: Phase 51 `instanceof` + 3 class gaps + `call_indirect`/`memory.grow` merge guards + reactor `_initialize` fix; 7 long-standing failures fixed 2026-06-02 |
 | [design-decisions.md](design-decisions.md) | Load-bearing invariants and codegen rules that must not be silently reverted — incl. **Go producer CLI/build invariants** (2026-06-07: `wasic --lang=go` removed; `modc`=WASI reactor library default, browser via `--go-target=wasm`; `run`=wasip1 command + Go auto-detect; `init`=library scaffold; reactor `_initialize` call; `call_indirect`+`memory.grow` merge guards) |
 | [testing.md](testing.md) | How to run the suites, the test populations, current pass counts, the CI / pre-publish gate (`deno publish` + fmt/lint/tests), naming conventions |
-| [roadmap.md](roadmap.md) | Phase status + **prioritized execution order (set 2026-06-03)**: **Phase 51 language hardening COMPLETE** (instanceof + object spread + param/nested destructuring + utility types) — unblocks the #5 async + own-runtime tracks; **Phase 52 leaf conveniences COMPLETE 2026-06-11** (void / chained assignment / `in` / Array.from-of-isArray / String.fromCodePoint); Phase 53 standalone built-ins still open (Number.parseInt/parseFloat, >2-deep interface inheritance); ecosystem loader is orthogonal. Links to the two long-form docs below |
+| [roadmap.md](roadmap.md) | **Release status (2026-06-12): v1.7.0 bumped + committed + pushed to GitHub `main` (`d602a072d`, `96e9d7f30`) but JSR publish HELD by owner — `v1.7.0` tag not pushed; release via `deno task publish`.** Phase status + **prioritized execution order (set 2026-06-03)**: **Phase 51 language hardening COMPLETE**; **Phase 52 leaf conveniences COMPLETE 2026-06-11** (void / chained assignment / `in` / Array.from-of-isArray / String.fromCodePoint); Phase 53 standalone built-ins still open (Number.parseInt/parseFloat, >2-deep interface inheritance); ecosystem loader is orthogonal. Links to the two long-form docs below |
 | [vision.md](vision.md) | **Full** polyglot ecosystem vision + "TypeScript as a DLL" vision: guiding decisions, layer diagram, language-support matrix, staged roadmap, repo map (moved from root `VISION.md`, 2026-05-31) |
 | [stdlib-bundling-brief.md](stdlib-bundling-brief.md) | **Full** on-demand stdlib bundling design brief (§1–§7d): rationale, allocator unification, the two linking regimes, feature tiering, Javy-independence verdict, work items, per-capability + merge-bug post-mortems (moved from root, 2026-05-31) |
 | [component-model-discussion.md](component-model-discussion.md) | **DRAFT / OPEN (2026-06-06) — circle back.** Polyglot monorepo component model + language-selection CLI: tentative decisions (producer set = TS/Go/Rust/Zig; explicit `--lang` on init/modc/wasic; auto-detect `run`); the central finding (**cross-language inclusion = `instance`/WIT/bindgen only, never `merge`**); draft `wasmtk.json` schema + validity matrix + build-graph/host-wiring; open decisions. Not implemented |
