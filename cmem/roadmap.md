@@ -16,7 +16,7 @@ score is back to 100%** (`total: 18`). The two gaps that had dropped it to 94 ar
   explicit type. `deno doc --lint` is now clean across all 15 entrypoints — keep it clean on future
   edits to hold the score.
 
-Suite **309/309** (307 at 1.7.0 + 2 Phase-53 tests), bindgen 103/103, jstyper 73/73. **1.7.0 is fully released; nothing outward-facing
+Suite **309/309** (307 at 1.7.0 + 2 Phase-53 tests), bindgen 104/104, jstyper 73/73. **1.7.0 is fully released; nothing outward-facing
 is pending.** Release mechanism unchanged: `deno task publish` (sync-version → commit → tag `vX.Y.Z` →
 push → `publish.yml` Action runs `deno publish` with provenance).
 
@@ -43,7 +43,7 @@ detail lives in `README.md` ("Completed Phases") and the legacy `CLAUDE.md`. Sum
 
 | Stage | Scope | Status |
 | --- | --- | --- |
-| 0 | Canonical ABI **alignment, partial** — `cabi_realloc` export + out-param string returns. NOTE: the realloc/param side is canonical-adjacent; the **return side is NOT yet canonical** (caller-allocated out-param, no `cabi_post_return`). Full forward-alignment is a pending decision — see [polyglot-producers.md](polyglot-producers.md) | ✅ 2026-05-19 (partial) |
+| 0 | Canonical ABI **calling-convention alignment** — `cabi_realloc` export, (ptr,len) string params, and (2026-06-15) **canonical callee-allocated string returns + `cabi_post_<name>`**. Only the container is deferred (P1 core + sidecar WIT, not an embedded component). See [polyglot-producers.md](polyglot-producers.md) / [architecture.md](architecture.md) | ✅ 2026-05-19; return-side forward-aligned 2026-06-15 |
 | 0.5 | Dual JSR `/compat` backend migration (wabt-ts + binaryen-ts) | ✅ |
 | 0.6 | Allocator unification in wasmmerge (shared heap across merged libs) | ✅ 2026-05-30 |
 | 0.7 | Tier-1 stdlib capability libs (Set/Map/Date/JSON/RegExp) | ✅ 2026-05-30/31 — see capabilities.md |
@@ -240,8 +240,9 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     kernel (`eval`/`new Function`, pervasive `any`, open-prototype mutation). **Gated behind Phase
     51.** Largest single track; `javyc` (QuickJS) is the interim fallback until it lands.
 
-**Gating summary:** 51 → (13, 14). 12 is parallel/ungated. 52 + 53 COMPLETE. The remaining work is
-#12 loader (separate `universalWasmLoader` repo), #13 async, #14 own runtime, and ABI forward-alignment.
+**Gating summary:** 51 → (13, 14). 12 is parallel/ungated. 52 + 53 COMPLETE; ABI forward-alignment
+(return side) COMPLETE 2026-06-15. The remaining work is #12 loader (separate `universalWasmLoader`
+repo), #13 async, #14 own runtime, and the deferred P2 container (embed component type — a wrap).
 
 ## Congruent polyglot-producer goal + ABI posture (added 2026-06-03 — full detail in [polyglot-producers.md](polyglot-producers.md))
 
@@ -252,7 +253,7 @@ host). Adding a language = adding a producer, not a toolchain.
 
 | Track | Scope | Status / gating |
 | --- | --- | --- |
-| **ABI forward-alignment (stay P1)** | Canonicalize the **in-memory boundary layout** + the **return convention** now (callee-allocated i32-ptr return + `cabi_post_<name>`; route all boundary allocs through `cabi_realloc`); keep P1 WASI imports behind a thin seam. Both P1-legal; makes future P2 a wrap, not a rewrite. | ⬜ **decided 2026-06-03**, not yet implemented. Independent of Phase 51; small near-term track. |
+| **ABI forward-alignment (stay P1)** | Canonicalize the **in-memory boundary layout** + the **return convention** now (callee-allocated i32-ptr return + `cabi_post_<name>`; route all boundary allocs through `cabi_realloc`); keep P1 WASI imports behind a thin seam. Both P1-legal; makes future P2 a wrap, not a rewrite. | ✅ **return-side IMPLEMENTED 2026-06-15** (wasic `$fn__cabi` shim now returns the i32 ptr + emits `cabi_post_<name>`; bindgen host reads-then-posts; bindgen 104/104, `strings_50` end-to-end). In-memory layout already canonical for shipped types. Only the P2 container remains deferred. |
 | **Go producer (TinyGo)** | `tinygo build` → wasm → shared optimize/host path. Library-first; stdlib `go` heavier fallback. | ✅ **v1 SHIPPED 2026-06-06, refined 2026-06-07** via `--lang=go` (path defaults to cwd): `init` (scaffold a **wasm library** by default; `--go-target=wasm` for a browser project), `modc` (**WASI reactor library** by default — `-buildmode=c-shared`: no `_start`, exports `//go:wasmexport` funcs, callable via `wasmtk mod`/bindgen; `--go-target=wasm` for a browser module + `wasm_exec.js`), `run` (build wasip1 command + run; **auto-detects** a `.go` file or a dir with `go.mod`, no flag needed). `--go-runtime=tinygo`(default)/`std`. `src/gowasic.ts`. **wasm-opt:** real `wasm-opt` → TinyGo full (incl. goroutines); else passthrough shim + `-scheduler=none` + **binaryen-ts `-Oz`** (no external binaryen; goroutine-free). **2026-06-07 changes:** `wasic --lang=go` REMOVED; `modc --lang=go` flipped browser→reactor-library (the formerly-deferred reactor/library item, now DONE — Go analog of TS `modc`); required a `_initialize` fix in `wasmtk mod`/`run` (reactor exports trap otherwise) + a `syscall/js`-in-library-build hint. Verified `modc --lang=go` lib → `wasmtk mod lib.wasm add 2 3` → 5. **Still deferred:** Go string/aggregate **bindgen** host marshalling (needs ABI forward-alignment — Go's layout ≠ Canonical ABI); a *mergeable* Go leaf (alloc-free `wasm-unknown`) is feasible but not auto-wired. Fixture: `tests/go_fixtures/hello.go` (not auto-run — needs TinyGo). |
 | **asyncify pass in binaryen-ts** | Port binaryen's `--asyncify` pass into `@jrmarcum/binaryen-ts` so wasmtk can be TinyGo's `wasm-opt` for **goroutine** code too (no external binaryen at all). Today binaryen-ts has `-Oz` but NOT asyncify, so goroutine Go needs a real `wasm-opt` installed. | ⬜ **future (large)** — asyncify is one of binaryen's most complex whole-program passes (~1.5k LOC) with an exact ABI contract TinyGo depends on; do it properly upstream in binaryen-ts, not rushed. Unblocks goroutine Go on the binaryen-ts path. |
 | **Zig producer** | `zig build-exe` (cleanest native path) | ✅ **SHIPPED 2026-06-07** (`src/zigwasic.ts`, `--lang=zig`): `init` (wasm-library scaffold), `modc` (freestanding library, `--export=<name>` scanned + binaryen-ts `-Oz`), `run` (`wasm32-wasi` on wasmtk's TS host; auto-detects `.zig`). Comptime-guarded scaffold `main` (Zig analyzes `main` even with `-fno-entry`). See [polyglot-producers.md](polyglot-producers.md). |
@@ -264,8 +265,9 @@ host). Adding a language = adding a producer, not a toolchain.
 merge-tier rewrite. wasmmerge merges P1 modules; never merge already-built *components* (use `wac`).
 
 **Verified 2026-06-03:** wasmtk itself is NOT a P2 producer — it emits P1 core modules + sidecar
-`.wit` + host-side bindgen ABI ("bucket (b)"). Canonical ABI is partial (`cabi_realloc` exported;
-return side not canonical, no `cabi_post_return`). See [polyglot-producers.md](polyglot-producers.md)
+`.wit` + host-side bindgen ABI ("bucket (b)"). Canonical ABI calling convention is now aligned on
+both param and return sides (`cabi_realloc` + callee-allocated returns + `cabi_post_<name>`, 2026-06-15);
+only the P2 container is deferred. See [polyglot-producers.md](polyglot-producers.md)
 for the raw evidence.
 
 ## "TypeScript as a DLL" vision
@@ -309,8 +311,9 @@ emitting `0`/`""` — which surfaced + FIXED a real latent bug (brace-less / sin
 chains after a single-line `if` were dropped; regression `15_ElseChainForms`), plus `instanceof
 <built-in>` and dead-code/orphaned-module removal, then a console.log comparison fix pass
 (findTopLevelOp paren-tail bug + string ===/!== operands + member-target chained assignment).
-Suite **309/309**, bindgen 103/103,
+Suite **309/309**, bindgen 104/104,
 jstyper 73/73. **Phase 53 COMPLETE 2026-06-15** (`Number.parseInt`/`parseFloat` + bare forms;
-multi-level interface inheritance, declaration-order independent). Remaining: the big tracks
-(#12 loader, #13 async, #14 own runtime) + ABI forward-alignment.
+multi-level interface inheritance, declaration-order independent). **ABI forward-alignment
+(return side) COMPLETE 2026-06-15.** Remaining: the big tracks (#12 loader, #13 async, #14 own
+runtime) + the deferred P2 container.
 Full analysis in CLAUDE.md § "TypeScript Feature Gap Analysis".

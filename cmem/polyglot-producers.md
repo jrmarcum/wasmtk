@@ -105,12 +105,14 @@ from `wasic`), using `jco`/`wasm-tools` + byte parsing. wasmtk emits **WASI Prev
     are the byte header (layer word) + top form.
 - **WIT:** sidecar file only; **not embedded**. No component-type custom section (`jco wit` yields an
   empty `world root {}`). The interface lives in the `.wit` consumed only by our TS bindgen.
-- **Canonical ABI:** partial. `cabi_realloc` IS exported (the canonical allocator primitive), but the
-  **lift/return side is not canonical**: exports are raw core (e.g. `strLen` is `(i32 i32)->i32`, not
-  `func(string)->s32`); string returns use wasic's caller-allocated out-param convention (e.g.
-  `greet(name_ptr,name_len,ret_area)` returns nothing); there is **no `cabi_post_return`**. All
-  string/list/record/variant marshalling happens **host-side** in the generated `bindings.ts` at
-  call time.
+- **Canonical ABI:** calling-convention aligned (param + return), container deferred. `cabi_realloc`
+  is exported (the canonical allocator primitive); string PARAMS flatten to (ptr, len); and as of
+  **2026-06-15** string RETURNS use the canonical **callee-allocated i32-ptr + `cabi_post_<name>`**
+  convention (`greet(name_ptr,name_len) -> i32` returns a pointer to an `[ptr,len]` pair, paired with
+  `cabi_post_greet`). What stays non-canonical is the **container**: exports are still raw core in a
+  P1 module (e.g. `strLen` is `(i32 i32)->i32`, not a lifted `func(string)->s32`) with a sidecar `.wit`,
+  and string/list/record/variant marshalling still happens **host-side** in the generated `bindings.ts`
+  at call time. The P1→P2 step (embed component type + `wasm-tools component new`) is now a wrap.
 - **WASI:** Preview 1 (`wasi_snapshot_preview1`: `proc_exit`, `fd_write`). `modc` library output has
   no imports. Not `wasi:cli/*` / `wasi:io/*` 0.2 worlds.
 
@@ -122,6 +124,13 @@ adjacent, the lift/return side is not. (Tightening applied 2026-06-03 in archite
 Stage 0 line + README; see those files.)
 
 ## DECISION: forward-align the current ABI to the Canonical ABI while staying P1 (2026-06-03)
+
+> **STATUS — return-side IMPLEMENTED 2026-06-15.** Layer 2's RETURN change below is done: exported
+> string-returning functions now use the canonical **callee-allocated i32-ptr return + `cabi_post_<name>`**
+> convention (wasic `$fn__cabi` shim + `bindgen` host read-then-post). Validated end-to-end by the
+> `strings_50` bindgen integration test; suite bindgen 104/104. Layer 1 (in-memory representation) is
+> already canonical for the shipped types (string/bool/numeric); only the **container** (P1 core +
+> sidecar WIT vs. embedded component) remains deferred — now a wrap, not a rewrite.
 
 P2 is a future endeavor; current output stays P1 core modules. But shape the ABI *now* so the future
 P2 step is a wrap, not a rewrite. Separate three layers — align the first two now (both P1-legal,

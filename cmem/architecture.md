@@ -99,22 +99,24 @@ For servers doing many string-param calls, the planned mitigation is an instance
 (`createPool`) in the universalWasmLoader, cycling fresh instances. `cabi_post_return` (full
 Component Model) would remove the need but is deferred.
 
-## Canonical ABI (Stage 0 — partial alignment)
+## Canonical ABI (Stage 0 + return-side forward-alignment, 2026-06-15)
 
-**Accuracy note (2026-06-03):** this is *partial* alignment, NOT full Canonical ABI compliance. The
-realloc/param side is canonical-adjacent; the **return side is NOT canonical** (caller-allocated
-out-param, no `cabi_post_return`), and the artifact is a P1 **core module** with a **sidecar** `.wit`
-(not embedded) — boundary marshalling is done **host-side** in bindgen, not by the binary. Do not
-describe this as "aligned with the Component Model Canonical ABI" without that qualifier. Full
-forward-alignment (canonicalize the memory image + switch to callee-allocated i32-ptr returns +
-`cabi_post_*`, while staying P1) is **decided but not yet implemented** — see
-[polyglot-producers.md](polyglot-producers.md).
+**Accuracy note (updated 2026-06-15):** the realloc/param side AND the **return side** are now
+canonical-aligned; what remains non-canonical is only the **container** — the artifact is a P1
+**core module** with a **sidecar** `.wit` (not an embedded component-type section), and boundary
+marshalling is still done **host-side** in bindgen rather than by the binary. So: "aligned with the
+Component Model Canonical ABI calling convention, shipped as a P1 core module + sidecar WIT" is the
+accurate phrasing. The remaining P1→P2 step (embed the component type + `wasm-tools component new`)
+is now a **wrap, not a rewrite** — see [polyglot-producers.md](polyglot-producers.md).
 
 - Exports `cabi_realloc(ptr,old,align,new)` (a `select`-based wrapper over `$__malloc`) instead
   of `__malloc`, when any export has a string param/return.
-- String returns currently use a **non-canonical** out-parameter: a `$fn__cabi` shim (exported as
-  `"fn"`) calls the internal void `$fn` (which sets `$__str_ret_ptr`/`$__str_ret_len` globals) and
-  writes ptr+len into a **caller-provided** 8-byte return area. The globals are **not** exported.
-  (Canonical form would be callee-allocated, callee-returns-pointer, + `cabi_post_<name>`.)
+- **String returns use the canonical callee-allocated convention (2026-06-15).** A `$fn__cabi`
+  shim (exported as `"fn"`, signature `(...params) -> i32`) allocates an 8-byte `[ptr, len]` return
+  area via `cabi_realloc`, calls the internal void `$fn` (which sets `$__str_ret_ptr`/`$__str_ret_len`
+  globals), writes ptr+len into that area, and **returns the area pointer**. A paired
+  `cabi_post_<fn>` export (empty body — the bump allocator has no free, but the export must exist
+  for the contract) lets the host release the buffer. The `$__str_ret_*` globals stay internal.
 - bindgen host: numerics direct; bool `x?1:0` / `r!==0`; string params `TextEncoder`+`cabi_realloc`;
-  string returns `cabi_realloc(0,0,4,8)` area + `DataView.getInt32` at 0/4.
+  string returns call the export → read `[ptr,len]` at the returned pointer via `DataView.getInt32`
+  at 0/4 → decode → call `cabi_post_<fn>(retPtr)`. (The host no longer allocates the return area.)
