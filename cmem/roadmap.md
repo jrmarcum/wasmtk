@@ -232,17 +232,25 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
 
 ### Big tracks (the "last items")
 
-12. **Ecosystem Stage 1 — `universalWasmLoader`** (+ `SPEC.md` + `InstancePool`) — **orthogonal /
-    ungated**; can run in parallel anytime (consumes ABI/WIT, not TS syntax).
+12. **Ecosystem Stage 1 — `universalWasmLoader`** (+ `SPEC.md` + `InstancePool`) — **JS/TS reference
+    loader DONE + ABI-aligned 2026-06-15.** Repo: `D:\Programs\_ProgramExamples\Example_Programs\GithubProjects\universalWasmLoader\universalWasmLoader-js`
+    (separate git repo, on `main`). `wasmImport` (WIT auto-detect + `@N` version pinning),
+    `createSingleton`, and `InstancePool` (acquire/release/run) are implemented; `SPEC.md` is at
+    **3.0.0**. Aligned to wasmtk's canonical callee-allocated string returns + `cabi_post_<name>`
+    (commit `8b4ffa3`; `tests/strings_50.wasm` regenerated; reference suite **24/24**). **Remaining
+    (Stage 2):** the other-language ports (`-rs`/`-py`/`-go`/`-jvm`/`-c`/`-dotnet`, sibling dirs)
+    must be re-aligned to **SPEC 3.0.0** (they predate the return-convention change). Orthogonal /
+    ungated — consumes ABI/WIT, not TS syntax.
 13. **#5 Promise/async** — state-machine lowering + microtask runtime; lift `hybrid` async exclusion.
     **Gated behind Phase 51.**
 14. **Own dynamic runtime** (§7-#7) — boxed values + property map + interpreter for the irreducible
     kernel (`eval`/`new Function`, pervasive `any`, open-prototype mutation). **Gated behind Phase
     51.** Largest single track; `javyc` (QuickJS) is the interim fallback until it lands.
 
-**Gating summary:** 51 → (13, 14). 12 is parallel/ungated. 52 + 53 COMPLETE; ABI forward-alignment
-(return side) COMPLETE 2026-06-15. The remaining work is #12 loader (separate `universalWasmLoader`
-repo), #13 async, #14 own runtime, and the deferred P2 container (embed component type — a wrap).
+**Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
+2026-06-15; **#12 Stage-1 JS reference loader DONE + ABI-aligned 2026-06-15**. The remaining work is
+#12 Stage-2 (other-language loader ports → SPEC 3.0.0), #13 async, #14 own runtime, and the deferred
+P2 container (embed component type — a wrap).
 
 ## Congruent polyglot-producer goal + ABI posture (added 2026-06-03 — full detail in [polyglot-producers.md](polyglot-producers.md))
 
@@ -314,6 +322,7 @@ chains after a single-line `if` were dropped; regression `15_ElseChainForms`), p
 Suite **309/309**, bindgen 104/104,
 jstyper 73/73. **Phase 53 COMPLETE 2026-06-15** (`Number.parseInt`/`parseFloat` + bare forms;
 multi-level interface inheritance, declaration-order independent). **ABI forward-alignment
-(return side) COMPLETE 2026-06-15.** Remaining: the big tracks (#12 loader, #13 async, #14 own
-runtime) + the deferred P2 container.
+(return side) COMPLETE 2026-06-15.** **#12 Stage-1 JS reference loader DONE + ABI-aligned 2026-06-15.**
+Remaining: #12 Stage-2 (other-language loader ports → SPEC 3.0.0), #13 async, #14 own runtime, the
+deferred P2 container.
 Full analysis in CLAUDE.md § "TypeScript Feature Gap Analysis".
