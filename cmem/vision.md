@@ -185,6 +185,7 @@ with the same "update the project memory" / "look for code issues" triggers as w
 | `universalWasmLoader-go`     | Go                  | wazero             | pkg.go.dev       |
 | `universalWasmLoader-jvm`    | Java / Kotlin       | Chicory            | Maven Central    |
 | `universalWasmLoader-dotnet` | C# / .NET           | wasmtime-dotnet*   | NuGet            |
+| `universalWasmLoader-dart`   | Dart                | OPEN (web/ffi)     | pub.dev          |
 | `universalWasmLoader-c`      | C (Zig/V/Julia)     | wasmtime C API     | header-only      |
 
 Julia uses this loader via Julia's `ccall` FFI to the wasmtime C API — no separate
@@ -205,16 +206,17 @@ tag `vX.Y.Z` → GitHub Action `deno publish` with provenance).
 | `-go` | pkg.go.dev | **git tag `vX.Y.Z`** (no version file) | `git tag vX.Y.Z` + push → proxy auto-indexes |
 | `-jvm` | Maven Central | `build.gradle(.kts)` `version` (or `pom.xml`) | Gradle/Maven publish (signed) |
 | `-dotnet` | NuGet | `.csproj` `<Version>` | `dotnet pack` + `dotnet nuget push` |
+| `-dart` | pub.dev | `pubspec.yaml` `version` | `dart pub publish` |
 | `-c` | **OPEN** (header-only) | **OPEN** — proposed: git tag + a `#define UWL_VERSION` in the header | OPEN |
 | Zig | **OPEN** | proposed: `build.zig.zon` `.version` (fetched by URL+hash; no central registry yet) | OPEN |
-| Dart (future) | pub.dev | `pubspec.yaml` `version` | `dart pub publish` |
 
 `*` `-dotnet` runtime is unconfirmed (no `.csproj` yet — stub). **Maturity (2026-06-15):** `-js` is the
 reference (done + ABI-aligned); `-rs` / `-py` / `-jvm` are real implementations that still need
-**SPEC 3.0.0** return-ABI alignment (see each repo's `cmem/overview.md`); `-go` / `-c` / `-dotnet` are
-stubs (no source) → build fresh against SPEC 3.0.0. **OPEN questions:** where C and Zig publish
-(no obvious central registry — likely git-tag + URL/hash fetch); a Dart port (`-dart`) is a possible
-future addition → pub.dev.
+**SPEC 3.0.0** return-ABI alignment (see each repo's `cmem/overview.md`); `-go` / `-dotnet` / `-dart`
+are stubs (no source) → build fresh against SPEC 3.0.0. `-dart` (created 2026-06-15) has an OPEN
+WASM-runtime decision (web via `dart:js_interop` over browser `WebAssembly`, or native via `dart:ffi`
+to a C runtime). **OPEN questions:** where C and Zig publish (no obvious central registry — likely
+git-tag + URL/hash fetch).
 
 Every loader exposes the same conceptual API in its language's idiom:
 
