@@ -3617,104 +3617,47 @@ class WasicTranspiler {
    * Computes field offsets with natural alignment and populates `structDefs`.
    */
   private parseStructs(): void {
-    const patterns = [
-      // Phase 30: capture optional `extends BaseType` between name and `{`
-      /(?:export\s+)?interface\s+(\w+)(?:\s+extends\s+(\w+))?\s*\{([^}]*)\}/g,
-      /(?:export\s+)?type\s+(\w+)\s*=\s*\{([^}]*)\}/g,
-    ];
-    for (const reIdx of [0, 1]) {
-      const re = patterns[reIdx];
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(this.src)) !== null) {
-        const name = m[1];
-        // Phase 32: skip discriminated union types already registered by parseDiscriminatedUnions()
-        if (this.structDefs.has(name)) continue;
-        // Phase 30: for interface pattern (reIdx===0), m[2]=extendsBase, m[3]=body;
-        //           for type pattern (reIdx===1), m[2]=body, no extends.
-        const extendsBase = reIdx === 0 ? (m[2] ?? null) : null;
-        const body = reIdx === 0 ? m[3] : m[2];
-        const fields: StructField[] = [];
-        let offset = 0;
-        // Match optional "readonly" prefix, then "fieldName: typeName;" or "fieldName?: typeName;"
-        // Detect method-type fields: name: (params) => ReturnType
-        const methodFieldRe = /(\w+)\??:\s*\(([^)]*)\)\s*=>\s*([\w\[\]|]+)/g;
-        const methodFieldNames = new Set<string>();
-        // Phase 30: prepend inherited fields from `extends BaseType`
-        if (extendsBase) {
-          const baseDef = this.structDefs.get(extendsBase);
-          if (baseDef) {
-            for (const bf of baseDef.fields) {
-              fields.push({ ...bf }); // copy with original offsets
-            }
-            offset = baseDef.totalSize;
-          }
-        }
-
-        let mf: RegExpExecArray | null;
-        while ((mf = methodFieldRe.exec(body)) !== null) {
-          const fieldName = mf[1];
-          const rawParams = mf[2];
-          const rawResult = mf[3].trim();
-          methodFieldNames.add(fieldName);
-          // Parse method param types
-          const methodParams: WatType[] = rawParams.trim()
-            ? rawParams.split(",").map((p) => {
-              const ci = p.indexOf(":");
-              return ci !== -1 ? mapType(p.slice(ci + 1).trim()) as WatType : "i32" as WatType;
-            })
-            : [];
-          const methodResult: WatType | null = rawResult === "void"
-            ? null
-            : mapType(rawResult) as WatType;
-          if (offset % 4 !== 0) offset = Math.ceil(offset / 4) * 4;
-          fields.push({
-            name: fieldName,
-            type: "i32",
-            offset,
-            size: 4,
-            funcType: { params: methodParams, result: methodResult },
-          });
-          offset += 4;
-        }
-        // Detect plain data fields (skip method fields already handled)
-        const fieldRe = /(?:(readonly)\s+)?(\w+)\??:\s*([\w\[\]]+)/g;
-        let fm: RegExpExecArray | null;
-        while ((fm = fieldRe.exec(body)) !== null) {
-          const isReadonly = fm[1] === "readonly";
-          const fieldName = fm[2];
-          if (methodFieldNames.has(fieldName)) continue; // already handled as method field
-          // Skip fields already inherited from extends
-          if (fields.some((f) => f.name === fieldName)) continue;
-          const originalTypeName = fm[3].trim();
-          const type = mapType(originalTypeName);
-          // string fields store ptr+len pair (8 bytes); f64/i64 need 8 bytes; all else 4.
-          const size = (type === "f64" || type === "i64" || type === "string") ? 8 : 4;
-          // Natural alignment: round offset up to a multiple of size
-          if (offset % size !== 0) offset = Math.ceil(offset / size) * size;
-          const fieldEntry: StructField = {
-            name: fieldName,
-            type,
-            offset,
-            size,
-            ...(isReadonly ? { readonly: true } : {}),
-          };
-          // Phase 42: track struct pointer fields (PascalCase → i32 pointer to another struct)
-          if (
-            type === "i32" && /^[A-Z]/.test(originalTypeName) &&
-            !originalTypeName.endsWith("[]") &&
-            !originalTypeName.startsWith("[") &&
-            !["Number", "Boolean", "String", "BigInt"].includes(originalTypeName)
-          ) {
-            fieldEntry.structType = originalTypeName;
-          }
-          fields.push(fieldEntry);
-          offset += size;
-        }
-        if (fields.length > 0) {
-          this.structDefs.set(name, { name, fields, totalSize: offset });
+    // Phase 30/53: interfaces (with optional `extends`) and object-type aliases. Collect every
+    // declaration first, then build in dependency order so a multi-level `extends` chain resolves
+    // regardless of source order — a derived interface may be declared before its base. (The old
+    // single source-order pass silently dropped inherited fields on a forward `extends` reference.)
+    type RawStructDecl = { name: string; extendsBase: string | null; body: string };
+    const decls: RawStructDecl[] = [];
+    const ifaceRe = /(?:export\s+)?interface\s+(\w+)(?:\s+extends\s+(\w+))?\s*\{([^}]*)\}/g;
+    let im: RegExpExecArray | null;
+    while ((im = ifaceRe.exec(this.src)) !== null) {
+      decls.push({ name: im[1], extendsBase: im[2] ?? null, body: im[3] });
+    }
+    const typeObjRe = /(?:export\s+)?type\s+(\w+)\s*=\s*\{([^}]*)\}/g;
+    let tm: RegExpExecArray | null;
+    while ((tm = typeObjRe.exec(this.src)) !== null) {
+      decls.push({ name: tm[1], extendsBase: null, body: tm[2] });
+    }
+    // Phase 32: skip names already registered as discriminated unions.
+    const pending = decls.filter((d) => !this.structDefs.has(d.name));
+    const declNames = new Set(decls.map((d) => d.name));
+    // A decl is ready when it has no base, its base is already built, or its base is external
+    // (not one of our decls → no inheritance to wait for). Iterate to a fixpoint; non-extends
+    // decls build immediately in source order (interfaces then type aliases), matching the prior
+    // behavior, while a derived interface waits until its base is registered.
+    let progress = true;
+    while (pending.length > 0 && progress) {
+      progress = false;
+      for (let k = 0; k < pending.length;) {
+        const d = pending[k];
+        const baseReady = d.extendsBase === null ||
+          this.structDefs.has(d.extendsBase) || !declNames.has(d.extendsBase);
+        if (baseReady) {
+          this.buildStructDef(d.name, d.extendsBase, d.body);
+          pending.splice(k, 1);
+          progress = true;
+        } else {
+          k++;
         }
       }
     }
+    // Leftovers (e.g. cyclic extends) — build without the unresolved base rather than dropping them.
+    for (const d of pending) this.buildStructDef(d.name, d.extendsBase, d.body);
     // Phase 23: tuple type aliases — type Pair = [i32, f64]
     const tupleAliasRe = /(?:export\s+)?type\s+(\w+)\s*=\s*\[([^\]]+)\]/g;
     let ta: RegExpExecArray | null;
@@ -3723,6 +3666,95 @@ class WasicTranspiler {
       if (this.structDefs.has(name)) continue; // already parsed as object-type alias
       const def = this.makeTupleStructDef(name, ta[2]);
       if (def.fields.length > 0) this.structDefs.set(name, def);
+    }
+  }
+
+  /**
+   * Builds and registers one struct/interface StructDef from its name, optional `extends` base,
+   * and field body. Inherited fields (and the base's `totalSize` as the starting offset) are
+   * prepended when the base is already registered — so, called in dependency order, this yields
+   * correct multi-level inheritance layouts. No-op if `name` is already registered.
+   */
+  private buildStructDef(name: string, extendsBase: string | null, body: string): void {
+    if (this.structDefs.has(name)) return;
+    const fields: StructField[] = [];
+    let offset = 0;
+    // Detect method-type fields: name: (params) => ReturnType
+    const methodFieldRe = /(\w+)\??:\s*\(([^)]*)\)\s*=>\s*([\w\[\]|]+)/g;
+    const methodFieldNames = new Set<string>();
+    // Phase 30: prepend inherited fields from `extends BaseType`
+    if (extendsBase) {
+      const baseDef = this.structDefs.get(extendsBase);
+      if (baseDef) {
+        for (const bf of baseDef.fields) {
+          fields.push({ ...bf }); // copy with original offsets
+        }
+        offset = baseDef.totalSize;
+      }
+    }
+
+    let mf: RegExpExecArray | null;
+    while ((mf = methodFieldRe.exec(body)) !== null) {
+      const fieldName = mf[1];
+      const rawParams = mf[2];
+      const rawResult = mf[3].trim();
+      methodFieldNames.add(fieldName);
+      // Parse method param types
+      const methodParams: WatType[] = rawParams.trim()
+        ? rawParams.split(",").map((p) => {
+          const ci = p.indexOf(":");
+          return ci !== -1 ? mapType(p.slice(ci + 1).trim()) as WatType : "i32" as WatType;
+        })
+        : [];
+      const methodResult: WatType | null = rawResult === "void"
+        ? null
+        : mapType(rawResult) as WatType;
+      if (offset % 4 !== 0) offset = Math.ceil(offset / 4) * 4;
+      fields.push({
+        name: fieldName,
+        type: "i32",
+        offset,
+        size: 4,
+        funcType: { params: methodParams, result: methodResult },
+      });
+      offset += 4;
+    }
+    // Detect plain data fields (skip method fields already handled)
+    const fieldRe = /(?:(readonly)\s+)?(\w+)\??:\s*([\w\[\]]+)/g;
+    let fm: RegExpExecArray | null;
+    while ((fm = fieldRe.exec(body)) !== null) {
+      const isReadonly = fm[1] === "readonly";
+      const fieldName = fm[2];
+      if (methodFieldNames.has(fieldName)) continue; // already handled as method field
+      // Skip fields already inherited from extends
+      if (fields.some((f) => f.name === fieldName)) continue;
+      const originalTypeName = fm[3].trim();
+      const type = mapType(originalTypeName);
+      // string fields store ptr+len pair (8 bytes); f64/i64 need 8 bytes; all else 4.
+      const size = (type === "f64" || type === "i64" || type === "string") ? 8 : 4;
+      // Natural alignment: round offset up to a multiple of size
+      if (offset % size !== 0) offset = Math.ceil(offset / size) * size;
+      const fieldEntry: StructField = {
+        name: fieldName,
+        type,
+        offset,
+        size,
+        ...(isReadonly ? { readonly: true } : {}),
+      };
+      // Phase 42: track struct pointer fields (PascalCase → i32 pointer to another struct)
+      if (
+        type === "i32" && /^[A-Z]/.test(originalTypeName) &&
+        !originalTypeName.endsWith("[]") &&
+        !originalTypeName.startsWith("[") &&
+        !["Number", "Boolean", "String", "BigInt"].includes(originalTypeName)
+      ) {
+        fieldEntry.structType = originalTypeName;
+      }
+      fields.push(fieldEntry);
+      offset += size;
+    }
+    if (fields.length > 0) {
+      this.structDefs.set(name, { name, fields, totalSize: offset });
     }
   }
 
