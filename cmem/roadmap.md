@@ -242,8 +242,10 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     24/24), `-dart` (**new, web-first** via `dart:js_interop`; `dart test -p chrome` 7/7). Each of
     `-rs`/`-py`/`-jvm`/`-dart` has **`run:`-only publish CI + a bump mechanism** (pending owner
     registry secrets — see vision.md matrix). **Remaining:** stubs `-go`/`-dotnet`/`-c` (build fresh
-    against 3.0.0; C→vcpkg, Zig→zigistry) + the SPEC §10 optional loader capabilities
-    (`_initialize` call + WASI-P1 browser shim, not yet implemented in any port). Orthogonal / ungated.
+    against 3.0.0; C→vcpkg, Zig→zigistry). **SPEC §10 loader capabilities (`_initialize` call +
+    minimal WASI-P1 shim) IMPLEMENTED in `-js` 2026-06-15** (suite 24→26; lets I/O-using `modc`
+    libraries load in a host with no native WASI) — propagation to `-rs`/`-py`/`-jvm`/`-dart` pending.
+    Orthogonal / ungated.
     **CI note:** these repos' org allows only `jrmarcum`-owned Actions → publish workflows MUST be
     `run:`-only (third-party `uses:` → `startup_failure`).
 13. **#5 Promise/async** — state-machine lowering + microtask runtime; lift `hybrid` async exclusion.
