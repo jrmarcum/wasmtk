@@ -81,7 +81,9 @@ export type WasmWatType = "i32" | "i64" | "f32" | "f64";
 export interface ExternalFuncDef {
   /** Canonical prefixed name, e.g. "math_add" for add exported from math.wasm */
   name: string;
+  /** Ordered WAT types of the function's parameters. */
   params: WasmWatType[];
+  /** WAT type of the function's return value, or null for a void function. */
   result: WasmWatType | null;
 }
 

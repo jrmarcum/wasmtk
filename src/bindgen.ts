@@ -25,28 +25,39 @@ export type WitType = "s32" | "s64" | "f32" | "f64" | "bool" | "string";
 
 /** A single parameter in a WIT function signature with its camelCase TypeScript name and WIT type. */
 export interface WitParam {
-  name: string; // camelCase (already converted from kebab)
+  /** Parameter name in camelCase (already converted from the kebab-case WIT spelling). */
+  name: string;
+  /** WIT type of the parameter. */
   type: WitType;
 }
 
 /** A parsed WIT function declaration with its original kebab-case name, derived camelCase name, params, and optional return type. */
 export interface WitFunc {
-  name: string; // original kebab-case WIT name (used to derive WASM symbol)
-  tsName: string; // camelCase TypeScript name
+  /** Original kebab-case WIT name (used to derive the WASM symbol). */
+  name: string;
+  /** Derived camelCase TypeScript name. */
+  tsName: string;
+  /** Ordered parameter list of the function signature. */
   params: WitParam[];
-  result: WitType | null; // null = void
+  /** Return type, or `null` for a void function. */
+  result: WitType | null;
 }
 
 /** The complete parsed representation of a `.wit` file produced by `wasmtk wasic` or `wasmtk modc`. */
 export interface ParsedWit {
-  packageName: string; // e.g. "local:basic-wit-gen-41"
-  worldName: string; // e.g. "basic-wit-gen-41"
+  /** Package name from the `package` declaration, e.g. `"local:basic-wit-gen-41"`. */
+  packageName: string;
+  /** World name from the `world` declaration, e.g. `"basic-wit-gen-41"`. */
+  worldName: string;
+  /** Functions declared as imports in the world. */
   imports: WitFunc[];
+  /** Functions declared as exports in the world. */
   exports: WitFunc[];
 }
 
 /** Options passed to `generateBindings()` and `runBindgen()`. */
 export interface BindgenOptions {
+  /** Target host runtime that the generated module-loading code is written for. */
   runtime?: "deno" | "node" | "bun";
 }
 

@@ -36,16 +36,23 @@ import { runBindgen } from "./bindgen.ts";
 
 /** A `// @wasm`-annotated function extracted from a hybrid TypeScript source file. */
 export interface WasmFunc {
+  /** The function's declared name. */
   name: string;
-  text: string; // complete function source text, guaranteed to start with "export "
-  lineStart: number; // 0-indexed line of the // @wasm annotation
-  lineEnd: number; // 0-indexed last line of the function body
+  /** Complete function source text, guaranteed to start with `export `. */
+  text: string;
+  /** 0-indexed line of the `// @wasm` annotation (or the function declaration when no directive). */
+  lineStart: number;
+  /** 0-indexed last line of the function body (its matching close brace). */
+  lineEnd: number;
 }
 
 /** Result of `parseHybridFile()`: the extracted WASM functions, remaining TypeScript source, and any warnings. */
 export interface ParseResult {
+  /** The `// @wasm`-annotated (or auto-routed) functions extracted for WASM compilation. */
   wasmFuncs: WasmFunc[];
-  remainingSrc: string; // original source with @wasm functions (and their annotations) removed
+  /** Original source with the extracted functions (and their directive comments) removed. */
+  remainingSrc: string;
+  /** Diagnostic warnings emitted during parsing (e.g. skipped async or non-wasic-typed functions). */
   warnings: string[];
 }
 

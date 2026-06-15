@@ -46,7 +46,7 @@ export const SCRATCH_BASE = 132;
 export const SCRATCH_SLOTS = 4;
 
 /** First byte available for static string data. */
-export const DATA_BASE = SCRATCH_BASE + SCRATCH_SLOTS * 32; // 260
+export const DATA_BASE: number = SCRATCH_BASE + SCRATCH_SLOTS * 32; // 260
 
 // ---------------------------------------------------------------------------
 // Escape-sequence processing
@@ -205,6 +205,11 @@ export type DataAllocator = (text: string) => [offset: number, byteLen: number];
  * cleared afterward. Compilation is synchronous so no concurrency risk.
  */
 let _strArrAlloc: ((elements: string[]) => number) | undefined = undefined;
+/**
+ * Inject the callback that allocates an inline string-array literal into the WASM data section
+ * and returns its base pointer, used when emitting `console.log` of a string array. Pass
+ * `undefined` to clear it.
+ */
 export function setStringArrayAllocator(fn: ((elements: string[]) => number) | undefined): void {
   _strArrAlloc = fn;
 }
@@ -212,6 +217,11 @@ export function setStringArrayAllocator(fn: ((elements: string[]) => number) | u
 let _structLiteralAlloc:
   | ((structName: string, initFields: Record<string, string>) => number)
   | undefined = undefined;
+/**
+ * Inject the callback that allocates an inline struct literal (by struct name + field values) into
+ * the WASM data section and returns its base pointer, used when a struct literal appears as a
+ * `console.log` argument. Pass `undefined` to clear it.
+ */
 export function setStructLiteralAllocator(
   fn: ((structName: string, initFields: Record<string, string>) => number) | undefined,
 ): void {
@@ -220,12 +230,21 @@ export function setStructLiteralAllocator(
 
 /** Called when exprToWat emits a $__str_cmp call so wasic can enable the helper. */
 let _strCmpNeeded: (() => void) | undefined = undefined;
+/**
+ * Inject the callback invoked when this module emits a `$__str_cmp` call, signaling wasic to emit
+ * the string-comparison helper. Pass `undefined` to clear it.
+ */
 export function setStrCmpNeededCallback(fn: (() => void) | undefined): void {
   _strCmpNeeded = fn;
 }
 
 /** Callback to get the function table index for a named function. Set by wasic.ts around parseConsoleLogArgs. */
 let _funcTableLookup: ((name: string) => number | undefined) | undefined = undefined;
+/**
+ * Inject the callback that resolves a named function to its function-table index (returns
+ * `undefined` for unknown names), used when a function reference is passed as a `console.log`
+ * argument. Pass `undefined` to clear it.
+ */
 export function setFuncTableLookup(fn: ((name: string) => number | undefined) | undefined): void {
   _funcTableLookup = fn;
 }
@@ -235,6 +254,11 @@ export function setFuncTableLookup(fn: ((name: string) => number | undefined) | 
 let _instanceofResolver:
   | ((token: string, locals: Map<string, string>) => string | undefined)
   | undefined = undefined;
+/**
+ * Inject the callback that resolves an `x instanceof ClassName` token to a WAT i32 bool expression
+ * via wasic's emitExpr (which owns the class tag / inheritance tables); returns `undefined` when
+ * the token isn't an instanceof check. Pass `undefined` to clear it.
+ */
 export function setInstanceofResolver(
   fn: ((token: string, locals: Map<string, string>) => string | undefined) | undefined,
 ): void {
@@ -247,6 +271,11 @@ export function setInstanceofResolver(
 let _stringExprResolver:
   | ((token: string, locals: Map<string, string>) => { ptrWat: string; lenWat: string } | undefined)
   | undefined = undefined;
+/**
+ * Inject the callback that resolves a string-producing expression (e.g. `s.toUpperCase()`,
+ * `arr[i].toUpperCase()`) to a ptr/len WAT pair via wasic's emitStringPtrLen; returns `undefined`
+ * when the token isn't a handled string expression. Pass `undefined` to clear it.
+ */
 export function setStringExprResolver(
   fn:
     | ((

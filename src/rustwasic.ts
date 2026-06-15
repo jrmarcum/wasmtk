@@ -23,7 +23,11 @@
 
 import { rt } from "./rt.ts";
 
-type RustResult = { success: boolean };
+/** Result of a delegated `rsxtk` invocation. */
+export type RustResult = {
+  /** True if the spawned `rsxtk` process exited 0. */
+  success: boolean;
+};
 
 /** True if `rsxtk --version` runs and exits 0. */
 export async function rsxtkAvailable(): Promise<boolean> {

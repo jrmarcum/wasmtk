@@ -13,23 +13,37 @@
 
 export type AnyPolicy = "skip" | "warn" | "default";
 
+/** Options controlling a {@link runJstyper} invocation. */
 export interface JstyperOptions {
-  dtsOnly?: boolean; // generate skeleton .d.ts, don't produce .ts
-  dryRun?: boolean; // print to stdout, don't write files
-  anyPolicy?: AnyPolicy; // how to handle `any`-typed params / returns
-  outPath?: string; // override output path
+  /** Generate a skeleton .d.ts only, do not produce the typed .ts. */
+  dtsOnly?: boolean;
+  /** Print the result to stdout instead of writing files. */
+  dryRun?: boolean;
+  /** How to handle `any`-typed params / returns (skip / warn / default). */
+  anyPolicy?: AnyPolicy;
+  /** Override the default output path. */
+  outPath?: string;
 }
 
+/** A function definition extracted from a JavaScript source file. */
 export interface JsFuncDef {
+  /** Function name. */
   name: string;
-  params: string[]; // raw JS param names (no types)
-  body: string; // verbatim { … } block from JS source
+  /** Raw JS param names (no types). */
+  params: string[];
+  /** Verbatim `{ … }` body block from the JS source. */
+  body: string;
+  /** Whether the function was declared with `export`. */
   isExported: boolean;
 }
 
+/** A typed function declaration extracted from a `.d.ts` file. */
 export interface DtsFuncDef {
+  /** Function name. */
   name: string;
+  /** Declared parameters, each with its name and type annotation. */
   params: Array<{ name: string; type: string }>;
+  /** Declared return type. */
   returnType: string;
 }
 
@@ -282,6 +296,20 @@ export function generateTypedTs(
 
 // ── CLI entry point ───────────────────────────────────────────────────────────
 
+/**
+ * CLI entry point: convert a `.js` file plus its sibling `.d.ts` into a typed
+ * `.ts` that wasic can compile.
+ *
+ * Reads `jsFile`, parses its functions, and — depending on `options` — either
+ * writes a skeleton `.d.ts` (`dtsOnly`), or merges the JS bodies with the
+ * typed `.d.ts` declarations and writes the resulting typed `.ts`. With
+ * `dryRun` the output is printed to stdout instead of being written. Missing
+ * input files cause an error message and `Deno.exit(1)`; type warnings are
+ * printed to stderr.
+ *
+ * @param jsFile   Path to the input `.js` file.
+ * @param options  Output and `any`-handling options (see {@link JstyperOptions}).
+ */
 export async function runJstyper(
   jsFile: string,
   options: JstyperOptions = {},

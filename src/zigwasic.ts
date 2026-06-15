@@ -22,16 +22,23 @@ import { basename, dirname, join, resolve } from "@std/path";
 import { rt } from "./rt.ts";
 import { binaryenOptimize } from "./binaryen.ts";
 
-// library  = wasm32-freestanding, exports `export fn`, no _start/WASI (the mergeable/bindgen leaf).
-// wasi     = wasm32-wasi, has _start + WASI imports (a runnable command).
+/**
+ * Zig build flavor passed to `zig build-exe`:
+ * - `"library"` = wasm32-freestanding, exports `export fn`, no `_start`/WASI (the mergeable/bindgen leaf).
+ * - `"wasi"` = wasm32-wasi, has `_start` + WASI imports (a runnable command).
+ */
 export type ZigTarget = "library" | "wasi";
 
+/** Options for {@link compileZig}. */
 export interface ZigCompileOptions {
+  /** Explicit output `.wasm` path; defaults to `<baseDir>/<name>.wasm`. */
   outPath?: string;
-  target?: ZigTarget; // default "library"
+  /** Build flavor (freestanding library vs. WASI command); defaults to `"library"`. */
+  target?: ZigTarget;
 }
 
-type ZigResult = { success: boolean; outputPath?: string; error?: string };
+/** Result of a Zig build/scaffold: `success` plus the output path or an error message. */
+export type ZigResult = { success: boolean; outputPath?: string; error?: string };
 
 /** Decodes captured stderr+stdout from a piped rt.Command result into one diagnostic string. */
 function decodeOut(r: { stdout: Uint8Array; stderr: Uint8Array }): string {

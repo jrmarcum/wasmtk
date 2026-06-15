@@ -166,10 +166,15 @@ interface WabtModule {
 // ---------------------------------------------------------------------------
 // Public result type
 // ---------------------------------------------------------------------------
+/** Outcome of a wasic TypeScript→WASM compile. */
 export interface WasicResult {
+  /** Whether compilation completed and a binary was written. */
   success: boolean;
+  /** Filesystem path of the emitted `.wasm` binary, when successful. */
   outputPath?: string;
+  /** Size of the emitted binary in bytes, when successful. */
   sizeBytes?: number;
+  /** Human-readable failure message, when unsuccessful. */
   error?: string;
 }
 

@@ -21,6 +21,19 @@ jobs:
         with:
           deno-version: v2.x
 
+      # Provenance requires a GitHub OIDC token. The `id-token: write` permission
+      # above is what injects ACTIONS_ID_TOKEN_REQUEST_URL/_TOKEN into the runner.
+      # If they are absent here despite the permission, an org/enterprise Actions
+      # OIDC policy is blocking the token and `deno publish` will silently skip
+      # provenance (publish still succeeds). This makes that failure mode visible.
+      - name: Check OIDC availability (provenance prerequisite)
+        run: |
+          if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "OIDC token endpoint available — provenance prerequisites met."
+          else
+            echo "::warning::OIDC token NOT available (URL present: ${ACTIONS_ID_TOKEN_REQUEST_URL:+yes}, TOKEN present: ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:+yes}). deno publish will skip provenance. Verify id-token:write is honored — check org/enterprise Settings → Actions → General OIDC policy."
+          fi
+
       - name: Publish to JSR
         run: deno publish
 

@@ -32,20 +32,31 @@ import { basename, dirname, join, resolve } from "@std/path";
 import { rt } from "./rt.ts";
 import { binaryenOptimize } from "./binaryen.ts";
 
+/** Go backend toolchain: `tinygo` (default, small) or `std` (standard `go`, large — full runtime/GC). */
 export type GoRuntime = "tinygo" | "std";
-// wasip1 = WASI command (_start); wasm = browser (syscall/js); reactor = WASI library
-// (`-buildmode=c-shared`: no _start, exports //go:wasmexport funcs + runtime, callable via
-// `wasmtk mod` / bindgen — the Go analog of TS `modc` library mode).
+
+/**
+ * Go build target: `wasip1` = WASI command (`_start`); `wasm` = browser (syscall/js); `reactor` =
+ * WASI library (`-buildmode=c-shared`: no `_start`, exports //go:wasmexport funcs + runtime, callable
+ * via `wasmtk mod` / bindgen — the Go analog of TS `modc` library mode).
+ */
 export type GoTarget = "wasip1" | "wasm" | "reactor";
+
+/** Project scaffold flavor: `library` (wasm library + test harness) or `browser` (syscall/js variant). */
 export type GoScaffold = "library" | "browser";
 
+/** Options for {@link compileGoWasi}. */
 export interface GoCompileOptions {
+  /** Output `.wasm` path. Default: `<name>.wasm` in the build's base directory. */
   outPath?: string;
-  runtime?: GoRuntime; // default "tinygo"
-  target?: GoTarget; // default "wasip1"
+  /** Backend toolchain. Default: `"tinygo"`. */
+  runtime?: GoRuntime;
+  /** Build target. Default: `"wasip1"`. */
+  target?: GoTarget;
 }
 
-type GoResult = { success: boolean; outputPath?: string; error?: string };
+/** Result of a Go build / scaffold: `success` plus the output path or an error message. */
+export type GoResult = { success: boolean; outputPath?: string; error?: string };
 
 /** Decodes captured stderr+stdout from a piped rt.Command result into one diagnostic string. */
 function decodeOut(r: { stdout: Uint8Array; stderr: Uint8Array }): string {
