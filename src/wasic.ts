@@ -1178,6 +1178,8 @@ function inferInitType(
   if (e.startsWith('"') || e.startsWith("'")) return "string"; // string literal or concat
   if (/^String\s*\(/.test(e)) return "string"; // String(n)
   if (/^\w+\.toString\s*\(.*\)$/.test(e)) return "string"; // n.toString() / n.toString(radix)
+  // Phase 53: Number.parseInt/parseFloat and bare parseInt/parseFloat take a string → number (f64)
+  if (/^(?:Number\.)?(?:parseInt|parseFloat)\s*\(/.test(e)) return "f64";
   // str.slice(...) — only if receiver is a known string var (checked at call sites; hint here)
   const sliceLeadId = e.match(/^(\w+)\.slice\s*\(/)?.[1];
   if (sliceLeadId && locals.get(sliceLeadId) === "string") return "string";
@@ -1284,6 +1286,7 @@ class WasicTranspiler {
   private needsArrPrintHelper = false;
   private needsJoinHelper = false;
   private needsMatrix2DPrintHelper = false; // Phase 6d
+  private needsNumParsers = false; // Phase 53: $__parse_int / $__parse_float
 
   // String data section: message → [offset, byteLength]
   // Raw (non-string) data segments for arrays etc.
@@ -7757,6 +7760,34 @@ class WasicTranspiler {
       }
     }
 
+    // Phase 53: Number.parseInt(s, radix) / Number.parseFloat(s) + bare parseInt/parseFloat.
+    // The argument is a string (ptr+len); the result is a number (f64). parseInt stops at the
+    // first character invalid for the radix (default 10; a 0x/0X prefix is honored when radix is
+    // 16 or omitted); parseFloat consumes an optional sign, integer/fraction, and e-exponent.
+    // No valid leading digits → NaN, matching JavaScript.
+    const numParseM = expr.match(/^(?:Number\.)?(parseInt|parseFloat)\s*\(([\s\S]*)\)$/);
+    if (numParseM && parenDepthNeverNegative(numParseM[2])) {
+      const fn = numParseM[1];
+      const pArgs = this.splitArgs(numParseM[2]);
+      const strArg = (pArgs[0] ?? '""').trim();
+      const ptrLen = this.emitStringPtrLen(strArg, locals);
+      this.needsNumParsers = true;
+      let callW: string;
+      if (fn === "parseInt") {
+        let radixWat = "(i32.const 0)";
+        if (pArgs.length >= 2) {
+          const rawRadix = pArgs[1].trim();
+          radixWat = /^\d+$/.test(rawRadix)
+            ? `(i32.const ${parseInt(rawRadix, 10)})`
+            : `(i32.trunc_f64_s ${this.emitExpr(rawRadix, locals, "f64")})`;
+        }
+        callW = `(call $__parse_int ${ptrLen} ${radixWat})`;
+      } else {
+        callW = `(call $__parse_float ${ptrLen})`;
+      }
+      return defaultType === "i32" ? `(i32.trunc_f64_s ${callW})` : callW;
+    }
+
     // Math.* constants and functions
     if (expr.startsWith("Math.")) {
       // Constants
@@ -13232,6 +13263,7 @@ class WasicTranspiler {
     if (this.needsArrPrintHelper) parts.push(getArrPrintHelperWat());
     if (this.needsJoinHelper) parts.push(getJoinHelperWat());
     if (this.mathHelpers.size > 0) parts.push(this.emitMathHelpers());
+    if (this.needsNumParsers) parts.push(this.emitNumParserHelpers());
     if (this.dynArrHelpers.size > 0) parts.push(this.emitDynArrHelpers());
     if (this.typedArrHelpers.size > 0) parts.push(this.emitTypedArrHelpers());
     if (this.needsMatrix2DPrintHelper) parts.push(this.emitMatrix2DPrintHelper());
@@ -13279,6 +13311,168 @@ class WasicTranspiler {
     )
     (local.get $result)
   )`,
+    ].join("\n\n");
+  }
+
+  /**
+   * Phase 53: `$__parse_int` / `$__parse_float` — string `(ptr, len)` → f64, mirroring JS
+   * `parseInt` / `parseFloat`. Both skip leading ASCII whitespace and an optional `+`/`-` sign,
+   * then read as many valid characters as possible and stop at the first invalid one. No valid
+   * leading digits yields `nan`. `$__parse_int` takes a radix (0 → default 10; a `0x`/`0X` prefix
+   * is consumed when radix is 16). `$__parse_float` reads integer, fractional, and `e`-exponent
+   * parts (decimal only; `Infinity`/`NaN` literals are not recognized).
+   */
+  private emitNumParserHelpers(): string {
+    return [
+      `  ;; parseInt(str, radix) — (ptr,len,radix) -> f64; radix 0 defaults to 10
+  (func $__parse_int (param $ptr i32) (param $len i32) (param $radix i32) (result f64)
+    (local $i i32) (local $c i32) (local $dv i32) (local $digits i32)
+    (local $sign f64) (local $acc f64)
+    (local.set $sign (f64.const 1))
+    (local.set $acc (f64.const 0))
+    ;; skip leading whitespace (space, tab, LF, CR)
+    (block $ws_done
+      (loop $ws
+        (br_if $ws_done (i32.ge_u (local.get $i) (local.get $len)))
+        (local.set $c (i32.load8_u (i32.add (local.get $ptr) (local.get $i))))
+        (br_if $ws_done (i32.eqz (i32.or
+          (i32.eq (local.get $c) (i32.const 32))
+          (i32.or (i32.eq (local.get $c) (i32.const 9))
+            (i32.or (i32.eq (local.get $c) (i32.const 10)) (i32.eq (local.get $c) (i32.const 13)))))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $ws)))
+    ;; optional sign
+    (if (i32.lt_u (local.get $i) (local.get $len))
+      (then
+        (local.set $c (i32.load8_u (i32.add (local.get $ptr) (local.get $i))))
+        (if (i32.eq (local.get $c) (i32.const 45))
+          (then (local.set $sign (f64.const -1)) (local.set $i (i32.add (local.get $i) (i32.const 1))))
+          (else (if (i32.eq (local.get $c) (i32.const 43))
+            (then (local.set $i (i32.add (local.get $i) (i32.const 1)))))))))
+    ;; optional 0x / 0X prefix when radix is 16 or auto (0); auto-detect sets radix 16
+    (if (i32.or (i32.eqz (local.get $radix)) (i32.eq (local.get $radix) (i32.const 16)))
+      (then (if (i32.lt_u (i32.add (local.get $i) (i32.const 1)) (local.get $len))
+        (then (if (i32.eq (i32.load8_u (i32.add (local.get $ptr) (local.get $i))) (i32.const 48))
+          (then
+            (local.set $c (i32.load8_u (i32.add (local.get $ptr) (i32.add (local.get $i) (i32.const 1)))))
+            (if (i32.or (i32.eq (local.get $c) (i32.const 120)) (i32.eq (local.get $c) (i32.const 88)))
+              (then
+                (local.set $radix (i32.const 16))
+                (local.set $i (i32.add (local.get $i) (i32.const 2)))))))))))
+    ;; default radix 10 when still unset (no 0x auto-detect fired)
+    (if (i32.eqz (local.get $radix)) (then (local.set $radix (i32.const 10))))
+    ;; digits
+    (block $done
+      (loop $lp
+        (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+        (local.set $c (i32.load8_u (i32.add (local.get $ptr) (local.get $i))))
+        (if (i32.and (i32.ge_u (local.get $c) (i32.const 48)) (i32.le_u (local.get $c) (i32.const 57)))
+          (then (local.set $dv (i32.sub (local.get $c) (i32.const 48))))
+          (else (if (i32.and (i32.ge_u (local.get $c) (i32.const 97)) (i32.le_u (local.get $c) (i32.const 122)))
+            (then (local.set $dv (i32.add (i32.sub (local.get $c) (i32.const 97)) (i32.const 10))))
+            (else (if (i32.and (i32.ge_u (local.get $c) (i32.const 65)) (i32.le_u (local.get $c) (i32.const 90)))
+              (then (local.set $dv (i32.add (i32.sub (local.get $c) (i32.const 65)) (i32.const 10))))
+              (else (br $done)))))))
+        (br_if $done (i32.ge_s (local.get $dv) (local.get $radix)))
+        (local.set $acc (f64.add
+          (f64.mul (local.get $acc) (f64.convert_i32_s (local.get $radix)))
+          (f64.convert_i32_s (local.get $dv))))
+        (local.set $digits (i32.add (local.get $digits) (i32.const 1)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)))
+    (if (result f64) (i32.eqz (local.get $digits))
+      (then (f64.const nan))
+      (else (f64.mul (local.get $sign) (local.get $acc)))))`,
+      `  ;; parseFloat(str) — (ptr,len) -> f64; decimal with optional fraction + e-exponent
+  (func $__parse_float (param $ptr i32) (param $len i32) (result f64)
+    (local $i i32) (local $c i32) (local $digits i32)
+    (local $sign f64) (local $acc f64) (local $scale f64)
+    (local $expSign i32) (local $expVal i32)
+    (local.set $sign (f64.const 1))
+    (local.set $acc (f64.const 0))
+    (local.set $scale (f64.const 1))
+    (local.set $expSign (i32.const 1))
+    ;; skip leading whitespace
+    (block $ws_done
+      (loop $ws
+        (br_if $ws_done (i32.ge_u (local.get $i) (local.get $len)))
+        (local.set $c (i32.load8_u (i32.add (local.get $ptr) (local.get $i))))
+        (br_if $ws_done (i32.eqz (i32.or
+          (i32.eq (local.get $c) (i32.const 32))
+          (i32.or (i32.eq (local.get $c) (i32.const 9))
+            (i32.or (i32.eq (local.get $c) (i32.const 10)) (i32.eq (local.get $c) (i32.const 13)))))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $ws)))
+    ;; optional sign
+    (if (i32.lt_u (local.get $i) (local.get $len))
+      (then
+        (local.set $c (i32.load8_u (i32.add (local.get $ptr) (local.get $i))))
+        (if (i32.eq (local.get $c) (i32.const 45))
+          (then (local.set $sign (f64.const -1)) (local.set $i (i32.add (local.get $i) (i32.const 1))))
+          (else (if (i32.eq (local.get $c) (i32.const 43))
+            (then (local.set $i (i32.add (local.get $i) (i32.const 1)))))))))
+    ;; integer part
+    (block $int_done
+      (loop $int_lp
+        (br_if $int_done (i32.ge_u (local.get $i) (local.get $len)))
+        (local.set $c (i32.load8_u (i32.add (local.get $ptr) (local.get $i))))
+        (br_if $int_done (i32.or (i32.lt_u (local.get $c) (i32.const 48)) (i32.gt_u (local.get $c) (i32.const 57))))
+        (local.set $acc (f64.add (f64.mul (local.get $acc) (f64.const 10))
+          (f64.convert_i32_s (i32.sub (local.get $c) (i32.const 48)))))
+        (local.set $digits (i32.add (local.get $digits) (i32.const 1)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $int_lp)))
+    ;; fractional part
+    (if (i32.lt_u (local.get $i) (local.get $len))
+      (then (if (i32.eq (i32.load8_u (i32.add (local.get $ptr) (local.get $i))) (i32.const 46))
+        (then
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (block $frac_done
+            (loop $frac_lp
+              (br_if $frac_done (i32.ge_u (local.get $i) (local.get $len)))
+              (local.set $c (i32.load8_u (i32.add (local.get $ptr) (local.get $i))))
+              (br_if $frac_done (i32.or (i32.lt_u (local.get $c) (i32.const 48)) (i32.gt_u (local.get $c) (i32.const 57))))
+              (local.set $scale (f64.mul (local.get $scale) (f64.const 10)))
+              (local.set $acc (f64.add (local.get $acc)
+                (f64.div (f64.convert_i32_s (i32.sub (local.get $c) (i32.const 48))) (local.get $scale))))
+              (local.set $digits (i32.add (local.get $digits) (i32.const 1)))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $frac_lp)))))))
+    ;; exponent
+    (if (i32.and (i32.gt_s (local.get $digits) (i32.const 0)) (i32.lt_u (local.get $i) (local.get $len)))
+      (then
+        (local.set $c (i32.load8_u (i32.add (local.get $ptr) (local.get $i))))
+        (if (i32.or (i32.eq (local.get $c) (i32.const 101)) (i32.eq (local.get $c) (i32.const 69)))
+          (then
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (if (i32.lt_u (local.get $i) (local.get $len))
+              (then
+                (local.set $c (i32.load8_u (i32.add (local.get $ptr) (local.get $i))))
+                (if (i32.eq (local.get $c) (i32.const 45))
+                  (then (local.set $expSign (i32.const -1)) (local.set $i (i32.add (local.get $i) (i32.const 1))))
+                  (else (if (i32.eq (local.get $c) (i32.const 43))
+                    (then (local.set $i (i32.add (local.get $i) (i32.const 1)))))))))
+            (block $exp_done
+              (loop $exp_lp
+                (br_if $exp_done (i32.ge_u (local.get $i) (local.get $len)))
+                (local.set $c (i32.load8_u (i32.add (local.get $ptr) (local.get $i))))
+                (br_if $exp_done (i32.or (i32.lt_u (local.get $c) (i32.const 48)) (i32.gt_u (local.get $c) (i32.const 57))))
+                (local.set $expVal (i32.add (i32.mul (local.get $expVal) (i32.const 10)) (i32.sub (local.get $c) (i32.const 48))))
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br $exp_lp)))))))
+    (if (result f64) (i32.eqz (local.get $digits))
+      (then (f64.const nan))
+      (else
+        (local.set $acc (f64.mul (local.get $sign) (local.get $acc)))
+        (block $e_done
+          (loop $e_lp
+            (br_if $e_done (i32.eqz (local.get $expVal)))
+            (if (i32.gt_s (local.get $expSign) (i32.const 0))
+              (then (local.set $acc (f64.mul (local.get $acc) (f64.const 10))))
+              (else (local.set $acc (f64.div (local.get $acc) (f64.const 10)))))
+            (local.set $expVal (i32.sub (local.get $expVal) (i32.const 1)))
+            (br $e_lp)))
+        (local.get $acc))))`,
     ].join("\n\n");
   }
 
