@@ -216,6 +216,18 @@ alternative (wazero), so even `-go` uses **wasmtime-go** (CGO + native lib) rath
 **Outliers are intentional:** JS and Dart-web can't reach wasmtime (browser/JS host) → host
 `WebAssembly` + hand-roll; the JVM has no official wasmtime embedding → pure-Java Chicory + `chicory-wasi`.
 
+**JVM engine decision (owner, 2026-06-15): keep Chicory** over the two alternatives, because the loader
+is a drop-in Maven library that must "just work" on any JVM: (a) **Chicory** is pure-Java (one jar, no
+native lib, runs on any JVM) and its bytecode-compiler mode (`chicory-compiler`, WASM→JVM bytecode) is
+fast *everywhere*; (b) **GraalWasm** is fast *only* with the Graal JIT (on GraalVM) and falls back to a
+slower Truffle interpreter on stock HotSpot, plus a heavy polyglot dependency — best only for
+GraalVM-centric consumers; (c) **`libwasmtime` via the Java FFM API (Panama, JDK 22+)** would put the
+JVM on real wasmtime (peak speed, principle-consistent) but re-introduces the per-platform native-lib
+distribution cost (same as dart-ffi) and a JDK-22 floor — a "maybe later if JVM speed becomes
+critical," not now. (Contrast `-go`, where the native-lib engine wasmtime-go was *unconditionally*
+faster than pure-Go wazero, so it won; on the JVM the portable engine wins because GraalWasm's edge is
+conditional.)
+
 **Dart is dual-backend** (the only language spanning both worlds): the current **web** backend is a
 native-Dart impl over browser `WebAssembly` (js_interop), and a future **native** backend would use
 `dart:ffi` → the wasmtime C API (Dart VM / Flutter desktop+mobile). Selected via conditional imports.
