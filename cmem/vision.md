@@ -185,7 +185,7 @@ with the same "update the project memory" / "look for code issues" triggers as w
 | `universalWasmLoader-go`     | Go                  | wazero             | pkg.go.dev       |
 | `universalWasmLoader-jvm`    | Java / Kotlin       | Chicory            | Maven Central    |
 | `universalWasmLoader-dotnet` | C# / .NET           | wasmtime-dotnet*   | NuGet            |
-| `universalWasmLoader-dart`   | Dart                | OPEN (web/ffi)     | pub.dev          |
+| `universalWasmLoader-dart`   | Dart (web-first)    | browser WASM (js_interop) | pub.dev   |
 | `universalWasmLoader-c`      | C (Zig/V/Julia)     | wasmtime C API     | header-only      |
 
 Julia uses this loader via Julia's `ccall` FFI to the wasmtime C API — no separate
@@ -211,14 +211,14 @@ tag `vX.Y.Z` → GitHub Action `deno publish` with provenance).
 | Zig | **OPEN** | proposed: `build.zig.zon` `.version` (fetched by URL+hash; no central registry yet) | OPEN |
 
 `*` `-dotnet` runtime is unconfirmed (no `.csproj` yet — stub). **Maturity (2026-06-15):** `-js`
-(reference), `-rs`, `-py`, `-jvm` are all real implementations **aligned to SPEC 3.0.0** (canonical
-callee-allocated string returns + `cabi_post`) and **verified** against their own test suites
-(`-js` 24/24, `-rs` `cargo test` 24/24, `-jvm` `./gradlew test` 24/24, `-py` 3 string tests pass +
-13 unrelated pre-existing `.wat`-harness failures). `-go` / `-dotnet` / `-dart` are stubs (no source)
-→ build fresh against SPEC 3.0.0. `-dart` (created 2026-06-15) has an OPEN
-WASM-runtime decision (web via `dart:js_interop` over browser `WebAssembly`, or native via `dart:ffi`
-to a C runtime). **OPEN questions:** where C and Zig publish (no obvious central registry — likely
-git-tag + URL/hash fetch).
+(reference), `-rs`, `-py`, `-jvm`, and `-dart` are all real implementations **on SPEC 3.0.0**
+(canonical callee-allocated string returns + `cabi_post`) and **verified** against their own test
+suites (`-js` 24/24, `-rs` `cargo test` 24/24, `-jvm` `./gradlew test` 24/24, `-py` 3 string tests
+pass + 13 unrelated pre-existing `.wat`-harness failures, `-dart` `dart test -p chrome` 7/7 in real
+Chrome). `-dart` is **web-first** (`dart:js_interop` over browser `WebAssembly`; runtime decision
+RESOLVED 2026-06-15 — a native `dart:ffi` backend is a possible future add). `-go` / `-dotnet` are
+stubs (no source) → build fresh against SPEC 3.0.0. **OPEN questions:** where C and Zig publish
+(no obvious central registry — likely git-tag + URL/hash fetch).
 
 Every loader exposes the same conceptual API in its language's idiom:
 
