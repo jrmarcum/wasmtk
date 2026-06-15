@@ -241,9 +241,14 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     provenance true**), `-rs` (`cargo test` 24/24), `-py` (string tests pass), `-jvm` (`gradlew test`
     24/24), `-dart` (**new, web-first** via `dart:js_interop`; `dart test -p chrome` 7/7). Each of
     `-rs`/`-py`/`-jvm`/`-dart` has **`run:`-only publish CI + a bump mechanism** (pending owner
-    registry secrets — see vision.md matrix). **Remaining:** stubs `-go`/`-dotnet`/`-c` (build fresh
-    against 3.0.0; C→vcpkg, Zig→zigistry). **SPEC §10 loader capabilities (`_initialize` call +
-    minimal WASI-P1 shim) IMPLEMENTED in `-js` 2026-06-15** (suite 24→26; lets I/O-using `modc`
+    registry secrets — see vision.md matrix). **Runtime + WASI strategy decided 2026-06-15** (in
+    vision.md → "Loader runtime + WASI strategy"): native ports use **wasmtime** (`-go` = **wasmtime-go**
+    over wazero for speed; Zig/`-c` = wasmtime C API; `-dotnet` = Wasmtime NuGet) with built-in WASI;
+    web ports (`-js`, `-dart`-web) host `WebAssembly` + hand-rolled shim; `-jvm` keeps Chicory +
+    `chicory-wasi`; `-dart` dual-backend (web now / native `dart:ffi`→wasmtime later). **Remaining:**
+    stubs `-go`/`-dotnet`/`-c` (build fresh against 3.0.0; C→vcpkg, Zig→zigistry). **SPEC §10 loader
+    capabilities (`_initialize` call + minimal WASI-P1 shim) IMPLEMENTED in `-js` 2026-06-15** (suite
+    24→26; lets I/O-using `modc`
     libraries load in a host with no native WASI) — propagation to `-rs`/`-py`/`-jvm`/`-dart` pending.
     Orthogonal / ungated.
     **CI note:** these repos' org allows only `jrmarcum`-owned Actions → publish workflows MUST be
