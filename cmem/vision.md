@@ -210,10 +210,12 @@ tag `vX.Y.Z` → GitHub Action `deno publish` with provenance).
 | `-c` | **OPEN** (header-only) | **OPEN** — proposed: git tag + a `#define UWL_VERSION` in the header | OPEN |
 | Zig | **OPEN** | proposed: `build.zig.zon` `.version` (fetched by URL+hash; no central registry yet) | OPEN |
 
-`*` `-dotnet` runtime is unconfirmed (no `.csproj` yet — stub). **Maturity (2026-06-15):** `-js` is the
-reference (done + ABI-aligned); `-rs` / `-py` / `-jvm` are real implementations that still need
-**SPEC 3.0.0** return-ABI alignment (see each repo's `cmem/overview.md`); `-go` / `-dotnet` / `-dart`
-are stubs (no source) → build fresh against SPEC 3.0.0. `-dart` (created 2026-06-15) has an OPEN
+`*` `-dotnet` runtime is unconfirmed (no `.csproj` yet — stub). **Maturity (2026-06-15):** `-js`
+(reference), `-rs`, `-py`, `-jvm` are all real implementations **aligned to SPEC 3.0.0** (canonical
+callee-allocated string returns + `cabi_post`) and **verified** against their own test suites
+(`-js` 24/24, `-rs` `cargo test` 24/24, `-jvm` `./gradlew test` 24/24, `-py` 3 string tests pass +
+13 unrelated pre-existing `.wat`-harness failures). `-go` / `-dotnet` / `-dart` are stubs (no source)
+→ build fresh against SPEC 3.0.0. `-dart` (created 2026-06-15) has an OPEN
 WASM-runtime decision (web via `dart:js_interop` over browser `WebAssembly`, or native via `dart:ffi`
 to a C runtime). **OPEN questions:** where C and Zig publish (no obvious central registry — likely
 git-tag + URL/hash fetch).
