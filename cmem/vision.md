@@ -207,8 +207,8 @@ tag `vX.Y.Z` → GitHub Action `deno publish` with provenance).
 | `-jvm` | Maven Central | `build.gradle.kts` `version` | ✅ run:-only workflow + `./gradlew bump`. Secrets: `MAVEN_CENTRAL_USERNAME/PASSWORD` + `GPG_PRIVATE_KEY/GPG_PASSPHRASE`; needs `io.github.jrmarcum` namespace verification |
 | `-dotnet` | NuGet | `.csproj` `<Version>` | `dotnet pack` + `dotnet nuget push` (stub — no CI yet) |
 | `-dart` | pub.dev | `pubspec.yaml` `version` | ✅ run:-only workflow + `scripts/bump.dart`/`release.sh`. Secret: `PUB_DEV_CREDENTIALS` (from `dart pub login`) |
-| `-c` | **OPEN** (header-only) | **OPEN** — proposed: git tag + a `#define UWL_VERSION` in the header | OPEN |
-| Zig | **OPEN** | proposed: `build.zig.zon` `.version` (fetched by URL+hash; no central registry yet) | OPEN |
+| `-c` (C/C++) | **vcpkg** ([vcpkg.io](https://vcpkg.io/en/)) | `vcpkg.json` `version` | a vcpkg **port** (`portfile.cmake` + `vcpkg.json`) submitted to the vcpkg registry (PR to `microsoft/vcpkg`) or served from a custom registry; the portfile fetches the repo at a tagged ref |
+| Zig | **zigistry** ([zigistry.dev](https://zigistry.dev/)) | `build.zig.zon` `.version` | public repo + git tag `vX.Y.Z`; zigistry.dev indexes GitHub Zig packages (those with a `build.zig.zon`), fetched by URL+hash |
 
 `*` `-dotnet` runtime is unconfirmed (no `.csproj` yet — stub). **Maturity (2026-06-15):** `-js`
 (reference), `-rs`, `-py`, `-jvm`, and `-dart` are all real implementations **on SPEC 3.0.0**
@@ -217,8 +217,10 @@ suites (`-js` 24/24, `-rs` `cargo test` 24/24, `-jvm` `./gradlew test` 24/24, `-
 pass + 13 unrelated pre-existing `.wat`-harness failures, `-dart` `dart test -p chrome` 7/7 in real
 Chrome). `-dart` is **web-first** (`dart:js_interop` over browser `WebAssembly`; runtime decision
 RESOLVED 2026-06-15 — a native `dart:ffi` backend is a possible future add). `-go` / `-dotnet` are
-stubs (no source) → build fresh against SPEC 3.0.0. **OPEN questions:** where C and Zig publish
-(no obvious central registry — likely git-tag + URL/hash fetch).
+stubs (no source) → build fresh against SPEC 3.0.0. **C/Zig publishing RESOLVED (owner, 2026-06-15):**
+C/C++ → **vcpkg** (vcpkg.io); Zig → **zigistry.dev**. (Both are git-tag/source-fetch ecosystems rather
+than upload-a-blob registries — vcpkg via a port that fetches a tagged ref, zigistry via GitHub
+indexing of `build.zig.zon`.)
 
 **CI workflow constraint — `run:`-only (learned the hard way 2026-06-15).** The loader repos' org
 restricts GitHub Actions to **`jrmarcum`-owned actions**, so any third-party `uses:` step
