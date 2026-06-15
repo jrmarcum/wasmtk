@@ -184,7 +184,7 @@ with the same "update the project memory" / "look for code issues" triggers as w
 | `universalWasmLoader-js`     | TypeScript / JS     | WebAssembly (host) | JSR (+ npm compat) |
 | `universalWasmLoader-rs`     | Rust                | wasmtime crate     | crates.io        |
 | `universalWasmLoader-py`     | Python              | wasmtime-py        | PyPI             |
-| `universalWasmLoader-go`     | Go                  | wazero             | pkg.go.dev       |
+| `universalWasmLoader-go`     | Go                  | wasmtime-go        | pkg.go.dev       |
 | `universalWasmLoader-jvm`    | Java / Kotlin       | Chicory            | Maven Central    |
 | `universalWasmLoader-dotnet` | C# / .NET           | wasmtime-dotnet*   | NuGet            |
 | `universalWasmLoader-dart`   | Dart (web-first)    | browser WASM (js_interop) | pub.dev   |
@@ -192,6 +192,38 @@ with the same "update the project memory" / "look for code issues" triggers as w
 
 Julia uses this loader via Julia's `ccall` FFI to the wasmtime C API — no separate
 Julia-specific repo is planned. Julia is Tier 3 (community-contributed or long-term).
+
+### Loader runtime + WASI strategy (owner decisions 2026-06-15)
+
+**Principle: native/server runtimes use wasmtime (engine + built-in WASI + Component-Model-ready);
+web/browser runtimes use the host's `WebAssembly` + a hand-rolled minimal WASI-P1 shim.** wasmtime is
+preferred for native because it's the de-facto reference runtime, has full built-in WASI, and is the
+Component Model runtime — and (owner, 2026-06-15) "wasmtime is faster" than the pure-Go interpreter
+alternative (wazero), so even `-go` uses **wasmtime-go** (CGO + native lib) rather than wazero.
+
+| Port(s) | Engine | WASI source |
+| --- | --- | --- |
+| `-rs` | wasmtime crate | `wasmtime-wasi` (`WasiP1Ctx`; needs `Store<WasiP1Ctx>`) |
+| `-py` | wasmtime-py | `linker.define_wasi(WasiConfig())` |
+| `-go` | **wasmtime-go** (decided over wazero — speed) | wasmtime built-in |
+| `-c`/`-cpp`, **Zig** | wasmtime C API (Zig via `@cImport`, cleanest) | wasmtime built-in |
+| `-dotnet` | Wasmtime NuGet | wasmtime built-in |
+| `-js` | host `WebAssembly` (Deno/Node/browser) | hand-rolled shim (`wasi.js`) ✅ |
+| `-dart` **web** | browser `WebAssembly` (js_interop) | hand-rolled shim |
+| `-dart` **native** *(future 2nd backend)* | wasmtime C API via `dart:ffi` | wasmtime built-in |
+| `-jvm` | **Chicory** (no wasmtime JVM embedding) | `chicory-wasi` |
+
+**Outliers are intentional:** JS and Dart-web can't reach wasmtime (browser/JS host) → host
+`WebAssembly` + hand-roll; the JVM has no official wasmtime embedding → pure-Java Chicory + `chicory-wasi`.
+
+**Dart is dual-backend** (the only language spanning both worlds): the current **web** backend is a
+native-Dart impl over browser `WebAssembly` (js_interop), and a future **native** backend would use
+`dart:ffi` → the wasmtime C API (Dart VM / Flutter desktop+mobile). Selected via conditional imports.
+NOTE: Dart-web *could* instead interop-call the published `-js` loader directly, but that re-adds a JS
+dependency and only works on web — so the native-Dart web impl we built is preferred; FFI/wasmtime is
+native-only (`dart:ffi` is unavailable on the web). **`dart:ffi`→wasmtime native backend + `libwasmtime`
+distribution (bundled per-platform binaries / native-assets) is a tracked FUTURE track**, not part of
+the §10 propagation.
 
 ### Per-language publishing / versioning (owner guidance 2026-06-15)
 
