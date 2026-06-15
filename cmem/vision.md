@@ -220,6 +220,23 @@ RESOLVED 2026-06-15 — a native `dart:ffi` backend is a possible future add). `
 stubs (no source) → build fresh against SPEC 3.0.0. **OPEN questions:** where C and Zig publish
 (no obvious central registry — likely git-tag + URL/hash fetch).
 
+**CI workflow constraint — `run:`-only (learned the hard way 2026-06-15).** The loader repos' org
+restricts GitHub Actions to **`jrmarcum`-owned actions**, so any third-party `uses:` step
+(`actions/checkout`, `denoland/setup-deno`, …) makes the workflow end in **`startup_failure`** — no
+step runs, nothing reaches JSR, yet a local `deno task publish` still creates the tag + GitHub release
+(so it *looks* published on GitHub but is absent on the registry). `universalWasmLoader-js` v1.0.6 hit
+exactly this when its `publish.yml` was (incorrectly) switched to `actions/checkout@v4` +
+`denoland/setup-deno@v2` to "match wasmtk"; reverted to **`run:`-only** steps (`git clone` +
+curl-install Deno) and v1.0.8 then published cleanly **with provenance**. So when wiring publish CI for
+the other ports, use **`run:`-only** workflows in these repos. (NOTE the asymmetry: the **wasmtk** repo
+itself currently DOES allow external `uses:` — its 1.7.0 published with provenance via
+`actions/checkout@v4` + `setup-deno@v2` — i.e. the restriction is per-repo, not blindly org-wide.
+Verify a repo's Actions policy before assuming either way.)
+
+**`-js` PUBLISHED:** `@jrmarcum/universal-wasm-loader@1.0.8` is live on JSR (package renamed
+2026-06-15 from `@jrmarcum/universalwasmloader-js`; `deno.json name` must equal the JSR package name),
+**JSR score 100** — `hasProvenance: true`, `percentageDocumentedSymbols: 1.0`.
+
 Every loader exposes the same conceptual API in its language's idiom:
 
 ```typescript
