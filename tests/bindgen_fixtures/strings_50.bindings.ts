@@ -32,16 +32,18 @@ export async function loadModule(
   }
   return {
     greet(name: string): string {
-      const _r = _cabi_realloc(0, 0, 4, 8);
-      (exp["greet"] as (...a: unknown[]) => unknown)(..._writeStr(name), _r);
+      const _r = (exp["greet"] as (...a: unknown[]) => unknown)(..._writeStr(name)) as number;
       const _v = new DataView(_mem.buffer);
-      return new TextDecoder().decode(new Uint8Array(_mem.buffer, _v.getInt32(_r, true), _v.getInt32(_r + 4, true)));
+      const _s = new TextDecoder().decode(new Uint8Array(_mem.buffer, _v.getInt32(_r, true), _v.getInt32(_r + 4, true)));
+      (exp["cabi_post_greet"] as ((p: number) => void))(_r);
+      return _s;
     },
     shout(msg: string): string {
-      const _r = _cabi_realloc(0, 0, 4, 8);
-      (exp["shout"] as (...a: unknown[]) => unknown)(..._writeStr(msg), _r);
+      const _r = (exp["shout"] as (...a: unknown[]) => unknown)(..._writeStr(msg)) as number;
       const _v = new DataView(_mem.buffer);
-      return new TextDecoder().decode(new Uint8Array(_mem.buffer, _v.getInt32(_r, true), _v.getInt32(_r + 4, true)));
+      const _s = new TextDecoder().decode(new Uint8Array(_mem.buffer, _v.getInt32(_r, true), _v.getInt32(_r + 4, true)));
+      (exp["cabi_post_shout"] as ((p: number) => void))(_r);
+      return _s;
     },
     strLen(s: string): number { return (exp["strLen"] as (...a: unknown[]) => unknown)(..._writeStr(s)) as number; },
   };

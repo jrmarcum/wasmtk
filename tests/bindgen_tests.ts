@@ -11,7 +11,7 @@
 
 import { join, toFileUrl } from "jsr:@std/path";
 import { bold, cyan, green, magenta, red, yellow } from "jsr:@std/fmt/colors";
-import { parseWit, generateBindings } from "../src/bindgen.ts";
+import { generateBindings, parseWit } from "../src/bindgen.ts";
 
 const FIXTURES = join(import.meta.dirname!, "bindgen_fixtures");
 const WASMTK_BIN = "wasmtk";
@@ -22,8 +22,13 @@ let passed = 0;
 let failed = 0;
 
 function ok(desc: string, cond: boolean) {
-  if (cond) { console.log(green(`  ✓ ${desc}`)); passed++; }
-  else       { console.log(red(`  ✗ ${desc}`));  failed++; }
+  if (cond) {
+    console.log(green(`  ✓ ${desc}`));
+    passed++;
+  } else {
+    console.log(red(`  ✗ ${desc}`));
+    failed++;
+  }
 }
 
 function contains(desc: string, haystack: string, needle: string) {
@@ -32,7 +37,10 @@ function contains(desc: string, haystack: string, needle: string) {
 
 // ── Helper: run subprocess ───────────────────────────────────────────────────
 
-async function run(cmd: string, args: string[]): Promise<{ success: boolean; stdout: string; stderr: string }> {
+async function run(
+  cmd: string,
+  args: string[],
+): Promise<{ success: boolean; stdout: string; stderr: string }> {
   const result = await new Deno.Command(cmd, {
     args,
     stdout: "piped",
@@ -202,12 +210,15 @@ world strings-50 {
   contains("_writeStr helper", ts, "function _writeStr(s: string)");
   contains("cabi_realloc accessed", ts, `exp["cabi_realloc"]`);
   contains("_writeStr called in greet", ts, "_writeStr(name)");
-  contains("return area allocated", ts, `_cabi_realloc(0, 0, 4, 8)`);
+  // Canonical return convention: the callee allocates the return area, so the host no longer
+  // allocates an 8-byte area; instead it reads the returned pointer and calls cabi_post_<name>.
+  ok("no host-side return-area alloc", !ts.includes(`_cabi_realloc(0, 0, 4, 8)`));
+  contains("cabi_post called for greet", ts, `exp["cabi_post_greet"]`);
   contains("DataView used for string return", ts, "DataView");
   contains("TextEncoder used", ts, "TextEncoder");
   contains("TextDecoder used", ts, "TextDecoder");
   ok("no __malloc (replaced by cabi_realloc)", !ts.includes(`exp["__malloc"]`));
-  ok("no __str_ret_ptr (replaced by out-param)", !ts.includes(`__str_ret_ptr`));
+  ok("no __str_ret_ptr in host glue", !ts.includes(`__str_ret_ptr`));
   ok("no _readStr (replaced by inline DataView)", !ts.includes(`function _readStr`));
 }
 
@@ -240,7 +251,7 @@ async function testIntegrationMath() {
 
   const fixtureSrc = join(FIXTURES, "math_50.ts");
   const fixtureWasm = join(FIXTURES, "math_50.wasm");
-  const fixtureWit  = join(FIXTURES, "math_50.wit");
+  const fixtureWit = join(FIXTURES, "math_50.wit");
   const fixtureBinding = join(FIXTURES, "math_50.bindings.ts");
   const hostRunner = join(FIXTURES, "math_50_host.ts");
 
@@ -254,7 +265,9 @@ async function testIntegrationMath() {
 
   // Step 2: verify WIT file was generated
   let witSrc = "";
-  try { witSrc = await Deno.readTextFile(fixtureWit); } catch { /**/ }
+  try {
+    witSrc = await Deno.readTextFile(fixtureWit);
+  } catch { /**/ }
   ok(".wit file generated", witSrc.length > 0);
   ok(".wit has export add", witSrc.includes("export add:"));
   ok(".wit has export multiply", witSrc.includes("export multiply:"));
@@ -266,7 +279,7 @@ async function testIntegrationMath() {
 
   // Step 4: write and run host test script
   const bindingUrl = toFileUrl(fixtureBinding).href;
-  const wasmUrl    = toFileUrl(fixtureWasm).href;
+  const wasmUrl = toFileUrl(fixtureWasm).href;
   const hostSrc = `
 // auto-generated host runner for math_50 bindgen test
 import { loadModule } from "${bindingUrl}";
@@ -296,7 +309,7 @@ async function testIntegrationBool() {
 
   const fixtureSrc = join(FIXTURES, "booleans_50.ts");
   const fixtureWasm = join(FIXTURES, "booleans_50.wasm");
-  const fixtureWit  = join(FIXTURES, "booleans_50.wit");
+  const fixtureWit = join(FIXTURES, "booleans_50.wit");
   const fixtureBinding = join(FIXTURES, "booleans_50.bindings.ts");
   const hostRunner = join(FIXTURES, "booleans_50_host.ts");
 
@@ -308,7 +321,9 @@ async function testIntegrationBool() {
   }
 
   let witSrc = "";
-  try { witSrc = await Deno.readTextFile(fixtureWit); } catch { /**/ }
+  try {
+    witSrc = await Deno.readTextFile(fixtureWit);
+  } catch { /**/ }
   ok(".wit file generated", witSrc.length > 0);
   ok(".wit has bool return", witSrc.includes("-> bool"));
 
@@ -316,7 +331,7 @@ async function testIntegrationBool() {
   await Deno.writeTextFile(fixtureBinding, ts);
 
   const bindingUrl2 = toFileUrl(fixtureBinding).href;
-  const wasmUrl2    = toFileUrl(fixtureWasm).href;
+  const wasmUrl2 = toFileUrl(fixtureWasm).href;
   const hostSrc = `
 import { loadModule } from "${bindingUrl2}";
 const wasmBytes = await Deno.readFile(new URL("${wasmUrl2}"));
@@ -335,11 +350,11 @@ console.log(m.isEven(3));
     console.log(red("    stderr: " + hostResult.stderr.slice(0, 300)));
   }
   const lines = hostResult.stdout.trim().split("\n");
-  ok("isPositive(1.0) = true",  lines[0]?.trim() === "true");
+  ok("isPositive(1.0) = true", lines[0]?.trim() === "true");
   ok("isPositive(-1.0) = false", lines[1]?.trim() === "false");
-  ok("inRange(5,1,10) = true",  lines[2]?.trim() === "true");
+  ok("inRange(5,1,10) = true", lines[2]?.trim() === "true");
   ok("inRange(0,1,10) = false", lines[3]?.trim() === "false");
-  ok("isEven(4) = true",  lines[4]?.trim() === "true");
+  ok("isEven(4) = true", lines[4]?.trim() === "true");
   ok("isEven(3) = false", lines[5]?.trim() === "false");
 }
 
@@ -350,7 +365,7 @@ async function testIntegrationStrings() {
 
   const fixtureSrc = join(FIXTURES, "strings_50.ts");
   const fixtureWasm = join(FIXTURES, "strings_50.wasm");
-  const fixtureWit  = join(FIXTURES, "strings_50.wit");
+  const fixtureWit = join(FIXTURES, "strings_50.wit");
   const fixtureBinding = join(FIXTURES, "strings_50.bindings.ts");
   const hostRunner = join(FIXTURES, "strings_50_host.ts");
 
@@ -362,7 +377,9 @@ async function testIntegrationStrings() {
   }
 
   let witSrc = "";
-  try { witSrc = await Deno.readTextFile(fixtureWit); } catch { /**/ }
+  try {
+    witSrc = await Deno.readTextFile(fixtureWit);
+  } catch { /**/ }
   ok(".wit file generated", witSrc.length > 0);
   ok(".wit has string param", witSrc.includes("name: string"));
   ok(".wit has string return", witSrc.includes("-> string"));
@@ -373,7 +390,7 @@ async function testIntegrationStrings() {
   contains("binding has cabi_realloc", ts, "_cabi_realloc");
 
   const bindingUrl3 = toFileUrl(fixtureBinding).href;
-  const wasmUrl3    = toFileUrl(fixtureWasm).href;
+  const wasmUrl3 = toFileUrl(fixtureWasm).href;
   const hostSrc = `
 import { loadModule } from "${bindingUrl3}";
 const wasmBytes = await Deno.readFile(new URL("${wasmUrl3}"));
@@ -390,8 +407,8 @@ console.log(m.strLen("hello"));
   }
   const lines = hostResult.stdout.trim().split("\n");
   ok("greet('World') = 'Hello, World!'", lines[0]?.trim() === "Hello, World!");
-  ok("shout('hi') = 'hihi'",            lines[1]?.trim() === "hihi");
-  ok("strLen('hello') = 5",            lines[2]?.trim() === "5");
+  ok("shout('hi') = 'hihi'", lines[1]?.trim() === "hihi");
+  ok("strLen('hello') = 5", lines[2]?.trim() === "5");
 }
 
 // ── 12. Integration: imports fixture ─────────────────────────────────────────
@@ -401,7 +418,7 @@ async function testIntegrationImports() {
 
   const fixtureSrc = join(FIXTURES, "imports_50.ts");
   const fixtureWasm = join(FIXTURES, "imports_50.wasm");
-  const fixtureWit  = join(FIXTURES, "imports_50.wit");
+  const fixtureWit = join(FIXTURES, "imports_50.wit");
   const fixtureBinding = join(FIXTURES, "imports_50.bindings.ts");
   const hostRunner = join(FIXTURES, "imports_50_host.ts");
 
@@ -413,7 +430,9 @@ async function testIntegrationImports() {
   }
 
   let witSrc = "";
-  try { witSrc = await Deno.readTextFile(fixtureWit); } catch { /**/ }
+  try {
+    witSrc = await Deno.readTextFile(fixtureWit);
+  } catch { /**/ }
   ok(".wit file generated", witSrc.length > 0);
   ok(".wit has import section", witSrc.includes("import "));
 
@@ -423,7 +442,7 @@ async function testIntegrationImports() {
   contains("envMul in interface", ts, "envMul?:");
 
   const bindingUrl4 = toFileUrl(fixtureBinding).href;
-  const wasmUrl4    = toFileUrl(fixtureWasm).href;
+  const wasmUrl4 = toFileUrl(fixtureWasm).href;
   const hostSrc = `
 import { loadModule } from "${bindingUrl4}";
 const wasmBytes = await Deno.readFile(new URL("${wasmUrl4}"));
@@ -443,8 +462,8 @@ console.log(m.combine(10, 7));
     console.log(red("    stderr: " + hostResult.stderr.slice(0, 300)));
   }
   const lines = hostResult.stdout.trim().split("\n");
-  ok("scale(3.0, 4.0) = 12",   lines[0]?.trim() === "12");
-  ok("combine(10, 7) = 17",    lines[1]?.trim() === "17");
+  ok("scale(3.0, 4.0) = 12", lines[0]?.trim() === "12");
+  ok("combine(10, 7) = 17", lines[1]?.trim() === "17");
 }
 
 // ── 13. CLI: wasmtk bindgen command ──────────────────────────────────────────
@@ -457,7 +476,10 @@ async function testCli() {
   const cliBinding = join(FIXTURES, "math_50_cli.bindings.ts");
 
   let hasWit = false;
-  try { await Deno.stat(fixtureWit); hasWit = true; } catch { /**/ }
+  try {
+    await Deno.stat(fixtureWit);
+    hasWit = true;
+  } catch { /**/ }
 
   if (!hasWit) {
     ok("CLI test skipped (no .wit — run integration tests first)", true);
@@ -471,7 +493,9 @@ async function testCli() {
     return;
   }
   let content = "";
-  try { content = await Deno.readTextFile(cliBinding); } catch { /**/ }
+  try {
+    content = await Deno.readTextFile(cliBinding);
+  } catch { /**/ }
   ok("binding file written", content.length > 0);
   contains("CLI binding has loadModule", content, "loadModule");
   contains("CLI binding has ModuleExports", content, "ModuleExports");

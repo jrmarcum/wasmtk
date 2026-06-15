@@ -256,7 +256,7 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
   if (needsMemory) {
     lines.push(`  const _mem = exp["memory"] as WebAssembly.Memory;`);
   }
-  if (needsMalloc || needsStrRet) {
+  if (needsMalloc) {
     lines.push(
       `  const _cabi_realloc = exp["cabi_realloc"] as ((ptr: number, oldSize: number, align: number, newSize: number) => number);`,
     );
@@ -269,9 +269,9 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
     lines.push(`    return [ptr, b.length];`);
     lines.push(`  }`);
   }
-  // String returns use the out-parameter convention: caller allocates an 8-byte return area via
-  // cabi_realloc(0,0,4,8) and passes its address as the last argument to the shim function.
-  // After the call, ptr and len are read back from the return area via DataView.
+  // String returns use the canonical ABI convention: the export returns a pointer to a callee-
+  // allocated 8-byte [ptr, len] return area. The host reads ptr+len via DataView, decodes the
+  // string, then calls the paired `cabi_post_<name>` export to release the buffer.
 
   // Return object
   lines.push(`  return {`);
@@ -289,14 +289,14 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
     }).join(", ");
 
     if (fn.result === "string") {
-      const cabiArgs = callArgs ? `${callArgs}, _r` : `_r`;
       lines.push(`    ${fn.tsName}(${paramStr}): string {`);
-      lines.push(`      const _r = _cabi_realloc(0, 0, 4, 8);`);
-      lines.push(`      ${wasm}(${cabiArgs});`);
+      lines.push(`      const _r = ${wasm}(${callArgs}) as number;`);
       lines.push(`      const _v = new DataView(_mem.buffer);`);
       lines.push(
-        `      return new TextDecoder().decode(new Uint8Array(_mem.buffer, _v.getInt32(_r, true), _v.getInt32(_r + 4, true)));`,
+        `      const _s = new TextDecoder().decode(new Uint8Array(_mem.buffer, _v.getInt32(_r, true), _v.getInt32(_r + 4, true)));`,
       );
+      lines.push(`      (exp["cabi_post_${wasmName}"] as ((p: number) => void))(_r);`);
+      lines.push(`      return _s;`);
       lines.push(`    },`);
     } else if (fn.result === "bool") {
       lines.push(`    ${fn.tsName}(${paramStr}): boolean { return ${wasm}(${callArgs}) !== 0; },`);

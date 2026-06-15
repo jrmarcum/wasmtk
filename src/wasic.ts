@@ -17695,12 +17695,15 @@ class WasicTranspiler {
     if (hasExportedStringParams || hasExportedStringRets) {
       extraExports.push(`  (export "cabi_realloc" (func $cabi_realloc))`);
     }
-    // $__str_ret_ptr / $__str_ret_len are no longer exported — string returns use the
-    // out-parameter convention via the __cabi shim wrappers generated below.
+    // $__str_ret_ptr / $__str_ret_len are no longer exported — string returns use the canonical
+    // ABI return convention (callee-allocated pointer + cabi_post_<name>) via the shims below.
 
-    // Generate canonical ABI shim wrappers for each exported string-returning function.
-    // The shim adds a trailing $__ret_area i32 param, calls the internal function (which sets
-    // the globals side-channel), then writes ptr+len into the caller-provided return area.
+    // Generate canonical ABI shim wrappers for each exported string-returning function. The shim
+    // allocates an 8-byte [ptr, len] return area via cabi_realloc, calls the internal function
+    // (which sets the side-channel globals), writes ptr+len into that area, and RETURNS the area
+    // pointer (i32). A paired no-op `cabi_post_<name>` export lets the host release the buffer
+    // after reading it (the bump allocator has no free, so the body is empty — but the export must
+    // exist to satisfy the Canonical ABI contract and keep future P2 componentization mechanical).
     const exportedStringRetFns = this.functions.filter(
       (f) => f.exported && !f.isClosureFactory && f.result === "string" && f.name !== "_start",
     );
@@ -17710,7 +17713,6 @@ class WasicTranspiler {
           ? [`(param $${p.name}_ptr i32)`, `(param $${p.name}_len i32)`]
           : [`(param $${p.name} ${watBaseType(p.type)})`]
       );
-      paramDecls.push(`(param $__ret_area i32)`);
       const callArgParts = fn.params.flatMap((p) =>
         p.type === "string"
           ? [`(local.get $${p.name}_ptr)`, `(local.get $${p.name}_len)`]
@@ -17720,11 +17722,15 @@ class WasicTranspiler {
         ? `(call $${fn.name} ${callArgParts.join(" ")})`
         : `(call $${fn.name})`;
       return [
-        `  (func $${fn.name}__cabi (export "${fn.name}") ${paramDecls.join(" ")}`,
+        `  (func $${fn.name}__cabi (export "${fn.name}") ${paramDecls.join(" ")} (result i32)`,
+        `    (local $__ret i32)`,
+        `    (local.set $__ret (call $cabi_realloc (i32.const 0) (i32.const 0) (i32.const 4) (i32.const 8)))`,
         `    ${callExpr}`,
-        `    (i32.store (local.get $__ret_area) (global.get $__str_ret_ptr))`,
-        `    (i32.store offset=4 (local.get $__ret_area) (global.get $__str_ret_len))`,
+        `    (i32.store (local.get $__ret) (global.get $__str_ret_ptr))`,
+        `    (i32.store offset=4 (local.get $__ret) (global.get $__str_ret_len))`,
+        `    (local.get $__ret)`,
         `  )`,
+        `  (func $cabi_post_${fn.name} (export "cabi_post_${fn.name}") (param $__ret i32))`,
       ].join("\n");
     }).join("\n");
 
