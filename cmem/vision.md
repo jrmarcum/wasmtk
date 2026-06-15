@@ -200,13 +200,13 @@ tag `vX.Y.Z` → GitHub Action `deno publish` with provenance).
 
 | Repo | Registry | Version lives in | Bump / publish |
 |---|---|---|---|
-| `-js` | JSR | `deno.json` `version` | ✅ `deno task bump` / `deno task publish` (done 2026-06-15) |
-| `-rs` | crates.io | `Cargo.toml` `version` | `cargo publish` (bump `Cargo.toml`) |
-| `-py` | PyPI | `pyproject.toml` `version` | build + `twine`/`uv publish` (the repo uses pixi → `pixi run`) |
-| `-go` | pkg.go.dev | **git tag `vX.Y.Z`** (no version file) | `git tag vX.Y.Z` + push → proxy auto-indexes |
-| `-jvm` | Maven Central | `build.gradle(.kts)` `version` (or `pom.xml`) | Gradle/Maven publish (signed) |
-| `-dotnet` | NuGet | `.csproj` `<Version>` | `dotnet pack` + `dotnet nuget push` |
-| `-dart` | pub.dev | `pubspec.yaml` `version` | `dart pub publish` |
+| `-js` | JSR | `deno.json` `version` | ✅ `deno task bump` / `deno task publish` — **PUBLISHED 1.0.8** (provenance, score 100) |
+| `-rs` | crates.io | `Cargo.toml` `version` | ✅ run:-only workflow + `scripts/bump.sh`/`release.sh` (2026-06-15). Secret: `CARGO_REGISTRY_TOKEN` |
+| `-py` | PyPI | `pyproject.toml` `version` | ✅ run:-only workflow + `pixi run bump`/`scripts/release.sh`. Secret: `PYPI_API_TOKEN` (project-scoped) |
+| `-go` | pkg.go.dev | **git tag `vX.Y.Z`** (no version file) | `git tag vX.Y.Z` + push → proxy auto-indexes (stub — no CI yet) |
+| `-jvm` | Maven Central | `build.gradle.kts` `version` | ✅ run:-only workflow + `./gradlew bump`. Secrets: `MAVEN_CENTRAL_USERNAME/PASSWORD` + `GPG_PRIVATE_KEY/GPG_PASSPHRASE`; needs `io.github.jrmarcum` namespace verification |
+| `-dotnet` | NuGet | `.csproj` `<Version>` | `dotnet pack` + `dotnet nuget push` (stub — no CI yet) |
+| `-dart` | pub.dev | `pubspec.yaml` `version` | ✅ run:-only workflow + `scripts/bump.dart`/`release.sh`. Secret: `PUB_DEV_CREDENTIALS` (from `dart pub login`) |
 | `-c` | **OPEN** (header-only) | **OPEN** — proposed: git tag + a `#define UWL_VERSION` in the header | OPEN |
 | Zig | **OPEN** | proposed: `build.zig.zon` `.version` (fetched by URL+hash; no central registry yet) | OPEN |
 
