@@ -344,6 +344,26 @@ string-array element, and `Math.*`/`Number.*` handling all have such twins.
   byte-identical — but it IS the compiler, so reinstall (`deno install -g … -n wasmtk`) and re-run
   the three suites after any reformat. fmt is not CI-gated (see testing.md), but staying clean keeps
   the pre-publish checklist green.
+- **Keep `deno doc --lint` clean across all `deno.json` entrypoints** (the JSR doc-coverage
+  score depends on it; published 2026-06-15 with v1.7.0). The score gates on
+  `percentageDocumentedSymbols >= 0.80`; every exported symbol (incl. **each interface field**
+  individually) needs a `/** … */` JSDoc, every public function must not return a private type
+  (`private-type-ref`), and computed exported consts need an explicit type (`missing-explicit-type`).
+  v1.7.0 brought this from 0.79 → 0.97 (commit `e64595f`). As part of that, the producer result
+  types **`GoResult` / `ZigResult` / `RustResult` are now `export`ed** (they're returned by the
+  public `compileGoWasi` / `scaffoldGoProject` / `compileZig` / `scaffoldZigProject` / `runRust`
+  functions) — do not re-privatize them. Run `deno doc --lint <all 15 exports>` before publishing;
+  it is not CI-gated but a regression silently drops the JSR score.
+- **JSR provenance is environmental, NOT a `publish.yml` problem.** Provenance was silently `false`
+  across v1.6.2–v1.6.5 even though every Action run succeeded — `deno publish` skips attestation
+  non-fatally when it can't mint/submit the GitHub OIDC token. The committed workflow was always
+  correct (`id-token: write` + clean `deno publish` with no `--token`/`DENO_AUTH_TOKEN` + `v*` tag
+  trigger, byte-identical at the tags); the cause was the OIDC token being gated at the
+  org/enterprise Actions level. A **"Check OIDC availability" diagnostic step** was added to
+  `.github/workflows/publish.yml` before `deno publish` (echoes whether `ACTIONS_ID_TOKEN_REQUEST_URL`
+  /`_TOKEN` reached the runner, `::warning::` if not) so any recurrence is visible in the run log.
+  v1.7.0 published with `hasProvenance: true` (JSR score 100). Do not "fix" provenance by editing the
+  publish/permissions YAML — it is already correct; check OIDC policy instead.
 
 ## Go producer (CLI / build invariants — set 2026-06-07)
 

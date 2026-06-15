@@ -55,16 +55,21 @@ counts in README are a record of when each phase first went green, not a live in
 
 ## CI / pre-publish gate
 
-The only GitHub workflow is `.github/workflows/publish.yml`: it fires on a `v*` tag and runs
-**`deno publish`** (with OIDC provenance), then creates a `release/<tag>` branch + GitHub release.
-So the *enforced* CI gate is exactly what `deno publish` validates: **type-check of all 14
-`deno.json` exports + JSR "slow-types" check + package validation**. `deno fmt` / `deno lint` /
-the test suites are **not** gated by CI.
+The only GitHub workflow is `.github/workflows/publish.yml`: it fires on a `v*` tag, runs a
+**"Check OIDC availability"** diagnostic step (added 2026-06-15 — surfaces a gated GitHub OIDC token
+in the run log) and then **`deno publish`** (with OIDC provenance), then creates a `release/<tag>`
+branch + GitHub release. So the *enforced* CI gate is exactly what `deno publish` validates:
+**type-check of all 15 `deno.json` exports + JSR "slow-types" check + package validation**. `deno fmt`
+/ `deno lint` / `deno doc --lint` / the test suites are **not** gated by CI — but `deno doc --lint`
+must be kept clean to hold the JSR doc-coverage score (see design-decisions.md), and provenance
+requires the OIDC token to actually reach the runner (was environmentally gated through v1.6.5;
+v1.7.0 published 2026-06-15 with `hasProvenance: true`, JSR score 100).
 
-The full green pre-publish checklist actually run (2026-06-02):
+The full green pre-publish checklist (run before each release):
 
 ```bash
 deno publish --dry-run --allow-dirty   # THE gate: type-check + slow-types + package — must pass
+deno doc --lint <all 15 exports>       # clean — guards the JSR doc-coverage score (≥0.80 symbols)
 deno lint main.ts src/                 # clean (18 files)
 deno fmt  --check main.ts src/         # clean as of 2026-06-02 (see design-decisions.md)
 deno run -A tests/wasi_tests.ts        # 307/307 as of 2026-06-12. HARDENED 2026-06-07: diffs run-ts vs run-wasm OUTPUT, not just exit codes. No open bugs; 6 tests legitimately diverge and carry `// @allow-output-diff`. A test FAILS on `output-mismatch` unless it opts out.

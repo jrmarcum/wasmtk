@@ -1,14 +1,24 @@
 # Roadmap, phase status & vision
 
-## Release status (2026-06-12)
+## Release status (2026-06-15)
 
-**Version 1.7.0** is bumped (`deno.json` / `package.json` / `src/utils.ts`), committed, and **pushed
-to GitHub `main`** (commits `d602a072d` Phase 52 + hardening, `96e9d7f30` console.log comparison fixes)
-— but the **JSR release is HELD by owner decision** (the `v1.7.0` tag has NOT been pushed, so the
-`publish.yml` GitHub Action has not run). To release when ready: `deno task publish` (tags `v1.7.0` +
-pushes the tag → Action publishes `@jrmarcum/wasmtk@1.7.0` to JSR with provenance). Suite **307/307**,
-bindgen 103/103, jstyper 73/73; fmt/lint/`publish --dry-run` clean. The publish is the only pending
-outward-facing step; everything else for 1.7.0 is done and on `main`.
+**Version 1.7.0 is PUBLISHED to JSR** (`@jrmarcum/wasmtk@1.7.0` is `latest`) and the **JSR package
+score is back to 100%** (`total: 18`). The two gaps that had dropped it to 94 are both fixed:
+- **`hasProvenance: true`** — provenance now works. It had been silently `false` across v1.6.2–v1.6.5
+  even though every Action run succeeded; the committed `publish.yml` was always provenance-correct
+  (`id-token: write` + clean `deno publish` + `v*` tag trigger, byte-identical at the tags), so the
+  cause was environmental (org/enterprise Actions OIDC policy gating the id-token), not the YAML. A
+  diagnostic step ("Check OIDC availability") was added before `deno publish` to surface a missing
+  OIDC token in the run log; the 1.7.0 run published with provenance.
+- **Docs: `percentageDocumentedSymbols` 0.79 → 0.97** (≥0.80 threshold cleared). Commit `e64595f`
+  added JSDoc to the 57 `missing-jsdoc` symbols across 9 files, exported the 3 producer result types
+  (`GoResult`/`ZigResult`/`RustResult`) to clear 5 `private-type-ref` errors, and gave `DATA_BASE` an
+  explicit type. `deno doc --lint` is now clean across all 15 entrypoints — keep it clean on future
+  edits to hold the score.
+
+Suite **307/307**, bindgen 103/103, jstyper 73/73. **1.7.0 is fully released; nothing outward-facing
+is pending.** Release mechanism unchanged: `deno task publish` (sync-version → commit → tag `vX.Y.Z` →
+push → `publish.yml` Action runs `deno publish` with provenance).
 
 ## Compiler phase status
 
