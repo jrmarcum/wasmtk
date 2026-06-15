@@ -16,7 +16,7 @@ on `wabt-ts@^1.3.2/compat` + `binaryen-ts@^1.3.5/compat`. Date surfaced+fixed tw
 (§7b); JSON four more (§7c); RegExp surfaced a merge bug (OOB-`charCodeAt` in a non-short-circuit
 `&&`) that is now **fixed (2026-06-02)** by making wasic short-circuit `&&`/`||` — the library
 workaround was removed — §7d. **All 7 long-standing test failures
-fixed 2026-06-02** → full `tests/wasm_wasi` **278/278** (now **307/307** as of 2026-06-12):
+fixed 2026-06-02** → full `tests/wasm_wasi` **278/278** (now **309/309** as of 2026-06-15):
 value-fallthru codegen in wasic (`5e`,
 `19×2`) + wabt-ts 1.3.1 hex-float-literal fix (`38×4` mathlib) — see cmem/compiler-bugs.md.
 **Brief §7-#4 (tree-shake) ✅, #6 (hybrid `--auto` routing) ✅, #7 (kernel-scope: build own runtime)
@@ -279,7 +279,7 @@ shape exposed two latent bugs in the merge pipeline that the bitwise/small-const
 Set/Map libraries never tripped. Both are fixed; the Date pipeline
 (`18e_DateCapabilityLibrary.ts`) passes and the full `tests/wasm_wasi` suite is
 **268/275** with the same 7 pre-existing wasic-codegen failures and **no
-regressions** (historical snapshot — those 7 were all fixed 2026-06-02; suite is now 307/307).
+regressions** (historical snapshot — those 7 were all fixed 2026-06-02; suite is now 309/309).
 
 1. **`wasmmerge` relocated arithmetic constants as if they were data pointers.**
    `relocateDataPtrs` (`src/wasmmerge.ts`) blindly shifted **every** `i32.const >=
@@ -319,7 +319,7 @@ That exercised four code paths the earlier capabilities never hit. All four are 
 JSON pipeline (`18f_JsonCapabilityLibrary.ts`) passes and the full `tests/wasm_wasi` suite is
 **269/276** — same 7 pre-existing wasic-codegen failures, no regressions — plus `bindgen`
 103/103 and `jstyper` 73/73 (historical snapshot — those 7 were all fixed 2026-06-02; suite is now
-307/307 as of 2026-06-12). (Detailed in cmem/capabilities.md (JSON).)
+309/309 as of 2026-06-15, bindgen 104/104). (Detailed in cmem/capabilities.md (JSON).)
 
 1. **String args to a merged import dropped to one stack value.** A modc `func(s: string)`
    compiles its string param to `(i32 i32)` (ptr+len), so `mergeWasmWat` registered the import

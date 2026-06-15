@@ -100,7 +100,9 @@ under npm:wabt + npm:binaryen: 446/446 tests passing (2026-05-25; 270 wasic +
 Go-by-Example + 103 bindgen + 73 jstyper). **Under the current dual JSR /compat
 stack (`jsr:@jrmarcum/wabt-ts@^1.3.2/compat` +
 `jsr:@jrmarcum/binaryen-ts@^1.3.5/compat`):** the full `tests/wasm_wasi`
-suite is **307/307** (`core_` 33/33), jstyper 73/73, and **bindgen 103/103** (pre-publish hardening
+suite is **309/309** (`core_` 33/33), jstyper 73/73, and **bindgen 104/104** (Phase 53, 2026-06-15,
+added `Number.parseInt`/`parseFloat` + multi-level interface inheritance; the ABI return side was
+forward-aligned to callee-allocated + `cabi_post`, bindgen 103→104; pre-publish hardening
 2026-06-12 added `15_ElseChainForms`; Phase 52, 2026-06-11,
 added the leaf conveniences `void`/chained-assignment/`in`/`Array.from`-`of`-`isArray`/
 `String.fromCodePoint` + 6 `52_*` tests; Phase 51, 2026-06-05/07,

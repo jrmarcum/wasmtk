@@ -1,7 +1,8 @@
 # Compiler bug log
 
 Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 309/309**
-(`bindgen` 103/103, `jstyper` 73/73) as of **2026-06-15**.
+(`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-15**. (309 = 307 at v1.7.0 + 2 Phase-53 tests;
+`bindgen` 103→104 from the ABI return-side forward-alignment's `cabi_post` assertion.)
 
 ## Multi-level interface inheritance dropped fields on forward `extends` (2026-06-15, Phase 53.11)
 
@@ -527,7 +528,7 @@ that `expandInlineBraceChain` alone fixed this was inaccurate; `cmem/` is author
 All 7 of the previously-"known pre-existing" failures are now fixed; as of 2026-06-02 the full
 `tests/wasm_wasi` was **278/278** (the 7 fixes brought it to 277/277; the new `18h` virtual-
 capability test added the 278th). (By 2026-06-03 it was **279/279** — the single-line-brace
-`if` fix added `48_SingleLineBraceIf`; the live count is at the top of this file — **307/307**.)
+`if` fix added `48_SingleLineBraceIf`; the live count is at the top of this file — **309/309**.)
 They were two unrelated root causes:
 
 ### (a) Value-fallthru codegen — `5e_MixedSignatures`, `19_NestedDiscriminantUnions`, `19_VariantMaximumMemoryAlignment` (fixed in wasic)
@@ -644,7 +645,7 @@ t.charCodeAt(ti + count)) === 1` **directly in the `while` `br_if`** (the exact 
 ## The 7 formerly-known test failures — ALL FIXED 2026-06-02
 
 These failed for a long time but are **now all passing** (full suite 278/278 as of 2026-06-02;
-live count at the top of this file — **307/307**). Kept here as a
+live count at the top of this file — **309/309**). Kept here as a
 pointer; full root-cause writeups are in the "FIXED — the 7 long-standing test failures" section at
 the top of this file.
 

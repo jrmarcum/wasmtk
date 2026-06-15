@@ -959,8 +959,8 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 > parsed as 0** (every merged-`mathlib` constant was encoded as 0, recovering all four
 > `38_*` Math tests). Under that toolchain, with the Stage 0.6 allocator-unification pass
 > and all five Tier-1 stdlib capabilities (Stage 0.7 — Set/Map/Date/JSON/RegExp)
-> in place, **the full `tests/wasm_wasi` suite is 307/307** (`core_`
-> 33/33, jstyper 73/73, bindgen **103/103**; a pre-publish hardening pass — 2026-06-12 — made the
+> in place, **the full `tests/wasm_wasi` suite is 309/309** (`core_`
+> 33/33, jstyper 73/73, bindgen **104/104**; a pre-publish hardening pass — 2026-06-12 — made the
 > compiler abort on an unsupported expression/statement instead of silently emitting 0/empty, which
 > surfaced and FIXED a real latent bug: brace-less and single-line-braced `else`/`else if` chains
 > after a single-line `if` were silently dropped — regression `15_ElseChainForms`; a follow-up
@@ -999,9 +999,13 @@ The toolkit is developed incrementally. Core phases build out the `wasic` TypeSc
 > inside `console.log`, chained `new X(...).method()`, runtime `n.toString(radix)`, and a
 > string method on an array element in an assignment (`const u = words[0].toUpperCase()`);
 > it also hardened the merge-time data-pointer relocation so an arithmetic constant that
-> coincidentally lands in a merged library's data range is no longer corrupted. The suite
-> is now 307/307 under binaryen-ts 1.3.5.** The per-phase
-> historical counts are preserved as a record of when each phase first reached
+> coincidentally lands in a merged library's data range is no longer corrupted. **Phase 53
+> (2026-06-15)** then added `Number.parseInt`/`parseFloat` (+ bare forms) and
+> declaration-order-independent **multi-level interface inheritance** (2 tests), and the **ABI
+> return side was forward-aligned** to the canonical callee-allocated convention (string-returning
+> exports now return an i32 pointer to a callee-allocated `[ptr,len]` pair + a `cabi_post_<name>`
+> release export; `bindgen` 103→104). The suite is now **309/309** under binaryen-ts 1.3.5.** The
+> per-phase historical counts are preserved as a record of when each phase first reached
 > green; they should not be read as a live-system invariant.**
 
 | Phase | Feature | Highlights |
@@ -1107,7 +1111,7 @@ All 50 wasic compiler phases are complete. The DLL model (compile → `.wasm` + 
 
 #### Stage 0 — Canonical ABI Alignment (partial) ✅ COMPLETE (2026-05-19)
 
-Moves wasic's ABI *toward* the WASM Component Model Canonical ABI — **partial alignment, not full compliance**. wasic exports `cabi_realloc` and uses an out-parameter string-return convention. Note: the output is a **WASI Preview 1 core module with a sidecar `.wit`** (not a component; the `.wit` is not embedded), and the **return side is not yet canonical** (caller-allocated out-param, no `cabi_post_return`) — boundary marshalling of strings/lists/records is performed **host-side** by the generated `.bindings.ts`. Full forward-alignment (canonicalize the in-memory layout + callee-allocated pointer returns + `cabi_post_*`, while staying P1) is decided but not yet implemented; see [`cmem/polyglot-producers.md`](cmem/polyglot-producers.md). 349/349 tests passing at completion under npm:wabt (2026-05-19); subsequent suite growth + wabt-ts migration noted in the table banner above and in CLAUDE.md § "wabt → wabt-ts migration".
+Moves wasic's ABI toward the WASM Component Model Canonical ABI. wasic exports `cabi_realloc`, flattens string params to `(ptr, len)`, and — **as of the 2026-06-15 return-side forward-alignment** — uses the canonical **callee-allocated** string-return convention: a string-returning export returns an i32 pointer to a callee-allocated `[ptr, len]` pair, paired with a `cabi_post_<name>` release export. So the boundary **calling convention** (params + returns) is now canonical; what remains deferred is only the **container** — the output is still a **WASI Preview 1 core module with a sidecar `.wit`** (not an embedded component), and boundary marshalling of strings/lists/records is still performed **host-side** by the generated `.bindings.ts`. The remaining P1→P2 step (embed the component type) is now a wrap, not a rewrite; see [`cmem/polyglot-producers.md`](cmem/polyglot-producers.md). 349/349 tests passing at the original Stage-0 completion under npm:wabt (2026-05-19); subsequent suite growth + the wabt-ts migration are noted in the table banner above and in CLAUDE.md § "wabt → wabt-ts migration".
 
 - [x] Replace `__malloc` export with `cabi_realloc(ptr, old_size, align, new_size) → i32` in `wasic.ts` emitter
 - [x] Update `bindgen.ts` to use `cabi_realloc` for string param encoding instead of `__malloc`
@@ -1374,7 +1378,7 @@ The TypeScript multi-file import bundler command is renamed from `bundle` to `ts
 
 ### Future Directions
 
-All 360/360 tests pass as of 2026-05-24 (257 wasic + Go-by-Example + 103 bindgen). Phase 50 completed the DLL model and Stage 0 *partially* aligned the ABI with the WASM Component Model Canonical ABI (`cabi_realloc` + out-parameter string returns; output is still a WASI-P1 core module with a sidecar `.wit`, and the return side is not yet canonical — see [`cmem/polyglot-producers.md`](cmem/polyglot-producers.md)) — `wasmtk bindgen` generates typed TypeScript host bindings from a `.wit` file so that wasic-compiled WASM modules are loaded from a TypeScript host with full type safety and no manual `WebAssembly` API work. The `hybrid` command (post-Phase-50 prototype) bridges wasic and javyc: annotate pure-computation functions with `// @wasm` and the tool splits the file into a WASM core + TypeScript runner automatically. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
+Phase 50 completed the DLL model and Stage 0 aligned the ABI with the WASM Component Model Canonical ABI calling convention (`cabi_realloc` + `(ptr,len)` string params, and — forward-aligned 2026-06-15 — **callee-allocated string returns + `cabi_post_<name>`**; the output is still a WASI-P1 core module with a sidecar `.wit`, only the P2 container is deferred — see [`cmem/polyglot-producers.md`](cmem/polyglot-producers.md)) — `wasmtk bindgen` generates typed TypeScript host bindings from a `.wit` file so that wasic-compiled WASM modules are loaded from a TypeScript host with full type safety and no manual `WebAssembly` API work. The `hybrid` command (post-Phase-50 prototype) bridges wasic and javyc: annotate pure-computation functions with `// @wasm` and the tool splits the file into a WASM core + TypeScript runner automatically. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
 
 ---
 

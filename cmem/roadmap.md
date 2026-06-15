@@ -232,15 +232,20 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
 
 ### Big tracks (the "last items")
 
-12. **Ecosystem Stage 1 — `universalWasmLoader`** (+ `SPEC.md` + `InstancePool`) — **JS/TS reference
-    loader DONE + ABI-aligned 2026-06-15.** Repo: `D:\Programs\_ProgramExamples\Example_Programs\GithubProjects\universalWasmLoader\universalWasmLoader-js`
-    (separate git repo, on `main`). `wasmImport` (WIT auto-detect + `@N` version pinning),
-    `createSingleton`, and `InstancePool` (acquire/release/run) are implemented; `SPEC.md` is at
-    **3.0.0**. Aligned to wasmtk's canonical callee-allocated string returns + `cabi_post_<name>`
-    (commit `8b4ffa3`; `tests/strings_50.wasm` regenerated; reference suite **24/24**). **Remaining
-    (Stage 2):** the other-language ports (`-rs`/`-py`/`-go`/`-jvm`/`-c`/`-dotnet`, sibling dirs)
-    must be re-aligned to **SPEC 3.0.0** (they predate the return-convention change). Orthogonal /
-    ungated — consumes ABI/WIT, not TS syntax.
+12. **Ecosystem — `universalWasmLoader` (polyglot loaders)** — **substantially DONE 2026-06-15; full
+    detail + publishing matrix in [vision.md](vision.md).** Repos live under
+    `D:\Programs\_ProgramExamples\Example_Programs\GithubProjects\universalWasmLoader\` (each its own
+    git repo, on `main`, with its own portable `cmem/`). **`SPEC.md` is at 3.0.0** (canonical
+    callee-allocated string returns + `cabi_post_<name>`). **Five ports implemented + verified on SPEC
+    3.0.0:** `-js` (reference — **PUBLISHED `@jrmarcum/universal-wasm-loader@1.0.8`, JSR score 100,
+    provenance true**), `-rs` (`cargo test` 24/24), `-py` (string tests pass), `-jvm` (`gradlew test`
+    24/24), `-dart` (**new, web-first** via `dart:js_interop`; `dart test -p chrome` 7/7). Each of
+    `-rs`/`-py`/`-jvm`/`-dart` has **`run:`-only publish CI + a bump mechanism** (pending owner
+    registry secrets — see vision.md matrix). **Remaining:** stubs `-go`/`-dotnet`/`-c` (build fresh
+    against 3.0.0; C→vcpkg, Zig→zigistry) + the SPEC §10 optional loader capabilities
+    (`_initialize` call + WASI-P1 browser shim, not yet implemented in any port). Orthogonal / ungated.
+    **CI note:** these repos' org allows only `jrmarcum`-owned Actions → publish workflows MUST be
+    `run:`-only (third-party `uses:` → `startup_failure`).
 13. **#5 Promise/async** — state-machine lowering + microtask runtime; lift `hybrid` async exclusion.
     **Gated behind Phase 51.**
 14. **Own dynamic runtime** (§7-#7) — boxed values + property map + interpreter for the irreducible
@@ -248,9 +253,10 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     51.** Largest single track; `javyc` (QuickJS) is the interim fallback until it lands.
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
-2026-06-15; **#12 Stage-1 JS reference loader DONE + ABI-aligned 2026-06-15**. The remaining work is
-#12 Stage-2 (other-language loader ports → SPEC 3.0.0), #13 async, #14 own runtime, and the deferred
-P2 container (embed component type — a wrap).
+2026-06-15; **#12 loaders substantially DONE 2026-06-15** (`-js` published; `-rs`/`-py`/`-jvm`/`-dart`
+implemented + SPEC-3.0.0-aligned + publish CI; stubs `-go`/`-dotnet`/`-c` remain — see vision.md). The
+remaining work is #13 async, #14 own runtime, the deferred P2 container (embed component type — a
+wrap), and finishing #12 (the 3 stub ports + SPEC §10 loader capabilities + owner registry secrets).
 
 ## Congruent polyglot-producer goal + ABI posture (added 2026-06-03 — full detail in [polyglot-producers.md](polyglot-producers.md))
 
@@ -322,7 +328,8 @@ chains after a single-line `if` were dropped; regression `15_ElseChainForms`), p
 Suite **309/309**, bindgen 104/104,
 jstyper 73/73. **Phase 53 COMPLETE 2026-06-15** (`Number.parseInt`/`parseFloat` + bare forms;
 multi-level interface inheritance, declaration-order independent). **ABI forward-alignment
-(return side) COMPLETE 2026-06-15.** **#12 Stage-1 JS reference loader DONE + ABI-aligned 2026-06-15.**
-Remaining: #12 Stage-2 (other-language loader ports → SPEC 3.0.0), #13 async, #14 own runtime, the
-deferred P2 container.
+(return side) COMPLETE 2026-06-15.** **#12 loaders substantially DONE 2026-06-15** (`-js` published
+`@jrmarcum/universal-wasm-loader@1.0.8`; `-rs`/`-py`/`-jvm`/`-dart` implemented + SPEC-3.0.0 + publish
+CI; stubs `-go`/`-dotnet`/`-c` remain). Remaining: #13 async, #14 own runtime, the deferred P2
+container, and finishing #12 (stub ports + SPEC §10 loader capabilities + owner registry secrets).
 Full analysis in CLAUDE.md § "TypeScript Feature Gap Analysis".
