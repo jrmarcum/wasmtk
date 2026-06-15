@@ -172,16 +172,49 @@ Additions scoped here (Stage 1):
 **Repositories:** separate repos per language under `jrmarcum/`
 **Role:** Per-language host runtimes; each implements the UniversalWasmLoader Spec
 
+**Local checkouts:** all loader repos live under
+`D:\Programs\_ProgramExamples\Example_Programs\GithubProjects\universalWasmLoader\` (each its own git
+repo on `main`). Each carries its own portable `cmem/` memory (set up 2026-06-15) and a `cmem/INDEX.md`
+with the same "update the project memory" / "look for code issues" triggers as wasmtk.
+
 | Repo                         | Language            | Underlying Runtime | Distribution     |
 |------------------------------|---------------------|--------------------|------------------|
+| `universalWasmLoader-js`     | TypeScript / JS     | WebAssembly (host) | JSR (+ npm compat) |
 | `universalWasmLoader-rs`     | Rust                | wasmtime crate     | crates.io        |
 | `universalWasmLoader-py`     | Python              | wasmtime-py        | PyPI             |
 | `universalWasmLoader-go`     | Go                  | wazero             | pkg.go.dev       |
 | `universalWasmLoader-jvm`    | Java / Kotlin       | Chicory            | Maven Central    |
-| `universalWasmLoader-c`      | Zig/V/Julia         | wasmtime C API     | header-only      |
+| `universalWasmLoader-dotnet` | C# / .NET           | wasmtime-dotnet*   | NuGet            |
+| `universalWasmLoader-c`      | C (Zig/V/Julia)     | wasmtime C API     | header-only      |
 
 Julia uses this loader via Julia's `ccall` FFI to the wasmtime C API — no separate
 Julia-specific repo is planned. Julia is Tier 3 (community-contributed or long-term).
+
+### Per-language publishing / versioning (owner guidance 2026-06-15)
+
+Each loader repo publishes to its language's registry with its own version scheme — there is no
+shared `deno task` mechanism across them (only `-js` is a Deno project). Set up a bump+publish flow
+per repo when it's ready to release; `-js` is the reference (`deno task bump` → `deno task publish` →
+tag `vX.Y.Z` → GitHub Action `deno publish` with provenance).
+
+| Repo | Registry | Version lives in | Bump / publish |
+|---|---|---|---|
+| `-js` | JSR | `deno.json` `version` | ✅ `deno task bump` / `deno task publish` (done 2026-06-15) |
+| `-rs` | crates.io | `Cargo.toml` `version` | `cargo publish` (bump `Cargo.toml`) |
+| `-py` | PyPI | `pyproject.toml` `version` | build + `twine`/`uv publish` (the repo uses pixi → `pixi run`) |
+| `-go` | pkg.go.dev | **git tag `vX.Y.Z`** (no version file) | `git tag vX.Y.Z` + push → proxy auto-indexes |
+| `-jvm` | Maven Central | `build.gradle(.kts)` `version` (or `pom.xml`) | Gradle/Maven publish (signed) |
+| `-dotnet` | NuGet | `.csproj` `<Version>` | `dotnet pack` + `dotnet nuget push` |
+| `-c` | **OPEN** (header-only) | **OPEN** — proposed: git tag + a `#define UWL_VERSION` in the header | OPEN |
+| Zig | **OPEN** | proposed: `build.zig.zon` `.version` (fetched by URL+hash; no central registry yet) | OPEN |
+| Dart (future) | pub.dev | `pubspec.yaml` `version` | `dart pub publish` |
+
+`*` `-dotnet` runtime is unconfirmed (no `.csproj` yet — stub). **Maturity (2026-06-15):** `-js` is the
+reference (done + ABI-aligned); `-rs` / `-py` / `-jvm` are real implementations that still need
+**SPEC 3.0.0** return-ABI alignment (see each repo's `cmem/overview.md`); `-go` / `-c` / `-dotnet` are
+stubs (no source) → build fresh against SPEC 3.0.0. **OPEN questions:** where C and Zig publish
+(no obvious central registry — likely git-tag + URL/hash fetch); a Dart port (`-dart`) is a possible
+future addition → pub.dev.
 
 Every loader exposes the same conceptual API in its language's idiom:
 
