@@ -1,7 +1,21 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 307/307**
-(`bindgen` 103/103, `jstyper` 73/73) as of **2026-06-12**.
+Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 309/309**
+(`bindgen` 103/103, `jstyper` 73/73) as of **2026-06-15**.
+
+## Multi-level interface inheritance dropped fields on forward `extends` (2026-06-15, Phase 53.11)
+
+`parseStructs` built interface/object-type structs in a single **source-order** regex pass. When a
+derived interface was declared **before** its base (`interface C extends B {…}` above `B`/`A`), the
+base wasn't in `structDefs` yet, so the inherited fields were silently lost — `const c: C = {x,y,z}`
+read `x:0 y:0 z:3` (only `C`'s own field landed; the base reads returned the 0 fallback). In-order
+chains of any depth already worked, so the long-standing "offset-calc" suspicion in the gap notes was
+a red herring — the bug was declaration ORDER, not arithmetic. **Fix:** collect all interface +
+object-type declarations up front, then build them in **dependency order** to a fixpoint (a decl is
+ready when its base is built, has no base, or is external); leftovers/cyclic build last without the
+unresolved base. Field-building extracted into the new `buildStructDef` helper. Regression
+`53_InterfaceInheritance` (4-level forward-ref chain + mixed-width chain + base-typed param). No
+behavior change for in-order decls (non-extends build in the same interfaces-then-type-aliases order).
 
 ## console.log string/numeric comparison fixes + member-target chained assignment (2026-06-12)
 

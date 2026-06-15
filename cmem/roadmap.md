@@ -16,7 +16,7 @@ score is back to 100%** (`total: 18`). The two gaps that had dropped it to 94 ar
   explicit type. `deno doc --lint` is now clean across all 15 entrypoints — keep it clean on future
   edits to hold the score.
 
-Suite **307/307**, bindgen 103/103, jstyper 73/73. **1.7.0 is fully released; nothing outward-facing
+Suite **309/309** (307 at 1.7.0 + 2 Phase-53 tests), bindgen 103/103, jstyper 73/73. **1.7.0 is fully released; nothing outward-facing
 is pending.** Release mechanism unchanged: `deno task publish` (sync-version → commit → tag `vX.Y.Z` →
 push → `publish.yml` Action runs `deno publish` with provenance).
 
@@ -214,10 +214,21 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
    pre-existing gap that also affected `fromCharCode` strings. NOTE multi-byte: wasic `.length` is
    UTF-8 byte count, TS `.length` is UTF-16 units (the test only `.length`-checks ASCII).
 
-### Phase 53 — Standalone built-ins (user-value; schedule on demand, not foundational)
+### Phase 53 — Standalone built-ins — ✅ COMPLETE 2026-06-15
 
-10. `Number.parseInt(s, radix)` / `Number.parseFloat(s)` — real WAT string→number parser.
-11. Multi-level interface inheritance (>2 deep) — offset-calc fix.
+10. **`Number.parseInt(s, radix)` / `Number.parseFloat(s)` (+ bare `parseInt`/`parseFloat`)** — ✅ DONE.
+    Two self-contained WAT helpers (`$__parse_int` / `$__parse_float`) take a string `(ptr,len)` →
+    f64 with JS semantics: skip leading whitespace + optional sign, stop at the first invalid char,
+    `nan` on no leading digits. `parseInt` honors radix (default 10; `0x` prefix auto-detected when
+    radix is 16 or omitted); `parseFloat` reads sign/integer/fraction/`e`-exponent. `emitExpr` handler
+    after the Phase-48 `Number.*` block; `inferInitType` maps the call to f64. Direct
+    `console.log(parseInt(...))` routes via a local (assign-then-log), matching the Phase-52
+    `in`-operator precedent. Test `53_NumberParse`.
+11. **Multi-level interface inheritance (>2 deep)** — ✅ DONE. Root cause was NOT offset math but
+    declaration ORDER: `parseStructs` built interfaces in a single source-order pass, so a forward
+    `extends` reference (derived declared before its base) silently dropped inherited fields. Refactor:
+    collect all interface/object-type decls first, then build in dependency order to a fixpoint (new
+    `buildStructDef` helper); in-order chains of any depth already worked. Test `53_InterfaceInheritance`.
 
 ### Big tracks (the "last items")
 
@@ -229,8 +240,8 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     kernel (`eval`/`new Function`, pervasive `any`, open-prototype mutation). **Gated behind Phase
     51.** Largest single track; `javyc` (QuickJS) is the interim fallback until it lands.
 
-**Gating summary:** 51 → (13, 14). 12 is parallel/ungated. 52 + 53 are opportunistic and block
-nothing.
+**Gating summary:** 51 → (13, 14). 12 is parallel/ungated. 52 + 53 COMPLETE. The remaining work is
+#12 loader (separate `universalWasmLoader` repo), #13 async, #14 own runtime, and ABI forward-alignment.
 
 ## Congruent polyglot-producer goal + ABI posture (added 2026-06-03 — full detail in [polyglot-producers.md](polyglot-producers.md))
 
@@ -298,7 +309,8 @@ emitting `0`/`""` — which surfaced + FIXED a real latent bug (brace-less / sin
 chains after a single-line `if` were dropped; regression `15_ElseChainForms`), plus `instanceof
 <built-in>` and dead-code/orphaned-module removal, then a console.log comparison fix pass
 (findTopLevelOp paren-tail bug + string ===/!== operands + member-target chained assignment).
-Suite **307/307**, bindgen 103/103,
-jstyper 73/73. Remaining: **Phase 53** (`Number.parseInt`/`parseFloat`, >2-deep interface
-inheritance) + the big tracks (#12 loader, #13 async, #14 own runtime).
+Suite **309/309**, bindgen 103/103,
+jstyper 73/73. **Phase 53 COMPLETE 2026-06-15** (`Number.parseInt`/`parseFloat` + bare forms;
+multi-level interface inheritance, declaration-order independent). Remaining: the big tracks
+(#12 loader, #13 async, #14 own runtime) + ABI forward-alignment.
 Full analysis in CLAUDE.md § "TypeScript Feature Gap Analysis".
