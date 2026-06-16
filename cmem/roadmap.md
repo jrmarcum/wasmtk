@@ -278,18 +278,22 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     closure dispatched by `call_indirect` through the closure ptr — test `59_AsyncClosureCb`); 13.4 =
     **`Promise.all` + `Promise.allSettled`** (array-literal arg, i32/f64) via per-call-site combinators
     (`all` drains+builds `T[]`/first-rejection-wins — test `60_AsyncAll`; `allSettled` never rejects,
-    builds a synth-`__settled_<T>` struct array of `{status,value,reason}` — test `61_AsyncAllSettled`).
-    **Next:** 13.5 lift `hybrid` async exclusion (the only remaining #13 item). Full detail in
-    [async-design.md](async-design.md).
+    builds a synth-`__settled_<T>` struct array of `{status,value,reason}` — test `61_AsyncAllSettled`);
+    13.5 = **lift the `hybrid` async exclusion** (`src/hybrid.ts`) — route async fns into the wasic core
+    via an internal `f__impl` + a sync unwrapping wrapper `f` (`return await f__impl`), validated by
+    `tests/hybrid_fixtures/async_hybrid.ts`. **#13 async track is now COMPLETE** (entire v1 Promise API
+    surface + hybrid integration). Full detail in [async-design.md](async-design.md).
 14. **Own dynamic runtime** (§7-#7) — boxed values + property map + interpreter for the irreducible
     kernel (`eval`/`new Function`, pervasive `any`, open-prototype mutation). **Gated behind Phase
     51.** Largest single track; `javyc` (QuickJS) is the interim fallback until it lands.
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
-2026-06-15; **#12 loaders substantially DONE 2026-06-15** (`-js` published; `-rs`/`-py`/`-jvm`/`-dart`
-implemented + SPEC-3.0.0-aligned + publish CI; stubs `-go`/`-dotnet`/`-c` remain — see vision.md). The
-remaining work is #13 async, #14 own runtime, the deferred P2 container (embed component type — a
-wrap), and finishing #12 (the 3 stub ports + SPEC §10 loader capabilities + owner registry secrets).
+2026-06-15; **#13 async track COMPLETE 2026-06-15** (13.1a–13.5: full v1 Promise API surface + hybrid
+lift; suite 317/317); **#12 loaders substantially DONE 2026-06-15** (`-js` published;
+`-rs`/`-py`/`-jvm`/`-dart` implemented + SPEC-3.0.0-aligned + publish CI; stubs `-go`/`-dotnet`/`-c`
+remain — see vision.md). The remaining work is **#14 own dynamic runtime**, the deferred **P2 container**
+(embed component type — a wrap), and finishing **#12** (the 3 stub ports + SPEC §10 loader capabilities +
+owner registry secrets). A README pass to document the now-complete async surface is also due.
 
 ## Congruent polyglot-producer goal + ABI posture (added 2026-06-03 — full detail in [polyglot-producers.md](polyglot-producers.md))
 

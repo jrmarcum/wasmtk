@@ -358,6 +358,13 @@ silently break (all `src/wasic.ts`):
 - **A struct-array string field in console.log returns ptr+len (`watLoadLen`), not just the ptr.** Both
   console.log/console.error `arr[idx].field` struct-lookup closures special-case `field.type ===
   "string"` (else the field prints as a raw i32 ptr). Surfaced by `allSettled`'s `results[i].status`.
+- **`hybrid` routes async fns via `f__impl` + a sync unwrapping wrapper (13.5, `src/hybrid.ts`).** A
+  compiled async fn returns a promise PTR, not the value — so a routed `async function f(p): Promise<T>`
+  is rewritten to an internal `f__impl` (intra-body calls to other routed async fns renamed to `__impl`
+  to keep the async call graph promise-typed) plus a SYNCHRONOUS exported `f` that does `return await
+  f__impl(args)` (eager model settles synchronously). `Promise<void>` wrappers just invoke the impl.
+  Don't expose the raw async fn to bindgen (the host would get a ptr). Async without a `Promise<T>`
+  annotation stays in the TS host. The awaited graph must be intra-module (host-I/O async → host).
 - **Promise object layout is the canonical `result<T,E>` window** `[state@0, vtype@4, disc@8, payload@16,
   plen@24, reactions@28]` (32 B). `disc`/`payload` are the lift-ready Canonical-ABI image — keep them
   contiguous + naturally aligned (forward-compat for a future WASI-P3 lift). Fresh bump memory is zero

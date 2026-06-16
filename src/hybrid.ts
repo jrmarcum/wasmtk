@@ -44,6 +44,8 @@ export interface WasmFunc {
   lineStart: number;
   /** 0-indexed last line of the function body (its matching close brace). */
   lineEnd: number;
+  /** Phase 13.5: `async function` — routed via a synchronous unwrapping wrapper in the core module. */
+  isAsync?: boolean;
 }
 
 /** Result of `parseHybridFile()`: the extracted WASM functions, remaining TypeScript source, and any warnings. */
@@ -80,27 +82,44 @@ export function isWasicType(t: string): boolean {
 
 /**
  * Static-routability analysis of a function declaration line for `--auto` mode (Brief #6).
- * A function is WASM-routable iff it is NOT async, every parameter carries a wasic-compatible
- * type annotation, and the return type (if present) is wasic-compatible. Untyped params or
- * `any`/object/dynamic types make it non-routable → it stays in the TypeScript host.
+ * A function is WASM-routable iff every parameter carries a wasic-compatible type annotation and
+ * the return type is wasic-compatible. Untyped params or `any`/object/dynamic types make it
+ * non-routable → it stays in the TypeScript host.
+ *
+ * Phase 13.5 (async lift): an `async` function IS routable when it returns `Promise<T>` with a
+ * wasic-compatible `T` (or `void`). `promiseInner` is the unwrapped `T` (or `"void"`); the core
+ * module routes it via a synchronous unwrapping wrapper (see `generateCoreModule`). Async without a
+ * `Promise<…>` annotation is non-routable (the inner type can't be determined).
  */
 export function analyzeSignature(
   decl: string,
-): { isAsync: boolean; routable: boolean; reason?: string } {
+): { isAsync: boolean; routable: boolean; reason?: string; promiseInner?: string } {
   const isAsync = /^\s*(?:export\s+)?async\s+function\b/.test(decl);
-  if (isAsync) return { isAsync, routable: false, reason: "async" };
   const paramSection = decl.match(/\(([^)]*)\)/)?.[1] ?? "";
-  const returnType = decl.match(/\)\s*:\s*([\w[\]|]+)/)?.[1];
+  const returnType = decl.match(/\)\s*:\s*([^{]+)/)?.[1]?.trim();
   const params = paramSection.split(",").map((p) => p.trim()).filter(Boolean);
   for (const p of params) {
     const t = p.split(":")[1]?.trim();
     if (!t) return { isAsync, routable: false, reason: `untyped parameter '${p}'` };
     if (!isWasicType(t)) return { isAsync, routable: false, reason: `parameter type '${t}'` };
   }
-  if (returnType && !isWasicType(returnType)) {
-    return { isAsync, routable: false, reason: `return type '${returnType}'` };
+  // Return type: a bare wasic type, or (Phase 13.5) Promise<T> with a wasic-compatible / void T.
+  let promiseInner: string | undefined;
+  if (returnType) {
+    const pm = returnType.match(/^Promise\s*<\s*(.+?)\s*>$/);
+    if (pm) {
+      promiseInner = pm[1].trim();
+      if (promiseInner !== "void" && !isWasicType(promiseInner)) {
+        return { isAsync, routable: false, reason: `Promise inner type '${promiseInner}'` };
+      }
+    } else if (!isWasicType(returnType)) {
+      return { isAsync, routable: false, reason: `return type '${returnType}'` };
+    }
   }
-  return { isAsync, routable: true };
+  if (isAsync && promiseInner === undefined) {
+    return { isAsync, routable: false, reason: "async without Promise<T> return annotation" };
+  }
+  return { isAsync, routable: true, promiseInner };
 }
 
 // ── parser ───────────────────────────────────────────────────────────────────
@@ -161,9 +180,13 @@ export function parseHybridFile(
 
     if (!route) continue;
 
-    // Async can never be compiled by wasic — even an explicit // @wasm cannot override that.
-    if (sig.isAsync) {
-      warnings.push(`⚠  hybrid: skipping '${name}' — async functions cannot be compiled by wasic`);
+    // Phase 13.5: async functions are now routable (wasic compiles async/await + Promise combinators).
+    // An async fn without a Promise<T> annotation is non-routable — skip even an explicit // @wasm,
+    // since the core module can't determine the unwrapped return type for its sync wrapper.
+    if (sig.isAsync && sig.promiseInner === undefined) {
+      warnings.push(
+        `⚠  hybrid: skipping async '${name}' — needs a Promise<T> return annotation to route to WASM`,
+      );
       continue;
     }
     // A force-included function with non-wasic types: keep it (wasic reports the real error)
@@ -178,7 +201,7 @@ export function parseHybridFile(
     let text = lines.slice(i, endLine + 1).join("\n");
     if (!text.trimStart().startsWith("export ")) text = "export " + text.trimStart();
 
-    wasmFuncs.push({ name, text, lineStart: i, lineEnd: endLine });
+    wasmFuncs.push({ name, text, lineStart: i, lineEnd: endLine, isAsync: sig.isAsync });
     // Remove the function body and, when present, its directive comment line.
     const startSkip = (forceWasm || forceHost) ? p : i;
     for (let j = startSkip; j <= endLine; j++) skipLines.add(j);
@@ -190,15 +213,65 @@ export function parseHybridFile(
 
 // ── generators ───────────────────────────────────────────────────────────────
 
-/** Generate the core wasic module source from the extracted @wasm functions. */
+/** Extract bare parameter names from a `(a: i32, b: f64)` parameter section. */
+function paramNames(paramSection: string): string[] {
+  return paramSection.split(",").map((p) => p.split(":")[0].trim()).filter(Boolean);
+}
+
+/**
+ * Generate the core wasic module source from the extracted @wasm functions.
+ *
+ * Phase 13.5 (async lift): a routed `async function f(p): Promise<T>` cannot be exposed to the host
+ * directly — compiled by modc it returns a *promise pointer* (i32), not the value. So each async fn
+ * is rewritten to an internal `f__impl` (calls to other routed async fns inside any async body are
+ * renamed to their `__impl` too, so the async call graph stays promise-typed), and a SYNCHRONOUS
+ * exported wrapper `f` is emitted that `await`s `f__impl` and returns the unwrapped value (`T`). Under
+ * wasic's eager model the body settles synchronously, so the wrapper returns a real value the host can
+ * use via the normal bindgen path. `Promise<void>` wrappers just invoke the impl (no value to return).
+ */
 export function generateCoreModule(wasmFuncs: WasmFunc[]): string {
   const parts = [
     `// auto-generated by wasmtk hybrid — do not edit manually`,
     `// deno-lint-ignore-file`,
     ``,
   ];
+  // Rename map: every routed async fn name → `<name>__impl`, applied to async bodies so intra-module
+  // async calls reach the promise-returning impl (not the value-returning wrapper).
+  const asyncNames = wasmFuncs.filter((f) => f.isAsync).map((f) => f.name);
+  const renameImplCalls = (text: string): string => {
+    let out = text;
+    for (const an of asyncNames) {
+      out = out.replace(new RegExp(`(?<![."'\`\\w])${an}\\s*\\(`, "g"), `${an}__impl(`);
+    }
+    return out;
+  };
+
   for (const fn of wasmFuncs) {
-    parts.push(fn.text);
+    if (!fn.isAsync) {
+      parts.push(fn.text);
+      parts.push("");
+      continue;
+    }
+    // Parse the async signature from the (export-prefixed) declaration.
+    const sigM = fn.text.match(
+      /export\s+async\s+function\s+\w+\s*\(([^)]*)\)\s*:\s*Promise\s*<\s*(.+?)\s*>/,
+    );
+    const params = sigM?.[1] ?? "";
+    const inner = (sigM?.[2] ?? "void").trim();
+    const args = paramNames(params).join(", ");
+    // Internal impl: strip the leading `export`, rename the decl + intra-body async calls to `__impl`.
+    const implText = renameImplCalls(fn.text.replace(/^export\s+/, ""));
+    parts.push(implText);
+    // Synchronous exported wrapper the host calls.
+    if (inner === "void") {
+      parts.push(`export function ${fn.name}(${params}): void {`);
+      parts.push(`  ${fn.name}__impl(${args});`);
+      parts.push(`}`);
+    } else {
+      parts.push(`export function ${fn.name}(${params}): ${inner} {`);
+      parts.push(`  return await ${fn.name}__impl(${args});`);
+      parts.push(`}`);
+    }
     parts.push("");
   }
   return parts.join("\n");
