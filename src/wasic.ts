@@ -13954,8 +13954,7 @@ class WasicTranspiler {
     const params = Array.from({ length: n }, (_, i) => `(param $p${i} i32)`).join(" ");
     const [fPtr, fLen] = this.allocString("fulfilled");
     const [rPtr, rLen] = this.allocString("rejected");
-    const valSize = elemT === "f64" ? 8 : 4;
-    const reasonOff = elemT === "f64" ? 16 : 12;
+    const reasonOff = elemT === "f64" ? 16 : 12; // value occupies [8, 8+valSize); reason follows
     const recSize = reasonOff + 8;
     const valStore = elemT === "f64" ? "f64.store" : "i32.store";
     const valLoad = elemT === "f64" ? "f64.load" : "i32.load";
