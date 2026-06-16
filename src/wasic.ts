@@ -6980,6 +6980,24 @@ class WasicTranspiler {
         return `(call $__promise_reject ${ptrlen})`;
       }
     }
+    // Phase 13.4b: `Promise.allSettled([…])` → a promise that NEVER rejects, fulfilling with a struct
+    // array of `{status, value|reason}` records. v1: ARRAY-LITERAL arg, value types i32/f64. (Checked
+    // before Promise.all — though `all\(` can't match `allSettled(` anyway.) See async-design.md §3.4.
+    {
+      const asM = expr.match(/^Promise\s*\.\s*allSettled\s*\(([\s\S]*)\)$/);
+      if (asM && parenDepthNeverNegative(asM[1])) {
+        const arg = asM[1].trim();
+        if (arg.startsWith("[") && arg.endsWith("]")) {
+          const elems = this.splitArgs(arg.slice(1, -1)).map((s) => s.trim()).filter(Boolean);
+          const elemT = elems.length > 0 ? this.promiseInnerTypeOf(elems[0], locals) : "i32";
+          this.ensureSettledStruct(elemT);
+          const fnName = this.genPromiseAllSettledSite(elems.length, elemT);
+          this.needsPromiseRuntime = true;
+          const argWats = elems.map((e) => this.emitExpr(e, locals, "i32"));
+          return `(call $${fnName} ${argWats.join(" ")})`.trim();
+        }
+      }
+    }
     // Phase 13.4: `Promise.all([p0, p1, …])` → a promise that fulfills with a T[] of the settled
     // values, or rejects with the first element's reason. v1: ARRAY-LITERAL argument only (the count
     // is fixed at the call site); element types i32 / f64. Each element promise ptr is passed to a
@@ -11576,6 +11594,14 @@ class WasicTranspiler {
                 : `(i32.const ${arrInfo.ptr})`;
               const ptrWat =
                 `(i32.load (i32.add (i32.add ${baseWat} (i32.const 8)) (i32.shl ${idxWat} (i32.const 2))))`;
+              if (field.type === "string") {
+                // string field: return ptr + len so console.log prints the text, not the raw ptr.
+                return {
+                  type: "string",
+                  watLoad: `(i32.load offset=${field.offset} ${ptrWat})`,
+                  watLoadLen: `(i32.load offset=${field.offset + 4} ${ptrWat})`,
+                };
+              }
               const loadOp = field.type === "f64"
                 ? "f64.load"
                 : field.type === "i64"
@@ -11945,6 +11971,13 @@ class WasicTranspiler {
                 : `(i32.const ${arrInfoE.ptr})`;
               const ptrWat =
                 `(i32.load (i32.add (i32.add ${baseWat} (i32.const 8)) (i32.shl ${idxWat} (i32.const 2))))`;
+              if (field.type === "string") {
+                return {
+                  type: "string",
+                  watLoad: `(i32.load offset=${field.offset} ${ptrWat})`,
+                  watLoadLen: `(i32.load offset=${field.offset + 4} ${ptrWat})`,
+                };
+              }
               const loadOp = field.type === "f64"
                 ? "f64.load"
                 : field.type === "i64"
@@ -13886,6 +13919,85 @@ class WasicTranspiler {
   }
 
   /**
+   * Phase 13.4b — synthesize (once) the `Promise.allSettled` result-element struct `__settled_<T>`:
+   * `{ status: string @0 (ptr+len), value: T @8, reason: string @<after value> }`. Registered in
+   * `structDefs` so a result var registered as a struct array of it resolves `r.status`/`.value`/
+   * `.reason` through the existing struct-array field-access paths. Returns the struct name.
+   */
+  private ensureSettledStruct(elemT: WatType): string {
+    const name = `__settled_${elemT}`;
+    if (!this.structDefs.has(name)) {
+      const valSize = elemT === "f64" ? 8 : 4;
+      const reasonOff = elemT === "f64" ? 16 : 12; // value occupies [8, 8+valSize)
+      this.structDefs.set(name, {
+        name,
+        fields: [
+          { name: "status", type: "string" as WatType, offset: 0, size: 8 },
+          { name: "value", type: elemT, offset: 8, size: valSize },
+          { name: "reason", type: "string" as WatType, offset: reasonOff, size: 8 },
+        ],
+        totalSize: reasonOff + 8,
+      });
+    }
+    return name;
+  }
+
+  /**
+   * Phase 13.4b — generate a per-`Promise.allSettled`-call-site combinator. Fixed arity `n`; drains,
+   * then builds an `i32[]` of struct-record ptrs (one `__settled_<T>` per element): a fulfilled
+   * element → `{status:"fulfilled", value}`, a rejected element → `{status:"rejected", reason}`.
+   * NEVER rejects. Unwritten fields are 0 (fresh bump memory is zero). Fulfills with the array ptr
+   * (vtype=3). Returns the helper's function name. See async-design.md §3.4.
+   */
+  private genPromiseAllSettledSite(n: number, elemT: WatType): string {
+    const name = `__promise_allsettled_${this.promiseAllCounter++}`;
+    const params = Array.from({ length: n }, (_, i) => `(param $p${i} i32)`).join(" ");
+    const [fPtr, fLen] = this.allocString("fulfilled");
+    const [rPtr, rLen] = this.allocString("rejected");
+    const valSize = elemT === "f64" ? 8 : 4;
+    const reasonOff = elemT === "f64" ? 16 : 12;
+    const recSize = reasonOff + 8;
+    const valStore = elemT === "f64" ? "f64.store" : "i32.store";
+    const valLoad = elemT === "f64" ? "f64.load" : "i32.load";
+    const L: string[] = [];
+    L.push(`  (func $${name} ${params} (result i32)`.replace(/\s+\(result/, " (result"));
+    L.push(`    (local $res i32) (local $arr i32) (local $rec i32)`);
+    L.push(`    (call $__drain_microtasks)`);
+    L.push(`    (local.set $arr (call $__malloc (i32.const ${8 + n * 4})))`);
+    L.push(`    (i32.store (local.get $arr) (i32.const ${n}))`);
+    L.push(`    (i32.store offset=4 (local.get $arr) (i32.const ${n}))`);
+    for (let i = 0; i < n; i++) {
+      L.push(`    (local.set $rec (call $__malloc (i32.const ${recSize})))`);
+      L.push(`    (if (i32.eq (i32.load offset=8 (local.get $p${i})) (i32.const 1))`);
+      L.push(`      (then`);
+      L.push(`        (i32.store (local.get $rec) (i32.const ${rPtr}))`);
+      L.push(`        (i32.store offset=4 (local.get $rec) (i32.const ${rLen}))`);
+      L.push(
+        `        (i32.store offset=${reasonOff} (local.get $rec) (i32.load offset=16 (local.get $p${i})))`,
+      );
+      L.push(
+        `        (i32.store offset=${
+          reasonOff + 4
+        } (local.get $rec) (i32.load offset=24 (local.get $p${i}))))`,
+      );
+      L.push(`      (else`);
+      L.push(`        (i32.store (local.get $rec) (i32.const ${fPtr}))`);
+      L.push(`        (i32.store offset=4 (local.get $rec) (i32.const ${fLen}))`);
+      L.push(
+        `        (${valStore} offset=8 (local.get $rec) (${valLoad} offset=16 (local.get $p${i})))))`,
+      );
+      L.push(`    (i32.store offset=${8 + i * 4} (local.get $arr) (local.get $rec))`);
+    }
+    L.push(`    (local.set $res (call $__promise_alloc))`);
+    L.push(`    (i32.store (local.get $res) (i32.const 1))`);
+    L.push(`    (i32.store offset=4 (local.get $res) (i32.const 3))`);
+    L.push(`    (i32.store offset=16 (local.get $res) (local.get $arr))`);
+    L.push(`    (local.get $res))`);
+    this.promiseTrampolineWat.push(L.join("\n"));
+    return name;
+  }
+
+  /**
    * Phase 13.2 — does `e` evaluate to a promise? Promise.resolve(...), an async call, or a chained
    * `.then(...)`. (Promise-holding locals are tracked from 13.1b onward — not yet.)
    */
@@ -13893,7 +14005,7 @@ class WasicTranspiler {
     const s = e.trim();
     // Phase 13.1b: a bare identifier that holds a promise (`const p = asyncFn(); … p.then(cb)`).
     if (/^\w+$/.test(s) && this.promiseInnerType.has(s)) return true;
-    if (/^Promise\s*\.\s*(resolve|reject|all)\s*\(/.test(s)) return true;
+    if (/^Promise\s*\.\s*(resolve|reject|allSettled|all)\s*\(/.test(s)) return true;
     // `<recv>.then|catch|finally(cb)` is a promise iff its RECEIVER is — recurse, do NOT loose-match
     // the method anywhere (that would treat `const y = p.then(f)` as a promise, mis-routing the stmt).
     const tm = s.match(/^([\s\S]+)\.(then|catch|finally)\s*\(([\s\S]*)\)$/);
@@ -16443,6 +16555,34 @@ class WasicTranspiler {
           }
         }
         continue;
+      }
+      // Phase 13.4b: `const results = await Promise.allSettled([...])` — register `results` as a struct
+      // array of the synthesized `__settled_<T>` element type so `results[i].status/.value/.reason`
+      // resolve. The local itself is an i32 (array ptr); element type from the first literal element.
+      {
+        const asPre = line.match(
+          /^(?:var|let|const)\s+(\w+)\s*(?::\s*[^=]+?)?\s*=\s*(?:await\s+)?Promise\s*\.\s*allSettled\s*\(\s*\[([\s\S]*)\]\s*\)\s*;?$/,
+        );
+        if (asPre) {
+          const varName = asPre[1];
+          const elemsPre = this.splitArgs(asPre[2]).map((s) => s.trim()).filter(Boolean);
+          const elemTPre = elemsPre.length > 0
+            ? this.promiseInnerTypeOf(elemsPre[0], locals)
+            : "i32";
+          const synName = this.ensureSettledStruct(elemTPre);
+          this.arrayVars.set(varName, {
+            elemType: "i32",
+            ptr: -2,
+            length: 0,
+            dynamic: true,
+            structTypeName: synName,
+          });
+          if (!locals.has(varName)) {
+            declaredLocals.push([varName, "i32"]);
+            locals.set(varName, "i32");
+          }
+          continue;
+        }
       }
       // Phase 44: Array<FuncType> = [] — function pointer array (local variable in a function)
       // Phase 18 fix: Array<{ field: type; ... }> = [] — anonymous inline object struct array

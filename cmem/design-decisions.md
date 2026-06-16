@@ -346,13 +346,18 @@ silently break (all `src/wasic.ts`):
   real params include `string`). wasic's closure trampoline (`emitClosureFactory`) keeps a `string` param
   as one i32 instead of expanding to (ptr,len), so dispatching it would be arity-mismatched. Use a NAMED
   reject callback. Fixing the closure trampoline's string-param expansion would lift this.
-- **`Promise.all` lowers to a per-call-site combinator, NOT reactions (13.4).** `genPromiseAllSite(n, elemT)`
-  has fixed arity = the array-LITERAL length; it `$__drain_microtasks` then collects (eager model = all
-  elements settled post-drain). First rejected element wins (copy reason → reject). Result is a fresh
-  wasic dynamic `T[]` (`[length,capacity,…elems]`), promise value vtype=3 (array ptr) → `await_i32`.
-  ARRAY-LITERAL arg ONLY (count must be a compile-time constant); element types i32/f64. `Promise.all(arrVar)`
-  is unsupported (the variable's element inner type isn't tracked). Do not regress `isPromiseExpr` to
-  drop `Promise.all`, or `await Promise.all(...)`/promise-var tracking of it breaks.
+- **`Promise.all`/`Promise.allSettled` lower to per-call-site combinators, NOT reactions (13.4).**
+  `genPromiseAllSite(n, elemT)` / `genPromiseAllSettledSite(n, elemT)` have fixed arity = the
+  array-LITERAL length; they `$__drain_microtasks` then collect (eager model = all elements settled
+  post-drain). `all`: first rejected element wins → reject; else build a fresh `T[]`. `allSettled`: never
+  rejects → build an `i32[]` of `__settled_<T>` struct-record ptrs (`{status:string, value:T,
+  reason:string}` via `ensureSettledStruct`), the result var registered as a struct array of that synth
+  type in the emitFunction pre-scan (the `__Anon_<var>` precedent). Both fulfill with an array ptr
+  (vtype=3 → `await_i32`). ARRAY-LITERAL arg ONLY (count must be a compile-time constant); element types
+  i32/f64; `Promise.all(arrVar)` unsupported. Do not regress `isPromiseExpr` to drop `all`/`allSettled`.
+- **A struct-array string field in console.log returns ptr+len (`watLoadLen`), not just the ptr.** Both
+  console.log/console.error `arr[idx].field` struct-lookup closures special-case `field.type ===
+  "string"` (else the field prints as a raw i32 ptr). Surfaced by `allSettled`'s `results[i].status`.
 - **Promise object layout is the canonical `result<T,E>` window** `[state@0, vtype@4, disc@8, payload@16,
   plen@24, reactions@28]` (32 B). `disc`/`payload` are the lift-ready Canonical-ABI image — keep them
   contiguous + naturally aligned (forward-compat for a future WASI-P3 lift). Fresh bump memory is zero

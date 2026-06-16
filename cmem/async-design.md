@@ -1,8 +1,28 @@
-# Async / Promise design (roadmap #13) — DESIGN + 13.1a/13.2/13.3a/13.3b/13.1b/13.4(all) SHIPPED
+# Async / Promise design (roadmap #13) — DESIGN + 13.1a/13.2/13.3a/13.3b/13.1b/13.4 SHIPPED
 
-**Status:** DESIGN + **sub-phases 13.1a + 13.2 + 13.3a + 13.3b + 13.1b + 13.4-`Promise.all`
+**Status:** DESIGN + **sub-phases 13.1a + 13.2 + 13.3a + 13.3b + 13.1b + 13.4 (all + allSettled)
 IMPLEMENTED (2026-06-15)**. Roadmap track **#13 — Promise/async** (brief §5 / §7-#5). The owner chose
-"design doc first," then "start the tasks." Suite **316/316**.
+"design doc first," then "start the tasks." Suite **317/317**. **The entire v1 Promise API surface is
+now done** (async/await + resolve/reject + then/catch/finally + all/allSettled); only **13.5** (lift the
+`hybrid` async exclusion — an integration task, not new compiler surface) remains in #13.
+
+**13.4b `Promise.allSettled` shipped (suite 316→317, output-verified, zero regressions):**
+`Promise.allSettled([…])` NEVER rejects — it fulfills with a struct array of `{status, value|reason}`
+records. A synthesized element struct `__settled_<T>` (`ensureSettledStruct`) has fields `status:
+string @0`, `value: T @8`, `reason: string @<after value>`; the result var is registered (in the
+emitFunction pre-scan) as a struct array of it (`structTypeName`, ptr=-2, dynamic — the
+`__Anon_<var>` struct-array precedent) so `results[i].status/.value/.reason` resolve through the existing
+struct-array field-access paths. The per-call-site combinator `genPromiseAllSettledSite(n, elemT)`
+drains, then for each element allocs a `__settled_<T>` record — fulfilled → `{status:"fulfilled",
+value}`, rejected → `{status:"rejected", reason}` (the two status literals are static `allocString`
+constants; unwritten fields are 0 since fresh bump memory is zero) — and stores the record ptr in an
+`i32[]` outer array, fulfilling with the array ptr (vtype=3). Test `61_AsyncAllSettled` (mixed
+fulfil/reject; `results[i].status`/`.value`/`.reason`). **Companion fix (general):** the two console.log
+struct-lookup closures' `arr[idx].field` handler returned a STRING field with only the ptr (`watLoad`,
+no `watLoadLen`) → `console.log(results[i].status)` printed the raw ptr; now returns ptr+len for string
+fields (any struct-array string field in console.log benefits). **v1 limits:** ARRAY-LITERAL argument
+only; value types i32/f64; access the field matching `status` (the other reads 0/empty, as the TS other
+field is `undefined`).
 
 **13.4 `Promise.all` shipped (suite 315→316, output-verified, zero regressions):** `Promise.all([p0,p1,…])`
 fulfills with a `T[]` of the settled values, or rejects with the FIRST element's reason (re-thrown by
@@ -97,35 +117,32 @@ the statement router were widened to `(then|catch|finally)` with `splitArgs` (ha
 passthrough, `.then(dbl).catch(recover)` chain). Plain `.then` trampolines are now dual-path too
 (propagate on rejected) — strictly more correct; 55's sources are fulfilled so output is unchanged.
 
-**Not yet done:** 13.4b `Promise.allSettled` (struct-array result); 13.5 lift the `hybrid` async
-exclusion. See §5.
+**Not yet done:** 13.5 lift the `hybrid` async exclusion. See §5.
 
 ## RESUME POINT — next session (paused 2026-06-15)
 
-**State:** 13.1a + 13.2 + 13.3a + 13.3b + 13.1b + 13.4-`Promise.all` done; full `tests/wasm_wasi` suite
-**316/316**, output-verified, zero regressions; bindgen 104/104, jstyper 73/73. Tests: `54_AsyncBasic` /
-`55_AsyncThen` / `56_AsyncReject` / `57_AsyncCatch` / `58_AsyncPromiseVar` / `59_AsyncClosureCb` /
-`60_AsyncAll`. All code in `src/wasic.ts`. Load-bearing invariants in
-[design-decisions.md](design-decisions.md) → "Async / Promise (#13)".
+**State:** 13.1a + 13.2 + 13.3a + 13.3b + 13.1b + 13.4 (all + allSettled) done — **the entire v1 Promise
+API surface is complete.** Full `tests/wasm_wasi` suite **317/317**, output-verified, zero regressions;
+bindgen 104/104, jstyper 73/73. Tests: `54_AsyncBasic` … `61_AsyncAllSettled`. All code in
+`src/wasic.ts`. Load-bearing invariants in [design-decisions.md](design-decisions.md) → "Async /
+Promise (#13)".
 
-**Next task — 13.4b `Promise.allSettled([…])`** (the deferred half of 13.4). Returns an array that NEVER
-rejects — each element is `{status: "fulfilled"|"rejected", value?: T, reason?: string}`. The work:
-- Synthesize a result struct type (e.g. `{status: i32 0/1, value: T, reason_ptr, reason_len}`) and
-  register the result var as a STRUCT ARRAY so `r.status`/`r.value`/`r.reason` resolve. The TS `status`
-  string needs `r.status === "fulfilled"` to compile — either map the literal to the i32 tag at the
-  compare site, or store the actual status string ptr/len.
-- A per-site combinator like `genPromiseAllSite` but building struct records (one per element; no
-  rejection short-circuit — drain, then for each element write status+value or status+reason).
-- Test `61_AsyncAllSettled.ts`: mixed fulfil/reject; assert each `r.status` + value/reason.
-- Mirror the `Promise.all` plumbing (`isPromiseExpr`/`promiseInnerTypeOf`/`emitExpr` handler), array-literal
-  arg only, i32/f64 value types.
+**Next task — 13.5: lift the `hybrid` async exclusion** (`src/hybrid.ts`, the async-skip at ~line
+90/166). `wasmtk hybrid` currently SKIPS `async` functions (warns + leaves them in the TS host). Now
+that wasic compiles async/await + the Promise combinators, an `async` function whose awaited graph is
+self-contained (no host I/O, only intra-module promises) can be routed to the wasic core instead. The
+work: stop excluding async fns in `parseHybridFile`/the router; add a hybrid fixture with an async fn;
+verify it compiles into the core module (vs being left in the runner). Mind the v1 async limits
+(standalone/intra-module only — an async fn that awaits a HOST call still belongs in the TS host).
 
-**After 13.4b:** 13.5 lift the `hybrid` async exclusion (`src/hybrid.ts` ~line 90/166). README stays
-untouched until the async surface is feature-complete enough to document.
+**13.4 notes:** both `Promise.all` and `Promise.allSettled` are ARRAY-LITERAL arg only (count fixed at
+the call site; a promise-array *variable* isn't supported — element inner type isn't tracked); value
+types i32/f64. `all` → per-site `genPromiseAllSite` (drain, first-rejection-wins, build `T[]`);
+`allSettled` → per-site `genPromiseAllSettledSite` + synth `__settled_<T>` struct (never rejects).
 
-**13.4 `Promise.all` notes:** array-LITERAL argument only (count fixed at the call site; `Promise.all(arrVar)`
-not supported — the variable's element inner type isn't tracked). Element types i32/f64. Helper is
-`genPromiseAllSite` (per-call-site, fixed arity); drains then collects; first rejection wins.
+**After 13.5:** README can document the async surface (it was held until feature-complete). The async
+track #13 is then done except the documented v1 limits (eager interleaving order, no real async
+sources, i32/f64 combinator element types, `Promise.race`/`any` out).
 
 **13.1b notes for future work:** capturing `.catch` (string-param closure) is guarded out — wasic's
 closure trampoline (`emitClosureFactory`, ~line 16981) keeps a `string` param as ONE i32 instead of
@@ -442,7 +459,7 @@ can `await` at module scope.
 | **13.1b** ✅ | promise-holding-var inner-type tracking (`const p = f(); await p` / `p.then`); capturing-closure callbacks for `.then`/`.finally` (env-bearing reaction record) | ✅ `58_AsyncPromiseVar` (var await i32/f64 + `.then` on var + aliasing), `59_AsyncClosureCb` (capturing `.then` i32/f64 + `.finally`) |
 | **13.3a** ✅ | `Promise.reject` + rejection→exception (`await` rejected → `throw`, caught by `try/catch`) + async-body-throw (free, eager model) | ✅ `56_AsyncReject.ts` |
 | **13.3b** ✅ | `.catch`/`.finally` rejection *reactions* (string reasons, dual-path trampoline) + `.then(onF,onR)` | ✅ `57_AsyncCatch.ts` (`.catch` recover + fulfilled-passthrough, `.finally` passthrough, `.then(dbl).catch(recover)` chain) |
-| **13.4** ✅ (all) | `Promise.all` (i32/f64 element types v1, array-literal arg); `allSettled` split to **13.4b** | ✅ `60_AsyncAll` (i32/f64/mixed sources/first-rejection); `allSettled` deferred |
+| **13.4** ✅ | `Promise.all` + `Promise.allSettled` (i32/f64 element types v1, array-literal arg) | ✅ `60_AsyncAll` (i32/f64/mixed sources/first-rejection) + `61_AsyncAllSettled` (mixed fulfil/reject, status/value/reason struct array) |
 | **13.5** | Lift the `hybrid` async exclusion — route async fns whose awaited graph is self-contained to the wasic core (`src/hybrid.ts` line 90/166) | hybrid async fixture compiles instead of being skipped |
 
 **Test discipline (project rule):** the runner judges by per-step **exit code**, but a broad codegen

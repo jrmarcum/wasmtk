@@ -1,8 +1,17 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 316/316**
-(`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-15**. (316 = 307 at v1.7.0 + 2 Phase-53 tests +
-7 async tests 54–60; `bindgen` 103→104 from the ABI return-side forward-alignment's `cabi_post` assertion.)
+Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 317/317**
+(`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-15**. (317 = 307 at v1.7.0 + 2 Phase-53 tests +
+8 async tests 54–61; `bindgen` 103→104 from the ABI return-side forward-alignment's `cabi_post` assertion.)
+
+## console.log struct-array STRING field printed the raw pointer (2026-06-15, async 13.4b)
+
+Both console.log/console.error `arr[idx].field` struct-lookup closures returned a `field.type ===
+"string"` field with only `watLoad` (the ptr i32) and NO `watLoadLen`, so `console.log(arr[i].strField)`
+printed the raw data pointer (e.g. `260`) instead of the string text. Surfaced by `Promise.allSettled`'s
+`results[i].status`. **Fix:** special-case string fields in both closures to return `{type:"string",
+watLoad: ptr@offset, watLoadLen: len@offset+4}` (the same shape the class-var string-field path already
+used). General improvement — any struct-array string field in console.log now prints correctly.
 
 ## Capturing expression-body arrow result-type inferred as f64 (2026-06-15, async 13.1b)
 

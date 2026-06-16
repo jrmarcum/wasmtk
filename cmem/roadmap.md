@@ -262,8 +262,9 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     introspects callbacks" invariant keeps B drop-in; warn-on-unhandled-rejection; mode-scoped
     deadlock trap. v1 scope = async/await +
     resolve/reject + then/catch/finally + all/allSettled, standalone WASI; 5 sub-phases (13.1–13.5).
-    **Sub-phases 13.1a + 13.2 + 13.3a + 13.3b + 13.1b + 13.4-`Promise.all` IMPLEMENTED 2026-06-15**
-    (suite 309→**316**, output-verified, zero regressions): 13.1a = `async`/`await` + `Promise.resolve`,
+    **Sub-phases 13.1a + 13.2 + 13.3a + 13.3b + 13.1b + 13.4 (all + allSettled) IMPLEMENTED 2026-06-15**
+    (suite 309→**317**, output-verified, zero regressions; the entire v1 Promise API surface is done —
+    only 13.5 hybrid-async-lift remains in #13): 13.1a = `async`/`await` + `Promise.resolve`,
     async-fn-returns-promise (i32/f64), inline runtime, canonical `result<T,E>` (test `54_AsyncBasic`);
     13.2 = `.then(namedCb)` + microtask queue (FIFO linked list) + drain, per-call-site `call_indirect`
     trampolines, correct ordering/FIFO/chained/f64/`await`-of-`.then` (test `55_AsyncThen`); 13.3a =
@@ -275,9 +276,10 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     await p`/`p.then`, i32+f64+aliasing — test `58_AsyncPromiseVar`) + **capturing-closure callbacks** for
     `.then`/`.finally` via an **env-bearing reaction record** (functype migrated to `(env,src,result)`;
     closure dispatched by `call_indirect` through the closure ptr — test `59_AsyncClosureCb`); 13.4 =
-    **`Promise.all`** (array-literal arg, i32/f64) via a per-call-site combinator that drains then builds a
-    `T[]` / rejects on the first reason — test `60_AsyncAll` (`Promise.allSettled` split to 13.4b, needs a
-    struct-array result). **Next:** 13.4b `allSettled`; 13.5 lift `hybrid` async exclusion. Full detail in
+    **`Promise.all` + `Promise.allSettled`** (array-literal arg, i32/f64) via per-call-site combinators
+    (`all` drains+builds `T[]`/first-rejection-wins — test `60_AsyncAll`; `allSettled` never rejects,
+    builds a synth-`__settled_<T>` struct array of `{status,value,reason}` — test `61_AsyncAllSettled`).
+    **Next:** 13.5 lift `hybrid` async exclusion (the only remaining #13 item). Full detail in
     [async-design.md](async-design.md).
 14. **Own dynamic runtime** (§7-#7) — boxed values + property map + interpreter for the irreducible
     kernel (`eval`/`new Function`, pervasive `any`, open-prototype mutation). **Gated behind Phase
