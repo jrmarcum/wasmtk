@@ -16,8 +16,10 @@ score is back to 100%** (`total: 18`). The two gaps that had dropped it to 94 ar
   explicit type. `deno doc --lint` is now clean across all 15 entrypoints — keep it clean on future
   edits to hold the score.
 
-Suite **309/309** (307 at 1.7.0 + 2 Phase-53 tests), bindgen 104/104, jstyper 73/73. **1.7.0 is fully released; nothing outward-facing
-is pending.** Release mechanism unchanged: `deno task publish` (sync-version → commit → tag `vX.Y.Z` →
+Suite **309/309** at the 1.7.0 tag (307 at 1.7.0 + 2 Phase-53 tests), bindgen 104/104, jstyper 73/73.
+**Post-1.7.0 the repo added the full #13 async/Promise track (2026-06-15, committed, NOT yet published
+to JSR) — current repo suite is 317/317** (8 async tests `54_*`–`61_*`); a future release will publish
+it. Release mechanism unchanged: `deno task publish` (sync-version → commit → tag `vX.Y.Z` →
 push → `publish.yml` Action runs `deno publish` with provenance).
 
 ## Compiler phase status
@@ -56,7 +58,7 @@ detail lives in `README.md` ("Completed Phases") and the legacy `CLAUDE.md`. Sum
 | 2 | Implement allocator-unification pass | ✅ |
 | 3 | Author Tier-1 caps (Set, Map, Date, JSON, RegExp) | ✅ **all 5 done** |
 | 4 | Wire capability selection (feature-level tree-shake — bundle only referenced caps) | ✅ 2026-06-02 — embedded caps + virtual `wasmtk:<cap>` import, auto-merge only referenced |
-| 5 | Promise/async: state-machine lowering + microtask runtime; lift `hybrid` async exclusion | ⬜ deferred (major track) |
+| 5 | Promise/async: microtask runtime; lift `hybrid` async exclusion | ✅ COMPLETE 2026-06-15 — #13 13.1a–13.5 (eager microtask runtime, not state-machine; suite 317/317) |
 | 6 | Evolve `hybrid` from `// @wasm` annotations → TS-type-driven routing | ✅ 2026-06-02 — `--auto` mode routes fully-typed fns to wasic, dynamic to host |
 | 7 | Decide the §6 kernel scope question (drop `javyc` vs ship own dynamic runtime) | ✅ DECIDED 2026-06-02 — **build wasmtk's own dynamic runtime** (see below) |
 
@@ -68,9 +70,9 @@ implemented yet; `javyc` (QuickJS) remains the interim dynamic fallback until th
 `hybrid --auto` (#6) currently routes dynamic-shaped functions to `javyc`; that target will migrate
 to the own-runtime once it exists.
 
-Remaining open tracks: **#5 Promise/async** (state-machine lowering + microtask runtime) and the
-**own dynamic runtime** (#7 decision). Both are large, dedicated efforts — and both are now
-**gated behind Phase 51 language hardening** (see next section).
+**#5 Promise/async is COMPLETE** (2026-06-15 — #13 13.1a–13.5; eager microtask runtime + `hybrid`
+lift; suite 317/317). The remaining large track is the **own dynamic runtime** (#7 decision) — gated
+behind Phase 51 language hardening (now done), so unblocked.
 
 ## Prioritized execution order (set 2026-06-03)
 
@@ -253,18 +255,19 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     Orthogonal / ungated.
     **CI note:** these repos' org allows only `jrmarcum`-owned Actions → publish workflows MUST be
     `run:`-only (third-party `uses:` → `startup_failure`).
-13. **#5 Promise/async** — state-machine lowering + microtask runtime; lift `hybrid` async exclusion.
-    **Gated behind Phase 51 (now unblocked).** **Design doc written + all decisions RESOLVED
-    2026-06-15 → [async-design.md](async-design.md)** — Approach A (microtask-drain) for v1, expand
+13. **#5 Promise/async — ✅ COMPLETE 2026-06-15 (13.1a–13.5; suite 317/317).** Eager microtask runtime
+    + `hybrid` async lift; Approach B (state-machine) is a future option, not needed for v1.
+    **Design doc + full implementation log → [async-design.md](async-design.md)** — Approach A
+    (microtask-drain) for v1, expand
     to B later; settled value laid out as Canonical ABI `result<T,E>` (max forward-compat) + opaque
     handle; runtime = **inline WAT helpers** (`needsPromiseRuntime`), NOT a merged capability (the
     `wasmmerge` `call_indirect` guard forbids a callback-bearing merged module) — locked "never
     introspects callbacks" invariant keeps B drop-in; warn-on-unhandled-rejection; mode-scoped
     deadlock trap. v1 scope = async/await +
     resolve/reject + then/catch/finally + all/allSettled, standalone WASI; 5 sub-phases (13.1–13.5).
-    **Sub-phases 13.1a + 13.2 + 13.3a + 13.3b + 13.1b + 13.4 (all + allSettled) IMPLEMENTED 2026-06-15**
-    (suite 309→**317**, output-verified, zero regressions; the entire v1 Promise API surface is done —
-    only 13.5 hybrid-async-lift remains in #13): 13.1a = `async`/`await` + `Promise.resolve`,
+    **Sub-phases 13.1a + 13.2 + 13.3a + 13.3b + 13.1b + 13.4 (all + allSettled) + 13.5 IMPLEMENTED
+    2026-06-15** (suite 309→**317**, output-verified, zero regressions; the entire #13 async track is
+    COMPLETE): 13.1a = `async`/`await` + `Promise.resolve`,
     async-fn-returns-promise (i32/f64), inline runtime, canonical `result<T,E>` (test `54_AsyncBasic`);
     13.2 = `.then(namedCb)` + microtask queue (FIFO linked list) + drain, per-call-site `call_indirect`
     trampolines, correct ordering/FIFO/chained/f64/`await`-of-`.then` (test `55_AsyncThen`); 13.3a =
@@ -367,6 +370,6 @@ jstyper 73/73. **Phase 53 COMPLETE 2026-06-15** (`Number.parseInt`/`parseFloat` 
 multi-level interface inheritance, declaration-order independent). **ABI forward-alignment
 (return side) COMPLETE 2026-06-15.** **#12 loaders substantially DONE 2026-06-15** (`-js` published
 `@jrmarcum/universal-wasm-loader@1.0.8`; `-rs`/`-py`/`-jvm`/`-dart` implemented + SPEC-3.0.0 + publish
-CI; stubs `-go`/`-dotnet`/`-c` remain). Remaining: #13 async, #14 own runtime, the deferred P2
-container, and finishing #12 (stub ports + SPEC §10 loader capabilities + owner registry secrets).
-Full analysis in CLAUDE.md § "TypeScript Feature Gap Analysis".
+CI; stubs `-go`/`-dotnet`/`-c` remain). **#13 async COMPLETE 2026-06-15** (13.1a–13.5; suite 317/317).
+Remaining: #14 own runtime, the deferred P2 container, and finishing #12 (stub ports + SPEC §10 loader
+capabilities + owner registry secrets). Full analysis in CLAUDE.md § "TypeScript Feature Gap Analysis".
