@@ -332,9 +332,17 @@ silently break (all `src/wasic.ts`):
   plen@24, reactions@28]` (32 B). `disc`/`payload` are the lift-ready Canonical-ABI image — keep them
   contiguous + naturally aligned (forward-compat for a future WASI-P3 lift). Fresh bump memory is zero
   → a new promise is pending/ok/no-reactions without explicit init.
-- **`isPromiseExpr` checks `.then` by RECURSING on the receiver**, never a loose `/\.then\(/` substring
-  test. The substring form mis-classified `const y = p.then(f)` as a promise statement and mis-routed
-  it. Same trap class as the scanner rules above.
+- **`isPromiseExpr` / the react routers recurse on the receiver for `.then|catch|finally`**, never a
+  loose `/\.(then|catch|finally)\(/` substring test. The substring form mis-classified `const y =
+  p.then(f)` as a promise statement and mis-routed it. Same trap class as the scanner rules above.
+- **Reaction trampolines are DUAL-PATH and chosen by `genReactionTrampoline({kind})` (13.3b)** — they
+  read `src.disc` (+8) and branch: `then` → fulfilled runs `onF(value:T)` / rejected propagates (or
+  runs `onR` for `.then(onF,onR)`); `catch` → fulfilled passes through / rejected runs `onR(reasonPtr,
+  reasonLen)` (the reject reason is a STRING at payload@16 + plen@24, so `onR` is a string-param fn);
+  `finally` → runs `onFin()` on both paths then passes through. Passthrough/propagate use a type-agnostic
+  `copySettlement` (full 32-B image incl. the 8-B payload via `i64`). The fixed reaction functype
+  `(src i32, result i32) → void` is UNCHANGED — only the body differs (so Approach B stays drop-in).
+  `promiseInnerTypeOf`: `.catch` → `onR`'s return type, `.finally` → src's inner type.
 - **Greedy `Promise.resolve(…)` / `.then(…)` regexes MUST carry a `parenDepthNeverNegative` guard**
   (in `promiseInnerTypeOf`, the `emitExpr` handlers, and the statement router) — without it,
   `Promise.resolve(2).then(triple)` is mis-split as resolve-with-arg `2).then(triple` → wrong inner type

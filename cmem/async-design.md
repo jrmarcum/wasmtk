@@ -1,7 +1,8 @@
-# Async / Promise design (roadmap #13) — DESIGN + 13.1a/13.2 SHIPPED
+# Async / Promise design (roadmap #13) — DESIGN + 13.1a/13.2/13.3a/13.3b SHIPPED
 
-**Status:** DESIGN + **sub-phases 13.1a + 13.2 IMPLEMENTED (2026-06-15)**. Roadmap track **#13 —
-Promise/async** (brief §5 / §7-#5). The owner chose "design doc first," then "start the tasks."
+**Status:** DESIGN + **sub-phases 13.1a + 13.2 + 13.3a + 13.3b IMPLEMENTED (2026-06-15)**. Roadmap
+track **#13 — Promise/async** (brief §5 / §7-#5). The owner chose "design doc first," then "start the
+tasks." Suite **313/313**.
 
 **13.1a shipped (suite 309→310):** `async` functions with `Promise<T>` returns (i32/f64); `await`
 on async calls (with/without params) and on `Promise.resolve(...)`; un-annotated `const x = await …`
@@ -38,30 +39,46 @@ is emitted, and `$__exn_tag` is declared. Test `56_AsyncReject.ts`. Known limit:
 Promise.reject(x)` uses the i32 await helper (default), so an `f64`-typed assignment target would
 mismatch — use an i32 context, or rely on the value never being read (it throws first).
 
-**Not yet done:** 13.3b `.catch`/`.finally` (rejection *reactions* — string reasons + dual-path
-trampoline); 13.1b promise-holding-var inner-type tracking (`const p = f(); await p`) + `.then` on a
-capturing-closure callback; 13.4 `Promise.all`/`allSettled`; 13.5 lift the `hybrid` async exclusion.
-See §5.
+**13.3b shipped (suite 312→313, output-verified, zero regressions):** `.catch(onR)` / `.finally(onFin)`
+rejection *reactions* + `.then(onF, onR)` two-arg form. `genThenTrampoline` was generalized to
+`genReactionTrampoline({kind: then|catch|finally, t, u, onF?, onR?, onFin?})` — a **dual-path**
+trampoline that reads `src.disc` (+8) and branches: `then` fulfilled→`onF(value:T)` / rejected→propagate
+(or `onR` when `.then(onF,onR)`); `catch` fulfilled→passthrough / rejected→`onR(reasonPtr,reasonLen)`
+(reason is the STRING at payload@16+plen@24, so `onR` is a string-param fn); `finally` runs `onFin()`
+on both paths then passes the settlement through. Passthrough/propagate use a type-agnostic
+`copySettlement` (full 32-B image, 8-B payload via `i64`). The fixed `(src,result)→void` reaction
+functype is unchanged. `.catch`/`.finally` reuse the existing `$__promise_then` runtime (it just
+registers a reaction regardless of `src.disc`) — no new runtime fn. The `emitExpr` `.then` handler and
+the statement router were widened to `(then|catch|finally)` with `splitArgs` (handles `.then(onF,onR)`);
+`isPromiseExpr` recurses through all three; `promiseInnerTypeOf` adds `.catch`→`onR.result` and
+`.finally`→src inner type. Test `57_AsyncCatch.ts` (`.catch` recover + fulfilled-passthrough, `.finally`
+passthrough, `.then(dbl).catch(recover)` chain). Plain `.then` trampolines are now dual-path too
+(propagate on rejected) — strictly more correct; 55's sources are fulfilled so output is unchanged.
+
+**Not yet done:** 13.1b promise-holding-var inner-type tracking (`const p = f(); await p` / `.then` on a
+*capturing-closure* callback — 13.3b callbacks are still NAMED fns only); 13.4 `Promise.all`/`allSettled`;
+13.5 lift the `hybrid` async exclusion. See §5.
 
 ## RESUME POINT — next session (paused 2026-06-15)
 
-**State:** 13.1a + 13.2 + 13.3a done; full `tests/wasm_wasi` suite **312/312**, output-verified, zero
-regressions. Tests: `54_AsyncBasic` / `55_AsyncThen` / `56_AsyncReject`. All code in `src/wasic.ts`.
-Load-bearing invariants recorded in [design-decisions.md](design-decisions.md) → "Async / Promise (#13)".
+**State:** 13.1a + 13.2 + 13.3a + 13.3b done; full `tests/wasm_wasi` suite **313/313**, output-verified,
+zero regressions; bindgen 104/104, jstyper 73/73. Tests: `54_AsyncBasic` / `55_AsyncThen` /
+`56_AsyncReject` / `57_AsyncCatch`. All code in `src/wasic.ts`. Load-bearing invariants recorded in
+[design-decisions.md](design-decisions.md) → "Async / Promise (#13)" (incl. the dual-path trampoline rule).
 
-**Next task — 13.3b: `.catch(onR)` / `.finally(onFin)` rejection reactions.** The harder part vs 13.3a:
-- A reaction trampoline must become **dual-path**: read `src.disc` (offset 8); on fulfilled run `onF`
-  (or pass the value through), on rejected run `onR` (or propagate the rejection by copying
-  `disc`/`payload`/`plen` to `result`).
-- `.catch(onR)` = `.then(undefined, onR)`; the **reason is a STRING** (`payload`=ptr@16, `plen`@24), so
-  `onR` is a string-param callback — the trampoline calls `onR(ptr, len)` (the first string-typed
-  callback in the reaction path; reuse `emitStringPtrLen`-style ptr+len passing).
-- `.finally(onFin)` runs `onFin()` then passes the original settlement through unchanged.
-- Extend `genThenTrampoline` to take an optional `onRejected` + a `kind` (then/catch/finally), or add a
-  sibling generator. Update `promiseInnerTypeOf` so `p.catch(cb)`/`p.finally(cb)` infer the chained
-  type. Add `.catch`/`.finally` to the `emitExpr` + statement routers (mirror the `.then` handlers).
-- Test `57_AsyncCatch.ts`: `.catch` recovers a rejected promise to a value; `.finally` runs on both
-  paths; `.then(onF).catch(onR)` chain.
+**Next task — 13.1b: promise-holding-var inner-type tracking + capturing-closure callbacks.**
+- Track the inner type `T` of a local that holds a promise (`const p = asyncFn(); await p` / `p.then(cb)`):
+  add a side-table (e.g. `promiseInnerType: Map<varName, WatType>`) populated when a `const/let` is
+  assigned a promise expr (`isPromiseExpr(rhs)` → `promiseInnerTypeOf(rhs)`); `promiseInnerTypeOf`/
+  `isPromiseExpr` consult it for a bare identifier. Today a promise-holding local defaults to i32.
+- Allow `.then`/`.catch`/`.finally` callbacks to be **capturing closures** (currently NAMED fns only —
+  the react routers require `/^\w+$/` + a `this.functions` match). The trampoline would need to pass the
+  closure env ptr; mirror the Phase-44 funcref-array closure-call path.
+- Test `58_AsyncPromiseVar.ts`: `const p = compute(); const v = await p;` + `p.then(cb)`; capturing arrow cb.
+
+**After 13.1b:** 13.4 `Promise.all`/`allSettled` (i32/f64 element types v1); 13.5 lift the `hybrid`
+async exclusion (`src/hybrid.ts` ~line 90/166). README stays untouched until the async surface is
+feature-complete enough to document.
 
 **Dev environment (must-do each session):**
 - The test runner shells out to a GLOBAL `wasmtk` (`WASMTK_BIN="wasmtk"`). This machine has no global
@@ -372,7 +389,7 @@ can `await` at module scope.
 | **13.2** ✅ | `.then(namedCb)` (per-`T` trampolines via `call_indirect`) + microtask queue + drain (in `await` and at `_start` end) | ✅ `55_AsyncThen.ts` (ordering vs sync, FIFO, value/void cb, chained `.then().then()`, f64, `await` of a `.then`) |
 | **13.1b** | promise-holding-var inner-type tracking (`const p = f(); await p` / `p.then`); `.then` on a capturing-closure callback | `await p` via a local; capturing arrow cb |
 | **13.3a** ✅ | `Promise.reject` + rejection→exception (`await` rejected → `throw`, caught by `try/catch`) + async-body-throw (free, eager model) | ✅ `56_AsyncReject.ts` |
-| **13.3b** | `.catch`/`.finally` rejection *reactions* (string reasons, dual-path trampoline) + `.then(onF,onR)` | `.catch` recovers; `.finally` passthrough |
+| **13.3b** ✅ | `.catch`/`.finally` rejection *reactions* (string reasons, dual-path trampoline) + `.then(onF,onR)` | ✅ `57_AsyncCatch.ts` (`.catch` recover + fulfilled-passthrough, `.finally` passthrough, `.then(dbl).catch(recover)` chain) |
 | **13.4** | `Promise.all` / `allSettled` (i32/f64 element types v1) | `all` of computed promises; `allSettled` mixed fulfil/reject |
 | **13.5** | Lift the `hybrid` async exclusion — route async fns whose awaited graph is self-contained to the wasic core (`src/hybrid.ts` line 90/166) | hybrid async fixture compiles instead of being skipped |
 
