@@ -262,8 +262,8 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     introspects callbacks" invariant keeps B drop-in; warn-on-unhandled-rejection; mode-scoped
     deadlock trap. v1 scope = async/await +
     resolve/reject + then/catch/finally + all/allSettled, standalone WASI; 5 sub-phases (13.1–13.5).
-    **Sub-phases 13.1a + 13.2 + 13.3a + 13.3b + 13.1b IMPLEMENTED 2026-06-15** (suite 309→**315**,
-    output-verified, zero regressions): 13.1a = `async`/`await` + `Promise.resolve`,
+    **Sub-phases 13.1a + 13.2 + 13.3a + 13.3b + 13.1b + 13.4-`Promise.all` IMPLEMENTED 2026-06-15**
+    (suite 309→**316**, output-verified, zero regressions): 13.1a = `async`/`await` + `Promise.resolve`,
     async-fn-returns-promise (i32/f64), inline runtime, canonical `result<T,E>` (test `54_AsyncBasic`);
     13.2 = `.then(namedCb)` + microtask queue (FIFO linked list) + drain, per-call-site `call_indirect`
     trampolines, correct ordering/FIFO/chained/f64/`await`-of-`.then` (test `55_AsyncThen`); 13.3a =
@@ -274,8 +274,10 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     both paths) (test `57_AsyncCatch`); 13.1b = promise-holding-var inner-type tracking (`const p = f();
     await p`/`p.then`, i32+f64+aliasing — test `58_AsyncPromiseVar`) + **capturing-closure callbacks** for
     `.then`/`.finally` via an **env-bearing reaction record** (functype migrated to `(env,src,result)`;
-    closure dispatched by `call_indirect` through the closure ptr — test `59_AsyncClosureCb`). **Next:**
-    13.4 `Promise.all`/`allSettled`; 13.5 lift `hybrid` async exclusion. Full detail in
+    closure dispatched by `call_indirect` through the closure ptr — test `59_AsyncClosureCb`); 13.4 =
+    **`Promise.all`** (array-literal arg, i32/f64) via a per-call-site combinator that drains then builds a
+    `T[]` / rejects on the first reason — test `60_AsyncAll` (`Promise.allSettled` split to 13.4b, needs a
+    struct-array result). **Next:** 13.4b `allSettled`; 13.5 lift `hybrid` async exclusion. Full detail in
     [async-design.md](async-design.md).
 14. **Own dynamic runtime** (§7-#7) — boxed values + property map + interpreter for the irreducible
     kernel (`eval`/`new Function`, pervasive `any`, open-prototype mutation). **Gated behind Phase

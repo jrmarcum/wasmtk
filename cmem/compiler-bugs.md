@@ -1,8 +1,8 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 315/315**
-(`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-15**. (315 = 307 at v1.7.0 + 2 Phase-53 tests +
-6 async tests 54–59; `bindgen` 103→104 from the ABI return-side forward-alignment's `cabi_post` assertion.)
+Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 316/316**
+(`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-15**. (316 = 307 at v1.7.0 + 2 Phase-53 tests +
+7 async tests 54–60; `bindgen` 103→104 from the ABI return-side forward-alignment's `cabi_post` assertion.)
 
 ## Capturing expression-body arrow result-type inferred as f64 (2026-06-15, async 13.1b)
 

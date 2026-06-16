@@ -1511,11 +1511,14 @@ class WasicTranspiler {
   // Phase 13: set to true when any async/await/Promise.* is compiled — triggers emission of
   // the inline Promise runtime helpers (getPromiseRuntimeWat) via emitHelpers().
   private needsPromiseRuntime = false;
-  // Phase 13.2: per-`.then`-call-site reaction trampolines (WAT bodies), appended by emitHelpers.
-  // Each conforms to the fixed reaction functype (param $src i32)(param $result i32) and is
-  // registered in the funcref table so the drain loop can call_indirect it. See async-design.md §3.6.
+  // Phase 13.2 / 13.1b: per-call-site reaction trampolines + Promise.all combinator helpers (WAT
+  // bodies), appended by emitHelpers. A reaction trampoline conforms to the fixed reaction functype
+  // (param $env i32)(param $src i32)(param $result i32) and is registered in the funcref table so the
+  // drain loop can call_indirect it. See async-design.md §3.6.
   private promiseTrampolineWat: string[] = [];
   private promiseThenCounter = 0;
+  // Phase 13.4: per-`Promise.all`-call-site combinator helpers (unique counter). See async-design.md §3.4.
+  private promiseAllCounter = 0;
   // Phase 13.1b: tracks the INNER value type (i32/f64) of a local that HOLDS a promise, e.g.
   // `const p = asyncFn();` → promiseInnerType.set("p", T). Lets `await p` pick the right
   // $__promise_await_<T> and lets `p.then(cb)` be recognized as a promise expr (isPromiseExpr /
@@ -6975,6 +6978,24 @@ class WasicTranspiler {
           ? `(i32.const 0) (i32.const 0)`
           : this.emitStringPtrLen(arg, locals);
         return `(call $__promise_reject ${ptrlen})`;
+      }
+    }
+    // Phase 13.4: `Promise.all([p0, p1, …])` → a promise that fulfills with a T[] of the settled
+    // values, or rejects with the first element's reason. v1: ARRAY-LITERAL argument only (the count
+    // is fixed at the call site); element types i32 / f64. Each element promise ptr is passed to a
+    // per-site combinator helper that drains then collects. See async-design.md §3.4.
+    {
+      const allM = expr.match(/^Promise\s*\.\s*all\s*\(([\s\S]*)\)$/);
+      if (allM && parenDepthNeverNegative(allM[1])) {
+        const arg = allM[1].trim();
+        if (arg.startsWith("[") && arg.endsWith("]")) {
+          const elems = this.splitArgs(arg.slice(1, -1)).map((s) => s.trim()).filter(Boolean);
+          const elemT = elems.length > 0 ? this.promiseInnerTypeOf(elems[0], locals) : "i32";
+          const fnName = this.genPromiseAllSite(elems.length, elemT);
+          this.needsPromiseRuntime = true;
+          const argWats = elems.map((e) => this.emitExpr(e, locals, "i32"));
+          return `(call $${fnName} ${argWats.join(" ")})`.trim();
+        }
       }
     }
     // Phase 13.2 / 13.3b / 13.1b: `<promise>.then(onF[, onR])` / `.catch(onR)` / `.finally(onFin)` —
@@ -13811,6 +13832,60 @@ class WasicTranspiler {
   }
 
   /**
+   * Phase 13.4 — generate a per-`Promise.all`-call-site combinator. Fixed arity `n` (the array-literal
+   * length); each param is one element's promise ptr. It drains microtasks (so any pending `.then`
+   * element settles), then: the FIRST rejected element rejects the combined promise (copying its
+   * reason); otherwise it builds a fresh wasic dynamic `T[]` (`[length, capacity, …elems]`) of the
+   * settled values and fulfills with the array ptr (vtype=3). `elemT` (i32/f64) picks the element size
+   * + load/store. Returns the helper's function name (called directly, not via the table).
+   * See async-design.md §3.4.
+   */
+  private genPromiseAllSite(n: number, elemT: WatType): string {
+    const name = `__promise_all_${this.promiseAllCounter++}`;
+    const params = Array.from({ length: n }, (_, i) => `(param $p${i} i32)`).join(" ");
+    const elemSize = elemT === "f64" ? 8 : 4;
+    const storeOp = elemT === "f64" ? "f64.store" : "i32.store";
+    const loadOp = elemT === "f64" ? "f64.load" : "i32.load";
+    const L: string[] = [];
+    L.push(`  (func $${name} ${params} (result i32)`.replace(/\s+\(result/, " (result"));
+    L.push(`    (local $res i32) (local $arr i32)`);
+    L.push(`    (call $__drain_microtasks)`);
+    L.push(`    (local.set $res (call $__promise_alloc))`);
+    // First rejection wins (checked in element order): copy reason → reject the combined promise.
+    for (let i = 0; i < n; i++) {
+      L.push(`    (if (i32.eq (i32.load offset=8 (local.get $p${i})) (i32.const 1))`);
+      L.push(`      (then`);
+      L.push(`        (i32.store (local.get $res) (i32.const 1))`);
+      L.push(`        (i32.store offset=4 (local.get $res) (i32.const 2))`);
+      L.push(`        (i32.store offset=8 (local.get $res) (i32.const 1))`);
+      L.push(
+        `        (i64.store offset=16 (local.get $res) (i64.load offset=16 (local.get $p${i})))`,
+      );
+      L.push(
+        `        (i32.store offset=24 (local.get $res) (i32.load offset=24 (local.get $p${i})))`,
+      );
+      L.push(`        (return (local.get $res))))`);
+    }
+    // No rejection — build the result array and fulfill.
+    L.push(`    (local.set $arr (call $__malloc (i32.const ${8 + n * elemSize})))`);
+    L.push(`    (i32.store (local.get $arr) (i32.const ${n}))`);
+    L.push(`    (i32.store offset=4 (local.get $arr) (i32.const ${n}))`);
+    for (let i = 0; i < n; i++) {
+      L.push(
+        `    (${storeOp} offset=${
+          8 + i * elemSize
+        } (local.get $arr) (${loadOp} offset=16 (local.get $p${i})))`,
+      );
+    }
+    L.push(`    (i32.store (local.get $res) (i32.const 1))`);
+    L.push(`    (i32.store offset=4 (local.get $res) (i32.const 3))`);
+    L.push(`    (i32.store offset=16 (local.get $res) (local.get $arr))`);
+    L.push(`    (local.get $res))`);
+    this.promiseTrampolineWat.push(L.join("\n"));
+    return name;
+  }
+
+  /**
    * Phase 13.2 — does `e` evaluate to a promise? Promise.resolve(...), an async call, or a chained
    * `.then(...)`. (Promise-holding locals are tracked from 13.1b onward — not yet.)
    */
@@ -13818,7 +13893,7 @@ class WasicTranspiler {
     const s = e.trim();
     // Phase 13.1b: a bare identifier that holds a promise (`const p = asyncFn(); … p.then(cb)`).
     if (/^\w+$/.test(s) && this.promiseInnerType.has(s)) return true;
-    if (/^Promise\s*\.\s*(resolve|reject)\s*\(/.test(s)) return true;
+    if (/^Promise\s*\.\s*(resolve|reject|all)\s*\(/.test(s)) return true;
     // `<recv>.then|catch|finally(cb)` is a promise iff its RECEIVER is — recurse, do NOT loose-match
     // the method anywhere (that would treat `const y = p.then(f)` as a promise, mis-routing the stmt).
     const tm = s.match(/^([\s\S]+)\.(then|catch|finally)\s*\(([\s\S]*)\)$/);

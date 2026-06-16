@@ -1,8 +1,26 @@
-# Async / Promise design (roadmap #13) — DESIGN + 13.1a/13.2/13.3a/13.3b/13.1b SHIPPED
+# Async / Promise design (roadmap #13) — DESIGN + 13.1a/13.2/13.3a/13.3b/13.1b/13.4(all) SHIPPED
 
-**Status:** DESIGN + **sub-phases 13.1a + 13.2 + 13.3a + 13.3b + 13.1b IMPLEMENTED (2026-06-15)**.
-Roadmap track **#13 — Promise/async** (brief §5 / §7-#5). The owner chose "design doc first," then
-"start the tasks." Suite **315/315**.
+**Status:** DESIGN + **sub-phases 13.1a + 13.2 + 13.3a + 13.3b + 13.1b + 13.4-`Promise.all`
+IMPLEMENTED (2026-06-15)**. Roadmap track **#13 — Promise/async** (brief §5 / §7-#5). The owner chose
+"design doc first," then "start the tasks." Suite **316/316**.
+
+**13.4 `Promise.all` shipped (suite 315→316, output-verified, zero regressions):** `Promise.all([p0,p1,…])`
+fulfills with a `T[]` of the settled values, or rejects with the FIRST element's reason (re-thrown by
+`await`, caught by `try/catch`). Under the eager model every element settles after a drain, so a
+**per-call-site combinator** (`genPromiseAllSite(n, elemT)`, fixed arity = the array-literal length)
+takes each element's promise ptr as a param, `$__drain_microtasks` first (settles any pending `.then`
+element), then: first rejected element → copy its reason → reject the combined promise; else build a
+fresh wasic dynamic `T[]` (`[length,capacity,…elems]`) of the values (read from each element's payload@16)
+and fulfill with the array ptr (vtype=3). `emitExpr` handler matches `Promise.all([...])`, infers element
+type from the first element via `promiseInnerTypeOf`, and emits `(call $__promise_all_K <ptr exprs…>)`.
+`isPromiseExpr` recognizes `Promise.all(...)`; `promiseInnerTypeOf` returns i32 (the result is an array
+ptr → `await_i32`). Test `60_AsyncAll` (i32, f64, mixed `resolve`/async-call/pending-`.then` elements,
+first-rejection→caught). **v1 limits:** ARRAY-LITERAL argument only (count fixed at the call site; a
+promise-array variable isn't supported — its element inner type isn't tracked); element types i32/f64
+(string/struct later). **`Promise.allSettled` DEFERRED to 13.4b** — it returns an array of
+`{status, value|reason}` objects, which needs a synthesized struct type + struct-array result var +
+`r.status === "fulfilled"` string compare; substantial and split out (same incremental-scope spirit as
+JSON-v1 / RegExp-subset).
 
 **13.1b shipped (suite 313→315, output-verified, zero regressions):** TWO parts. **(1) Promise-holding-var
 inner-type tracking** — a new `promiseInnerType: Map<varName, WatType>` side-table (reset per fn) is
@@ -79,31 +97,35 @@ the statement router were widened to `(then|catch|finally)` with `splitArgs` (ha
 passthrough, `.then(dbl).catch(recover)` chain). Plain `.then` trampolines are now dual-path too
 (propagate on rejected) — strictly more correct; 55's sources are fulfilled so output is unchanged.
 
-**Not yet done:** 13.4 `Promise.all`/`allSettled`; 13.5 lift the `hybrid` async exclusion. See §5.
+**Not yet done:** 13.4b `Promise.allSettled` (struct-array result); 13.5 lift the `hybrid` async
+exclusion. See §5.
 
 ## RESUME POINT — next session (paused 2026-06-15)
 
-**State:** 13.1a + 13.2 + 13.3a + 13.3b + 13.1b done; full `tests/wasm_wasi` suite **315/315**,
-output-verified, zero regressions; bindgen 104/104, jstyper 73/73. Tests: `54_AsyncBasic` /
-`55_AsyncThen` / `56_AsyncReject` / `57_AsyncCatch` / `58_AsyncPromiseVar` / `59_AsyncClosureCb`. All code
-in `src/wasic.ts`. Load-bearing invariants in [design-decisions.md](design-decisions.md) → "Async /
-Promise (#13)" (dual-path trampoline + env-bearing reaction record/functype + promise-var tracking).
+**State:** 13.1a + 13.2 + 13.3a + 13.3b + 13.1b + 13.4-`Promise.all` done; full `tests/wasm_wasi` suite
+**316/316**, output-verified, zero regressions; bindgen 104/104, jstyper 73/73. Tests: `54_AsyncBasic` /
+`55_AsyncThen` / `56_AsyncReject` / `57_AsyncCatch` / `58_AsyncPromiseVar` / `59_AsyncClosureCb` /
+`60_AsyncAll`. All code in `src/wasic.ts`. Load-bearing invariants in
+[design-decisions.md](design-decisions.md) → "Async / Promise (#13)".
 
-**Next task — 13.4: `Promise.all(arr)` / `Promise.allSettled(arr)`** (i32/f64 element types in v1).
-- `Promise.all(arr)`: build a result promise; counter = `arr.length`; for each element register a
-  reaction that stores its value at index `i` of a result `T[]` and decrements the counter; at 0 →
-  fulfill the result with the `T[]`; FIRST rejection → reject the result. v1 element types **i32/f64**
-  (string/struct later). `arr` is a wasic dynamic `i32[]`/`f64[]` of promise ptrs (so the elements are
-  promise handles — needs a promise-array type or just an `i32[]` of handles).
-- `Promise.allSettled(arr)`: like `all` but NEVER rejects; each slot holds a `{status, value|reason}`
-  record; fulfill when all settle.
-- Reuse the env-bearing reaction record (the per-element reaction can store the result-array + index via
-  a small combinator-glue record, or a dedicated trampoline kind). `await Promise.all([...])` returns the
-  `T[]`. Update `promiseInnerTypeOf` so `Promise.all(...)` infers an array inner type.
-- Test `60_AsyncAll.ts`: `all` of computed promises (sum/print elements); `allSettled` mixed fulfil/reject.
+**Next task — 13.4b `Promise.allSettled([…])`** (the deferred half of 13.4). Returns an array that NEVER
+rejects — each element is `{status: "fulfilled"|"rejected", value?: T, reason?: string}`. The work:
+- Synthesize a result struct type (e.g. `{status: i32 0/1, value: T, reason_ptr, reason_len}`) and
+  register the result var as a STRUCT ARRAY so `r.status`/`r.value`/`r.reason` resolve. The TS `status`
+  string needs `r.status === "fulfilled"` to compile — either map the literal to the i32 tag at the
+  compare site, or store the actual status string ptr/len.
+- A per-site combinator like `genPromiseAllSite` but building struct records (one per element; no
+  rejection short-circuit — drain, then for each element write status+value or status+reason).
+- Test `61_AsyncAllSettled.ts`: mixed fulfil/reject; assert each `r.status` + value/reason.
+- Mirror the `Promise.all` plumbing (`isPromiseExpr`/`promiseInnerTypeOf`/`emitExpr` handler), array-literal
+  arg only, i32/f64 value types.
 
-**After 13.4:** 13.5 lift the `hybrid` async exclusion (`src/hybrid.ts` ~line 90/166). README stays
+**After 13.4b:** 13.5 lift the `hybrid` async exclusion (`src/hybrid.ts` ~line 90/166). README stays
 untouched until the async surface is feature-complete enough to document.
+
+**13.4 `Promise.all` notes:** array-LITERAL argument only (count fixed at the call site; `Promise.all(arrVar)`
+not supported — the variable's element inner type isn't tracked). Element types i32/f64. Helper is
+`genPromiseAllSite` (per-call-site, fixed arity); drains then collects; first rejection wins.
 
 **13.1b notes for future work:** capturing `.catch` (string-param closure) is guarded out — wasic's
 closure trampoline (`emitClosureFactory`, ~line 16981) keeps a `string` param as ONE i32 instead of
@@ -420,7 +442,7 @@ can `await` at module scope.
 | **13.1b** ✅ | promise-holding-var inner-type tracking (`const p = f(); await p` / `p.then`); capturing-closure callbacks for `.then`/`.finally` (env-bearing reaction record) | ✅ `58_AsyncPromiseVar` (var await i32/f64 + `.then` on var + aliasing), `59_AsyncClosureCb` (capturing `.then` i32/f64 + `.finally`) |
 | **13.3a** ✅ | `Promise.reject` + rejection→exception (`await` rejected → `throw`, caught by `try/catch`) + async-body-throw (free, eager model) | ✅ `56_AsyncReject.ts` |
 | **13.3b** ✅ | `.catch`/`.finally` rejection *reactions* (string reasons, dual-path trampoline) + `.then(onF,onR)` | ✅ `57_AsyncCatch.ts` (`.catch` recover + fulfilled-passthrough, `.finally` passthrough, `.then(dbl).catch(recover)` chain) |
-| **13.4** | `Promise.all` / `allSettled` (i32/f64 element types v1) | `all` of computed promises; `allSettled` mixed fulfil/reject |
+| **13.4** ✅ (all) | `Promise.all` (i32/f64 element types v1, array-literal arg); `allSettled` split to **13.4b** | ✅ `60_AsyncAll` (i32/f64/mixed sources/first-rejection); `allSettled` deferred |
 | **13.5** | Lift the `hybrid` async exclusion — route async fns whose awaited graph is self-contained to the wasic core (`src/hybrid.ts` line 90/166) | hybrid async fixture compiles instead of being skipped |
 
 **Test discipline (project rule):** the runner judges by per-step **exit code**, but a broad codegen

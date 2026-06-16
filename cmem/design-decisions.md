@@ -346,6 +346,13 @@ silently break (all `src/wasic.ts`):
   real params include `string`). wasic's closure trampoline (`emitClosureFactory`) keeps a `string` param
   as one i32 instead of expanding to (ptr,len), so dispatching it would be arity-mismatched. Use a NAMED
   reject callback. Fixing the closure trampoline's string-param expansion would lift this.
+- **`Promise.all` lowers to a per-call-site combinator, NOT reactions (13.4).** `genPromiseAllSite(n, elemT)`
+  has fixed arity = the array-LITERAL length; it `$__drain_microtasks` then collects (eager model = all
+  elements settled post-drain). First rejected element wins (copy reason → reject). Result is a fresh
+  wasic dynamic `T[]` (`[length,capacity,…elems]`), promise value vtype=3 (array ptr) → `await_i32`.
+  ARRAY-LITERAL arg ONLY (count must be a compile-time constant); element types i32/f64. `Promise.all(arrVar)`
+  is unsupported (the variable's element inner type isn't tracked). Do not regress `isPromiseExpr` to
+  drop `Promise.all`, or `await Promise.all(...)`/promise-var tracking of it breaks.
 - **Promise object layout is the canonical `result<T,E>` window** `[state@0, vtype@4, disc@8, payload@16,
   plen@24, reactions@28]` (32 B). `disc`/`payload` are the lift-ready Canonical-ABI image — keep them
   contiguous + naturally aligned (forward-compat for a future WASI-P3 lift). Fresh bump memory is zero
