@@ -595,6 +595,13 @@ interface FuncDef {
    *  When set, the inner function takes $__closure_ptr (i32) as its first param and accesses
    *  mutable captures via f64.load/f64.store (or i32.load/i32.store) through the closure pointer. */
   closureCaptureLayout?: Map<string, { type: WatType; offset: number }>;
+  /** Phase 13 (#13 async): true when declared `async`. */
+  isAsync?: boolean;
+  /** Phase 13: inner type T of a promise-returning async fn (`async f(): Promise<T>`), null for
+   *  `Promise<void>` (which 13.1a treats as a plain void fn — body runs eagerly, returns no promise).
+   *  When non-null, the fn's WAT result is i32 (a promise ptr) and `return expr` is wrapped in
+   *  `$__promise_resolve_<T>(expr)`. See cmem/async-design.md. */
+  asyncInner?: WatType | null;
 }
 
 /** Maps TypeScript type annotation strings to WAT types (or the "string"/"never" pseudo-types).
@@ -1167,6 +1174,26 @@ function inferInitType(
   const e = initExpr.trim();
   // Phase 35: typeof x → the typeof operator always produces a string value
   if (/^typeof\s+\w+$/.test(e)) return "string";
+  // Phase 13 (#13 async): `await <promiseExpr>` → the awaited promise's inner value type.
+  if (e.startsWith("await ")) {
+    const inner = e.slice(6).trim();
+    const r = inner.match(/^Promise\s*\.\s*resolve\s*\(([\s\S]*)\)$/);
+    if (r) {
+      const a = r[1].trim();
+      return a === "" ? "i32" : inferInitType(a, locals, enumValues, functions);
+    }
+    const c = inner.match(/^(\w+)\s*\(/);
+    if (c && functions) {
+      const fn = functions.find((f) => f.name === c[1]);
+      if (fn?.asyncInner != null) return fn.asyncInner;
+    }
+    const d = inner.match(/^(\w+)\.(\w+)\s*\(/);
+    if (d && functions) {
+      const fn = functions.find((f) => f.name === `${d[1]}_${d[2]}`);
+      if (fn?.asyncInner != null) return fn.asyncInner;
+    }
+    return "i32";
+  }
   // 0. boolean literals
   if (e === "true" || e === "false") return "bool";
   // 1. bigint literal
@@ -1478,6 +1505,21 @@ class WasicTranspiler {
   private nullableFuncReturnType: Map<string, WatType> = new Map();
   // Phase 24: set to true when the function currently being emitted returns T|null.
   private currentFuncIsNullableReturn = false;
+  // Phase 13 (#13 async): inner promise type of the async fn currently being emitted
+  // (null = not promise-returning; the function returns no promise — see cmem/async-design.md).
+  private currentFuncAsyncInner: WatType | null = null;
+  // Phase 13: set to true when any async/await/Promise.* is compiled — triggers emission of
+  // the inline Promise runtime helpers (getPromiseRuntimeWat) via emitHelpers().
+  private needsPromiseRuntime = false;
+  // Phase 13.2: per-`.then`-call-site reaction trampolines (WAT bodies), appended by emitHelpers.
+  // Each conforms to the fixed reaction functype (param $src i32)(param $result i32) and is
+  // registered in the funcref table so the drain loop can call_indirect it. See async-design.md §3.6.
+  private promiseTrampolineWat: string[] = [];
+  private promiseThenCounter = 0;
+  // Phase 13.3: set when Promise.reject / a rejected await path is compiled — adds the rejection
+  // re-throw to the await helpers + $__promise_reject, and declares the $__exn_tag. Kept separate
+  // from needsPromiseRuntime so resolve/then-only programs stay exception-free.
+  private needsPromiseReject = false;
   // Phase 24: set to true when any nullable-return function is compiled — triggers
   // emission of the $__nullable_ret_flag global in the WAT module.
   private needsNullableResultFlag = false;
@@ -1986,7 +2028,12 @@ class WasicTranspiler {
 
   /** Emits (table N funcref) and (elem ...) for all functions registered in funcTable. */
   private emitFuncrefTable(): string {
-    if (this.funcTable.size === 0) return "";
+    if (this.funcTable.size === 0) {
+      // Phase 13: the Promise drain's `call_indirect` needs a funcref table even when the program
+      // has no `.then` (await/resolve-only) — emit a minimal empty table so it validates. (The
+      // call_indirect is never executed when the microtask queue is empty.)
+      return this.needsPromiseRuntime ? `  (table 1 funcref)` : "";
+    }
     const sorted = [...this.funcTable.entries()].sort((a, b) => a[1] - b[1]);
     const elem = sorted.map(([name]) => `$${name}`).join(" ");
     return [
@@ -2319,13 +2366,14 @@ class WasicTranspiler {
 
   private parseFunctions(): void {
     const src = this.src;
-    // Find `[export] function name(` — params extracted separately to handle nested parens
-    const headerRe = /(export\s+)?function\s+(\w+)\s*\(/g;
+    // Find `[export] [async] function name(` — params extracted separately to handle nested parens
+    const headerRe = /(export\s+)?(async\s+)?function\s+(\w+)\s*\(/g;
     let m: RegExpExecArray | null;
 
     while ((m = headerRe.exec(src)) !== null) {
       const exported = !!m[1];
-      const name = m[2];
+      const isAsync = !!m[2]; // Phase 13 (#13 async)
+      const name = m[3];
       const openParen = m.index + m[0].length - 1; // position of opening `(`
 
       // Extract param list with paren-counting (handles function-type params)
@@ -2335,12 +2383,30 @@ class WasicTranspiler {
       // Return type may include array suffix: i32[], i32[][], ClassName, tuple [T1,T2], T|null, etc.
       // Phase 34: also matches type predicate annotations "param is Type".
       // Also matches function-type return annotations like `() => number` or `(a: i32) => f64`.
+      // Phase 13: also matches `Promise<T>` (async return) — handled just below.
       const restMatch = src.slice(afterClose).match(
-        /^\s*(?::\s*([\w]+\s+is\s+[\w]+|[\w]+(?:\[\])*(?:\s*\|\s*(?:null|undefined))*|\[[^\]]*\]|\([^)]*\)\s*=>\s*[\w]+))?\s*\{/,
+        /^\s*(?::\s*(Promise\s*<[^>]*>|[\w]+\s+is\s+[\w]+|[\w]+(?:\[\])*(?:\s*\|\s*(?:null|undefined))*|\[[^\]]*\]|\([^)]*\)\s*=>\s*[\w]+))?\s*\{/,
       );
       if (!restMatch) continue; // malformed header — skip
 
       let rawResult = (restMatch[1] ?? "void").trim();
+      // Phase 13 (#13 async): `async f(): Promise<T>` — must run BEFORE the tuple/nullable/mapType
+      // paths so they never see the `Promise<…>` token. Promise<void> (or async with no/other
+      // annotation) is treated as a plain void fn in 13.1a (body runs eagerly, returns no promise);
+      // Promise<T> with T≠void becomes a promise-returning fn (WAT result i32 = promise ptr).
+      let asyncInner: WatType | null = null;
+      if (isAsync) {
+        const pm = rawResult.match(/^Promise\s*<\s*([\s\S]+?)\s*>$/);
+        const innerTs = pm ? pm[1].trim() : "void";
+        if (innerTs === "void" || innerTs === "") {
+          asyncInner = null;
+          rawResult = "void";
+        } else {
+          asyncInner = mapType(innerTs);
+          rawResult = "i32"; // promise pointer
+          this.needsPromiseRuntime = true;
+        }
+      }
       // Phase 34: detect type predicate return annotation "param is Type"
       // e.g. function isCircle(s: Shape): s is Circle { ... }
       const typePredicateMatch = rawResult.match(/^(\w+)\s+is\s+(\w+)$/);
@@ -2619,6 +2685,8 @@ class WasicTranspiler {
         returnedArrow: returnedArrow ?? undefined,
         resultTsName,
         sharedMutableCaptures,
+        isAsync,
+        asyncInner,
       });
     }
   }
@@ -2838,8 +2906,8 @@ class WasicTranspiler {
       const closes = (line.match(/\}/g) ?? []).length;
 
       if (depth === 0) {
-        // Regular function declaration — skip body, already parsed
-        if (/^(?:export\s+)?function\s+\w+/.test(line)) {
+        // Regular function declaration — skip body, already parsed (Phase 13: incl. `async`)
+        if (/^(?:export\s+)?(?:async\s+)?function\s+\w+/.test(line)) {
           depth += opens - closes;
           continue;
         }
@@ -6771,6 +6839,41 @@ class WasicTranspiler {
     return this.emitExpr(expr, locals, "i32");
   }
 
+  /**
+   * Phase 13 (#13 async): inner value type (i32 / f64) of an expression that evaluates to a
+   * promise — used to pick $__promise_await_<T> / $__promise_resolve_<T>. 13.1a determines it from
+   * the awaited expression directly: `Promise.resolve(x)` → type of x; an async call `fn(...)` /
+   * `recv.m(...)` → that fn's tracked `asyncInner`. Defaults to i32 (incl. promise-holding locals,
+   * whose inner-type tracking lands with `.then` in 13.2). See cmem/async-design.md §3.3.
+   */
+  private promiseInnerTypeOf(promiseExpr: string, locals: Map<string, WatType>): WatType {
+    const e = promiseExpr.trim();
+    const norm = (t: WatType | null | undefined): WatType =>
+      t === "f64" || t === "f32" ? "f64" : "i32";
+    const r = e.match(/^Promise\s*\.\s*resolve\s*\(([\s\S]*)\)$/);
+    if (r && parenDepthNeverNegative(r[1])) {
+      const a = r[1].trim();
+      return a === "" ? "i32" : norm(inferInitType(a, locals, this.enumValues, this.functions));
+    }
+    // `<promise>.then(cb)` — the chained promise carries cb's return type U.
+    const thenM = e.match(/^([\s\S]+)\.then\s*\(([\s\S]*)\)$/);
+    if (thenM && parenDepthNeverNegative(thenM[2]) && /^\w+$/.test(thenM[2].trim())) {
+      const fn = this.functions.find((f) => f.name === thenM[2].trim());
+      if (fn) return norm(fn.result);
+    }
+    const c = e.match(/^(\w+)\s*\(/);
+    if (c) {
+      const fn = this.functions.find((f) => f.name === c[1]);
+      if (fn?.asyncInner != null) return norm(fn.asyncInner);
+    }
+    const d = e.match(/^(\w+)\.(\w+)\s*\(/);
+    if (d) {
+      const fn = this.functions.find((f) => f.name === `${d[1]}_${d[2]}`);
+      if (fn?.asyncInner != null) return norm(fn.asyncInner);
+    }
+    return "i32";
+  }
+
   // -------------------------------------------------------------------------
   // Expression emitter
   // -------------------------------------------------------------------------
@@ -6803,6 +6906,66 @@ class WasicTranspiler {
     // stray f64.convert_i32_s (e.g. `ptr as unknown as i32` on a pointer return).
     if (/\bas\s+(?:unknown|any)\b/.test(expr)) {
       expr = expr.replace(/\s+as\s+(?:unknown|any)\b/g, " ").replace(/\s{2,}/g, " ").trim();
+    }
+
+    // Phase 13 (#13 async): `await <promiseExpr>` — drain microtasks, then take the settled value.
+    // 13.1a: applied directly to an async call or Promise.resolve(...). The awaited expression
+    // evaluates to a promise ptr (i32); the inner type picks $__promise_await_i32 / _f64.
+    // See cmem/async-design.md §3.4.
+    if (expr.startsWith("await ")) {
+      const inner = expr.slice(6).trim();
+      const innerT = this.promiseInnerTypeOf(inner, locals);
+      this.needsPromiseRuntime = true;
+      const pWat = this.emitExpr(inner, locals, "i32");
+      return `(call $__promise_await_${innerT} ${pWat})`;
+    }
+    // Phase 13: `Promise.resolve(x)` → a settled promise carrying x. (Promise.reject is 13.3.)
+    {
+      const presM = expr.match(/^Promise\s*\.\s*resolve\s*\(([\s\S]*)\)$/);
+      if (presM && parenDepthNeverNegative(presM[1])) {
+        const arg = presM[1].trim();
+        const wt = this.promiseInnerTypeOf(expr, locals); // i32 / f64 from the resolve arg
+        this.needsPromiseRuntime = true;
+        const argWat = arg === "" ? "(i32.const 0)" : this.emitExpr(arg, locals, wt);
+        return `(call $__promise_resolve_${wt} ${argWat})`;
+      }
+    }
+    // Phase 13.3: `Promise.reject(reason)` → a settled-rejected promise carrying the string reason.
+    // Awaiting it re-throws the reason (caught by a surrounding try/catch). See async-design.md §3.5.
+    {
+      const prejM = expr.match(/^Promise\s*\.\s*reject\s*\(([\s\S]*)\)$/);
+      if (prejM && parenDepthNeverNegative(prejM[1])) {
+        const arg = prejM[1].trim();
+        this.needsPromiseRuntime = true;
+        this.needsPromiseReject = true;
+        this.needsExceptionTag = true;
+        const ptrlen = arg === ""
+          ? `(i32.const 0) (i32.const 0)`
+          : this.emitStringPtrLen(arg, locals);
+        return `(call $__promise_reject ${ptrlen})`;
+      }
+    }
+    // Phase 13.2: `<promise>.then(cb)` — register a reaction; cb(value) runs as a microtask, and
+    // the call evaluates to a new promise<U>. 13.2: cb is a NAMED function (or a non-capturing arrow
+    // already lifted to one); onRejected (2nd arg) lands with 13.3. See async-design.md §3.4.
+    {
+      const thenM = expr.match(/^([\s\S]+)\.then\s*\(([\s\S]*)\)$/);
+      if (thenM && parenDepthNeverNegative(thenM[2])) {
+        const recv = thenM[1].trim();
+        const cbName = thenM[2].trim();
+        const cbFn = /^\w+$/.test(cbName)
+          ? this.functions.find((f) => f.name === cbName)
+          : undefined;
+        if (this.isPromiseExpr(recv) && cbFn) {
+          const t = this.promiseInnerTypeOf(recv, locals);
+          const u = cbFn.result;
+          const trampIdx = this.genThenTrampoline(cbName, t, u);
+          this.getOrCreateFuncType(["i32", "i32"], null); // register the reaction functype
+          this.needsPromiseRuntime = true;
+          const srcWat = this.emitExpr(recv, locals, "i32");
+          return `(call $__promise_then ${srcWat} (i32.const ${trampIdx}))`;
+        }
+      }
     }
 
     // Phase 22: `as` type assertion — `expr as T` → appropriate WASM conversion
@@ -9115,6 +9278,18 @@ class WasicTranspiler {
     locals: Map<string, WatType>,
     funcResult: WatType | null,
   ): string {
+    // Phase 13.2: `<promise>.then(cb);` as a statement — the reaction is registered (cb runs at the
+    // microtask drain); the returned result promise is dropped. emitExpr owns the .then lowering.
+    {
+      const t = line.replace(/;$/, "").trim();
+      const tm = t.match(/^([\s\S]+)\.then\s*\(([\s\S]*)\)$/);
+      if (
+        tm && parenDepthNeverNegative(tm[2]) && /^\w+$/.test(tm[2].trim()) &&
+        this.isPromiseExpr(tm[1].trim())
+      ) {
+        return `(drop ${this.emitExpr(t, locals, "i32")})`;
+      }
+    }
     // Block-scope correction: a struct-typed var can be re-declared in a sibling block with a
     // DIFFERENT struct type. The pre-scan registers structVars globally (last declaration wins),
     // so an earlier block's field access would resolve against the wrong type. Re-register the
@@ -9221,6 +9396,15 @@ class WasicTranspiler {
     if (line.startsWith("return")) {
       const expr = line.replace(/^return\s*/, "").replace(/;$/, "").trim();
       if (!expr || funcResult === null) return "(return)";
+      // Phase 13 (#13 async): inside a promise-returning async fn, `return expr` resolves the
+      // promise — wrap the inner value in $__promise_resolve_<T>. funcResult is i32 (the promise
+      // ptr). See cmem/async-design.md §3.4. (Rejection-on-throw is 13.3.)
+      if (this.currentFuncAsyncInner !== null) {
+        const innerT = this.currentFuncAsyncInner;
+        this.needsPromiseRuntime = true;
+        const valWat = this.emitExpr(expr, locals, innerT);
+        return `(return (call $__promise_resolve_${innerT} ${valWat}))`;
+      }
       // Phase 24: nullable-return function — set $__nullable_ret_flag before returning.
       // flag=1 → has value; flag=0 → is null.
       if (this.currentFuncIsNullableReturn) {
@@ -12303,7 +12487,8 @@ class WasicTranspiler {
       }
 
       // Nested function declaration — already lifted to module level, skip its body
-      if (/^(?:export\s+)?function\s+\w+\s*\(/.test(line)) {
+      // (Phase 13: incl. `async function`)
+      if (/^(?:export\s+)?(?:async\s+)?function\s+\w+\s*\(/.test(line)) {
         if (line.includes("{")) {
           const [, consumed] = this.extractBlock(lines, i + 1);
           i += consumed + 1;
@@ -13299,7 +13484,174 @@ class WasicTranspiler {
     if (this.dynArrHelpers.size > 0) parts.push(this.emitDynArrHelpers());
     if (this.typedArrHelpers.size > 0) parts.push(this.emitTypedArrHelpers());
     if (this.needsMatrix2DPrintHelper) parts.push(this.emitMatrix2DPrintHelper());
+    if (this.needsPromiseRuntime) parts.push(this.getPromiseRuntimeWat());
+    // Phase 13.2: per-call-site .then reaction trampolines (registered in the funcref table).
+    if (this.promiseTrampolineWat.length > 0) parts.push(this.promiseTrampolineWat.join("\n"));
     return parts.join("\n");
+  }
+
+  /**
+   * Phase 13 (#13 async) — inline Promise runtime (Approach A: microtask-drain). Emitted on demand
+   * when `needsPromiseRuntime` is set. Lives INLINE in the main module (NOT a merged capability —
+   * the wasmmerge call_indirect guard forbids a callback-bearing merged module; see
+   * cmem/async-design.md §3.6). Binaryen -Oz dead-strips any helper a program does not reach.
+   *
+   * Promise object = 32 bytes, fresh bump memory is zero so a new object is pending/ok/no-reactions:
+   *   +0  state    i32  (0=pending, 1=settled)         — internal scheduling
+   *   +4  vtype    i32  (0=i32, 1=f64, 2=string, 3=ptr) — internal dispatch tag
+   *   +8  disc     i32  (0=ok/fulfilled, 1=err/rejected) — Canonical ABI result<T,E> discriminant
+   *   +12 (pad to align the 8-byte payload)
+   *   +16 payload  8B   (i32 / f64 / string-ptr)        — Canonical result payload
+   *   +24 plen     i32  (string byte length)
+   *   +28 reactions i32 (head of the reaction list; 0 in 13.1a — no .then yet)
+   * The [disc, payload(, plen)] window is the lift-ready Canonical result<T,E> image.
+   *
+   * 13.1a scope: resolve (i32/f64) + await (i32/f64). No reactions/.then (13.2), no reject/throw
+   * (13.3). $__drain_microtasks is a no-op until 13.2; $__on_quiescent traps (provable deadlock in
+   * self-contained WASI-P1 — routed through one seam so the future host mode can rebind to yield).
+   */
+  private getPromiseRuntimeWat(): string {
+    // The drain loop's `call_indirect (type $ftype_i32_i32_r_void)` needs this functype declared
+    // even when the program has no `.then` (await/resolve-only) — register it unconditionally so a
+    // promise program without reactions still validates. (A funcref table is likewise forced in
+    // emitFuncrefTable when needsPromiseRuntime.)
+    this.getOrCreateFuncType(["i32", "i32"], null);
+    // Phase 13.3: a rejected await re-throws the reason string (disc==1 → throw $__exn_tag), so a
+    // surrounding try/catch catches it. Only emitted when needsPromiseReject (keeps resolve/then-only
+    // programs exception-free). $__promise_reject builds a settled-rejected promise from a string.
+    const rej = this.needsPromiseReject
+      ? `\n    (if (i32.eq (i32.load offset=8 (local.get $p)) (i32.const 1))` +
+        `\n      (then (throw $__exn_tag (i32.load offset=16 (local.get $p)) (i32.load offset=24 (local.get $p)))))`
+      : "";
+    const rejectFn = this.needsPromiseReject
+      ? `\n  (func $__promise_reject (param $ptr i32) (param $len i32) (result i32)` +
+        `\n    (local $p i32)` +
+        `\n    (local.set $p (call $__promise_alloc))` +
+        `\n    (i32.store (local.get $p) (i32.const 1))` +
+        `\n    (i32.store offset=4 (local.get $p) (i32.const 2))` +
+        `\n    (i32.store offset=8 (local.get $p) (i32.const 1))` +
+        `\n    (i32.store offset=16 (local.get $p) (local.get $ptr))` +
+        `\n    (i32.store offset=24 (local.get $p) (local.get $len))` +
+        `\n    (local.get $p))`
+      : "";
+    return `  ;; ---- Promise runtime (Phase 13.1, #13 async) ----
+  (func $__promise_alloc (result i32)
+    (call $__malloc (i32.const 32)))
+  (func $__promise_resolve_i32 (param $v i32) (result i32)
+    (local $p i32)
+    (local.set $p (call $__promise_alloc))
+    (i32.store (local.get $p) (i32.const 1))
+    (i32.store offset=16 (local.get $p) (local.get $v))
+    (local.get $p))
+  (func $__promise_resolve_f64 (param $v f64) (result i32)
+    (local $p i32)
+    (local.set $p (call $__promise_alloc))
+    (i32.store (local.get $p) (i32.const 1))
+    (i32.store offset=4 (local.get $p) (i32.const 1))
+    (f64.store offset=16 (local.get $p) (local.get $v))
+    (local.get $p))
+  (func $__promise_await_i32 (param $p i32) (result i32)
+    (call $__drain_microtasks)
+    (if (i32.eqz (i32.load (local.get $p))) (then (call $__on_quiescent)))${rej}
+    (i32.load offset=16 (local.get $p)))
+  (func $__promise_await_f64 (param $p i32) (result f64)
+    (call $__drain_microtasks)
+    (if (i32.eqz (i32.load (local.get $p))) (then (call $__on_quiescent)))${rej}
+    (f64.load offset=16 (local.get $p)))
+  (func $__on_quiescent (unreachable))${rejectFn}
+  ;; ---- Microtask queue (Phase 13.2) ----
+  ;; FIFO linked list of reaction records (16 B): [tramp_idx i32 | src i32 | result i32 | next i32].
+  ;; $__mt_head / $__mt_tail are module globals (emitted in the globals section).
+  (func $__promise_enqueue (param $tramp i32) (param $src i32) (param $result i32)
+    (local $r i32)
+    (local.set $r (call $__malloc (i32.const 16)))
+    (i32.store (local.get $r) (local.get $tramp))
+    (i32.store offset=4 (local.get $r) (local.get $src))
+    (i32.store offset=8 (local.get $r) (local.get $result))
+    (i32.store offset=12 (local.get $r) (i32.const 0))
+    (if (i32.eqz (global.get $__mt_head))
+      (then
+        (global.set $__mt_head (local.get $r))
+        (global.set $__mt_tail (local.get $r)))
+      (else
+        (i32.store offset=12 (global.get $__mt_tail) (local.get $r))
+        (global.set $__mt_tail (local.get $r)))))
+  ;; Register a reaction: alloc a pending result promise, enqueue the reaction (src is settled
+  ;; under the eager model), and return the result promise. tramp = funcref table index.
+  (func $__promise_then (param $src i32) (param $tramp i32) (result i32)
+    (local $result i32)
+    (local.set $result (call $__promise_alloc))
+    (call $__promise_enqueue (local.get $tramp) (local.get $src) (local.get $result))
+    (local.get $result))
+  ;; Run queued microtasks FIFO until empty. A reaction may enqueue more (chained .then) — they
+  ;; append to the tail and run in this same loop. Each trampoline has type (src,result)->void.
+  (func $__drain_microtasks
+    (local $cur i32)
+    (block $done
+      (loop $L
+        (br_if $done (i32.eqz (global.get $__mt_head)))
+        (local.set $cur (global.get $__mt_head))
+        (global.set $__mt_head (i32.load offset=12 (local.get $cur)))
+        (if (i32.eqz (global.get $__mt_head)) (then (global.set $__mt_tail (i32.const 0))))
+        (call_indirect (type $ftype_i32_i32_r_void)
+          (i32.load offset=4 (local.get $cur))
+          (i32.load offset=8 (local.get $cur))
+          (i32.load (local.get $cur)))
+        (br $L))))`;
+  }
+
+  /**
+   * Phase 13.2 — generate a per-`.then`-call-site reaction trampoline conforming to the fixed
+   * reaction functype `(src i32, result i32) -> void`. It reads the settled value from `src`'s
+   * canonical payload as T, invokes the (named) callback, and settles `result` with U. Returns the
+   * funcref table index to store in the reaction record. See async-design.md §3.3/§3.6.
+   */
+  private genThenTrampoline(cbName: string, t: WatType, u: WatType | null): number {
+    const name = `__then_tramp_${this.promiseThenCounter++}`;
+    const read = t === "f64"
+      ? `(f64.load offset=16 (local.get $src))`
+      : `(i32.load offset=16 (local.get $src))`;
+    const call = `(call $${cbName} ${read})`;
+    let settle: string;
+    if (u === null) {
+      // void callback — run for side effects, settle result as a fulfilled void promise
+      settle = `    ${call}\n    (i32.store (local.get $result) (i32.const 1))`;
+    } else if (u === "f64") {
+      settle = `    (f64.store offset=16 (local.get $result) ${call})\n` +
+        `    (i32.store offset=4 (local.get $result) (i32.const 1))\n` +
+        `    (i32.store (local.get $result) (i32.const 1))`;
+    } else {
+      settle = `    (i32.store offset=16 (local.get $result) ${call})\n` +
+        `    (i32.store (local.get $result) (i32.const 1))`;
+    }
+    this.promiseTrampolineWat.push(
+      `  (func $${name} (param $src i32) (param $result i32)\n${settle})`,
+    );
+    return this.getFuncTableIdx(name);
+  }
+
+  /**
+   * Phase 13.2 — does `e` evaluate to a promise? Promise.resolve(...), an async call, or a chained
+   * `.then(...)`. (Promise-holding locals are tracked from 13.1b onward — not yet.)
+   */
+  private isPromiseExpr(e: string): boolean {
+    const s = e.trim();
+    if (/^Promise\s*\.\s*(resolve|reject)\s*\(/.test(s)) return true;
+    // `<recv>.then(cb)` is a promise iff its RECEIVER is — recurse, do NOT loose-match `.then(`
+    // anywhere (that would treat `const y = p.then(f)` as a promise and mis-route the statement).
+    const tm = s.match(/^([\s\S]+)\.then\s*\(([\s\S]*)\)$/);
+    if (tm && parenDepthNeverNegative(tm[2])) return this.isPromiseExpr(tm[1].trim());
+    const c = s.match(/^(\w+)\s*\(/);
+    if (c) {
+      const fn = this.functions.find((f) => f.name === c[1]);
+      if (fn?.asyncInner != null) return true;
+    }
+    const d = s.match(/^(\w+)\.(\w+)\s*\(/);
+    if (d) {
+      const fn = this.functions.find((f) => f.name === `${d[1]}_${d[2]}`);
+      if (fn?.asyncInner != null) return true;
+    }
+    return false;
   }
 
   private emitMathHelpers(): string {
@@ -15322,6 +15674,7 @@ class WasicTranspiler {
     this.nullableVarInnerType = new Map();
     this.currentFuncResultTsName = null;
     this.currentFuncIsNullableReturn = this.nullableFuncReturnType.has(fn.name);
+    this.currentFuncAsyncInner = fn.asyncInner ?? null; // Phase 13 (#13 async)
     this.currentMethodClass = fn.className ?? null;
     this.currentMethodName = fn.name;
 
@@ -16948,7 +17301,9 @@ class WasicTranspiler {
     if (this.mode === "library") {
       startBody = ""; // unused in library mode — _start is never emitted
     } else if (hasMain) {
-      startBody = `\n    (call $main)\n    (call $proc_exit (i32.const 0))`;
+      startBody = `\n    (call $main)${
+        this.needsPromiseRuntime ? `\n    (call $__drain_microtasks)` : ""
+      }\n    (call $proc_exit (i32.const 0))`;
     } else if (this.startBodyLines.length > 0) {
       // Pre-scan for var/let/const so WAT locals are declared at the top of _start.
       // String variables expand to two i32 locals ($name_ptr, $name_len).
@@ -17642,7 +17997,9 @@ class WasicTranspiler {
       const bodyWat = this.emitBlock(this.startBodyLines, startLocals, null);
       startBody = `\n${
         localDecls ? localDecls + "\n" : ""
-      }${bodyWat}\n    (call $proc_exit (i32.const 0))`;
+      }${bodyWat}${
+        this.needsPromiseRuntime ? `\n    (call $__drain_microtasks)` : ""
+      }\n    (call $proc_exit (i32.const 0))`;
     } else {
       startBody = `\n    (call $proc_exit (i32.const 0))`;
     }
@@ -17739,6 +18096,8 @@ class WasicTranspiler {
       imports,
       `  (memory (export "memory") ${memoryPages})`,
       `  (global $__heap_ptr (mut i32) (i32.const ${heapStart}))`,
+      this.needsPromiseRuntime ? `  (global $__mt_head (mut i32) (i32.const 0))` : "",
+      this.needsPromiseRuntime ? `  (global $__mt_tail (mut i32) (i32.const 0))` : "",
       this.needsNullableResultFlag ? `  (global $__nullable_ret_flag (mut i32) (i32.const 0))` : "",
       this.needsStringRetGlobals ? `  (global $__str_ret_ptr (mut i32) (i32.const 0))` : "",
       this.needsStringRetGlobals ? `  (global $__str_ret_len (mut i32) (i32.const 0))` : "",

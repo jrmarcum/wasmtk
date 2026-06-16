@@ -239,8 +239,15 @@ this change makes the former a scope decision rather than a technical blocker.
    specifier (`wasmtk:set` / `:map` / `:date` / `:json` / `:regex`). Only capabilities a
    program actually imports get merged → feature-level tree-shake. No fixture `.wasm` on
    disk needed. See cmem/capabilities.md "Virtual capability imports".
-5. **(Separate track, DEFERRED)** Promise/async: state-machine lowering in `wasic` +
-   microtask runtime module; lift the `hybrid` async exclusion. Large, not in this release.
+5. **(Separate track — DESIGNED 2026-06-15, see [async-design.md](async-design.md); impl not
+   started.)** Promise/async: microtask runtime + async/await lowering; lift the `hybrid` async
+   exclusion. **Note for THIS brief:** unlike the 5 Tier-1 capabilities, the Promise runtime is
+   **NOT a bundled/merged capability** — it is **callback-bearing** (`.then`/drain invoke reactions
+   via `call_indirect`), and `wasmmerge`'s `call_indirect` guard forbids a merged module containing
+   `call_indirect`. So the runtime ships as **inline WAT helpers** in the main module (gated by
+   `needsPromiseRuntime`), sharing one table/type-section with the compiler-emitted per-`T`
+   trampolines. v1 = Approach A (microtask-drain), standalone WASI; settled value laid out as
+   Canonical ABI `result<T,E>` for forward-compat. 5 sub-phases (13.1–13.5).
 6. ✅ **Evolve** `hybrid` to TS-type-driven routing (2026-06-02): `wasmtk hybrid --auto`
    routes every module-level named function whose params + return are all wasic-typed to the
    WASM core, and leaves async / `any`-shaped / untyped functions in the TS host. `// @wasm`

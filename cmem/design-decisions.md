@@ -318,6 +318,41 @@ string-array element, and `Math.*`/`Number.*` handling all have such twins.
   module-level multi-statement single physical line `const a = ...; const b = ...;` isn't split —
   both rare.)
 
+## Async / Promise (#13, 2026-06-15) — load-bearing invariants
+
+Full design + implementation log in [async-design.md](async-design.md). The rules a refactor must NOT
+silently break (all `src/wasic.ts`):
+
+- **Promise runtime is INLINE, never a merged capability.** It uses `call_indirect` to invoke `.then`
+  reactions, and `wasmmerge`'s `call_indirect` guard forbids that in a merged module. The runtime is
+  emitted by `getPromiseRuntimeWat()` (gated by `needsPromiseRuntime`) in the main module, sharing one
+  funcref table + the `$ftype_i32_i32_r_void` reaction functype with the compiler-emitted trampolines.
+  Do NOT move it to a `wasmtk:promise` capability.
+- **Promise object layout is the canonical `result<T,E>` window** `[state@0, vtype@4, disc@8, payload@16,
+  plen@24, reactions@28]` (32 B). `disc`/`payload` are the lift-ready Canonical-ABI image — keep them
+  contiguous + naturally aligned (forward-compat for a future WASI-P3 lift). Fresh bump memory is zero
+  → a new promise is pending/ok/no-reactions without explicit init.
+- **`isPromiseExpr` checks `.then` by RECURSING on the receiver**, never a loose `/\.then\(/` substring
+  test. The substring form mis-classified `const y = p.then(f)` as a promise statement and mis-routed
+  it. Same trap class as the scanner rules above.
+- **Greedy `Promise.resolve(…)` / `.then(…)` regexes MUST carry a `parenDepthNeverNegative` guard**
+  (in `promiseInnerTypeOf`, the `emitExpr` handlers, and the statement router) — without it,
+  `Promise.resolve(2).then(triple)` is mis-split as resolve-with-arg `2).then(triple` → wrong inner type
+  → f64/i32 trampoline mismatch at instantiate.
+- **When `needsPromiseRuntime`, the reaction functype + a funcref table are FORCED** even with no `.then`
+  (`getPromiseRuntimeWat` registers `$ftype_i32_i32_r_void`; `emitFuncrefTable` emits `(table 1 funcref)`
+  when `funcTable` is empty) — the drain's `call_indirect` references both and would otherwise be a
+  dangling type / missing table for an await/resolve-only program.
+- **Rejection support is gated by `needsPromiseReject` (separate from `needsPromiseRuntime`)** so
+  resolve/then-only programs stay exception-free. When set: `await` helpers gain the `disc==1 → (throw
+  $__exn_tag …)` re-throw, `$__promise_reject` is emitted, and `needsExceptionTag` is set. async-body
+  `throw` → caught at the `await` site is FREE under the eager model (eager run + WASM exception
+  propagation) — no reject-wrapping; do not add one expecting JS deferred-rejection timing.
+- **async `Promise<void>` fns are plain void fns** (body runs eagerly, no promise returned); only
+  `Promise<T>` with T≠void is promise-returning (`asyncInner` non-null → `return` wraps in
+  `$__promise_resolve_<T>`). The `parseFunctions` header regex, `parseTopLevel`, and the nested-fn skip
+  all accept an optional `async`; the return-annotation regex accepts `Promise<…>`.
+
 ## Tooling
 
 - `tsbundle` outputs **`.ts`** (`.bundled.ts`), an import inliner — NOT `deno bundle`/JavaScript.

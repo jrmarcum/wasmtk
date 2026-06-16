@@ -254,7 +254,23 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     **CI note:** these repos' org allows only `jrmarcum`-owned Actions → publish workflows MUST be
     `run:`-only (third-party `uses:` → `startup_failure`).
 13. **#5 Promise/async** — state-machine lowering + microtask runtime; lift `hybrid` async exclusion.
-    **Gated behind Phase 51.**
+    **Gated behind Phase 51 (now unblocked).** **Design doc written + all decisions RESOLVED
+    2026-06-15 → [async-design.md](async-design.md)** — Approach A (microtask-drain) for v1, expand
+    to B later; settled value laid out as Canonical ABI `result<T,E>` (max forward-compat) + opaque
+    handle; runtime = **inline WAT helpers** (`needsPromiseRuntime`), NOT a merged capability (the
+    `wasmmerge` `call_indirect` guard forbids a callback-bearing merged module) — locked "never
+    introspects callbacks" invariant keeps B drop-in; warn-on-unhandled-rejection; mode-scoped
+    deadlock trap. v1 scope = async/await +
+    resolve/reject + then/catch/finally + all/allSettled, standalone WASI; 5 sub-phases (13.1–13.5).
+    **Sub-phases 13.1a + 13.2 + 13.3a IMPLEMENTED 2026-06-15** (suite 309→**312**, output-verified,
+    zero regressions): 13.1a = `async`/`await` + `Promise.resolve`, async-fn-returns-promise
+    (i32/f64), inline runtime, canonical `result<T,E>` (test `54_AsyncBasic`); 13.2 = `.then(namedCb)`
+    + microtask queue (FIFO linked list) + drain, per-call-site `call_indirect` trampolines, correct
+    ordering/FIFO/chained/f64/`await`-of-`.then` (test `55_AsyncThen`); 13.3a = `Promise.reject` +
+    rejection→exception (rejected `await` re-throws, caught by `try/catch`) + async-body-throw caught
+    free via the eager model (test `56_AsyncReject`). **Next:** 13.3b `.catch`/`.finally` rejection
+    reactions; 13.1b promise-var tracking + capturing-closure cb; 13.4 `Promise.all`/`allSettled`;
+    13.5 lift `hybrid` async exclusion. Full detail in [async-design.md](async-design.md).
 14. **Own dynamic runtime** (§7-#7) — boxed values + property map + interpreter for the irreducible
     kernel (`eval`/`new Function`, pervasive `any`, open-prototype mutation). **Gated behind Phase
     51.** Largest single track; `javyc` (QuickJS) is the interim fallback until it lands.
