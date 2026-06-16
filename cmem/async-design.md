@@ -1,8 +1,32 @@
-# Async / Promise design (roadmap #13) — DESIGN + 13.1a/13.2/13.3a/13.3b SHIPPED
+# Async / Promise design (roadmap #13) — DESIGN + 13.1a/13.2/13.3a/13.3b/13.1b SHIPPED
 
-**Status:** DESIGN + **sub-phases 13.1a + 13.2 + 13.3a + 13.3b IMPLEMENTED (2026-06-15)**. Roadmap
-track **#13 — Promise/async** (brief §5 / §7-#5). The owner chose "design doc first," then "start the
-tasks." Suite **313/313**.
+**Status:** DESIGN + **sub-phases 13.1a + 13.2 + 13.3a + 13.3b + 13.1b IMPLEMENTED (2026-06-15)**.
+Roadmap track **#13 — Promise/async** (brief §5 / §7-#5). The owner chose "design doc first," then
+"start the tasks." Suite **315/315**.
+
+**13.1b shipped (suite 313→315, output-verified, zero regressions):** TWO parts. **(1) Promise-holding-var
+inner-type tracking** — a new `promiseInnerType: Map<varName, WatType>` side-table (reset per fn) is
+populated by a non-consuming observer at the top of `emitStatement` whenever `const/let/var p = <promiseExpr>`
+(`isPromiseExpr(rhs)` → `promiseInnerTypeOf(rhs)`); `isPromiseExpr`/`promiseInnerTypeOf` consult it for a
+bare identifier. So `const p = computeF(); const v: f64 = await p` picks `$__promise_await_f64` (was i32
+default), and `p.then(cb)` is recognized as a promise. Aliasing (`const q = p`) is tracked for free
+(test `58_AsyncPromiseVar`: i32+f64 await-via-var, `.then` on a var, aliasing). **(2) Capturing-closure
+callbacks** for `.then`/`.finally` — a capturing arrow lifts to `__anon_N__factory(caps)` (a closure
+struct ptr); the reaction RECORD + functype were migrated to carry an **`env` slot**
+(`(env i32, src i32, result i32) -> void`, 20-byte record `[tramp@0|env@4|src@8|result@12|next@16]`), and
+the trampoline dispatches a closure cb via `call_indirect (type [i32,…args]→U) (env) (args) (i32.load env)`.
+`genReactionTrampoline` now takes pre-built call exprs (the react block decides named-fn vs closure); at
+most ONE closure cb per reaction (one env slot). Test `59_AsyncClosureCb` (capturing `.then` i32+f64,
+capturing `.finally`). **Two bugs fixed under 13.1b:** (a) a LATENT arrow-result-inference bug — an
+expression-body arrow's result was inferred with only the arrow's own params in scope, so a CAPTURED var
+(`v => base + v`) was unknown → defaulted to f64; fixed by seeding the enclosing fn's params/locals into
+the inference scope for BOTH the block-body and expression-body paths (`substituteOneArrow`). (b)
+`promiseInnerTypeOf` `.then`/`.catch` only resolved NAMED callbacks → an f64 closure cb mis-picked
+`await_i32`; added a `cbResult` resolver covering the `__anon_N__factory` form. **Known limits:**
+capturing `.catch` needs a string-param closure, which wasic's closure trampoline can't expand to
+(ptr,len) — guarded out (clean unsupported error; use a NAMED recover, e.g. 57); un-annotated
+`const v = await pVar` of an f64 promise var still defaults to i32 (use a `: f64` annotation — the common
+style; `inferInitType` is a free fn with no access to the side-table).
 
 **13.1a shipped (suite 309→310):** `async` functions with `Promise<T>` returns (i32/f64); `await`
 on async calls (with/without params) and on `Promise.resolve(...)`; un-annotated `const x = await …`
@@ -55,30 +79,36 @@ the statement router were widened to `(then|catch|finally)` with `splitArgs` (ha
 passthrough, `.then(dbl).catch(recover)` chain). Plain `.then` trampolines are now dual-path too
 (propagate on rejected) — strictly more correct; 55's sources are fulfilled so output is unchanged.
 
-**Not yet done:** 13.1b promise-holding-var inner-type tracking (`const p = f(); await p` / `.then` on a
-*capturing-closure* callback — 13.3b callbacks are still NAMED fns only); 13.4 `Promise.all`/`allSettled`;
-13.5 lift the `hybrid` async exclusion. See §5.
+**Not yet done:** 13.4 `Promise.all`/`allSettled`; 13.5 lift the `hybrid` async exclusion. See §5.
 
 ## RESUME POINT — next session (paused 2026-06-15)
 
-**State:** 13.1a + 13.2 + 13.3a + 13.3b done; full `tests/wasm_wasi` suite **313/313**, output-verified,
-zero regressions; bindgen 104/104, jstyper 73/73. Tests: `54_AsyncBasic` / `55_AsyncThen` /
-`56_AsyncReject` / `57_AsyncCatch`. All code in `src/wasic.ts`. Load-bearing invariants recorded in
-[design-decisions.md](design-decisions.md) → "Async / Promise (#13)" (incl. the dual-path trampoline rule).
+**State:** 13.1a + 13.2 + 13.3a + 13.3b + 13.1b done; full `tests/wasm_wasi` suite **315/315**,
+output-verified, zero regressions; bindgen 104/104, jstyper 73/73. Tests: `54_AsyncBasic` /
+`55_AsyncThen` / `56_AsyncReject` / `57_AsyncCatch` / `58_AsyncPromiseVar` / `59_AsyncClosureCb`. All code
+in `src/wasic.ts`. Load-bearing invariants in [design-decisions.md](design-decisions.md) → "Async /
+Promise (#13)" (dual-path trampoline + env-bearing reaction record/functype + promise-var tracking).
 
-**Next task — 13.1b: promise-holding-var inner-type tracking + capturing-closure callbacks.**
-- Track the inner type `T` of a local that holds a promise (`const p = asyncFn(); await p` / `p.then(cb)`):
-  add a side-table (e.g. `promiseInnerType: Map<varName, WatType>`) populated when a `const/let` is
-  assigned a promise expr (`isPromiseExpr(rhs)` → `promiseInnerTypeOf(rhs)`); `promiseInnerTypeOf`/
-  `isPromiseExpr` consult it for a bare identifier. Today a promise-holding local defaults to i32.
-- Allow `.then`/`.catch`/`.finally` callbacks to be **capturing closures** (currently NAMED fns only —
-  the react routers require `/^\w+$/` + a `this.functions` match). The trampoline would need to pass the
-  closure env ptr; mirror the Phase-44 funcref-array closure-call path.
-- Test `58_AsyncPromiseVar.ts`: `const p = compute(); const v = await p;` + `p.then(cb)`; capturing arrow cb.
+**Next task — 13.4: `Promise.all(arr)` / `Promise.allSettled(arr)`** (i32/f64 element types in v1).
+- `Promise.all(arr)`: build a result promise; counter = `arr.length`; for each element register a
+  reaction that stores its value at index `i` of a result `T[]` and decrements the counter; at 0 →
+  fulfill the result with the `T[]`; FIRST rejection → reject the result. v1 element types **i32/f64**
+  (string/struct later). `arr` is a wasic dynamic `i32[]`/`f64[]` of promise ptrs (so the elements are
+  promise handles — needs a promise-array type or just an `i32[]` of handles).
+- `Promise.allSettled(arr)`: like `all` but NEVER rejects; each slot holds a `{status, value|reason}`
+  record; fulfill when all settle.
+- Reuse the env-bearing reaction record (the per-element reaction can store the result-array + index via
+  a small combinator-glue record, or a dedicated trampoline kind). `await Promise.all([...])` returns the
+  `T[]`. Update `promiseInnerTypeOf` so `Promise.all(...)` infers an array inner type.
+- Test `60_AsyncAll.ts`: `all` of computed promises (sum/print elements); `allSettled` mixed fulfil/reject.
 
-**After 13.1b:** 13.4 `Promise.all`/`allSettled` (i32/f64 element types v1); 13.5 lift the `hybrid`
-async exclusion (`src/hybrid.ts` ~line 90/166). README stays untouched until the async surface is
-feature-complete enough to document.
+**After 13.4:** 13.5 lift the `hybrid` async exclusion (`src/hybrid.ts` ~line 90/166). README stays
+untouched until the async surface is feature-complete enough to document.
+
+**13.1b notes for future work:** capturing `.catch` (string-param closure) is guarded out — wasic's
+closure trampoline (`emitClosureFactory`, ~line 16981) keeps a `string` param as ONE i32 instead of
+expanding to (ptr,len), so the trampoline arity mismatches the inner fn. Fixing that in the closure
+machinery would unblock capturing reject callbacks (and string-param capturing closures generally).
 
 **Dev environment (must-do each session):**
 - The test runner shells out to a GLOBAL `wasmtk` (`WASMTK_BIN="wasmtk"`). This machine has no global
@@ -387,7 +417,7 @@ can `await` at module scope.
 | --- | --- | --- |
 | **13.1a** ✅ | Promise object (canonical `result<T,E>`) + `resolve` (i32/f64) + `await` (drain no-op) + async-fn-returns-promise + `Promise.resolve` | ✅ `54_AsyncBasic.ts` (async fn value, sequential `await`, `await Promise.resolve`, f64, un-annotated infer) |
 | **13.2** ✅ | `.then(namedCb)` (per-`T` trampolines via `call_indirect`) + microtask queue + drain (in `await` and at `_start` end) | ✅ `55_AsyncThen.ts` (ordering vs sync, FIFO, value/void cb, chained `.then().then()`, f64, `await` of a `.then`) |
-| **13.1b** | promise-holding-var inner-type tracking (`const p = f(); await p` / `p.then`); `.then` on a capturing-closure callback | `await p` via a local; capturing arrow cb |
+| **13.1b** ✅ | promise-holding-var inner-type tracking (`const p = f(); await p` / `p.then`); capturing-closure callbacks for `.then`/`.finally` (env-bearing reaction record) | ✅ `58_AsyncPromiseVar` (var await i32/f64 + `.then` on var + aliasing), `59_AsyncClosureCb` (capturing `.then` i32/f64 + `.finally`) |
 | **13.3a** ✅ | `Promise.reject` + rejection→exception (`await` rejected → `throw`, caught by `try/catch`) + async-body-throw (free, eager model) | ✅ `56_AsyncReject.ts` |
 | **13.3b** ✅ | `.catch`/`.finally` rejection *reactions* (string reasons, dual-path trampoline) + `.then(onF,onR)` | ✅ `57_AsyncCatch.ts` (`.catch` recover + fulfilled-passthrough, `.finally` passthrough, `.then(dbl).catch(recover)` chain) |
 | **13.4** | `Promise.all` / `allSettled` (i32/f64 element types v1) | `all` of computed promises; `allSettled` mixed fulfil/reject |

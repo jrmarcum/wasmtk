@@ -326,8 +326,26 @@ silently break (all `src/wasic.ts`):
 - **Promise runtime is INLINE, never a merged capability.** It uses `call_indirect` to invoke `.then`
   reactions, and `wasmmerge`'s `call_indirect` guard forbids that in a merged module. The runtime is
   emitted by `getPromiseRuntimeWat()` (gated by `needsPromiseRuntime`) in the main module, sharing one
-  funcref table + the `$ftype_i32_i32_r_void` reaction functype with the compiler-emitted trampolines.
+  funcref table + the `$ftype_i32_i32_i32_r_void` reaction functype with the compiler-emitted trampolines.
   Do NOT move it to a `wasmtk:promise` capability.
+- **The reaction functype carries an `env` slot: `(env i32, src i32, result i32) -> void` (13.1b).** The
+  reaction RECORD is 20 bytes `[tramp@0 | env@4 | src@8 | result@12 | next@16]`; `$__promise_then` /
+  `$__promise_enqueue` take `env` (the capturing-closure struct ptr, 0 for a named callback); the drain
+  `call_indirect`s `(env, src, result, tramp)`. Keep this functype/record in lockstep — it is the §3.6
+  design-locked shape (the earlier 2-param `(src,result)` form was a 13.2 simplification, corrected here).
+  A trampoline invokes a NAMED cb via `(call $name <args>)` (env unused) and a CLOSURE cb via
+  `(call_indirect (type [i32,…args]→U) (local.get $env) <args> (i32.load (local.get $env)))`. At most ONE
+  closure callback per reaction (one env slot).
+- **`promiseInnerType: Map<varName,WatType>` tracks promise-holding locals (13.1b).** Reset per function;
+  populated by a non-consuming observer at the TOP of `emitStatement` for `const/let/var p = <promiseExpr>`;
+  `isPromiseExpr`/`promiseInnerTypeOf` consult it for a bare identifier (so `await p` / `p.then` work and
+  pick `await_<T>`). `promiseInnerTypeOf` resolves a callback's return type via `cbResult`, which covers
+  BOTH a named fn AND the `__anon_N__factory(caps)` capturing-closure form — do not regress it to
+  named-only or an f64 closure cb mis-picks `await_i32`.
+- **Capturing `.catch` (string-param closure) is guarded OUT** (`resolveCb` returns null if a closure's
+  real params include `string`). wasic's closure trampoline (`emitClosureFactory`) keeps a `string` param
+  as one i32 instead of expanding to (ptr,len), so dispatching it would be arity-mismatched. Use a NAMED
+  reject callback. Fixing the closure trampoline's string-param expansion would lift this.
 - **Promise object layout is the canonical `result<T,E>` window** `[state@0, vtype@4, disc@8, payload@16,
   plen@24, reactions@28]` (32 B). `disc`/`payload` are the lift-ready Canonical-ABI image — keep them
   contiguous + naturally aligned (forward-compat for a future WASI-P3 lift). Fresh bump memory is zero

@@ -5,7 +5,7 @@
   (global $__heap_ptr (mut i32) (i32.const 260))
   (global $__mt_head (mut i32) (i32.const 0))
   (global $__mt_tail (mut i32) (i32.const 0))
-  (type $ftype_i32_i32_r_void (func (param i32) (param i32)))
+  (type $ftype_i32_i32_i32_r_void (func (param i32) (param i32) (param i32)))
   ;; Bump allocator — advances __heap_ptr and returns the old value
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
@@ -374,43 +374,47 @@
     (if (i32.eqz (i32.load (local.get $p))) (then (call $__on_quiescent)))
     (f64.load offset=16 (local.get $p)))
   (func $__on_quiescent (unreachable))
-  ;; ---- Microtask queue (Phase 13.2) ----
-  ;; FIFO linked list of reaction records (16 B): [tramp_idx i32 | src i32 | result i32 | next i32].
-  ;; $__mt_head / $__mt_tail are module globals (emitted in the globals section).
-  (func $__promise_enqueue (param $tramp i32) (param $src i32) (param $result i32)
+  ;; ---- Microtask queue (Phase 13.2 / 13.1b) ----
+  ;; FIFO linked list of reaction records (20 B): [tramp_idx@0 | env@4 | src@8 | result@12 | next@16].
+  ;; env is the capturing-closure struct ptr (0 for a named callback). $__mt_head / $__mt_tail are
+  ;; module globals (emitted in the globals section).
+  (func $__promise_enqueue (param $tramp i32) (param $env i32) (param $src i32) (param $result i32)
     (local $r i32)
-    (local.set $r (call $__malloc (i32.const 16)))
+    (local.set $r (call $__malloc (i32.const 20)))
     (i32.store (local.get $r) (local.get $tramp))
-    (i32.store offset=4 (local.get $r) (local.get $src))
-    (i32.store offset=8 (local.get $r) (local.get $result))
-    (i32.store offset=12 (local.get $r) (i32.const 0))
+    (i32.store offset=4 (local.get $r) (local.get $env))
+    (i32.store offset=8 (local.get $r) (local.get $src))
+    (i32.store offset=12 (local.get $r) (local.get $result))
+    (i32.store offset=16 (local.get $r) (i32.const 0))
     (if (i32.eqz (global.get $__mt_head))
       (then
         (global.set $__mt_head (local.get $r))
         (global.set $__mt_tail (local.get $r)))
       (else
-        (i32.store offset=12 (global.get $__mt_tail) (local.get $r))
+        (i32.store offset=16 (global.get $__mt_tail) (local.get $r))
         (global.set $__mt_tail (local.get $r)))))
   ;; Register a reaction: alloc a pending result promise, enqueue the reaction (src is settled
-  ;; under the eager model), and return the result promise. tramp = funcref table index.
-  (func $__promise_then (param $src i32) (param $tramp i32) (result i32)
+  ;; under the eager model), and return the result promise. tramp = funcref table index; env =
+  ;; closure struct ptr (0 if the callback is a named function).
+  (func $__promise_then (param $src i32) (param $tramp i32) (param $env i32) (result i32)
     (local $result i32)
     (local.set $result (call $__promise_alloc))
-    (call $__promise_enqueue (local.get $tramp) (local.get $src) (local.get $result))
+    (call $__promise_enqueue (local.get $tramp) (local.get $env) (local.get $src) (local.get $result))
     (local.get $result))
   ;; Run queued microtasks FIFO until empty. A reaction may enqueue more (chained .then) — they
-  ;; append to the tail and run in this same loop. Each trampoline has type (src,result)->void.
+  ;; append to the tail and run in this same loop. Each trampoline has type (env,src,result)->void.
   (func $__drain_microtasks
     (local $cur i32)
     (block $done
       (loop $L
         (br_if $done (i32.eqz (global.get $__mt_head)))
         (local.set $cur (global.get $__mt_head))
-        (global.set $__mt_head (i32.load offset=12 (local.get $cur)))
+        (global.set $__mt_head (i32.load offset=16 (local.get $cur)))
         (if (i32.eqz (global.get $__mt_head)) (then (global.set $__mt_tail (i32.const 0))))
-        (call_indirect (type $ftype_i32_i32_r_void)
+        (call_indirect (type $ftype_i32_i32_i32_r_void)
           (i32.load offset=4 (local.get $cur))
           (i32.load offset=8 (local.get $cur))
+          (i32.load offset=12 (local.get $cur))
           (i32.load (local.get $cur)))
         (br $L))))
   (func $getN  (result i32)

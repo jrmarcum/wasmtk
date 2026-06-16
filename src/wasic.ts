@@ -1516,6 +1516,11 @@ class WasicTranspiler {
   // registered in the funcref table so the drain loop can call_indirect it. See async-design.md §3.6.
   private promiseTrampolineWat: string[] = [];
   private promiseThenCounter = 0;
+  // Phase 13.1b: tracks the INNER value type (i32/f64) of a local that HOLDS a promise, e.g.
+  // `const p = asyncFn();` → promiseInnerType.set("p", T). Lets `await p` pick the right
+  // $__promise_await_<T> and lets `p.then(cb)` be recognized as a promise expr (isPromiseExpr /
+  // promiseInnerTypeOf consult it for a bare identifier). Reset per function. See async-design.md §3.4.
+  private promiseInnerType = new Map<string, WatType>();
   // Phase 13.3: set when Promise.reject / a rejected await path is compiled — adds the rejection
   // re-throw to the await helpers + $__promise_reject, and declares the $__exn_tag. Kept separate
   // from needsPromiseRuntime so resolve/then-only programs stay exception-free.
@@ -1875,6 +1880,19 @@ class WasicTranspiler {
       ? (retAnnotation === "void" ? null : mapType(retAnnotation) as WatType)
       : (paramInfo?.result ?? interfaceFieldResult ?? null);
 
+    // Scope for result-type inference: the arrow's own params PLUS the enclosing function's
+    // params/locals (so a CAPTURED variable in the body is typed, not assumed f64). Used by both the
+    // block-body (return-stmt) and expression-body inference paths.
+    const inferLocals = new Map<string, WatType>();
+    if (enclosingFn) {
+      for (const p of enclosingFn.params) inferLocals.set(p.name, p.type);
+      for (const bl of enclosingFn.bodyLines) {
+        const vm = bl.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+))?\s*=/);
+        if (vm) inferLocals.set(vm[1], vm[2] ? mapType(vm[2]) as WatType : "i32");
+      }
+    }
+    for (const p of paramList) inferLocals.set(p.name, p.type);
+
     // Build body lines
     const bodyRaw = line.slice(bodyStart, arrowEnd).trim();
     let bodyLines: string[];
@@ -1883,16 +1901,6 @@ class WasicTranspiler {
       bodyLines = WasicTranspiler.splitStmts(inner);
       // Infer result type from return statement if not annotated
       if (anonResult === null) {
-        // Build scope including outer function params + locals for captured variable types
-        const inferLocals = new Map<string, WatType>();
-        if (enclosingFn) {
-          for (const p of enclosingFn.params) inferLocals.set(p.name, p.type);
-          for (const bl of enclosingFn.bodyLines) {
-            const vm = bl.match(/^(?:var|let|const)\s+(\w+)\s*(?::\s*(\w+))?\s*=/);
-            if (vm) inferLocals.set(vm[1], vm[2] ? mapType(vm[2]) as WatType : "i32");
-          }
-        }
-        for (const p of paramList) inferLocals.set(p.name, p.type);
         for (const bl of bodyLines) {
           const retM = bl.match(/^return\s+(.+?)\s*;?$/);
           if (retM) {
@@ -1914,9 +1922,7 @@ class WasicTranspiler {
       // If paramInfo is defined but its result is null (void callee), don't override with inferInitType
       // because null from JavaScript's ?? coalescing is indistinguishable from "no info" otherwise.
       if (anonResult === null && paramInfo === undefined) {
-        const paramLocals = new Map<string, WatType>();
-        for (const p of paramList) paramLocals.set(p.name, p.type);
-        anonResult = inferInitType(bodyRaw, paramLocals, this.enumValues, this.functions);
+        anonResult = inferInitType(bodyRaw, inferLocals, this.enumValues, this.functions);
       }
       bodyLines = anonResult !== null ? [`return ${bodyRaw};`] : [`${bodyRaw};`];
     }
@@ -6850,23 +6856,37 @@ class WasicTranspiler {
     const e = promiseExpr.trim();
     const norm = (t: WatType | null | undefined): WatType =>
       t === "f64" || t === "f32" ? "f64" : "i32";
+    // Phase 13.1b: a bare identifier holding a promise → its tracked inner type.
+    if (/^\w+$/.test(e) && this.promiseInnerType.has(e)) return this.promiseInnerType.get(e)!;
     const r = e.match(/^Promise\s*\.\s*resolve\s*\(([\s\S]*)\)$/);
     if (r && parenDepthNeverNegative(r[1])) {
       const a = r[1].trim();
       return a === "" ? "i32" : norm(inferInitType(a, locals, this.enumValues, this.functions));
     }
+    // Resolve a callback token's return type — a named function or a lifted capturing closure
+    // (`__anon_N__factory(caps)` → the inner arrow's result). undefined = not a known callback.
+    const cbResult = (tok: string): WatType | null | undefined => {
+      if (/^\w+$/.test(tok)) return this.functions.find((f) => f.name === tok)?.result;
+      const fm = tok.match(/^(\w+__factory)\s*\(/);
+      if (fm) {
+        const factory = this.functions.find(
+          (f) => f.name === fm[1] && f.isClosureFactory && f.returnedArrow,
+        );
+        return factory?.returnedArrow?.result;
+      }
+      return undefined;
+    };
     // `<promise>.then(onF[, onR])` — the chained promise carries onF's return type U.
     const thenM = e.match(/^([\s\S]+)\.then\s*\(([\s\S]*)\)$/);
     if (thenM && parenDepthNeverNegative(thenM[2])) {
-      const onF = this.splitArgs(thenM[2])[0]?.trim() ?? "";
-      const fn = /^\w+$/.test(onF) ? this.functions.find((f) => f.name === onF) : undefined;
-      if (fn) return norm(fn.result);
+      const u = cbResult(this.splitArgs(thenM[2])[0]?.trim() ?? "");
+      if (u !== undefined) return norm(u);
     }
     // `<promise>.catch(onR)` — recovery value type = onR's return type.
     const catchM = e.match(/^([\s\S]+)\.catch\s*\(([\s\S]*)\)$/);
-    if (catchM && parenDepthNeverNegative(catchM[2]) && /^\w+$/.test(catchM[2].trim())) {
-      const fn = this.functions.find((f) => f.name === catchM[2].trim());
-      if (fn) return norm(fn.result);
+    if (catchM && parenDepthNeverNegative(catchM[2])) {
+      const u = cbResult(this.splitArgs(catchM[2])[0]?.trim() ?? "");
+      if (u !== undefined) return norm(u);
     }
     // `<promise>.finally(onFin)` — passes the original settlement through → src's inner type.
     const finM = e.match(/^([\s\S]+)\.finally\s*\(([\s\S]*)\)$/);
@@ -6957,40 +6977,117 @@ class WasicTranspiler {
         return `(call $__promise_reject ${ptrlen})`;
       }
     }
-    // Phase 13.2 / 13.3b: `<promise>.then(onF[, onR])` / `.catch(onR)` / `.finally(onFin)` — register
-    // a reaction (per-call-site trampoline via call_indirect) that runs as a microtask, evaluating to
-    // a new promise<U>. Callbacks are NAMED functions (or non-capturing arrows already lifted to one).
+    // Phase 13.2 / 13.3b / 13.1b: `<promise>.then(onF[, onR])` / `.catch(onR)` / `.finally(onFin)` —
+    // register a reaction (per-call-site trampoline via call_indirect) that runs as a microtask,
+    // evaluating to a new promise<U>. A callback is a NAMED function OR a capturing closure (a lifted
+    // `__anon_N__factory(caps)` arrow — dispatched via call_indirect through the closure ptr `env`).
     // See async-design.md §3.4. Reject callbacks (onR) take the string reason (ptr,len).
     {
       const reactM = expr.match(/^([\s\S]+)\.(then|catch|finally)\s*\(([\s\S]*)\)$/);
-      if (reactM && parenDepthNeverNegative(reactM[3])) {
+      if (reactM && parenDepthNeverNegative(reactM[3]) && this.isPromiseExpr(reactM[1].trim())) {
         const recv = reactM[1].trim();
         const method = reactM[2];
         const args = reactM[3].trim() === "" ? [] : this.splitArgs(reactM[3]).map((a) => a.trim());
-        const cbFn = (n: string | undefined) =>
-          n && /^\w+$/.test(n) ? this.functions.find((f) => f.name === n) : undefined;
-        const f0 = cbFn(args[0]);
-        const f1 = cbFn(args[1]);
-        if (this.isPromiseExpr(recv) && f0) {
-          const t = this.promiseInnerTypeOf(recv, locals); // src inner type
-          let trampIdx: number;
-          if (method === "then") {
-            trampIdx = this.genReactionTrampoline({
-              kind: "then",
-              t,
-              u: f0.result,
-              onF: args[0],
-              onR: f1 ? args[1] : undefined,
-            });
-          } else if (method === "catch") {
-            trampIdx = this.genReactionTrampoline({ kind: "catch", t, u: f0.result, onR: args[0] });
-          } else {
-            trampIdx = this.genReactionTrampoline({ kind: "finally", t, u: t, onFin: args[0] });
+        const t = this.promiseInnerTypeOf(recv, locals); // src inner value type
+        const readVal = t === "f64"
+          ? `(f64.load offset=16 (local.get $src))`
+          : `(i32.load offset=16 (local.get $src))`;
+        const readReason =
+          `(i32.load offset=16 (local.get $src)) (i32.load offset=24 (local.get $src))`;
+        // Resolve a callback token → a call-expr builder + return type U + (closure) env ptr. Named fn
+        // → `(call $name <vargs>)`; capturing closure → `call_indirect` through `$env`. null = neither.
+        const resolveCb = (
+          tok: string | undefined,
+        ): { build: (v: string) => string; u: WatType | null; env?: string } | null => {
+          if (!tok) return null;
+          if (/^\w+$/.test(tok)) {
+            const fn = this.functions.find((f) => f.name === tok);
+            return fn ? { build: (v) => `(call $${tok} ${v})`.trim(), u: fn.result } : null;
           }
-          this.getOrCreateFuncType(["i32", "i32"], null); // register the reaction functype
+          const fm = tok.match(/^(\w+__factory)\s*\(/);
+          if (fm) {
+            const factory = this.functions.find(
+              (f) => f.name === fm[1] && f.isClosureFactory && f.returnedArrow,
+            );
+            if (!factory) return null;
+            const innerFn = factory.returnedArrow!;
+            if (innerFn.result === "string") return null; // string-returning closure cb out of v1 scope
+            const caps = innerFn.closureCaptures ?? [];
+            const extParams = innerFn.params
+              .filter((p) => !caps.includes(p.name) && p.name !== "__closure_ptr")
+              .map((p) => p.type);
+            // String-param closures: wasic's closure trampoline doesn't expand a string param into
+            // (ptr,len), so a capturing reject callback `(e: string) => …` can't be dispatched here.
+            // Fall through (→ clean unsupported error) rather than emit an arity-mismatched call.
+            if (extParams.includes("string")) return null;
+            const ft = this.getOrCreateFuncType(["i32", ...extParams], innerFn.result);
+            const envWat = this.emitExpr(tok, locals, "i32"); // factory call → closure struct ptr
+            return {
+              build: (v) =>
+                `(call_indirect (type ${ft}) (local.get $env) ${v} (i32.load (local.get $env)))`
+                  .trim(),
+              u: innerFn.result,
+              env: envWat,
+            };
+          }
+          return null;
+        };
+
+        let env = "(i32.const 0)";
+        let envCount = 0;
+        const useEnv = (cb: { env?: string }) => {
+          if (cb.env) {
+            env = cb.env;
+            envCount++;
+          }
+        };
+        let trampIdx: number | null = null;
+        if (method === "then") {
+          const cf = resolveCb(args[0]);
+          const cr = args[1] !== undefined ? resolveCb(args[1]) : null;
+          if (cf && (args[1] === undefined || cr)) {
+            useEnv(cf);
+            if (cr) useEnv(cr);
+            if (envCount <= 1) {
+              trampIdx = this.genReactionTrampoline({
+                kind: "then",
+                u: cf.u,
+                onFcall: cf.build(readVal),
+                onRcall: cr ? cr.build(readReason) : undefined,
+              });
+            }
+          }
+        } else if (method === "catch") {
+          const cr = resolveCb(args[0]);
+          if (cr) {
+            useEnv(cr);
+            if (envCount <= 1) {
+              trampIdx = this.genReactionTrampoline({
+                kind: "catch",
+                u: cr.u,
+                onRcall: cr.build(readReason),
+              });
+            }
+          }
+        } else {
+          const cfin = resolveCb(args[0]);
+          if (cfin) {
+            useEnv(cfin);
+            if (envCount <= 1) {
+              const finCall = cfin.build("");
+              trampIdx = this.genReactionTrampoline({
+                kind: "finally",
+                u: t,
+                onFinStmt: cfin.u === null ? finCall : `(drop ${finCall})`,
+              });
+            }
+          }
+        }
+        if (trampIdx !== null) {
+          this.getOrCreateFuncType(["i32", "i32", "i32"], null); // register the reaction functype
           this.needsPromiseRuntime = true;
           const srcWat = this.emitExpr(recv, locals, "i32");
-          return `(call $__promise_then ${srcWat} (i32.const ${trampIdx}))`;
+          return `(call $__promise_then ${srcWat} (i32.const ${trampIdx}) ${env})`;
         }
       }
     }
@@ -9305,6 +9402,21 @@ class WasicTranspiler {
     locals: Map<string, WatType>,
     funcResult: WatType | null,
   ): string {
+    // Phase 13.1b: observe `const/let/var p = <promiseExpr>` and record p's inner value type so a
+    // later `await p` picks $__promise_await_<T> and `p.then(cb)` is recognized as a promise. This is
+    // a non-consuming observer — it records and falls through to the normal assignment emitter (the
+    // var is a plain i32 local holding the promise ptr). Aliasing (`const q = p`) is tracked for free.
+    {
+      const declObs = line.replace(/;\s*$/, "").match(
+        /^(?:const|let|var)\s+(\w+)\s*(?::\s*[^=]+?)?\s*=\s*([\s\S]+)$/,
+      );
+      if (declObs) {
+        const rhs = declObs[2].trim();
+        if (this.isPromiseExpr(rhs)) {
+          this.promiseInnerType.set(declObs[1], this.promiseInnerTypeOf(rhs, locals));
+        }
+      }
+    }
     // Phase 13.2 / 13.3b: `<promise>.then|catch|finally(cb);` as a statement — the reaction is
     // registered (cb runs at the microtask drain); the returned result promise is dropped. emitExpr
     // owns the lowering; we just verify the shape (promise receiver + a named callback) and drop.
@@ -9313,9 +9425,10 @@ class WasicTranspiler {
       const tm = t.match(/^([\s\S]+)\.(then|catch|finally)\s*\(([\s\S]*)\)$/);
       if (tm && parenDepthNeverNegative(tm[3]) && this.isPromiseExpr(tm[1].trim())) {
         const a0 = this.splitArgs(tm[3])[0]?.trim() ?? "";
-        if (/^\w+$/.test(a0) && this.functions.some((f) => f.name === a0)) {
-          return `(drop ${this.emitExpr(t, locals, "i32")})`;
-        }
+        // a named callback, or a lifted capturing-closure factory call (`__anon_N__factory(caps)`).
+        const a0ok = (/^\w+$/.test(a0) && this.functions.some((f) => f.name === a0)) ||
+          /^\w+__factory\s*\(/.test(a0);
+        if (a0ok) return `(drop ${this.emitExpr(t, locals, "i32")})`;
       }
     }
     // Block-scope correction: a struct-typed var can be re-declared in a sibling block with a
@@ -13539,11 +13652,11 @@ class WasicTranspiler {
    * self-contained WASI-P1 — routed through one seam so the future host mode can rebind to yield).
    */
   private getPromiseRuntimeWat(): string {
-    // The drain loop's `call_indirect (type $ftype_i32_i32_r_void)` needs this functype declared
-    // even when the program has no `.then` (await/resolve-only) — register it unconditionally so a
-    // promise program without reactions still validates. (A funcref table is likewise forced in
-    // emitFuncrefTable when needsPromiseRuntime.)
-    this.getOrCreateFuncType(["i32", "i32"], null);
+    // The drain loop's `call_indirect (type $ftype_i32_i32_i32_r_void)` (env,src,result) needs this
+    // functype declared even when the program has no `.then` (await/resolve-only) — register it
+    // unconditionally so a promise program without reactions still validates. (A funcref table is
+    // likewise forced in emitFuncrefTable when needsPromiseRuntime.)
+    this.getOrCreateFuncType(["i32", "i32", "i32"], null);
     // Phase 13.3: a rejected await re-throws the reason string (disc==1 → throw $__exn_tag), so a
     // surrounding try/catch catches it. Only emitted when needsPromiseReject (keeps resolve/then-only
     // programs exception-free). $__promise_reject builds a settled-rejected promise from a string.
@@ -13587,73 +13700,79 @@ class WasicTranspiler {
     (if (i32.eqz (i32.load (local.get $p))) (then (call $__on_quiescent)))${rej}
     (f64.load offset=16 (local.get $p)))
   (func $__on_quiescent (unreachable))${rejectFn}
-  ;; ---- Microtask queue (Phase 13.2) ----
-  ;; FIFO linked list of reaction records (16 B): [tramp_idx i32 | src i32 | result i32 | next i32].
-  ;; $__mt_head / $__mt_tail are module globals (emitted in the globals section).
-  (func $__promise_enqueue (param $tramp i32) (param $src i32) (param $result i32)
+  ;; ---- Microtask queue (Phase 13.2 / 13.1b) ----
+  ;; FIFO linked list of reaction records (20 B): [tramp_idx@0 | env@4 | src@8 | result@12 | next@16].
+  ;; env is the capturing-closure struct ptr (0 for a named callback). $__mt_head / $__mt_tail are
+  ;; module globals (emitted in the globals section).
+  (func $__promise_enqueue (param $tramp i32) (param $env i32) (param $src i32) (param $result i32)
     (local $r i32)
-    (local.set $r (call $__malloc (i32.const 16)))
+    (local.set $r (call $__malloc (i32.const 20)))
     (i32.store (local.get $r) (local.get $tramp))
-    (i32.store offset=4 (local.get $r) (local.get $src))
-    (i32.store offset=8 (local.get $r) (local.get $result))
-    (i32.store offset=12 (local.get $r) (i32.const 0))
+    (i32.store offset=4 (local.get $r) (local.get $env))
+    (i32.store offset=8 (local.get $r) (local.get $src))
+    (i32.store offset=12 (local.get $r) (local.get $result))
+    (i32.store offset=16 (local.get $r) (i32.const 0))
     (if (i32.eqz (global.get $__mt_head))
       (then
         (global.set $__mt_head (local.get $r))
         (global.set $__mt_tail (local.get $r)))
       (else
-        (i32.store offset=12 (global.get $__mt_tail) (local.get $r))
+        (i32.store offset=16 (global.get $__mt_tail) (local.get $r))
         (global.set $__mt_tail (local.get $r)))))
   ;; Register a reaction: alloc a pending result promise, enqueue the reaction (src is settled
-  ;; under the eager model), and return the result promise. tramp = funcref table index.
-  (func $__promise_then (param $src i32) (param $tramp i32) (result i32)
+  ;; under the eager model), and return the result promise. tramp = funcref table index; env =
+  ;; closure struct ptr (0 if the callback is a named function).
+  (func $__promise_then (param $src i32) (param $tramp i32) (param $env i32) (result i32)
     (local $result i32)
     (local.set $result (call $__promise_alloc))
-    (call $__promise_enqueue (local.get $tramp) (local.get $src) (local.get $result))
+    (call $__promise_enqueue (local.get $tramp) (local.get $env) (local.get $src) (local.get $result))
     (local.get $result))
   ;; Run queued microtasks FIFO until empty. A reaction may enqueue more (chained .then) — they
-  ;; append to the tail and run in this same loop. Each trampoline has type (src,result)->void.
+  ;; append to the tail and run in this same loop. Each trampoline has type (env,src,result)->void.
   (func $__drain_microtasks
     (local $cur i32)
     (block $done
       (loop $L
         (br_if $done (i32.eqz (global.get $__mt_head)))
         (local.set $cur (global.get $__mt_head))
-        (global.set $__mt_head (i32.load offset=12 (local.get $cur)))
+        (global.set $__mt_head (i32.load offset=16 (local.get $cur)))
         (if (i32.eqz (global.get $__mt_head)) (then (global.set $__mt_tail (i32.const 0))))
-        (call_indirect (type $ftype_i32_i32_r_void)
+        (call_indirect (type $ftype_i32_i32_i32_r_void)
           (i32.load offset=4 (local.get $cur))
           (i32.load offset=8 (local.get $cur))
+          (i32.load offset=12 (local.get $cur))
           (i32.load (local.get $cur)))
         (br $L))))`;
   }
 
   /**
-   * Phase 13.2 / 13.3b — generate a per-call-site reaction trampoline conforming to the fixed
-   * reaction functype `(src i32, result i32) -> void`. It reads `src`'s canonical settlement
-   * (`disc` at +8: 0=fulfilled, 1=rejected) and, per `kind`, runs the fulfill/reject/finally
-   * callback then settles `result`. Returns the funcref table index. See async-design.md §3.3/§3.6.
+   * Phase 13.2 / 13.3b / 13.1b — generate a per-call-site reaction trampoline conforming to the fixed
+   * reaction functype `(env i32, src i32, result i32) -> void`. It reads `src`'s canonical settlement
+   * (`disc` at +8: 0=fulfilled, 1=rejected) and, per `kind`, runs the fulfill/reject/finally callback
+   * then settles `result`. Returns the funcref table index. See async-design.md §3.3/§3.6.
    *
-   * - `then`    : fulfilled → settle U = onF(value:T); rejected → propagate (copy src's settlement)
-   *               unless `onR` is given (`.then(onF, onR)`), in which case → settle U = onR(reason).
-   * - `catch`   : fulfilled → passthrough (copy src's settlement); rejected → settle U = onR(reason).
-   * - `finally` : run onFin() on BOTH paths, then passthrough src's settlement unchanged.
+   * - `then`    : fulfilled → settle U = onFcall; rejected → propagate (copy src's settlement) unless
+   *               `onRcall` is given (`.then(onF, onR)`), in which case → settle U = onRcall.
+   * - `catch`   : fulfilled → passthrough (copy src's settlement); rejected → settle U = onRcall.
+   * - `finally` : run onFinStmt on BOTH paths, then passthrough src's settlement unchanged.
    *
-   * The reject reason is a STRING — `onR(reasonPtr, reasonLen)` (payload ptr @16, len @24). The
-   * fulfilled value is read as T (i32/f64). `copySettlement` mirrors src's whole settled image
-   * (state/vtype/disc/8-byte payload/plen) into result — type-agnostic, so it serves both the
-   * fulfilled-passthrough and rejection-propagate cases.
+   * The callback CALL EXPRESSIONS are pre-built by the caller (it knows named-fn vs capturing-closure
+   * dispatch): a named callback is `(call $name <args>)`; a capturing closure is
+   * `(call_indirect (type $T) (local.get $env) <args> (i32.load (local.get $env)))` where `$env` is the
+   * closure struct ptr stored in the reaction record (13.1b). The fulfilled value is read from src@16
+   * and the reject reason from (src@16 ptr, src@24 len) — both baked into the call exprs. At most one
+   * callback per reaction may be a closure (one `$env` slot). `copySettlement` mirrors src's whole
+   * settled image (type-agnostic), serving both fulfilled-passthrough and rejection-propagate.
    */
   private genReactionTrampoline(opts: {
     kind: "then" | "catch" | "finally";
-    t: WatType; // src fulfilled value type (for the onF read)
-    u: WatType | null; // result fulfilled value type (for onF / onR settle)
-    onF?: string;
-    onR?: string;
-    onFin?: string;
+    u: WatType | null; // result fulfilled value type (for the settled value)
+    onFcall?: string; // WAT expr producing U from the fulfilled value (refs $src/$env)
+    onRcall?: string; // WAT expr producing U from the reason string (refs $src/$env)
+    onFinStmt?: string; // WAT void statement running onFin (refs $env)
   }): number {
     const name = `__then_tramp_${this.promiseThenCounter++}`;
-    const { kind, t, u, onF, onR, onFin } = opts;
+    const { kind, u, onFcall, onRcall, onFinStmt } = opts;
     // settle result with a fulfilled value of type `ty` produced by `callWat`.
     const settleVal = (ty: WatType | null, callWat: string): string => {
       if (ty === null) {
@@ -13672,26 +13791,21 @@ class WasicTranspiler {
       `    (i32.store offset=8 (local.get $result) (i32.load offset=8 (local.get $src)))\n` +
       `    (i64.store offset=16 (local.get $result) (i64.load offset=16 (local.get $src)))\n` +
       `    (i32.store offset=24 (local.get $result) (i32.load offset=24 (local.get $src)))`;
-    const readVal = t === "f64"
-      ? `(f64.load offset=16 (local.get $src))`
-      : `(i32.load offset=16 (local.get $src))`;
-    const readReason =
-      `(i32.load offset=16 (local.get $src)) (i32.load offset=24 (local.get $src))`;
 
     let body: string;
     if (kind === "finally") {
       // run onFin() (void, no args) on both paths, then pass the original settlement through.
-      body = `    (call $${onFin})\n${copySettlement}`;
+      body = `    ${onFinStmt}\n${copySettlement}`;
     } else {
       // then / catch: branch on disc (+8): 0=fulfilled, 1=rejected.
-      const fulfilledBranch = onF ? settleVal(u, `(call $${onF} ${readVal})`) : copySettlement; // .catch (no onF) → passthrough the fulfilled value
-      const rejectedBranch = onR ? settleVal(u, `(call $${onR} ${readReason})`) : copySettlement; // .then(onF) (no onR) → propagate the rejection
+      const fulfilledBranch = onFcall ? settleVal(u, onFcall) : copySettlement; // .catch (no onF) → passthrough the fulfilled value
+      const rejectedBranch = onRcall ? settleVal(u, onRcall) : copySettlement; // .then(onF) (no onR) → propagate the rejection
       body = `    (if (i32.eqz (i32.load offset=8 (local.get $src)))\n` +
         `      (then\n${fulfilledBranch})\n` +
         `      (else\n${rejectedBranch}))`;
     }
     this.promiseTrampolineWat.push(
-      `  (func $${name} (param $src i32) (param $result i32)\n${body})`,
+      `  (func $${name} (param $env i32) (param $src i32) (param $result i32)\n${body})`,
     );
     return this.getFuncTableIdx(name);
   }
@@ -13702,6 +13816,8 @@ class WasicTranspiler {
    */
   private isPromiseExpr(e: string): boolean {
     const s = e.trim();
+    // Phase 13.1b: a bare identifier that holds a promise (`const p = asyncFn(); … p.then(cb)`).
+    if (/^\w+$/.test(s) && this.promiseInnerType.has(s)) return true;
     if (/^Promise\s*\.\s*(resolve|reject)\s*\(/.test(s)) return true;
     // `<recv>.then|catch|finally(cb)` is a promise iff its RECEIVER is — recurse, do NOT loose-match
     // the method anywhere (that would treat `const y = p.then(f)` as a promise, mis-routing the stmt).
@@ -15741,6 +15857,7 @@ class WasicTranspiler {
     this.currentFuncResultTsName = null;
     this.currentFuncIsNullableReturn = this.nullableFuncReturnType.has(fn.name);
     this.currentFuncAsyncInner = fn.asyncInner ?? null; // Phase 13 (#13 async)
+    this.promiseInnerType = new Map(); // Phase 13.1b: promise-holding-var inner types (per function)
     this.currentMethodClass = fn.className ?? null;
     this.currentMethodName = fn.name;
 

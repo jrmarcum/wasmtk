@@ -1,8 +1,22 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 309/309**
-(`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-15**. (309 = 307 at v1.7.0 + 2 Phase-53 tests;
-`bindgen` 103→104 from the ABI return-side forward-alignment's `cabi_post` assertion.)
+Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 315/315**
+(`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-15**. (315 = 307 at v1.7.0 + 2 Phase-53 tests +
+6 async tests 54–59; `bindgen` 103→104 from the ABI return-side forward-alignment's `cabi_post` assertion.)
+
+## Capturing expression-body arrow result-type inferred as f64 (2026-06-15, async 13.1b)
+
+A LATENT bug surfaced by capturing-closure `.then` callbacks. `substituteOneArrow` inferred an
+**expression-body** arrow's result type (`v => base + v`, no return annotation) with ONLY the arrow's
+own params in scope — so a CAPTURED variable (`base`) was an unknown identifier and `inferInitType`
+defaulted the arithmetic to **f64**. The lifted closure body then got `(result f64)` while the body
+actually produced i32 → `local.set expected f64, found call of type i32` at instantiate (and a wrong
+`await_<T>` pick downstream). The block-body path already seeded the enclosing fn's params/locals; the
+expression-body path did not. **Fix:** build the inference scope (enclosing fn params + locals + the
+arrow's own params) ONCE and use it for BOTH paths. Benefits any value-returning capturing arrow used
+as a callback. Surfaced + covered by `59_AsyncClosureCb` (capturing `.then` i32/f64). Companion fix:
+`promiseInnerTypeOf`'s `.then`/`.catch` callback-type resolution was named-only → an f64 closure cb
+mis-picked `await_i32`; added a `cbResult` resolver covering the `__anon_N__factory` form.
 
 ## Multi-level interface inheritance dropped fields on forward `extends` (2026-06-15, Phase 53.11)
 
