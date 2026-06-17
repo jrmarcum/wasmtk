@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//tmp/**)",
+      "Bash(./spike.exe)",
+      "Bash(echo \"exit=$?\")"
+    ]
+  }
+}
