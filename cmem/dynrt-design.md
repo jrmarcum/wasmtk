@@ -90,6 +90,44 @@ scripts/gen_caps_bytes.ts` → then `deno task install` (so the installed binary
 
 Deferred from 1b (not blocking): a hashmap-backed property map and f64-aware `dynToNumber(string)`.
 
+## Increment 2a — `eval` of a pure expression language (SHIPPED 2026-06-22)
+
+The first piece of the **interpreter** (#14 increment 2). DECISION (owner 2026-06-22): **continue in
+the wasic subset** — the subset already proved out recursive-descent (JSON) and backtracking (RegExp)
+with a module cursor, and the interpreter is parsing + tag-dispatch + arithmetic + value-model calls,
+so **no `rtcore` extraction / hand-WAT was needed** (kept in reserve for a concrete future wall). And:
+**expression evaluator first** (no variables / member access / calls / statements yet — those are 2b+).
+
+`dynEval(src: string): i32` is a **recursive-descent, DIRECT-eval** parser (no separate AST) over a
+module-level cursor `evalPos`, mirroring the JSON parser's shape, returning a boxed value handle.
+Grammar (low→high precedence): ternary `?:`, `||`, `&&`, equality `=== !== == !=` (`==`/`!=` treated
+as strict in v1), relational `< > <= >=`, additive `+ -`, multiplicative `* / %`, unary `- ! +`,
+primary (number/string/bool/null/undefined literal or `( … )`). Number literals (int/fraction/exponent)
+are sliced and parsed with `parseFloat` (works in modc). String literals handle `\n \t \r` + literal
+escapes.
+
+**Key v1 simplification — no real short-circuit (correct here):** because v1 expressions have NO side
+effects (no variables, calls, or assignments), `&&`/`||`/`?:` evaluate BOTH sides and select per JS
+semantics (`a&&b` → b if truthy(a) else a; `a||b` → a if truthy(a) else b; `?:` picks). This is
+observationally identical to short-circuit for a side-effect-free language. **Real short-circuit
+(skip-parse or AST) becomes mandatory in 2b** once identifiers/calls can have side effects.
+
+Added the **dynamic operator surface** the value model lacked (also what the future wasic `any`
+lowering will call): `dynNeg`/`dynNot`/`dynSub`/`dynMul`/`dynDiv`/`dynMod`/`dynLt`/`dynGt`/`dynLe`/
+`dynGe` (comparisons numeric in v1; string/lexicographic compare is a gap). `dynStrictEq`/`dynAdd`
+already existed. All are exports of the dynrt library; a program importing only `dynNumber` still
+gets them dead-stripped by Binaryen (reachable only from `dynEval`).
+
+- Lives in the same library (`dynrt_lib_modc.ts`); `wasmtk:dynrt` now also exposes `dynEval` (caps
+  bytes regenerated → 7773 bytes). Driver `tests/wasm_wasi_bundle/dynrt_eval_bundle/main_wasic.ts`
+  (explicit-fixture pipeline, imports `../dynrt_bundle/dynrt_lib_modc.wasm`); pipeline test
+  `tests/wasm_wasi/18l_DynRuntimeEval.ts`. **PASS** (precedence/parens/unary/f64/comparisons/logical/
+  ternary/string-concat). **No new compiler gaps** — the lib compiled clean on the first try.
+
+**2a gaps (→ 2b+):** variables / an environment (identifier resolution), member/property access,
+function calls, `new Function`, statements + control flow, real short-circuit, string comparison,
+loose-equality coercion (`==`/`!=` are strict in v1).
+
 ## Compiler gaps surfaced (worked around in the library; candidates for a real wasic fix)
 
 Like every Tier-1 cap, this increment surfaced wasic gaps. Both are worked around in the library and
@@ -117,9 +155,14 @@ recorded in `compiler-bugs.md`; each could later be fixed in `src/wasic.ts` and 
 - **1a — value + object model — ✅ SHIPPED 2026-06-22** (test `18j`; see above).
 - **1b — `wasmtk:dynrt` virtual import + tree-shake — ✅ SHIPPED 2026-06-22** (test `18k`; see above).
   Deferred extras (optional, not started): hashmap-backed property map; f64-aware `dynToNumber(string)`.
-- **2 — the interpreter:** a JS expression parser + tree-walking evaluator over boxed values for
-  `eval`/`new Function`. This is where the **`rtcore` extraction + hand-WAT** decision (3 above)
-  is revisited, since by then the exact shared-helper set is known.
+- **2a — `eval` of a pure expression language — ✅ SHIPPED 2026-06-22** (test `18l`; see above).
+  Authoring decision resolved: continue in the subset (no `rtcore`/hand-WAT needed yet).
+- **2b — variables + environment + member access + calls + real short-circuit** (next). Identifiers
+  resolve against a bindings object; `&&`/`||`/`?:` must become real short-circuit (skip-parse or a
+  small AST) once operands can have side effects.
+- **2c — statements + control flow + `new Function`** (a callable from a body string).
+  This is where the **`rtcore` extraction + hand-WAT** decision (authoring §3) is most likely
+  revisited, if the subset hits a wall.
 - **3 — wasic `any` + auto-merge:** add an `any` type to wasic that lowers to a boxed-value handle;
   auto-merge the runtime when `any`/dynamic features are used; migrate `hybrid --auto`'s dynamic
   routing target off `javyc` onto the own-runtime.

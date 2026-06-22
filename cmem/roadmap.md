@@ -318,9 +318,15 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     future reconstruct-then-`push`). **Increment 1b — virtual `wasmtk:dynrt` import + tree-shake —
     SHIPPED 2026-06-22** (embedded in `src/wasm/caps_bytes.ts` as a 6th registry entry via
     `gen_caps_bytes.ts`; the `tsbundler` resolver is generic so no resolver change; no `modc` step;
-    pipeline test `18k`). **Next:** 2 the interpreter (eval/`new Function`; `rtcore`+hand-WAT
-    revisit); 3 wasic `any` + auto-merge + migrate `hybrid --auto`'s dynamic target off `javyc`.
-    Still the largest remaining track.
+    pipeline test `18k`). **Increment 2a — `eval` of a pure expression language — SHIPPED 2026-06-22**
+    (test `18l`): a recursive-descent direct-eval parser authored in the subset (authoring decision
+    resolved — continue in the subset, no `rtcore`/hand-WAT needed yet); full operator precedence +
+    parens + unary + ternary + string concat → boxed value; added the dynamic operators
+    `dynSub/Mul/Div/Mod/Neg/Not/Lt/Gt/Le/Ge`; `parseFloat` works in modc; NO new compiler gaps.
+    **Next:** 2b variables + environment + member access + calls + real short-circuit; 2c statements +
+    control flow + `new Function` (the `rtcore`+hand-WAT decision is most likely revisited here); 3
+    wasic `any` + auto-merge + migrate `hybrid --auto`'s dynamic target off `javyc`. Still the largest
+    remaining track.
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
 2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1

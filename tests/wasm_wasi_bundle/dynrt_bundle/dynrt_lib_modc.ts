@@ -449,5 +449,394 @@ export function dynAdd(a: i32, b: i32): i32 {
     const s: string = sa + sb;
     return dynString(s);
   }
-  return dynNumber(dynToNumber(a) + dynToNumber(b));
+  const an: f64 = dynToNumber(a);
+  const bn: f64 = dynToNumber(b);
+  return dynNumber(an + bn);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────────────────────
+// Increment 2a — dynamic operators (used by dynEval; also the operator surface the future wasic
+// `any` lowering will call for `-` `*` `/` `%` `< > <= >=` `-x` `!x`). Comparisons are numeric in
+// v1 (string/lexicographic compare is a documented gap).
+// ──────────────────────────────────────────────────────────────────────────────────────────────
+
+/** Unary minus (`-x`). */
+/** @export */
+export function dynNeg(v: i32): i32 {
+  const a: f64 = dynToNumber(v);
+  return dynNumber(0 - a);
+}
+
+/** Logical NOT (`!x`). */
+/** @export */
+export function dynNot(v: i32): i32 {
+  return dynBool(dynToBool(v) === 0 ? 1 : 0);
+}
+
+/** Numeric subtraction (`-`). */
+/** @export */
+export function dynSub(x: i32, y: i32): i32 {
+  const a: f64 = dynToNumber(x);
+  const b: f64 = dynToNumber(y);
+  return dynNumber(a - b);
+}
+
+/** Numeric multiplication (`*`). */
+/** @export */
+export function dynMul(x: i32, y: i32): i32 {
+  const a: f64 = dynToNumber(x);
+  const b: f64 = dynToNumber(y);
+  return dynNumber(a * b);
+}
+
+/** Numeric division (`/`). */
+/** @export */
+export function dynDiv(x: i32, y: i32): i32 {
+  const a: f64 = dynToNumber(x);
+  const b: f64 = dynToNumber(y);
+  return dynNumber(a / b);
+}
+
+/** Remainder (`%`, JS truncated-toward-zero semantics). */
+/** @export */
+export function dynMod(x: i32, y: i32): i32 {
+  const a: f64 = dynToNumber(x);
+  const b: f64 = dynToNumber(y);
+  const q: f64 = a / b;
+  const t: f64 = q < 0 ? Math.ceil(q) : Math.floor(q);
+  return dynNumber(a - b * t);
+}
+
+/** Less-than (`<`, numeric). */
+/** @export */
+export function dynLt(x: i32, y: i32): i32 {
+  const a: f64 = dynToNumber(x);
+  const b: f64 = dynToNumber(y);
+  return dynBool(a < b ? 1 : 0);
+}
+
+/** Greater-than (`>`, numeric). */
+/** @export */
+export function dynGt(x: i32, y: i32): i32 {
+  const a: f64 = dynToNumber(x);
+  const b: f64 = dynToNumber(y);
+  return dynBool(a > b ? 1 : 0);
+}
+
+/** Less-or-equal (`<=`, numeric). */
+/** @export */
+export function dynLe(x: i32, y: i32): i32 {
+  const a: f64 = dynToNumber(x);
+  const b: f64 = dynToNumber(y);
+  return dynBool(a <= b ? 1 : 0);
+}
+
+/** Greater-or-equal (`>=`, numeric). */
+/** @export */
+export function dynGe(x: i32, y: i32): i32 {
+  const a: f64 = dynToNumber(x);
+  const b: f64 = dynToNumber(y);
+  return dynBool(a >= b ? 1 : 0);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────────────────────
+// Increment 2a — `eval` of a pure expression language → boxed value.
+//
+// A recursive-descent, DIRECT-eval parser (no separate AST) over a module-level cursor `evalPos`,
+// mirroring the JSON parser's shape. Grammar (low→high precedence): ternary `?:`, `||`, `&&`,
+// equality `=== !== == !=` (`==`/`!=` treated as strict in v1), relational `< > <= >=`, additive
+// `+ -`, multiplicative `* / %`, unary `- ! +`, primary (number/string/bool/null/undefined literal
+// or parenthesised expr). Because v1 expressions have NO side effects (no variables, calls, or
+// assignments yet), `&&`/`||`/`?:` evaluate both sides and select — observationally identical to
+// short-circuit. Real short-circuit arrives with 2b (variables + calls). Identifiers other than the
+// keywords, member access, and calls are 2b+. See cmem/dynrt-design.md.
+// ──────────────────────────────────────────────────────────────────────────────────────────────
+
+let evalPos: i32 = 0; // read cursor into the eval source string
+
+function evalSkipWs(s: string): void {
+  let go: i32 = 1;
+  while (go === 1) {
+    if (evalPos >= s.length) {
+      go = 0;
+    } else {
+      const c: i32 = s.charCodeAt(evalPos);
+      if (c === 32 || c === 9 || c === 10 || c === 13) {
+        evalPos = evalPos + 1;
+      } else {
+        go = 0;
+      }
+    }
+  }
+}
+
+function evalPeek(s: string): i32 {
+  if (evalPos >= s.length) return -1;
+  return s.charCodeAt(evalPos);
+}
+
+function evalPeek2(s: string): i32 {
+  if (evalPos + 1 >= s.length) return -1;
+  return s.charCodeAt(evalPos + 1);
+}
+
+function parseNumLit(s: string): i32 {
+  const start: i32 = evalPos;
+  let c: i32 = evalPeek(s);
+  while (c >= 48 && c <= 57) {
+    evalPos = evalPos + 1;
+    c = evalPeek(s);
+  }
+  if (c === 46) { // '.'
+    evalPos = evalPos + 1;
+    c = evalPeek(s);
+    while (c >= 48 && c <= 57) {
+      evalPos = evalPos + 1;
+      c = evalPeek(s);
+    }
+  }
+  if (c === 101 || c === 69) { // 'e' / 'E'
+    evalPos = evalPos + 1;
+    c = evalPeek(s);
+    if (c === 43 || c === 45) {
+      evalPos = evalPos + 1;
+      c = evalPeek(s);
+    }
+    while (c >= 48 && c <= 57) {
+      evalPos = evalPos + 1;
+      c = evalPeek(s);
+    }
+  }
+  const tok: string = s.slice(start, evalPos);
+  return dynNumber(parseFloat(tok));
+}
+
+function parseStringLit(s: string): i32 {
+  const quote: i32 = evalPeek(s);
+  evalPos = evalPos + 1; // skip opening quote
+  let r: string = "";
+  let go: i32 = 1;
+  while (go === 1) {
+    if (evalPos >= s.length) {
+      go = 0;
+    } else {
+      const c: i32 = s.charCodeAt(evalPos);
+      if (c === quote) {
+        evalPos = evalPos + 1;
+        go = 0;
+      } else if (c === 92) { // backslash escape
+        evalPos = evalPos + 1;
+        const e: i32 = s.charCodeAt(evalPos);
+        let d: i32 = e;
+        if (e === 110) d = 10;      // \n
+        else if (e === 116) d = 9;  // \t
+        else if (e === 114) d = 13; // \r
+        r = r + String.fromCharCode(d);
+        evalPos = evalPos + 1;
+      } else {
+        r = r + String.fromCharCode(c);
+        evalPos = evalPos + 1;
+      }
+    }
+  }
+  return dynString(r);
+}
+
+function parsePrimary(s: string): i32 {
+  evalSkipWs(s);
+  const c: i32 = evalPeek(s);
+  if (c === 40) { // '('
+    evalPos = evalPos + 1;
+    const v: i32 = parseExpr(s);
+    evalSkipWs(s);
+    if (evalPeek(s) === 41) evalPos = evalPos + 1; // ')'
+    return v;
+  }
+  if (c === 39 || c === 34) return parseStringLit(s); // ' or "
+  if (c >= 48 && c <= 57) return parseNumLit(s);
+  if (c === 46) return parseNumLit(s); // .5
+  if (c === 116) { // true
+    evalPos = evalPos + 4;
+    return dynBool(1);
+  }
+  if (c === 102) { // false
+    evalPos = evalPos + 5;
+    return dynBool(0);
+  }
+  if (c === 110) { // null
+    evalPos = evalPos + 4;
+    return dynNull();
+  }
+  if (c === 117) { // undefined
+    evalPos = evalPos + 9;
+    return dynUndefined();
+  }
+  return dynUndefined(); // unrecognised → undefined (v1)
+}
+
+function parseUnary(s: string): i32 {
+  evalSkipWs(s);
+  const c: i32 = evalPeek(s);
+  if (c === 45) { // -x
+    evalPos = evalPos + 1;
+    return dynNeg(parseUnary(s));
+  }
+  if (c === 33) { // !x
+    evalPos = evalPos + 1;
+    return dynNot(parseUnary(s));
+  }
+  if (c === 43) { // +x → ToNumber
+    evalPos = evalPos + 1;
+    const v: i32 = parseUnary(s);
+    return dynNumber(dynToNumber(v));
+  }
+  return parsePrimary(s);
+}
+
+function parseMul(s: string): i32 {
+  let left: i32 = parseUnary(s);
+  let go: i32 = 1;
+  while (go === 1) {
+    evalSkipWs(s);
+    const c: i32 = evalPeek(s);
+    if (c === 42) { // *
+      evalPos = evalPos + 1;
+      left = dynMul(left, parseUnary(s));
+    } else if (c === 47) { // /
+      evalPos = evalPos + 1;
+      left = dynDiv(left, parseUnary(s));
+    } else if (c === 37) { // %
+      evalPos = evalPos + 1;
+      left = dynMod(left, parseUnary(s));
+    } else {
+      go = 0;
+    }
+  }
+  return left;
+}
+
+function parseAdd(s: string): i32 {
+  let left: i32 = parseMul(s);
+  let go: i32 = 1;
+  while (go === 1) {
+    evalSkipWs(s);
+    const c: i32 = evalPeek(s);
+    if (c === 43) { // +
+      evalPos = evalPos + 1;
+      left = dynAdd(left, parseMul(s));
+    } else if (c === 45) { // -
+      evalPos = evalPos + 1;
+      left = dynSub(left, parseMul(s));
+    } else {
+      go = 0;
+    }
+  }
+  return left;
+}
+
+function parseRel(s: string): i32 {
+  let left: i32 = parseAdd(s);
+  let go: i32 = 1;
+  while (go === 1) {
+    evalSkipWs(s);
+    const c: i32 = evalPeek(s);
+    const c2: i32 = evalPeek2(s);
+    if (c === 60) { // <
+      if (c2 === 61) {
+        evalPos = evalPos + 2;
+        left = dynLe(left, parseAdd(s));
+      } else {
+        evalPos = evalPos + 1;
+        left = dynLt(left, parseAdd(s));
+      }
+    } else if (c === 62) { // >
+      if (c2 === 61) {
+        evalPos = evalPos + 2;
+        left = dynGe(left, parseAdd(s));
+      } else {
+        evalPos = evalPos + 1;
+        left = dynGt(left, parseAdd(s));
+      }
+    } else {
+      go = 0;
+    }
+  }
+  return left;
+}
+
+function parseEq(s: string): i32 {
+  let left: i32 = parseRel(s);
+  let go: i32 = 1;
+  while (go === 1) {
+    evalSkipWs(s);
+    const c: i32 = evalPeek(s);
+    const c2: i32 = evalPeek2(s);
+    if (c === 61 && c2 === 61) { // == or ===
+      evalPos = evalPos + 2;
+      if (evalPeek(s) === 61) evalPos = evalPos + 1; // consume the 3rd '='
+      const right: i32 = parseRel(s);
+      left = dynBool(dynStrictEq(left, right));
+    } else if (c === 33 && c2 === 61) { // != or !==
+      evalPos = evalPos + 2;
+      if (evalPeek(s) === 61) evalPos = evalPos + 1; // consume the 3rd '='
+      const right: i32 = parseRel(s);
+      left = dynBool(dynStrictEq(left, right) === 0 ? 1 : 0);
+    } else {
+      go = 0;
+    }
+  }
+  return left;
+}
+
+function parseAnd(s: string): i32 {
+  let left: i32 = parseEq(s);
+  let go: i32 = 1;
+  while (go === 1) {
+    evalSkipWs(s);
+    if (evalPeek(s) === 38 && evalPeek2(s) === 38) { // &&
+      evalPos = evalPos + 2;
+      const right: i32 = parseEq(s);
+      left = dynToBool(left) === 1 ? right : left; // a && b
+    } else {
+      go = 0;
+    }
+  }
+  return left;
+}
+
+function parseOr(s: string): i32 {
+  let left: i32 = parseAnd(s);
+  let go: i32 = 1;
+  while (go === 1) {
+    evalSkipWs(s);
+    if (evalPeek(s) === 124 && evalPeek2(s) === 124) { // ||
+      evalPos = evalPos + 2;
+      const right: i32 = parseAnd(s);
+      left = dynToBool(left) === 1 ? left : right; // a || b
+    } else {
+      go = 0;
+    }
+  }
+  return left;
+}
+
+function parseExpr(s: string): i32 {
+  const cond: i32 = parseOr(s);
+  evalSkipWs(s);
+  if (evalPeek(s) === 63) { // ? :
+    evalPos = evalPos + 1;
+    const thenV: i32 = parseExpr(s);
+    evalSkipWs(s);
+    if (evalPeek(s) === 58) evalPos = evalPos + 1; // ':'
+    const elseV: i32 = parseExpr(s);
+    return dynToBool(cond) === 1 ? thenV : elseV;
+  }
+  return cond;
+}
+
+/** Evaluate a pure JS expression string → boxed value handle (v1 expression subset). */
+/** @export */
+export function dynEval(s: string): i32 {
+  evalPos = 0;
+  return parseExpr(s);
 }

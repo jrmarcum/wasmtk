@@ -26,4 +26,15 @@ world dynrt-lib-modc {
   export dyn-arr-get: func(arr: s32, i: s32) -> s32;
   export dyn-strict-eq: func(a: s32, b: s32) -> s32;
   export dyn-add: func(a: s32, b: s32) -> s32;
+  export dyn-neg: func(v: s32) -> s32;
+  export dyn-not: func(v: s32) -> s32;
+  export dyn-sub: func(x: s32, y: s32) -> s32;
+  export dyn-mul: func(x: s32, y: s32) -> s32;
+  export dyn-div: func(x: s32, y: s32) -> s32;
+  export dyn-mod: func(x: s32, y: s32) -> s32;
+  export dyn-lt: func(x: s32, y: s32) -> s32;
+  export dyn-gt: func(x: s32, y: s32) -> s32;
+  export dyn-le: func(x: s32, y: s32) -> s32;
+  export dyn-ge: func(x: s32, y: s32) -> s32;
+  export dyn-eval: func(s: string) -> s32;
 }

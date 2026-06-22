@@ -1,8 +1,8 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 319/319**
+Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 320/320**
 (`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-22** (+`18j` dynrt value-model + `18k` dynrt
-virtual import). 3 KNOWN wasic
+virtual import + `18l` dynrt eval — 2a added NO new gaps). 3 KNOWN wasic
 gaps are OPEN but worked around in the dynrt library (so the suite stays green) — see the next
 section; each is a candidate for a real `src/wasic.ts` fix (then the lib workaround can be removed,
 the RegExp `&&` precedent). (Pre-18j: 317 = 307 at v1.7.0 + 2 Phase-53 tests + 8 async tests 54–61;
