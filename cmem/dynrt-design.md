@@ -353,10 +353,21 @@ collectively as "14.3"):
   parseFunctions); `as string` unboxing (needs ptr+len in the string-assign path, not single-value
   emitExpr); inline `(x as f64) === lit` mis-infers the comparison as i32 (use an intermediate typed
   local — the common form); non-literal typed RHS boxing (`const x: any = someI32`).
-- **3.2 — operators on `any`.** In `emitExpr`'s binary-op path: if either operand is `any`, box the
-  other and emit `dynAdd`/`dynSub`/`dynMul`/`dynDiv`/`dynMod`/`dynStrictEq`/`dynLt`/… → result is
-  `any`. `typeof x`(any)→`dynTypeof`; truthiness in `if`/`while` conds → `dynToBool`. **Hot-path risk
-  — the biggest single danger; output-verify broadly.**
+- **3.2 — operators on `any`. ✅ SHIPPED 2026-06-22** (extends `18q`). In `emitExpr`'s binary-op loop,
+  right after `lhs`/`rhs` are split, a guarded block fires **only when an operand is a simple `any`
+  var** (`anyVars.has`) — otherwise the existing typed paths run **untouched** (the safety invariant
+  for the hottest path). New helper `boxAnyOperand` yields a handle for each operand (any var passes
+  through; literal/typed var boxed via merged `dynrt_dynNumber/dynString/dynBool`). Emission:
+  arithmetic `+ - * / %` → `dynrt_dynAdd/Sub/Mul/Div/Mod` (result is an **`any` handle**); `=== ==` →
+  `dynrt_dynStrictEq` (**raw i32 0/1**), `!== !=` → `(i32.eqz …)`; `< > <= >=` →
+  `dynrt_dynToBool(dynrt_dynLt/Gt/Le/Ge …)` (**raw i32**, so they work in conditions, matching wasic's
+  comparison convention); `&& ||` → truthiness short-circuit over `dynrt_dynToBool(operand)` (**v1
+  returns the boolean, not the JS operand** — documented). String concat on `any` works (`dynAdd`
+  dispatches). Full suite stayed green (the guard means zero impact on non-`any` code). **Gaps
+  (follow-ups):** inline unbox of an op RESULT (`(a+b) as i32`) — assign to an `: any` var first then
+  `as` (same shape as 3.1's inline-cast gap); `typeof x`(any) still resolves at compile time (should
+  be runtime `dynTypeof`); unary `-x`/`!x` on `any`; bitwise/shift on `any`; bare `if (anyVar)` needs
+  `if (anyVar as bool)`; chained any-arith where an operand is a sub-expression (not a simple var).
 - **3.3 — member/index/call on `any` (the "deep" part).** `x.foo`→`dynMember`, `x[i]`→`dynIndexValue`,
   `x(args)`→build args array + `dynApply`. **Requires EXPORTING `dynMember` + `dynIndexValue`** from
   the dynrt library (currently internal). `eval(str)`→`dynEval` (returns `any`).

@@ -70,4 +70,54 @@ const no: any = false;
 const nb: bool = no as bool;
 check(nb === 0 ? 1 : 0);
 
+// ── 3.2: operators on `any` route to dynrt ────────────────────────────────────────────────────
+const a: any = 10;
+const b: any = 3;
+
+// arithmetic → an `any` handle; unbox via an intermediate any var + `as`
+const sum: any = a + b;
+check((sum as i32) === 13 ? 1 : 0);
+const diff: any = a - b;
+check((diff as i32) === 7 ? 1 : 0);
+const prod: any = a * b;
+check((prod as i32) === 30 ? 1 : 0);
+const rem: any = a % b;
+check((rem as i32) === 1 ? 1 : 0);
+const inc: any = a + 5; // any + typed literal (boxed)
+check((inc as i32) === 15 ? 1 : 0);
+
+// comparisons → raw i32 (0/1) — usable directly in conditions
+const ltAB: i32 = a < b;
+check(ltAB === 0 ? 1 : 0);
+const gtAB: i32 = a > b;
+check(gtAB === 1 ? 1 : 0);
+const eqAA: i32 = a === a;
+check(eqAA === 1 ? 1 : 0);
+const neAB: i32 = a !== b;
+check(neAB === 1 ? 1 : 0);
+const geAB: i32 = a >= b;
+check(geAB === 1 ? 1 : 0);
+
+// comparison used directly as a condition
+if (a > b) {
+  check(1);
+} else {
+  check(0); // must not reach
+}
+
+// string concat on `any`
+const s1: any = "foo";
+const s2: any = "bar";
+const catSS: any = s1 + s2;
+check(dynTypeof(catSS) === 4 ? 1 : 0);
+check(dynStrLen(catSS) === 6 ? 1 : 0);
+
+// && / || on `any` (truthiness → bool)
+const tt: any = true;
+const ff: any = false;
+const andTF: i32 = tt && ff;
+check(andTF === 0 ? 1 : 0);
+const orFT: i32 = ff || tt;
+check(orFT === 1 ? 1 : 0);
+
 console.log("dynrt any foundation: all checks passed");

@@ -8998,6 +8998,41 @@ class WasicTranspiler {
         const lhs = expr.slice(0, idx).trim();
         const rhs = expr.slice(idx + op.length).trim();
 
+        // #14.3.2: operators on `any` values route to dynrt. Fires ONLY when an operand is a simple
+        // `any` var (in anyVars); otherwise this block does nothing and the existing typed paths run
+        // untouched. Arithmetic → an `any` handle; comparisons → a raw i32 0/1 (so they work in
+        // conditions, matching wasic's comparison convention). To get a primitive from an arithmetic
+        // result, assign to an `: any` var then unbox with `as` (inline unbox of an op result is a
+        // documented gap — same as 3.1's inline-cast gap).
+        {
+          const lhsAny = /^\w+$/.test(lhs) && this.anyVars.has(lhs);
+          const rhsAny = /^\w+$/.test(rhs) && this.anyVars.has(rhs);
+          if (lhsAny || rhsAny) {
+            if (op === "&&" || op === "||") {
+              // truthiness short-circuit; v1 returns the boolean (not the JS operand) — documented.
+              const lb = `(call $dynrt_dynToBool ${this.boxAnyOperand(lhs, locals)})`;
+              const rb = `(call $dynrt_dynToBool ${this.boxAnyOperand(rhs, locals)})`;
+              return op === "&&"
+                ? `(if (result i32) ${lb} (then ${rb}) (else (i32.const 0)))`
+                : `(if (result i32) ${lb} (then (i32.const 1)) (else ${rb}))`;
+            }
+            const L = this.boxAnyOperand(lhs, locals);
+            const R = this.boxAnyOperand(rhs, locals);
+            if (op === "+") return `(call $dynrt_dynAdd ${L} ${R})`;
+            if (op === "-") return `(call $dynrt_dynSub ${L} ${R})`;
+            if (op === "*") return `(call $dynrt_dynMul ${L} ${R})`;
+            if (op === "/") return `(call $dynrt_dynDiv ${L} ${R})`;
+            if (op === "%") return `(call $dynrt_dynMod ${L} ${R})`;
+            if (op === "===" || op === "==") return `(call $dynrt_dynStrictEq ${L} ${R})`;
+            if (op === "!==" || op === "!=") return `(i32.eqz (call $dynrt_dynStrictEq ${L} ${R}))`;
+            if (op === "<") return `(call $dynrt_dynToBool (call $dynrt_dynLt ${L} ${R}))`;
+            if (op === ">") return `(call $dynrt_dynToBool (call $dynrt_dynGt ${L} ${R}))`;
+            if (op === "<=") return `(call $dynrt_dynToBool (call $dynrt_dynLe ${L} ${R}))`;
+            if (op === ">=") return `(call $dynrt_dynToBool (call $dynrt_dynGe ${L} ${R}))`;
+            // bitwise / shift on `any` are not supported in v1 — fall through (rare).
+          }
+        }
+
         // Logical && / || — emit SHORT-CIRCUIT form (an if/result that skips the RHS when the
         // LHS already decides the result) instead of a bitwise (i32.and/or) that always
         // evaluates both sides. This matches JavaScript semantics and, critically, prevents an
@@ -9293,6 +9328,29 @@ class WasicTranspiler {
     }
     const safeExpr = expr.replace(/\(;/g, "( ;").replace(/;\)/g, "; )") + " ";
     return `(;? ${safeExpr};) ${zeroOf(defaultType)}`;
+  }
+
+  /**
+   * #14.3.2: produce a WAT expression that yields an `any` (boxed dynrt handle) for a binary-operator
+   * operand. An `any` var passes through; a number/string/bool literal or a typed var is boxed via
+   * the merged `dynrt_dynNumber/dynString/dynBool`; anything else is assumed to already yield a handle.
+   */
+  private boxAnyOperand(e: string, locals: Map<string, WatType>): string {
+    e = e.trim();
+    if (/^\w+$/.test(e) && this.anyVars.has(e)) return this.emitExpr(e, locals, "i32"); // already any
+    if (e.startsWith('"') || e.startsWith("'") || e.startsWith("`")) {
+      return this.emitExpr(`dynrt_dynString(${e})`, locals, "i32");
+    }
+    if (e === "true") return this.emitExpr(`dynrt_dynBool(1)`, locals, "i32");
+    if (e === "false") return this.emitExpr(`dynrt_dynBool(0)`, locals, "i32");
+    if (/^-?\d+(?:\.\d+)?$/.test(e)) return this.emitExpr(`dynrt_dynNumber(${e})`, locals, "i32");
+    if (/^\w+$/.test(e) && locals.has(e)) {
+      const t = locals.get(e)!;
+      if (t === "string") return this.emitExpr(`dynrt_dynString(${e})`, locals, "i32");
+      if (t === "bool") return this.emitExpr(`dynrt_dynBool(${e})`, locals, "i32");
+      return this.emitExpr(`dynrt_dynNumber(${e})`, locals, "i32"); // i32 / f64 / i64 → number
+    }
+    return this.emitExpr(e, locals, "i32"); // assume an any-producing sub-expression
   }
 
   /** Finds an operator in an expression while respecting paren nesting.
