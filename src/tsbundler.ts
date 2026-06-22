@@ -237,6 +237,29 @@ export async function bundleImportsEx(entryPath: string): Promise<BundleResult> 
       return { source: "", exportRenames: new Map() };
     }
 
+    // ── #14.3.1 auto-merge: pull the own dynamic runtime when the entry uses `any` or `eval` ──
+    // The `any` type lowers to a boxed dynrt handle and `eval(...)` is the dynrt evaluator, so a
+    // program using either needs `wasmtk:dynrt` merged. Rather than a new merge path, inject a
+    // synthetic `import { …ops… } from "wasmtk:dynrt"` so the existing virtual-capability handler
+    // below merges it (and Binaryen DCE strips the dynrt functions the program doesn't call).
+    // Only the ENTRY is scanned; programs without `any`/`eval` are byte-for-byte unaffected.
+    if (isEntry && !/from\s+["']wasmtk:dynrt["']/.test(src)) {
+      const usesAny = /:\s*any\b/.test(src) || /\bany\[\]/.test(src) || /<\s*any\s*>/.test(src);
+      const usesEval = /\beval\s*\(/.test(src);
+      if (usesAny || usesEval) {
+        const ops = [
+          "dynNumber", "dynBool", "dynString", "dynNumberValue", "dynBoolValue", "dynToBool",
+          "dynToNumber", "dynStrBytes", "dynStrLen", "dynStrCharAt", "dynTypeof", "dynTag",
+          "dynAdd", "dynSub", "dynMul", "dynDiv", "dynMod", "dynNeg", "dynNot", "dynStrictEq",
+          "dynLt", "dynGt", "dynLe", "dynGe", "dynApply",
+          "dynEval", "dynEvalEnv", "dynObject", "dynArray", "dynSet", "dynGet", "dynPush",
+          "dynMakeFunc", "dynStdEnv", "dynUndefined", "dynNull",
+          // NOTE: dynMember / dynIndexValue are added in 3.3 when they become dynrt exports.
+        ].join(", ");
+        src = `import { ${ops} } from "wasmtk:dynrt";\n` + src;
+      }
+    }
+
     const fileDir = dirname(realPath);
     const prefix = modulePrefix(realPath);
     const importedChunks: string[] = [];

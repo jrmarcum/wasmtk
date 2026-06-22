@@ -627,6 +627,10 @@ function mapType(ts: string): WatType {
   if (t === "bigint") return "i64";
   if (t === "bool" || t === "boolean") return "bool"; // boolean → bool pseudo-type (WAT i32)
   if (t === "string" || t === "str") return "string"; // pseudo-type: ptr+len i32 locals
+  // #14.3.1: `any` is a boxed dynrt value handle — lowered to i32. (Which i32 locals are `any` is
+  // tracked in the `anyVars` side-set; only the box/unbox/operator paths consult it, so existing
+  // code keeps treating it as a plain i32. No test used `any` before — it had fallen through to f64.)
+  if (t === "any") return "i32";
   // Phase 23: synthetic tuple StructDef name → i32 pointer
   if (base.startsWith("__Tuple_")) return "i32";
   // PascalCase identifier = interface/class/struct pointer (i32). Guard known primitives.
@@ -1443,6 +1447,9 @@ class WasicTranspiler {
 
   // Tracks variable names declared with type "string" (stored as ptr+len i32 locals)
   private stringVars: Set<string> = new Set();
+  // #14.3.1: names of locals/params whose declared type is `any` (a boxed dynrt handle, lowered to
+  // i32). Consulted only by the box/unbox/operator paths; existing code keeps treating them as i32.
+  private anyVars: Set<string> = new Set();
   // Tracks variable names declared with a function type (e.g. let f: (a: i32) => i32)
   // Stored as Map<name, signature> — the i32 local holds the funcref table index.
   private funcTypeVars: Map<string, { params: WatType[]; result: WatType | null }> = new Map();
@@ -7138,6 +7145,25 @@ class WasicTranspiler {
       if (asIdx !== -1) {
         const inner = expr.slice(0, asIdx).trim();
         const targetTypeStr = expr.slice(asIdx + 4).trim().split(/[\s<]/)[0]; // first word (strip generics)
+        // #14.3.1: unbox an `any` operand (`x as T`, x a boxed dynrt handle). Recurse through the
+        // dynrt op by NAME so the auto-injected import resolves the merged symbol. (Numeric/bool
+        // here; `as string` needs ptr+len → handled in the string-assignment path, a follow-up.)
+        if (/^\w+$/.test(inner) && this.anyVars.has(inner)) {
+          // Emit the MERGED `dynrt_`-prefixed names (see boxing pre-pass note).
+          const tt = targetTypeStr.toLowerCase();
+          if (tt === "f64" || tt === "f32" || tt === "number") {
+            return this.emitExpr(`dynrt_dynNumberValue(${inner})`, locals, "f64");
+          }
+          if (tt === "bool" || tt === "boolean") {
+            return this.emitExpr(`dynrt_dynToBool(${inner})`, locals, "i32");
+          }
+          if (tt === "i32" || tt === "i64" || tt === "int") {
+            return `(i32.trunc_f64_s ${
+              this.emitExpr(`dynrt_dynNumberValue(${inner})`, locals, "f64")
+            })`;
+          }
+          // other targets (incl. string) fall through to the normal cast path (documented gap)
+        }
         const targetType = mapType(targetTypeStr);
         let srcType: WatType;
         if (/^\w+$/.test(inner) && locals.has(inner)) {
@@ -16040,6 +16066,15 @@ class WasicTranspiler {
     this.catchVarNames = new Set();
     this.catchVarShadows = new Set();
     this.nullableVarInnerType = new Map();
+    // #14.3.1: collect `any`-typed locals (from body `: any` declarations) so the `as`-unbox path
+    // knows which i32s are boxed dynrt handles. (any-PARAM unboxing is a documented follow-up — the
+    // FuncParam struct doesn't retain the raw `any` annotation; any params still work via the
+    // foundation's explicit dynrt calls.)
+    this.anyVars = new Set();
+    for (const line of fn.bodyLines) {
+      const m = line.match(/(?:const|let|var)\s+(\w+)\s*:\s*any\b/);
+      if (m) this.anyVars.add(m[1]);
+    }
     this.currentFuncResultTsName = null;
     this.currentFuncIsNullableReturn = this.nullableFuncReturnType.has(fn.name);
     this.currentFuncAsyncInner = fn.asyncInner ?? null; // Phase 13 (#13 async)
@@ -17631,6 +17666,22 @@ class WasicTranspiler {
     // Phase 51.4: pass-through utility types (Partial/Readonly/Required/NonNullable) → inner type,
     // before parseStructs so the unwrapped type is seen everywhere (incl. interface field types).
     this.src = this.expandUtilityTypes(this.src);
+    // #14.3.1: implicit boxing of LITERAL initialisers for `any` variables (typed value → boxed dynrt
+    // handle). Conservative — only fires when the RHS is EXACTLY a number / string / template / bool
+    // literal terminated by `;`, so compound RHS (`42 + 3`, a var, `eval(...)`, an already-`any`
+    // value) is left untouched. dynNumber/dynString/dynBool resolve via the auto-injected
+    // `wasmtk:dynrt` import. (Non-literal typed RHS boxing is a documented follow-up.)
+    // NOTE: emit the MERGED `dynrt_`-prefixed names — the bundler rewrites explicit `dynX` imports to
+    // `dynrt_dynX`, but that rewrite runs BEFORE this pre-pass, so names we introduce here must be
+    // pre-prefixed to resolve against the merged module.
+    this.src = this.src
+      .replace(
+        /(:\s*any\s*=\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)(\s*;)/g,
+        "$1dynrt_dynString($2)$3",
+      )
+      .replace(/(:\s*any\s*=\s*)true(\s*;)/g, "$1dynrt_dynBool(1)$2")
+      .replace(/(:\s*any\s*=\s*)false(\s*;)/g, "$1dynrt_dynBool(0)$2")
+      .replace(/(:\s*any\s*=\s*)(-?\d+(?:\.\d+)?)(\s*;)/g, "$1dynrt_dynNumber($2)$3");
     // Rewrite `const/let/var name = function(params): type { ... }` to `function name(params): type { ... }`
     // so parseFunctions() can recognize the pattern as a named function.
     this.src = this.src.replace(
@@ -17714,6 +17765,12 @@ class WasicTranspiler {
       this.nullableVarInnerType = new Map();
       this.catchVarNames = new Set();
       this.catchVarShadows = new Set();
+      // #14.3.1: module-level `any` locals (top-level `: any` declarations) for the as-unbox path.
+      this.anyVars = new Set();
+      for (const line of this.startBodyLines) {
+        const m = line.match(/(?:const|let|var)\s+(\w+)\s*:\s*any\b/);
+        if (m) this.anyVars.add(m[1]);
+      }
       this.currentFuncIsNullableReturn = false;
       const startDynArrayNames = this.findDynamicArrays(this.startBodyLines);
       const startLocals = new Map<string, WatType>();

@@ -329,13 +329,30 @@ modifies the wasic COMPILER (type system, the hot binary-op path, member/call em
 dynrt library. Recommended BUILD ORDER (land + full-suite-verify each before the next; delivered
 collectively as "14.3"):
 
-- **3.1 — `any` as a tracked type + box/unbox + auto-merge.** Add `any` to the type system as an i32
-  **boxed handle** (new tracked pseudo-type; `mapType("any")` currently falls through to f64 — must
-  branch first). Box typed→any implicitly (`dynNumber`/`dynBool`/`dynString`) on `const x: any = …` /
-  any-param / any-return; unbox any→typed via `as` (`dynNumberValue`+trunc / `dynToBool`; **any→string
-  needs a NEW dynrt export `dynStrBytes`** returning the buffer ptr so wasic gets ptr+len). Auto-merge:
-  detect `any`/`eval` usage → inject `import { …ops… } from "wasmtk:dynrt"` (reuse tsbundler virtual
-  import; inject the full op set, Binaryen DCE strips unused). Programs without `any` unaffected.
+- **3.1 — `any` as a tracked type + box/unbox + auto-merge.**
+  **3.1-foundation ✅ SHIPPED 2026-06-22** (test `18q`): `mapType("any") → i32` (a boxed handle; no
+  test used `any` before — it had fallen through to f64, so the change is safe). AUTO-MERGE works —
+  the bundler (`tsbundler.ts`, in `load()` for the entry) injects a synthetic `import { …ops… } from
+  "wasmtk:dynrt"` when the entry uses `: any` / `any[]` / `<any>` / `eval(`, reusing the existing
+  virtual-capability merge + tree-shake; a driver with NO explicit dynrt import merges it purely from
+  `: any` usage. New dynrt export **`dynStrBytes`** (raw byte ptr, for any→string unboxing). Proven:
+  box/unbox round-trip (`dynNumber`→`dynNumberValue`), `eval` of a string → `any`, `any` string +
+  introspection, `any` params/returns (= i32 handle) through a function. Driver
+  `tests/wasm_wasi_bundle/dynrt_any_bundle/main_wasic.ts`. (`dynMember`/`dynIndexValue` are NOT yet in
+  the injected import set — they become dynrt exports in 3.3.)
+  **3.1-sugar ✅ SHIPPED 2026-06-22** (extends `18q`): **implicit boxing of LITERAL initialisers** —
+  a transpile source pre-pass rewrites `const x: any = <number|string|template|bool literal>;` →
+  `dynrt_dynNumber/dynString/dynBool(...)` (conservative: only a bare literal terminated by `;`, so
+  `42+3` / vars / `eval(...)` / already-`any` are untouched). **`as`-unboxing** — new `anyVars`
+  side-set (per-function + module, populated by scanning body/start lines for `: any` declarations);
+  the `as` handler emits `dynrt_dynNumberValue`(+trunc for i32) / `dynrt_dynToBool` when the operand
+  is an any var. **KEY WIRING LESSON:** the bundler rewrites explicit `dynX` imports → `dynrt_dynX`
+  (merge prefix) BEFORE transpile, so names the compiler INTRODUCES (boxing pre-pass, as-handler) must
+  be **pre-prefixed `dynrt_`** to resolve against the merged module. **Gaps (follow-ups):** any-PARAM
+  unboxing (FuncParam doesn't retain the raw `any` annotation — needs an `isAny` flag from
+  parseFunctions); `as string` unboxing (needs ptr+len in the string-assign path, not single-value
+  emitExpr); inline `(x as f64) === lit` mis-infers the comparison as i32 (use an intermediate typed
+  local — the common form); non-literal typed RHS boxing (`const x: any = someI32`).
 - **3.2 — operators on `any`.** In `emitExpr`'s binary-op path: if either operand is `any`, box the
   other and emit `dynAdd`/`dynSub`/`dynMul`/`dynDiv`/`dynMod`/`dynStrictEq`/`dynLt`/… → result is
   `any`. `typeof x`(any)→`dynTypeof`; truthiness in `if`/`while` conds → `dynToBool`. **Hot-path risk

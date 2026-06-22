@@ -353,10 +353,16 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     globals around the nested `dynRun`. Still authored in the subset (the `rtcore`/hand-WAT path was
     never forced). Known limitation: deep recursion is heap-bound (bump allocator, no GC — `fib(10)`
     overflows ~2 pages; `fib(8)` used). **#14 interpreter (2a–2d.2) DONE — the §6 `eval`/`new Function`
-    kernel is covered, entirely in the wasic subset.** **Remaining for #14:** increment 3 — wasic `any`
-    type + auto-merge + migrate `hybrid --auto`'s dynamic target off `javyc` (lower `any` to a
-    boxed-value handle, route dynamic-shaped fns to this runtime), + an optional memory pass to lift
-    the heap-bound-recursion limit.
+    kernel is covered, entirely in the wasic subset.** **Increment 3 STARTED (first wasic-COMPILER
+    change of the track): 3.1 — wasic `any` type + auto-merge — SHIPPED 2026-06-22** (test `18q`):
+    `mapType("any")→i32` (boxed handle; no test used `any` so safe); the bundler auto-injects a
+    synthetic `wasmtk:dynrt` import on `any`/`eval` usage (reuses the virtual-cap merge; `any`-free
+    programs unaffected); implicit boxing of literal `: any =` initialisers (source pre-pass) +
+    `as`-unboxing via an `anyVars` side-set; new dynrt export `dynStrBytes`. Wiring lesson: the bundler
+    rewrites explicit `dynX`→`dynrt_dynX`, so compiler-INTRODUCED calls must be pre-prefixed `dynrt_`.
+    **Remaining for #14:** 3.2 operators on `any` (hot binary-op path) → 3.3 member/index/call on
+    `any` → 3.4 hybrid `--auto` migration (route dynamic-shaped fns to dynrt, host fallback); + an
+    optional memory pass to lift the heap-bound-recursion limit.
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
 2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1

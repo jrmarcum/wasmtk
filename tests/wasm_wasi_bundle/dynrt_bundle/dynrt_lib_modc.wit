@@ -14,6 +14,7 @@ world dynrt-lib-modc {
   export dyn-number-value: func(v: s32) -> f64;
   export dyn-bool-value: func(v: s32) -> s32;
   export dyn-str-len: func(v: s32) -> s32;
+  export dyn-str-bytes: func(v: s32) -> s32;
   export dyn-str-char-at: func(v: s32, i: s32) -> s32;
   export dyn-to-bool: func(v: s32) -> s32;
   export dyn-to-number: func(v: s32) -> f64;

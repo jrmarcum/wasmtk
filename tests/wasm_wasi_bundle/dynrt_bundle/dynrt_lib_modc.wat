@@ -1400,6 +1400,14 @@
     (return (i32.load (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 2) (i32.const 2)))))
   )
 
+  (func $dynStrBytes (export "dynStrBytes") (param $v i32) (result i32)
+    (local $n i32)
+    (local $bufPtr i32)
+    (local.set $n (local.get $v))
+    (local.set $bufPtr (i32.load (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2)))))
+    (return (i32.add (local.get $bufPtr) (i32.const 8)))
+  )
+
   (func $dynStrCharAt (export "dynStrCharAt") (param $v i32) (param $i i32) (result i32)
     (local $n i32)
     (local $p i32)

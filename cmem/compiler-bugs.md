@@ -1,9 +1,11 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 324/324**
-(`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-22** (+`18j`–`18p` dynrt: value-model / virtual
-import / eval / eval-env / calls / statements / functions+`new Function`. 4 known wasic gaps are OPEN
-but worked around in the dynrt library — see next section; 2d.1/2d.2 added none). 3 KNOWN wasic
+Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 325/325**
+(`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-22** (+`18j`–`18q` dynrt: value-model / virtual
+import / eval / eval-env / calls / statements / functions+`new Function` / `18q` wasic `any`
+type+auto-merge. 4 known wasic gaps are OPEN but worked around in the dynrt library — see next
+section; 2d.1/2d.2/3.1 added none. 3.1 has its own documented FOLLOW-UPS — see dynrt-design.md
+"Increment 3 → 3.1": any-param unbox, `as string` unbox, inline-cast comparison, non-literal boxing). 3 KNOWN wasic
 gaps are OPEN but worked around in the dynrt library (so the suite stays green) — see the next
 section; each is a candidate for a real `src/wasic.ts` fix (then the lib workaround can be removed,
 the RegExp `&&` precedent). (Pre-18j: 317 = 307 at v1.7.0 + 2 Phase-53 tests + 8 async tests 54–61;

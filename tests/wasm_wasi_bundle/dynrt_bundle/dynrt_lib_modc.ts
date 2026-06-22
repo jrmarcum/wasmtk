@@ -215,6 +215,18 @@ export function dynStrLen(v: i32): i32 {
   return n[2];
 }
 
+/**
+ * Raw byte pointer of a string box's UTF-8 data — for unboxing an `any` string back to a wasic
+ * `string` (ptr+len): `ptr = dynStrBytes(v)`, `len = dynStrLen(v)`. The string box stores a
+ * Uint8Array base in slot 1; the data starts 8 bytes past it (the TypedArray header).
+ */
+/** @export */
+export function dynStrBytes(v: i32): i32 {
+  const n: Int32Array = v as unknown as Int32Array;
+  const bufPtr: i32 = n[1];
+  return bufPtr + 8;
+}
+
 /** Byte (char code) at index `i` of a string box. */
 /** @export */
 export function dynStrCharAt(v: i32, i: i32): i32 {
