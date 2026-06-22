@@ -1,8 +1,39 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO OPEN BUGS — full suite 317/317**
-(`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-15**. (317 = 307 at v1.7.0 + 2 Phase-53 tests +
-8 async tests 54–61; `bindgen` 103→104 from the ABI return-side forward-alignment's `cabi_post` assertion.)
+Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 318/318**
+(`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-22** (+`18j` dynrt value-model). 3 KNOWN wasic
+gaps are OPEN but worked around in the dynrt library (so the suite stays green) — see the next
+section; each is a candidate for a real `src/wasic.ts` fix (then the lib workaround can be removed,
+the RegExp `&&` precedent). (Pre-18j: 317 = 307 at v1.7.0 + 2 Phase-53 tests + 8 async tests 54–61;
+`bindgen` 103→104 from the ABI return-side forward-alignment's `cabi_post` assertion.)
+
+## OPEN (worked around) — 3 gaps surfaced by the #14 dynamic runtime, increment 1 (2026-06-22)
+
+Surfaced building `tests/wasm_wasi_bundle/dynrt_bundle/dynrt_lib_modc.ts` (boxed-value runtime in the
+wasic subset). All three are worked around IN the library; full design + context in
+[dynrt-design.md](dynrt-design.md). None fail the suite.
+
+1. **`+` of two string-returning CALLS not supported.** `stringForm(a) + stringForm(b)` (both operands
+   string-returning function calls) aborts with "Unsupported expression" — `emitStringAssign` doesn't
+   handle a concat whose operands are both string-call results. Workaround: bind each call to a
+   `string` local, then concat the locals. Fix site: `emitStringAssign` / `appendConcatPart` in
+   `src/wasic.ts`.
+2. **`Float64Array` element in a comparison mis-infers as i32.** `fa[0] === fb[0]` (two Float64Array
+   element reads) emits `i32.eq` over `f64.load` operands → `i32.eq[0] expected i32, found f64.load`
+   at instantiate. Float64Array element reads aren't tracked as f64 by the binary-op type inference
+   unless first assigned to an explicitly-typed `f64` local. Workaround: `const x: f64 = fa[0]` before
+   comparing. Fix site: binary-op operand-type inference in `emitExpr` (recognize TypedArray element
+   reads' element type, as the i32/Uint8 paths effectively do).
+3. **Empty `[]` is a SHARED static zero-capacity array; growth from cap 0 is broken.** `const a: i32[]
+   = []` lowers to a static data-segment array (`(local.set $elems (i32.const 260))`) — every such
+   literal aliases the SAME ptr until first grow — and `$__dynarr_push_i32` grows by `cap << 1`, which
+   stays `0` from a `0` capacity. So pushing to an empty `[]` that was stored and later reconstructed
+   scribbles past the allocation into the next `$__malloc` (the dynrt symptom: element 0 lost, later
+   elements fine) and independent empty arrays alias. JSON dodged it (build hot, read immediately);
+   a mutable runtime can't. Workaround: dynrt manages containers as self-grown `Int32Array` lists
+   `[len, cap, …]` (the Set/Map idiom), nonzero starting cap + correct doubling. **Real fix (high
+   value — hardens every reconstruct-then-`push` user):** make `[]` heap-allocate with a nonzero
+   capacity and make the grow use `max(cap*2, MIN)`.
 
 ## console.log struct-array STRING field printed the raw pointer (2026-06-15, async 13.4b)
 

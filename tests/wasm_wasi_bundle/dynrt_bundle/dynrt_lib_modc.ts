@@ -1,0 +1,453 @@
+// wasmtk own dynamic runtime — #14, increment 1: the boxed-value + dynamic-object model.
+//
+// DECISION TRACE (roadmap §7-#7 / cmem/dynrt-design.md): wasmtk ships its OWN dynamic runtime
+// (boxed values + property map + — later — an interpreter) rather than depending on javyc/QuickJS.
+// This first increment delivers ONLY the value + object substrate that everything else lowers onto;
+// there is no `eval`/interpreter and no prototype mutation yet. It is authored in the SAME wasic TS
+// subset as the Tier-1 caps (Set/Map/Date/JSON/RegExp), so the allocator, strings, dynamic arrays
+// and number formatting all come from wasic's own codegen for free — zero duplication (a shared
+// `rtcore` + hand-WAT is the chosen path only when the interpreter increment needs it).
+//
+// Compiled with `wasmtk modc` (no _start / no WASI). A driver/host imports the exports and the
+// wasmmerge allocator-unification pass (Stage 0.6) makes every $__malloc here resolve to the host
+// module's shared bump cursor, so boxed values live on the ONE heap shared with the program.
+//
+// THE BOXED VALUE  (value = i32 handle = base pointer of a 4-slot Int32Array node)
+// --------------------------------------------------------------------------------
+//   node[0] tag : 0=undefined 1=null 2=boolean 3=number 4=string 5=array 6=object
+//   node[1] a   : bool→0/1 · number→ptr to Float64Array(1) · string→Uint8Array byte buffer ptr ·
+//                 array→i32[] of value handles · object→i32[] of value handles
+//   node[2] b   : string→byte length (numbers/arrays/objects read their length LIVE, see below)
+//   node[3] c   : object→i32[] of interleaved [keyPtr, keyLen] pairs (length = 2 * entryCount)
+//
+// Containers (array elems, object vals, object keys) reuse wasic's native dynamic `i32[]`: stored
+// by pointer (`arr as unknown as i32`) and reconstructed for access (`ptr as unknown as i32[]`).
+// Because `.push` can GROW (reallocate) the backing array, every mutator writes the (possibly new)
+// pointer back into the owning node — the one structural difference from the immutable JSON tree.
+//
+// SCOPE (v1): undefined / null / boolean / number (real f64) / string / array / object; the dynamic
+// operators `typeof`, `===` (dynStrictEq) and `+` (dynAdd — numeric add + string concat). Functions
+// (tag 7), `eval`/`new Function`, prototype mutation, and string→number coercion are later
+// increments. Strings are UTF-16-code-unit / ASCII-accurate (multi-byte is the documented gap, as
+// elsewhere in wasic). Absent object keys return the sentinel -1 (the future wasic `any` lowering
+// maps that to `undefined`).
+
+type i32 = number;
+type f64 = number;
+
+// ── Tag constants (kept as literals at use sites; listed here for reference) ──────────────────
+//   0 undefined · 1 null · 2 boolean · 3 number · 4 string · 5 array · 6 object
+
+// ── Constructors ──────────────────────────────────────────────────────────────────────────────
+
+/** The `undefined` value. */
+/** @export */
+export function dynUndefined(): i32 {
+  const n: Int32Array = new Int32Array(4);
+  n[0] = 0;
+  return n as unknown as i32;
+}
+
+/** The `null` value. */
+/** @export */
+export function dynNull(): i32 {
+  const n: Int32Array = new Int32Array(4);
+  n[0] = 1;
+  return n as unknown as i32;
+}
+
+/** A boolean value from 0 (false) / non-zero (true). */
+/** @export */
+export function dynBool(b: i32): i32 {
+  const n: Int32Array = new Int32Array(4);
+  n[0] = 2;
+  n[1] = b === 0 ? 0 : 1;
+  return n as unknown as i32;
+}
+
+/** A number value (real f64). */
+/** @export */
+export function dynNumber(x: f64): i32 {
+  const fv: Float64Array = new Float64Array(1);
+  fv[0] = x;
+  const n: Int32Array = new Int32Array(4);
+  n[0] = 3;
+  n[1] = fv as unknown as i32;
+  return n as unknown as i32;
+}
+
+/** A string value (bytes copied from the wasic string). */
+/** @export */
+export function dynString(s: string): i32 {
+  const len: i32 = s.length;
+  const buf: Uint8Array = new Uint8Array(len);
+  let i: i32 = 0;
+  while (i < len) {
+    buf[i] = s.charCodeAt(i);
+    i = i + 1;
+  }
+  const n: Int32Array = new Int32Array(4);
+  n[0] = 4;
+  n[1] = buf as unknown as i32;
+  n[2] = len;
+  return n as unknown as i32;
+}
+
+// ── Self-managed growable i32 list (Set/Map idiom) ────────────────────────────────────────────
+// A "list" is an Int32Array laid out as [len, cap, e0, e1, …]. We manage growth ourselves with a
+// guaranteed nonzero starting capacity and correct doubling — wasic's native `[]`-then-`.push`
+// path can't be used here: an empty `[]` literal lowers to a SHARED static zero-capacity array
+// (every `dynArray()` would alias address 260) and `$__dynarr_push_i32` grows by `cap<<1`, which
+// stays 0 from a 0 capacity (see cmem/dynrt-design.md / compiler-bugs.md "empty-array push gap").
+const LIST_CAP0: i32 = 4;
+
+function listNew(): i32 {
+  const a: Int32Array = new Int32Array(LIST_CAP0 + 2);
+  a[0] = 0;          // len
+  a[1] = LIST_CAP0;  // cap
+  return a as unknown as i32;
+}
+
+function listLen(lp: i32): i32 {
+  const a: Int32Array = lp as unknown as Int32Array;
+  return a[0];
+}
+
+function listGet(lp: i32, i: i32): i32 {
+  const a: Int32Array = lp as unknown as Int32Array;
+  return a[i + 2];
+}
+
+function listSet(lp: i32, i: i32, v: i32): void {
+  const a: Int32Array = lp as unknown as Int32Array;
+  a[i + 2] = v;
+}
+
+// Append; returns the (possibly reallocated) list pointer — caller must write it back.
+function listPush(lp: i32, v: i32): i32 {
+  const a: Int32Array = lp as unknown as Int32Array;
+  const len: i32 = a[0];
+  const cap: i32 = a[1];
+  if (len >= cap) {
+    const ncap: i32 = cap * 2;
+    const b: Int32Array = new Int32Array(ncap + 2);
+    b[1] = ncap;
+    let i: i32 = 0;
+    while (i < len) {
+      b[i + 2] = a[i + 2];
+      i = i + 1;
+    }
+    b[len + 2] = v;
+    b[0] = len + 1;
+    return b as unknown as i32;
+  }
+  a[len + 2] = v;
+  a[0] = len + 1;
+  return lp;
+}
+
+/** A fresh empty array. */
+/** @export */
+export function dynArray(): i32 {
+  const n: Int32Array = new Int32Array(4);
+  n[0] = 5;
+  n[1] = listNew();
+  return n as unknown as i32;
+}
+
+/** A fresh empty object. */
+/** @export */
+export function dynObject(): i32 {
+  const n: Int32Array = new Int32Array(4);
+  n[0] = 6;
+  n[1] = listNew(); // values
+  n[3] = listNew(); // interleaved [keyPtr, keyLen]
+  return n as unknown as i32;
+}
+
+// ── Introspection ─────────────────────────────────────────────────────────────────────────────
+
+/** Raw structural tag: 0=undefined 1=null 2=boolean 3=number 4=string 5=array 6=object. */
+/** @export */
+export function dynTag(v: i32): i32 {
+  const n: Int32Array = v as unknown as Int32Array;
+  return n[0];
+}
+
+/**
+ * JS `typeof` code: 0=undefined 1=object 2=boolean 3=number 4=string 5=function.
+ * Note the JS quirk: typeof null / array / plain object are all "object" (→ 1).
+ */
+/** @export */
+export function dynTypeof(v: i32): i32 {
+  const n: Int32Array = v as unknown as Int32Array;
+  const t: i32 = n[0];
+  if (t === 0) return 0; // undefined
+  if (t === 2) return 2; // boolean
+  if (t === 3) return 3; // number
+  if (t === 4) return 4; // string
+  return 1;              // null / array / object → "object"
+}
+
+// ── Typed accessors (assert nothing; caller is expected to check the tag) ─────────────────────
+
+/** The f64 value of a number box. */
+/** @export */
+export function dynNumberValue(v: i32): f64 {
+  const n: Int32Array = v as unknown as Int32Array;
+  const p: i32 = n[1];
+  const fv: Float64Array = p as unknown as Float64Array;
+  return fv[0];
+}
+
+/** The 0/1 value of a boolean box. */
+/** @export */
+export function dynBoolValue(v: i32): i32 {
+  const n: Int32Array = v as unknown as Int32Array;
+  return n[1];
+}
+
+/** Byte length of a string box. */
+/** @export */
+export function dynStrLen(v: i32): i32 {
+  const n: Int32Array = v as unknown as Int32Array;
+  return n[2];
+}
+
+/** Byte (char code) at index `i` of a string box. */
+/** @export */
+export function dynStrCharAt(v: i32, i: i32): i32 {
+  const n: Int32Array = v as unknown as Int32Array;
+  const p: i32 = n[1];
+  const buf: Uint8Array = p as unknown as Uint8Array;
+  return buf[i];
+}
+
+// ── Coercions (JS ToBoolean / ToNumber) ───────────────────────────────────────────────────────
+
+/** JS truthiness: 1 if truthy, else 0. */
+/** @export */
+export function dynToBool(v: i32): i32 {
+  const n: Int32Array = v as unknown as Int32Array;
+  const t: i32 = n[0];
+  if (t === 0) return 0; // undefined
+  if (t === 1) return 0; // null
+  if (t === 2) return n[1];
+  if (t === 3) {
+    const p: i32 = n[1];
+    const fv: Float64Array = p as unknown as Float64Array;
+    const x: f64 = fv[0];
+    if (x !== x) return 0;      // NaN is falsy
+    return x === 0 ? 0 : 1;     // 0 and -0 are falsy
+  }
+  if (t === 4) return n[2] === 0 ? 0 : 1; // "" is falsy
+  return 1;                                // array / object are truthy
+}
+
+/** JS ToNumber (v1: string/array/object → NaN). */
+/** @export */
+export function dynToNumber(v: i32): f64 {
+  const n: Int32Array = v as unknown as Int32Array;
+  const t: i32 = n[0];
+  if (t === 1) return 0;          // null → 0
+  if (t === 2) return n[1] === 0 ? 0 : 1; // bool → 0/1
+  if (t === 3) {
+    const p: i32 = n[1];
+    const fv: Float64Array = p as unknown as Float64Array;
+    return fv[0];
+  }
+  return Number.NaN;              // undefined / string / array / object → NaN (v1)
+}
+
+// ── Internal: reconstruct a wasic string from a string box's bytes ────────────────────────────
+function boxToStr(v: i32): string {
+  const n: Int32Array = v as unknown as Int32Array;
+  const len: i32 = n[2];
+  const p: i32 = n[1];
+  const buf: Uint8Array = p as unknown as Uint8Array;
+  let r: string = "";
+  let i: i32 = 0;
+  while (i < len) {
+    r = r + String.fromCharCode(buf[i]);
+    i = i + 1;
+  }
+  return r;
+}
+
+// ── Internal: JS ToString for the `+` concat path (array/object → "" in v1) ───────────────────
+function stringForm(v: i32): string {
+  const n: Int32Array = v as unknown as Int32Array;
+  const t: i32 = n[0];
+  if (t === 4) return boxToStr(v);
+  if (t === 3) {
+    const p: i32 = n[1];
+    const fv: Float64Array = p as unknown as Float64Array;
+    const x: f64 = fv[0];
+    return `${x}`;
+  }
+  if (t === 2) return n[1] === 0 ? "false" : "true";
+  if (t === 1) return "null";
+  if (t === 0) return "undefined";
+  return ""; // array / object stringification deferred to a later increment
+}
+
+// ── Object ops ────────────────────────────────────────────────────────────────────────────────
+
+// Index of `key` among an object's entries, or -1. `keys` list is interleaved [keyPtr, keyLen].
+function objIndexOf(obj: i32, key: string): i32 {
+  const n: Int32Array = obj as unknown as Int32Array;
+  const vlp: i32 = n[1];
+  const klp: i32 = n[3];
+  const count: i32 = listLen(vlp);
+  const klen: i32 = key.length;
+  let i: i32 = 0;
+  while (i < count) {
+    const kl: i32 = listGet(klp, i * 2 + 1);
+    if (kl === klen) {
+      const kptr: i32 = listGet(klp, i * 2);
+      const kv: Uint8Array = kptr as unknown as Uint8Array;
+      let eq: i32 = 1;
+      let j: i32 = 0;
+      while (j < kl) {
+        if (kv[j] !== key.charCodeAt(j)) {
+          eq = 0;
+          j = kl;
+        } else {
+          j = j + 1;
+        }
+      }
+      if (eq === 1) return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+/** Set `obj[key] = val` (overwrite if present, else append). */
+/** @export */
+export function dynSet(obj: i32, key: string, val: i32): void {
+  const n: Int32Array = obj as unknown as Int32Array;
+  const hit: i32 = objIndexOf(obj, key);
+  if (hit !== -1) {
+    listSet(n[1], hit, val); // overwrite value in place
+    return;
+  }
+  // append: copy key bytes, push [keyPtr, keyLen] to the keys list and val to the values list
+  const klen: i32 = key.length;
+  const kbuf: Uint8Array = new Uint8Array(klen);
+  let m: i32 = 0;
+  while (m < klen) {
+    kbuf[m] = key.charCodeAt(m);
+    m = m + 1;
+  }
+  const kp0: i32 = kbuf as unknown as i32;
+  let klp: i32 = n[3];
+  klp = listPush(klp, kp0);
+  klp = listPush(klp, klen);
+  n[3] = klp;
+  n[1] = listPush(n[1], val);
+}
+
+/** `obj[key]` → value handle, or -1 if absent. */
+/** @export */
+export function dynGet(obj: i32, key: string): i32 {
+  const n: Int32Array = obj as unknown as Int32Array;
+  const hit: i32 = objIndexOf(obj, key);
+  if (hit === -1) return -1;
+  return listGet(n[1], hit);
+}
+
+/** 1 if `obj` has own `key`, else 0. */
+/** @export */
+export function dynHas(obj: i32, key: string): i32 {
+  return objIndexOf(obj, key) === -1 ? 0 : 1;
+}
+
+/** Number of own entries on an object. */
+/** @export */
+export function dynObjLen(obj: i32): i32 {
+  const n: Int32Array = obj as unknown as Int32Array;
+  return listLen(n[1]);
+}
+
+// ── Array ops ─────────────────────────────────────────────────────────────────────────────────
+
+/** Append `val` to an array. */
+/** @export */
+export function dynPush(arr: i32, val: i32): void {
+  const n: Int32Array = arr as unknown as Int32Array;
+  n[1] = listPush(n[1], val); // listPush may reallocate — write the new pointer back
+}
+
+/** Array length. */
+/** @export */
+export function dynArrLen(arr: i32): i32 {
+  const n: Int32Array = arr as unknown as Int32Array;
+  return listLen(n[1]);
+}
+
+/** Array element at index `i` (a value handle). */
+/** @export */
+export function dynArrGet(arr: i32, i: i32): i32 {
+  const n: Int32Array = arr as unknown as Int32Array;
+  return listGet(n[1], i);
+}
+
+// ── Operators ─────────────────────────────────────────────────────────────────────────────────
+
+/** JS `===` (strict equality): primitives by value, objects/arrays by reference. */
+/** @export */
+export function dynStrictEq(a: i32, b: i32): i32 {
+  const na: Int32Array = a as unknown as Int32Array;
+  const nb: Int32Array = b as unknown as Int32Array;
+  const ta: i32 = na[0];
+  const tb: i32 = nb[0];
+  if (ta !== tb) return 0;
+  if (ta === 0) return 1; // undefined === undefined
+  if (ta === 1) return 1; // null === null
+  if (ta === 2) return na[1] === nb[1] ? 1 : 0;
+  if (ta === 3) {
+    const pa: i32 = na[1];
+    const pb: i32 = nb[1];
+    const fa: Float64Array = pa as unknown as Float64Array;
+    const fb: Float64Array = pb as unknown as Float64Array;
+    // NOTE: comparing Float64Array elements directly (`fa[0] === fb[0]`) mis-infers as i32 — route
+    // through explicitly-typed f64 locals (a known wasic gap; see cmem/dynrt-design.md).
+    const xa: f64 = fa[0];
+    const xb: f64 = fb[0];
+    return xa === xb ? 1 : 0; // NaN === NaN is false (f64.eq)
+  }
+  if (ta === 4) {
+    const len: i32 = na[2];
+    if (len !== nb[2]) return 0;
+    const pa: i32 = na[1];
+    const pb: i32 = nb[1];
+    const va: Uint8Array = pa as unknown as Uint8Array;
+    const vb: Uint8Array = pb as unknown as Uint8Array;
+    let i: i32 = 0;
+    while (i < len) {
+      if (va[i] !== vb[i]) return 0;
+      i = i + 1;
+    }
+    return 1;
+  }
+  // array / object: reference identity (same handle)
+  return a === b ? 1 : 0;
+}
+
+/** JS `+`: string concat if either operand is a string, else numeric addition. */
+/** @export */
+export function dynAdd(a: i32, b: i32): i32 {
+  const na: Int32Array = a as unknown as Int32Array;
+  const nb: Int32Array = b as unknown as Int32Array;
+  if (na[0] === 4 || nb[0] === 4) {
+    // NOTE: `stringForm(a) + stringForm(b)` (concat of two string-returning CALLS) is not yet
+    // supported by emitStringAssign — bind each to a string local first (a known wasic gap; see
+    // cmem/dynrt-design.md / compiler-bugs.md). Remove this dance once the compiler handles it.
+    const sa: string = stringForm(a);
+    const sb: string = stringForm(b);
+    const s: string = sa + sb;
+    return dynString(s);
+  }
+  return dynNumber(dynToNumber(a) + dynToNumber(b));
+}

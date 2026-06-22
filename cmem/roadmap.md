@@ -302,8 +302,22 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     `tests/hybrid_fixtures/async_hybrid.ts`. **#13 async track is now COMPLETE** (entire v1 Promise API
     surface + hybrid integration). Full detail in [async-design.md](async-design.md).
 14. **Own dynamic runtime** (§7-#7) — boxed values + property map + interpreter for the irreducible
-    kernel (`eval`/`new Function`, pervasive `any`, open-prototype mutation). **Gated behind Phase
-    51.** Largest single track; `javyc` (QuickJS) is the interim fallback until it lands.
+    kernel (`eval`/`new Function`, pervasive `any`, open-prototype mutation). Gated behind Phase 51
+    (done) → unblocked. `javyc` (QuickJS) is the interim fallback until it lands. **Design + full log
+    → [dynrt-design.md](dynrt-design.md).** Locked architecture (owner 2026-06-22): value+object model
+    first; **tagged heap cell (i32 handle)**; authored in the **wasic TS subset now** (zero
+    duplication — reuses wasic's allocator/strings/arrays/num-fmt), extract a shared `rtcore` + go
+    hand-WAT only at the interpreter increment; **runtime-only first** (no wasic `any` yet).
+    **Increment 1 — value + object model — SHIPPED 2026-06-22** as a shared-heap `modc` capability
+    (`tests/wasm_wasi_bundle/dynrt_bundle/` + pipeline test `18j`): boxed value = 4-slot `Int32Array`
+    node `[tag,a,b,c]` (undefined/null/bool/number-as-f64/string/array/object), self-managed
+    `Int32Array` growable lists for containers, ~23 exports incl. `dynTypeof`/`dynStrictEq`
+    (`===`)/`dynAdd` (`+`). Surfaced 3 wasic gaps (worked around in the lib, logged in
+    compiler-bugs.md): str-concat-of-two-calls, Float64Array-elem comparison mis-infers i32, and
+    **empty-`[]` is a shared static cap-0 array whose cap-0 grow is broken** (the latter hardens any
+    future reconstruct-then-`push`). **Next:** 1b virtual `wasmtk:dynrt` import + tree-shake; 2 the
+    interpreter (eval/`new Function`; `rtcore`+hand-WAT revisit); 3 wasic `any` + auto-merge +
+    migrate `hybrid --auto`'s dynamic target off `javyc`. Still the largest remaining track.
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
 2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1

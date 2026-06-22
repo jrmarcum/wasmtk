@@ -36,11 +36,11 @@ installed launcher prompts interactively (`Deno requests ffi access … [y/n/A]`
 invocation, which stalls the whole test run. (Regression history: a documented reinstall command here
 once omitted `--allow-ffi`; fixed 2026-06-08 by deferring to `deno task install`.)
 
-## Current pass counts (2026-06-12, wabt-ts 1.3.2 + binaryen-ts 1.3.5)
+## Current pass counts (2026-06-22, wabt-ts 1.3.2 + binaryen-ts 1.3.5)
 
 | Suite | Result |
 | --- | --- |
-| `tests/wasm_wasi` (full, HARDENED output-diff runner) | **317 / 317** (+`54_AsyncBasic` … `61_AsyncAllSettled` 2026-06-15 — #13 async sub-phases 13.1a (async/await + Promise.resolve) + 13.2 (.then + microtask queue) + 13.3a (Promise.reject + rejection→exception) + 13.3b (.catch/.finally rejection reactions + .then(onF,onR), dual-path trampoline) + 13.1b (promise-var inner-type tracking + capturing-closure callbacks via env-bearing reaction record) + 13.4 (Promise.all + allSettled — per-call-site combinators, array-literal arg, i32/f64); the entire v1 Promise API surface; see async-design.md; +`53_NumberParse` + `53_InterfaceInheritance` 2026-06-15 — Phase 53; +`27_ConsoleLogStringCompare` 2026-06-12 — console.log string/numeric comparison fixes (findTopLevelOp paren-tail, string ===/!== resolver, != inversion, string .length operand); +`15_ElseChainForms` — brace-less/single-line-braced else-chain drop bug; see compiler-bugs.md. Earlier: 6 Phase 52 tests added 2026-06-11; the 14 output-mismatch bugs the 2026-06-07 runner-hardening surfaced are ALL FIXED 2026-06-08; 6 tests carry `// @allow-output-diff` for documented float-precision / zero-sentinel divergences, incl. `1_values`) |
+| `tests/wasm_wasi` (full, HARDENED output-diff runner) | **318 / 318** (+`18j_DynRuntimeValueModel` 2026-06-22 — #14 own dynamic runtime, increment 1: boxed-value + dynamic-object model as a shared-heap `modc` capability; see dynrt-design.md. +`54_AsyncBasic` … `61_AsyncAllSettled` 2026-06-15 — #13 async sub-phases 13.1a (async/await + Promise.resolve) + 13.2 (.then + microtask queue) + 13.3a (Promise.reject + rejection→exception) + 13.3b (.catch/.finally rejection reactions + .then(onF,onR), dual-path trampoline) + 13.1b (promise-var inner-type tracking + capturing-closure callbacks via env-bearing reaction record) + 13.4 (Promise.all + allSettled — per-call-site combinators, array-literal arg, i32/f64); the entire v1 Promise API surface; see async-design.md; +`53_NumberParse` + `53_InterfaceInheritance` 2026-06-15 — Phase 53; +`27_ConsoleLogStringCompare` 2026-06-12 — console.log string/numeric comparison fixes (findTopLevelOp paren-tail, string ===/!== resolver, != inversion, string .length operand); +`15_ElseChainForms` — brace-less/single-line-braced else-chain drop bug; see compiler-bugs.md. Earlier: 6 Phase 52 tests added 2026-06-11; the 14 output-mismatch bugs the 2026-06-07 runner-hardening surfaced are ALL FIXED 2026-06-08; 6 tests carry `// @allow-output-diff` for documented float-precision / zero-sentinel divergences, incl. `1_values`) |
 | `bindgen_tests.ts` | **104 / 104** (+1 `cabi_post` assertion, 2026-06-15 ABI return-side forward-alignment) |
 | `jstyper_tests.ts` | **73 / 73** |
 | Capability pipelines `18c`–`18g` (Set/Map/Date/JSON/RegExp) + `18h` (virtual `wasmtk:` imports) | **6 / 6** |
@@ -72,7 +72,7 @@ deno publish --dry-run --allow-dirty   # THE gate: type-check + slow-types + pac
 deno doc --lint <all 15 exports>       # clean — guards the JSR doc-coverage score (≥0.80 symbols)
 deno lint main.ts src/                 # clean (18 files)
 deno fmt  --check main.ts src/         # clean as of 2026-06-02 (see design-decisions.md)
-deno run -A tests/wasi_tests.ts        # 317/317 as of 2026-06-15 (+54..61 async; #13 13.1a+13.2+13.3a+13.3b+13.1b+13.4 all+allSettled). HARDENED 2026-06-07: diffs run-ts vs run-wasm OUTPUT, not just exit codes. No open bugs; 6 tests legitimately diverge and carry `// @allow-output-diff`. A test FAILS on `output-mismatch` unless it opts out.
+deno run -A tests/wasi_tests.ts        # 318/318 as of 2026-06-22 (+18j dynrt value-model; +54..61 async). HARDENED 2026-06-07: diffs run-ts vs run-wasm OUTPUT, not just exit codes. No open bugs; 6 tests legitimately diverge and carry `// @allow-output-diff`. A test FAILS on `output-mismatch` unless it opts out.
 deno run -A tests/bindgen_tests.ts     # 104/104
 deno run -A tests/jstyper_tests.ts     # 73/73
 ```
