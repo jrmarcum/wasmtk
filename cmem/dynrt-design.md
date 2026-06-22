@@ -498,6 +498,22 @@ the surviving executable malloc auto-grows — so merged programs (incl. the dyn
 benefit. (Unrelated bug noticed while testing: a `const x` inside a SINGLE-physical-line nested block
 isn't declared as a WAT local → "local $x cannot be resolved"; the test uses a multi-line `check`.)
 
+**Part 2 — free-list allocator — ✅ SHIPPED 2026-06-22** (test `18s`). The allocator can now RECLAIM:
+`$__free(ptr, size)` links a block (>= 8 bytes; smaller blocks leak — can't hold the header) into a
+new `$__free_list` global, storing `[blockSize@0, nextFree@4]` in the block's own first 8 bytes;
+`$__malloc` walks the free list FIRST-FIT before bumping. **No splitting in v1** (returns the whole
+block — internal frag is fine). Executable-only (same gating reason as P1: a merged library's malloc
+is dropped + replaced by the host's, and the free-list loads/stores/loop would defeat
+`detectBumpAllocator` + break the merge). On its own the free list is **dormant** — nothing calls
+`$__free` yet (the GC sweep will, in P5). Tested directly via three new wasic intrinsics added for the
+GC + its tests: **`__malloc(size)` / `__free(ptr, size)` / `__heapPtr()`** (emitExpr + emitStatement
+handlers → `call $__malloc` / `call $__free` / `global.get $__heap_ptr`). Test
+(`tests/wasm_wasi_bundle/gc_bundle/freelist.ts`) self-checks (trap-on-failure): a freed 64-byte block
+is reused by a later `__malloc(64)` (same ptr, bump cursor unchanged) and by a smaller `__malloc(32)`;
+a fresh `__malloc(48)` with an empty list bumps (ptr advances). **Edit gotcha:** the malloc template
+shared one `parts.push(\`…\`)` with `$cabi_realloc`; splitting malloc into a mode if/else left
+`cabi_realloc` dangling — re-wrap it in its own `parts.push`.
+
 ## Does 14.3 let us drop `javyc`? — retirement criteria (decided framing 2026-06-22)
 
 **No — not on 14.3 alone.** 14.3 is *wiring, not language growth*: it lowers `any` → a boxed handle,

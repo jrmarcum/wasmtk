@@ -3,7 +3,7 @@
   (memory (export "memory") 2)
   (global $__heap_ptr (mut i32) (i32.const 289))
   (global $libraryMultiplier i32 (i32.const 3))
-  ;; Bump allocator — advances __heap_ptr and returns the old value (auto-grows in WASI mode).
+  ;; Bump allocator — advances __heap_ptr and returns the old value.
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
     (local.set $ptr (global.get $__heap_ptr))

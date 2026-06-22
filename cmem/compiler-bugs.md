@@ -1,9 +1,9 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 326/326**
-(`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-22** (+`18j`–`18r` dynrt: value-model / virtual
+Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 327/327**
+(`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-22** (+`18j`–`18s` dynrt: value-model / virtual
 import / eval / eval-env / calls / statements / functions+`new Function` / `18q` wasic `any`
-type+auto-merge / `18r` GC Part 1 auto-grow heap. 4 known wasic gaps are OPEN but worked around in the dynrt library — see next
+type+auto-merge / `18r` GC Part 1 auto-grow heap / `18s` GC Part 2 free-list allocator. 4 known wasic gaps are OPEN but worked around in the dynrt library — see next
 section; 2d.1/2d.2/3.1 added none. 3.1 has its own documented FOLLOW-UPS — see dynrt-design.md
 "Increment 3 → 3.1": any-param unbox, `as string` unbox, inline-cast comparison, non-literal boxing). 3 KNOWN wasic
 gaps are OPEN but worked around in the dynrt library (so the suite stays green) — see the next

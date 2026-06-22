@@ -6972,6 +6972,14 @@ class WasicTranspiler {
       expr = expr.replace(/\s+as\s+(?:unknown|any)\b/g, " ").replace(/\s{2,}/g, " ").trim();
     }
 
+    // GC Part 2: low-level allocator intrinsics (used by the GC + its tests). `__malloc(size)` →
+    // the free-list/bump allocator; `__heapPtr()` → the current bump cursor (for measuring heap use).
+    {
+      const mm = expr.match(/^__malloc\s*\((.+)\)$/);
+      if (mm) return `(call $__malloc ${this.emitExpr(mm[1].trim(), locals, "i32")})`;
+      if (/^__heapPtr\s*\(\s*\)$/.test(expr)) return `(global.get $__heap_ptr)`;
+    }
+
     // #14.3.3: member / index / call on an `any` value → dynrt. Fires ONLY when the receiver is a
     // simple `any` var; otherwise the typed handlers below run untouched. Single-level forms only
     // (chained `x.a.b` / `x.a()` are a documented follow-up). Result is an `any` handle.
@@ -9572,6 +9580,18 @@ class WasicTranspiler {
     locals: Map<string, WatType>,
     funcResult: WatType | null,
   ): string {
+    // GC Part 2: `__free(ptr, size);` intrinsic — return a block to the free list (used by the GC + tests).
+    {
+      const fm = line.replace(/;\s*$/, "").match(/^__free\s*\((.+)\)$/);
+      if (fm) {
+        const args = this.splitArgs(fm[1]);
+        if (args.length === 2) {
+          return `(call $__free ${this.emitExpr(args[0].trim(), locals, "i32")} ${
+            this.emitExpr(args[1].trim(), locals, "i32")
+          })`;
+        }
+      }
+    }
     // Phase 13.1b: observe `const/let/var p = <promiseExpr>` and record p's inner value type so a
     // later `await p` picks $__promise_await_<T> and `p.then(cb)` is recognized as a promise. This is
     // a non-consuming observer — it records and falls through to the normal assignment emitter (the
@@ -13795,14 +13815,52 @@ class WasicTranspiler {
               (i32.sub (global.get $__heap_ptr) (i32.shl (memory.size) (i32.const 16)))
               (i32.const 65535))
             (i32.const 16))))))`;
-    parts.push(`  ;; Bump allocator — advances __heap_ptr and returns the old value (auto-grows in WASI mode).
+    // GC Part 2: free-list first-fit (executable only). A reclaimed block (>= 8 bytes) is linked into
+    // $__free_list, storing [blockSize@0, nextFree@4] in its own first 8 bytes; $__malloc scans the
+    // list first-fit before bumping. No splitting (returns the whole block — internal frag is fine for
+    // v1). Library mode keeps the simple bump (dropped + replaced by the host's on merge).
+    if (this.mode === "library") {
+      parts.push(`  ;; Bump allocator — advances __heap_ptr and returns the old value.
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
+    (local.set $ptr (global.get $__heap_ptr))
+    (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))
+    (local.get $ptr)
+  )`);
+    } else {
+      parts.push(`  ;; Free-list + bump allocator (auto-grows). GC Part 1+2.
+  (func $__malloc (param $size i32) (result i32)
+    (local $ptr i32)
+    (local $cur i32)
+    (local $prev i32)
+    (local.set $cur (global.get $__free_list))
+    (local.set $prev (i32.const 0))
+    (block $done
+      (loop $scan
+        (br_if $done (i32.eqz (local.get $cur)))
+        (if (i32.ge_u (i32.load (local.get $cur)) (local.get $size))
+          (then
+            (if (i32.eqz (local.get $prev))
+              (then (global.set $__free_list (i32.load offset=4 (local.get $cur))))
+              (else (i32.store offset=4 (local.get $prev) (i32.load offset=4 (local.get $cur)))))
+            (return (local.get $cur))))
+        (local.set $prev (local.get $cur))
+        (local.set $cur (i32.load offset=4 (local.get $cur)))
+        (br $scan)))
     (local.set $ptr (global.get $__heap_ptr))
     (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))${autoGrow}
     (local.get $ptr)
   )
-  ;; Canonical ABI allocator — fresh allocation (ptr==0) delegates to $__malloc;
+  ;; Return a block (>= 8 bytes) to the free list. Smaller blocks are leaked (can't hold the header).
+  (func $__free (param $ptr i32) (param $size i32)
+    (if (i32.ge_u (local.get $size) (i32.const 8))
+      (then
+        (i32.store (local.get $ptr) (local.get $size))
+        (i32.store offset=4 (local.get $ptr) (global.get $__free_list))
+        (global.set $__free_list (local.get $ptr))))
+  )`);
+    }
+    parts.push(`  ;; Canonical ABI allocator — fresh allocation (ptr==0) delegates to $__malloc;
   ;; realloc requests (ptr!=0) return ptr unchanged (bump allocator has no free).
   (func $cabi_realloc (param $ptr i32) (param $old_size i32) (param $align i32) (param $new_size i32) (result i32)
     (select
@@ -18723,6 +18781,9 @@ class WasicTranspiler {
       imports,
       `  (memory (export "memory") ${memoryPages})`,
       `  (global $__heap_ptr (mut i32) (i32.const ${heapStart}))`,
+      // GC Part 2: free-list head (0 = empty). Executable-only — a merged library's allocator is
+      // dropped + replaced by the host's, and the free-list logic would defeat detectBumpAllocator.
+      this.mode === "library" ? "" : `  (global $__free_list (mut i32) (i32.const 0))`,
       this.needsPromiseRuntime ? `  (global $__mt_head (mut i32) (i32.const 0))` : "",
       this.needsPromiseRuntime ? `  (global $__mt_tail (mut i32) (i32.const 0))` : "",
       this.needsNullableResultFlag ? `  (global $__nullable_ret_flag (mut i32) (i32.const 0))` : "",

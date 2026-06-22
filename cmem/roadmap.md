@@ -404,9 +404,13 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     ~2-page limit to WASM's multi-GiB limit → `fib(15)` (≈1973 interpreter calls) now runs (was
     overflowing at `fib(10)`); gated to executable/WASI modules (a merged lib's malloc is
     dropped+replaced by the host's, and `memory.grow` defeats `detectBumpAllocator` + the wabt-ts merge
-    re-assembly). It doesn't FREE — that's P2–P5: free-list (`$__free`) → cell registry → roots
-    (shadow-stack) + mark → sweep + `collect()` + triggers. (functions-as-`any` still cross as opaque
-    handles; `javyc` stays as the full-JS fallback — see the retirement criteria in dynrt-design.md).
+    re-assembly). **Part 2 — free-list allocator — SHIPPED 2026-06-22** (test `18s`):
+    `$__free(ptr,size)` links blocks ≥8B into a `$__free_list` (storing [size@0,next@4] in the block);
+    `$__malloc` first-fits the list before bumping; no splitting v1; executable-only; dormant until the
+    GC sweep calls free in P5; tested via new `__malloc`/`__free`/`__heapPtr` wasic intrinsics.
+    Remaining: P3 cell registry → P4 roots (shadow-stack) + mark → P5 sweep + `collect()` + triggers.
+    (functions-as-`any` still cross as opaque handles; `javyc` stays as the full-JS fallback — see the
+    retirement criteria in dynrt-design.md).
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
 2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1
