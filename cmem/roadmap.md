@@ -370,9 +370,21 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     routes `x.foo`→`dynrt_dynMember`, `x[i]`→`dynrt_dynIndexValue`, `x(args)`→`dynrt_dynCall0/1/2/3`
     (the library now EXPORTS `dynMember`/`dynIndexValue` + new fixed-arity `dynCall0-3` helpers — wasic
     can't build an args array inline); bare `eval(...)` rewritten to `dynrt_dynEval`. All results are
-    `any` handles; single-level forms (chained `x.a.b`/`x.a()` use an intermediate var). **Remaining
-    for #14:** 3.4 hybrid `--auto` migration (route dynamic-shaped fns to dynrt, host fallback); + an
-    optional memory pass to lift the heap-bound-recursion limit.
+    `any` handles; single-level forms (chained `x.a.b`/`x.a()` use an intermediate var). **3.4 — hybrid
+    `--auto` migration — SHIPPED 2026-06-22 (COMPLETES increment 3 + the #14 arc):** functions with a
+    TYPED signature + a DYNAMIC (`any`/`eval`) body now compile to the wasic+dynrt core (their typed
+    signature marshals to the host normally; `any`-signature functions stay in the host — boxed-handle
+    marshalling is a follow-up); a **try-compile / fall-back-to-host** ladder (`runHybrid`: compile the
+    full core; on failure keep the dynamic-bodied fns in the host and recompile the static remainder —
+    failure detected by whether the core `.wit` was produced, since modc doesn't throw). Fixed a real
+    bug found here: `compileLibTs` (modc) didn't handle embedded virtual-cap `entry.bytes`/`witText`
+    like `compileWasiTs`, so auto-merged `wasmtk:dynrt` failed in the modc core compile — now fixed.
+    Verified: `dynamic_hybrid` (eval+any body) routes → `evalScaled(8)=50`; `dynamic_fallback_hybrid`
+    falls back to host; `math_hybrid` unchanged. **`hybrid --auto`'s dynamic target is now the own
+    runtime, not `javyc`.** **#14 own-dynamic-runtime track — CORE COMPLETE.** Remaining are follow-ups
+    only: any-signature host↔core marshalling, coarse-fallback refinement, and an optional memory/GC
+    pass to lift the heap-bound-recursion limit (`javyc` stays as the full-JS fallback — see the
+    retirement criteria in dynrt-design.md).
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
 2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1

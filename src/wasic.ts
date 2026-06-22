@@ -18929,13 +18929,18 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
 
   for (const entry of wasmImports) {
     try {
-      const bytes = await rt.readFile(entry.filePath);
+      // #14.3.4: handle EMBEDDED virtual-capability bytes/wit (e.g. auto-merged `wasmtk:dynrt`) the
+      // same way compileWasiTs does — modc must support virtual imports too (the hybrid core is a
+      // modc library that auto-merges dynrt for `any`/`eval`).
+      const bytes = entry.bytes ?? await rt.readFile(entry.filePath);
       wasmBytesMap2.set(entry.filePath, bytes);
       const mod = wabtMod2.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: true });
       const importedWat = mod.toText({ foldExprs: false, inlineExport: false });
       mod.destroy();
       const preResult2 = mergeWasmWat(importedWat, entry.prefix, 0);
-      const logicalSigs2 = await readWitLogicalSigs(entry.filePath, entry.prefix);
+      const logicalSigs2 = entry.witText !== undefined
+        ? parseWitLogicalSigs(entry.witText, entry.prefix)
+        : await readWitLogicalSigs(entry.filePath, entry.prefix);
       for (const ef of preResult2.exportedFuncs) applyWitSig(ef, logicalSigs2);
       allExternalFuncs2.push(...preResult2.exportedFuncs);
     } catch (_err) {

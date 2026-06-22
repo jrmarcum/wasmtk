@@ -147,7 +147,7 @@ function findCloseBrace(lines: string[], openLine: number): number {
  */
 export function parseHybridFile(
   src: string,
-  opts: { auto?: boolean } = {},
+  opts: { auto?: boolean; excludeDynamicBody?: boolean } = {},
 ): ParseResult {
   const auto = opts.auto === true;
   const lines = src.split("\n");
@@ -199,6 +199,17 @@ export function parseHybridFile(
 
     const endLine = findCloseBrace(lines, i);
     let text = lines.slice(i, endLine + 1).join("\n");
+
+    // #14.3.4 fallback: when the full core failed to compile, keep functions with a DYNAMIC body
+    // (using `any` / `eval`, which lower to the dynrt runtime) in the TS HOST — full JavaScript runs
+    // them natively. Their typed signature still marshals normally either way; this only changes
+    // WHERE they run. (Functions with an `any`-typed SIGNATURE were never routed — the host is the
+    // natural place for them, since marshalling a boxed handle across the bindgen boundary is a
+    // separate follow-up.)
+    if (opts.excludeDynamicBody && /\bany\b|\beval\s*\(/.test(text)) {
+      continue; // leave in remainingSrc (host)
+    }
+
     if (!text.trimStart().startsWith("export ")) text = "export " + text.trimStart();
 
     wasmFuncs.push({ name, text, lineStart: i, lineEnd: endLine, isAsync: sig.isAsync });
@@ -340,7 +351,7 @@ export async function runHybrid(
   const base = basename(inputPath, ".ts");
   const outDir = opts.outDir ?? dir;
 
-  const { wasmFuncs, remainingSrc, warnings } = parseHybridFile(src, { auto: opts.auto });
+  let { wasmFuncs, remainingSrc, warnings } = parseHybridFile(src, { auto: opts.auto });
 
   for (const w of warnings) console.warn(w);
 
@@ -367,25 +378,72 @@ export async function runHybrid(
     }`,
   );
 
-  // Step 1 — write generated core module
+  // Step 1+2 — write the generated core module and compile it with modc (emits .wasm + .wit).
+  // #14.3.4: try-compile / fall-back-to-host. Functions whose bodies use `any` / `eval` now lower to
+  // the merged dynrt runtime; if some dynamic body exceeds what wasic+dynrt can compile, the whole
+  // core fails — so on failure we re-route the dynamic-bodied functions to the TS HOST (full JS) and
+  // recompile the static remainder. Static-only programs hit neither branch (identical behavior).
   const coreTsPath = join(outDir, `${base}_core.ts`);
-  await rt.writeTextFile(coreTsPath, generateCoreModule(wasmFuncs));
-  console.log(`   hybrid: core     → ${coreTsPath}`);
+  const coreWitPath = join(outDir, `${base}_core.wit`);
 
-  // Step 2 — compile core module with modc (emits .wasm + .wit)
-  await compileModule(coreTsPath);
+  // modc prints a diagnostic and returns (it does NOT throw) on a compile abort, so detect failure by
+  // whether the .wit was (re)produced. Remove a stale one first so the check is reliable.
+  const compileCore = async (funcs: WasmFunc[]): Promise<boolean> => {
+    try {
+      await rt.remove(coreWitPath);
+    } catch { /* not present */ }
+    await rt.writeTextFile(coreTsPath, generateCoreModule(funcs));
+    try {
+      await compileModule(coreTsPath);
+    } catch { /* fall through to the file-existence check */ }
+    try {
+      await rt.stat(coreWitPath);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  if (!(await compileCore(wasmFuncs))) {
+    const reparsed = parseHybridFile(src, { auto: opts.auto, excludeDynamicBody: true });
+    if (reparsed.wasmFuncs.length === wasmFuncs.length) {
+      throw new Error(`hybrid: core module failed to compile (and no dynamic body to fall back)`);
+    }
+    const moved = wasmFuncs.length - reparsed.wasmFuncs.length;
+    console.warn(
+      `⚠  hybrid: ${moved} dynamic function(s) (any/eval) did not compile to WASM — keeping them in ` +
+        `the TS host (fallback).`,
+    );
+    wasmFuncs = reparsed.wasmFuncs;
+    remainingSrc = reparsed.remainingSrc;
+    if (wasmFuncs.length === 0) {
+      // nothing left to route — the whole program stays in the host (just emit it as the runner)
+      const runnerOnlyPath = join(outDir, `${base}_runner.ts`);
+      await rt.writeTextFile(runnerOnlyPath, remainingSrc);
+      console.log(`   hybrid: no WASM-routable functions remain — runner is host-only`);
+      console.log(`   hybrid: runner   → ${runnerOnlyPath}`);
+      return;
+    }
+    if (!(await compileCore(wasmFuncs))) {
+      throw new Error(`hybrid: static core failed to compile after fallback`);
+    }
+    console.log(`   hybrid: core     → ${coreTsPath} (dynamic bodies kept in host)`);
+  } else {
+    console.log(`   hybrid: core     → ${coreTsPath}`);
+  }
 
   // Step 3 — generate TypeScript bindings from the .wit
-  const coreWitPath = join(outDir, `${base}_core.wit`);
   await runBindgen(coreWitPath);
 
-  // Step 4 — write runner
+  // Step 4 — write runner. Recompute the routed names from the FINAL wasmFuncs (the fallback may
+  // have moved some back to the host) so only the names actually in the core are rewritten to `lib.`.
+  const routedNames = wasmFuncs.map((f) => f.name);
   const runnerPath = join(outDir, `${base}_runner.ts`);
   await rt.writeTextFile(
     runnerPath,
     generateRunner(
       remainingSrc,
-      funcNames,
+      routedNames,
       `./${base}_core.bindings.ts`,
       `./${base}_core.wasm`,
     ),

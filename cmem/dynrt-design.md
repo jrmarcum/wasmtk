@@ -380,11 +380,25 @@ collectively as "14.3"):
   `obj.x`, `arr[0]`/`arr[ix]` (computed index), `env.sqrt`→`sqrtFn(16)`=4 / `maxFn(3,8)`=8,
   `eval("2 + 3 * 4")`=14. **Gaps (follow-ups):** chained `x.a.b` / `x.a()` (single-level only — use an
   intermediate `: any` var); call arity > 3; member-ASSIGNMENT (`x.foo = …` / `x[i] = …`).
-- **3.4 — hybrid `--auto` migration + host fallback.** `analyzeSignature` currently disqualifies
-  `any`/dynamic → host. Change: `any`-typed functions become ROUTABLE to the wasic+dynrt core; since
-  the body may exceed dynrt's subset, hybrid must **try wasic compile, fall back to the TS host on
-  failure** (the safety net). This is where the §6 "route dynamic-shaped fns to the own runtime, not
-  javyc" intent lands.
+- **3.4 — hybrid `--auto` migration + host fallback — ✅ SHIPPED 2026-06-22 (COMPLETES increment 3 +
+  the whole #14 track).** Refined design (avoids a host↔core marshalling gap): `any`-**signature**
+  functions stay in the host (marshalling a boxed handle across bindgen is a follow-up), but functions
+  with a **typed signature and a DYNAMIC body** (`any`/`eval` internally — which lower to the merged
+  dynrt runtime via 3.1–3.3) now compile to the WASM core; their typed signature marshals normally.
+  **Try-compile / fall-back-to-host ladder** in `runHybrid` (`src/hybrid.ts`): compile the full core;
+  on failure, re-route the dynamic-bodied functions (`parseHybridFile` new `excludeDynamicBody` option
+  → keeps `any`/`eval` functions in the host) and recompile the static remainder; if nothing routable
+  remains, the runner is host-only. **modc returns (does NOT throw) on a compile abort**, so failure
+  is detected by whether the core `.wit` was (re)produced (stale removed first). **Also fixed a real
+  bug:** `compileLibTs` (modc) didn't handle EMBEDDED virtual-capability `entry.bytes`/`entry.witText`
+  the way `compileWasiTs` does — so the auto-merged `wasmtk:dynrt` failed in the modc core compile
+  ("Cannot read imported WASM wasmtk:dynrt"); fixed to mirror `compileWasiTs`. Verified end-to-end:
+  fixture `tests/hybrid_fixtures/dynamic_hybrid.ts` (`evalScaled(n: f64): f64` with an `eval`+`any`
+  body) routes to WASM → runner prints `evalScaled(8)=50`; `dynamic_fallback_hybrid.ts` (uncompilable
+  dynamic body) falls back to host (warning) while the static fn still routes → `plus1(41)=42`; the
+  existing `math_hybrid` is unchanged. This realizes the §6 intent — `hybrid --auto`'s dynamic target
+  is now the own runtime (wasic+dynrt), not `javyc`. **Gaps:** any-SIGNATURE host↔core marshalling;
+  the fallback is coarse (all dynamic-bodied functions, not just the failing one).
 
 **Cross-cutting:** the `any` codegen calls the MERGED dynrt exports (prefixed names from the
 `wasmtk:dynrt` merge) — the compiler must emit the right merged symbol. **Heap/no-GC caveat applies**
