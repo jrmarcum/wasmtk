@@ -3,7 +3,7 @@
   (import "env" "env_add" (func $env_add (param i32) (param i32) (result i32)))
   (memory (export "memory") 2)
   (global $__heap_ptr (mut i32) (i32.const 260))
-  ;; Bump allocator — advances __heap_ptr and returns the old value
+  ;; Bump allocator — advances __heap_ptr and returns the old value.
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
     (local.set $ptr (global.get $__heap_ptr))

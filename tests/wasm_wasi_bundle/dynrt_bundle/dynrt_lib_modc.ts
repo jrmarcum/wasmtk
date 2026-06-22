@@ -43,7 +43,7 @@ type f64 = number;
 /** The `undefined` value. */
 /** @export */
 export function dynUndefined(): i32 {
-  const n: Int32Array = new Int32Array(4);
+  const n: Int32Array = mkCell() as unknown as Int32Array;
   n[0] = 0;
   return n as unknown as i32;
 }
@@ -51,7 +51,7 @@ export function dynUndefined(): i32 {
 /** The `null` value. */
 /** @export */
 export function dynNull(): i32 {
-  const n: Int32Array = new Int32Array(4);
+  const n: Int32Array = mkCell() as unknown as Int32Array;
   n[0] = 1;
   return n as unknown as i32;
 }
@@ -59,7 +59,7 @@ export function dynNull(): i32 {
 /** A boolean value from 0 (false) / non-zero (true). */
 /** @export */
 export function dynBool(b: i32): i32 {
-  const n: Int32Array = new Int32Array(4);
+  const n: Int32Array = mkCell() as unknown as Int32Array;
   n[0] = 2;
   n[1] = b === 0 ? 0 : 1;
   return n as unknown as i32;
@@ -70,7 +70,7 @@ export function dynBool(b: i32): i32 {
 export function dynNumber(x: f64): i32 {
   const fv: Float64Array = new Float64Array(1);
   fv[0] = x;
-  const n: Int32Array = new Int32Array(4);
+  const n: Int32Array = mkCell() as unknown as Int32Array;
   n[0] = 3;
   n[1] = fv as unknown as i32;
   return n as unknown as i32;
@@ -86,7 +86,7 @@ export function dynString(s: string): i32 {
     buf[i] = s.charCodeAt(i);
     i = i + 1;
   }
-  const n: Int32Array = new Int32Array(4);
+  const n: Int32Array = mkCell() as unknown as Int32Array;
   n[0] = 4;
   n[1] = buf as unknown as i32;
   n[2] = len;
@@ -146,10 +146,158 @@ function listPush(lp: i32, v: i32): i32 {
   return lp;
 }
 
+// ── GC cell registry (#14 GC track, Part 3) ───────────────────────────────────────────────────
+// Every boxed VALUE cell (the 4-slot [tag,a,b,c] nodes + the 5-slot user-function cell) is recorded
+// in a registry list so a future mark-sweep (P4 mark / P5 sweep) can ENUMERATE all live allocations
+// and reclaim the unmarked ones. Only value cells are registered — their payloads (Float64Array /
+// Uint8Array / the container lists) are owned by a cell and reached THROUGH it, so the sweep will
+// free them by reading the cell's fields (no separate registry entry). The registry list itself is
+// allocated via listNew (NOT mkCell), so it never registers itself and is never collected.
+let __gc_reg: i32 = 0; // registry list ptr (0 = not yet created)
+
+function gcRegister(cellPtr: i32): void {
+  if (__gc_reg === 0) {
+    __gc_reg = listNew();
+  }
+  __gc_reg = listPush(__gc_reg, cellPtr);
+}
+
+// Allocate + register a 4-slot value cell; returns the cell pointer.
+// NB: the raw `new Int32Array(4)` here is the ACTUAL allocation — it must NOT be routed back through
+// mkCell (that would be infinite self-recursion; a replace-all once did exactly that).
+// The registry append is INLINED (not a gcRegister/listPush call) on the common non-grow path: this
+// is the hot allocation site reached at the DEEPEST point of interpreter recursion, and every extra
+// WAT call frame here lowers the max recursion depth before V8's stack overflows. Only the rare grow
+// path calls listPush.
+function mkCell(): i32 {
+  const raw: Int32Array = new Int32Array(4);
+  const p: i32 = raw as unknown as i32;
+  if (__gc_reg === 0) {
+    __gc_reg = listNew();
+  }
+  const a: Int32Array = __gc_reg as unknown as Int32Array;
+  const len: i32 = a[0];
+  if (len >= a[1]) {
+    __gc_reg = listPush(__gc_reg, p); // grow (rare) — keeps the call
+  } else {
+    a[len + 2] = p;
+    a[0] = len + 1;
+  }
+  return p;
+}
+
+// Allocate + register a 5-slot value cell (user-function); returns the cell pointer.
+function mkCell5(): i32 {
+  const n: Int32Array = new Int32Array(5);
+  const p: i32 = n as unknown as i32;
+  gcRegister(p);
+  return p;
+}
+
+/** Number of value cells currently tracked by the GC registry (test/introspection hook). */
+/** @export */
+export function dynGcCellCount(): i32 {
+  if (__gc_reg === 0) {
+    return 0;
+  }
+  return listLen(__gc_reg);
+}
+
+// ── GC mark phase (#14 GC track, Part 4a) ─────────────────────────────────────────────────────
+// The MARK BIT is bit 8 (256) of a cell's slot-0 tag — uniform across 4-slot and 5-slot cells, no
+// extra storage. The real tag is bits 0..7 (values 0..7), so mark/sweep read `slot0 & 255`. The rest
+// of the runtime NEVER sees the bit: a full collect() clears every survivor's mark before returning,
+// so between collections all tags are clean and `dynTag`/`dynTypeof`/etc. need no masking.
+const GC_MARK_BIT: i32 = 256;
+
+function cellTag(c: i32): i32 {
+  const n: Int32Array = c as unknown as Int32Array;
+  return n[0] & 255;
+}
+
+function cellMarked(c: i32): i32 {
+  const n: Int32Array = c as unknown as Int32Array;
+  return (n[0] & GC_MARK_BIT) === 0 ? 0 : 1;
+}
+
+// Recursively mark `c` and everything reachable from it. The mark bit doubles as the visited set, so
+// cycles terminate. Only CELLS are followed: array/object element handles (the list at slot a) and a
+// user-function's body/params/defEnv cells. Number payloads (Float64Array) and string buffers
+// (Uint8Array) and object key byte-pairs (slot c) are owned, non-cell allocations — not followed here
+// (the sweep frees them by reading the owning cell).
+function gcMark(c: i32): void {
+  if (c === 0) {
+    return;
+  }
+  if (cellMarked(c) === 1) {
+    return;
+  }
+  const n: Int32Array = c as unknown as Int32Array;
+  n[0] = n[0] | GC_MARK_BIT;
+  const t: i32 = n[0] & 255;
+  if (t === 5 || t === 6) {
+    // array or object: slot a holds the list of element / value handles
+    const lst: i32 = n[1];
+    const len: i32 = listLen(lst);
+    let i: i32 = 0;
+    while (i < len) {
+      gcMark(listGet(lst, i));
+      i = i + 1;
+    }
+  } else if (t === 7) {
+    // user-function cell (marker -1 in slot 1): body box, params array, defining env are all cells
+    if (n[1] === -1) {
+      gcMark(n[2]);
+      gcMark(n[3]);
+      gcMark(n[4]);
+    }
+  }
+}
+
+/** Clear the mark bit on every registered cell (start a fresh mark, or finish a collection). */
+/** @export */
+export function dynGcMarkClear(): void {
+  if (__gc_reg === 0) {
+    return;
+  }
+  const len: i32 = listLen(__gc_reg);
+  let i: i32 = 0;
+  while (i < len) {
+    const c: i32 = listGet(__gc_reg, i);
+    const n: Int32Array = c as unknown as Int32Array;
+    n[0] = n[0] & 255;
+    i = i + 1;
+  }
+}
+
+/** Mark `root` and everything reachable from it (test/introspection hook; P4b feeds the root set). */
+/** @export */
+export function dynGcMark(root: i32): void {
+  gcMark(root);
+}
+
+/** Number of registered cells currently marked (test/introspection hook). */
+/** @export */
+export function dynGcMarkedCount(): i32 {
+  if (__gc_reg === 0) {
+    return 0;
+  }
+  const len: i32 = listLen(__gc_reg);
+  let count: i32 = 0;
+  let i: i32 = 0;
+  while (i < len) {
+    if (cellMarked(listGet(__gc_reg, i)) === 1) {
+      count = count + 1;
+    }
+    i = i + 1;
+  }
+  return count;
+}
+
 /** A fresh empty array. */
 /** @export */
 export function dynArray(): i32 {
-  const n: Int32Array = new Int32Array(4);
+  const n: Int32Array = mkCell() as unknown as Int32Array;
   n[0] = 5;
   n[1] = listNew();
   return n as unknown as i32;
@@ -158,7 +306,7 @@ export function dynArray(): i32 {
 /** A fresh empty object. */
 /** @export */
 export function dynObject(): i32 {
-  const n: Int32Array = new Int32Array(4);
+  const n: Int32Array = mkCell() as unknown as Int32Array;
   n[0] = 6;
   n[1] = listNew(); // values
   n[3] = listNew(); // interleaved [keyPtr, keyLen]
@@ -594,7 +742,7 @@ export function dynGe(x: i32, y: i32): i32 {
 /** A built-in function value with the given id (see the id table above). */
 /** @export */
 export function dynBuiltin(id: i32): i32 {
-  const n: Int32Array = new Int32Array(4);
+  const n: Int32Array = mkCell() as unknown as Int32Array;
   n[0] = 7;
   n[1] = id;
   return n as unknown as i32;
@@ -606,7 +754,7 @@ export function dynBuiltin(id: i32): i32 {
 // `defEnv` is the scope the function was DEFINED in — the call scope links to it as its parent so the
 // body can see outer names (→ recursion + simple closures, via the `envLookup` chain).
 function makeUserFunc(paramsArr: i32, bodyBox: i32, defEnv: i32): i32 {
-  const n: Int32Array = new Int32Array(5);
+  const n: Int32Array = mkCell5() as unknown as Int32Array;
   n[0] = 7;
   n[1] = -1;
   n[2] = bodyBox;

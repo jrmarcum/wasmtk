@@ -1,7 +1,7 @@
 (module
   (import "wasi_snapshot_preview1" "proc_exit" (func $proc_exit (param i32)))
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
-  (memory (export "memory") 3)
+  (memory (export "memory") 2)
   (global $__heap_ptr (mut i32) (i32.const 746))
   (global $__free_list (mut i32) (i32.const 0))
   (global $guard (mut i32) (i32.const 0))
@@ -636,7 +636,7 @@
   (data (i32.const 477) "\72\65\67\65\78\20\6f\6b\0a")
 
   ;; globals from regex_lib_modc
-  (global $regex_lib_modc_global1 (mut i32) (i32.const 131072))
+  (global $regex_lib_modc_global1 (mut i32) (i32.const 0))
   ;; functions from regex_lib_modc
   (func $regex_lib_modc_cabi_realloc (param i32 i32 i32 i32) (result i32)
     local.get 3

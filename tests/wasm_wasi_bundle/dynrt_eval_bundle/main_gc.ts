@@ -1,5 +1,7 @@
 // GC Part 1 — auto-grow heap: deep interpreter recursion that previously overflowed the fixed ~2-page
-// heap (fib(10) ≈ 177 calls overflowed) now runs because $__malloc grows memory on demand.
+// heap (fib(10) ≈ 177 calls overflowed) now runs because $__malloc grows memory on demand. Still
+// passes with the GC Part 3 cell registry active (every cell tracked) thanks to the merge mutable-
+// global preservation fix.
 type i32 = number;
 type f64 = number;
 import { dynRun, dynObject, dynNumberValue } from "../dynrt_bundle/dynrt_lib_modc.wasm";

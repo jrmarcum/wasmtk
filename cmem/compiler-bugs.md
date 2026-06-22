@@ -1,15 +1,39 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 327/327**
-(`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-22** (+`18j`–`18s` dynrt: value-model / virtual
+Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 329/329**
+(`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-22** (+`18j`–`18t` dynrt: value-model / virtual
 import / eval / eval-env / calls / statements / functions+`new Function` / `18q` wasic `any`
-type+auto-merge / `18r` GC Part 1 auto-grow heap / `18s` GC Part 2 free-list allocator. 4 known wasic gaps are OPEN but worked around in the dynrt library — see next
+type+auto-merge / `18r` GC Part 1 auto-grow heap / `18s`/`18t`/`18u` GC Parts 2-4a (free-list / cell registry / mark phase). 4 known wasic gaps are OPEN but worked around in the dynrt library — see next
 section; 2d.1/2d.2/3.1 added none. 3.1 has its own documented FOLLOW-UPS — see dynrt-design.md
 "Increment 3 → 3.1": any-param unbox, `as string` unbox, inline-cast comparison, non-literal boxing). 3 KNOWN wasic
 gaps are OPEN but worked around in the dynrt library (so the suite stays green) — see the next
 section; each is a candidate for a real `src/wasic.ts` fix (then the lib workaround can be removed,
 the RegExp `&&` precedent). (Pre-18j: 317 = 307 at v1.7.0 + 2 Phase-53 tests + 8 async tests 54–61;
 `bindgen` 103→104 from the ABI return-side forward-alignment's `cabi_post` assertion.)
+
+## FIXED — wasmmerge clobbered ALL merged mutable globals to 131072 (#14 GC Part 3, 2026-06-22)
+
+`mergeWasmWat` (`src/wasmmerge.ts` ~line 776) rewrote the initial value of **every** `(mut i32)` global
+in a merged library to `131072` (the page-2 boundary). That hack was meant for a hand-written library
+carrying its OWN bump-allocator free-pointer (the Phase 18 `18_symbol_table.wasm`) — placing that
+private heap out of the main module's region. But it fired BLANKET on all mutable globals, including
+the ordinary STATE globals of modc capability libraries (whose allocator is unified into the host's,
+so they have no private heap). Pre-existing dynrt globals (`pos`, `lastLen`) survived only because
+they're written-before-read. **GC Part 3's `__gc_reg` registry pointer is read-before-write** (its `0`
+value is the "registry not yet created" sentinel): clobbered to 131072, the lazy-init `=== 0` check
+never fired, so `mkCell` treated 131072 as the registry list and wrote cell pointers through it →
+heap corruption that manifested as `RuntimeError: memory access out of bounds` once enough cells were
+allocated (~3–4k). **Fix:** gate the rewrite on `droppedHeapPtrGlobalIdx === null` — i.e. apply the
+131072 relocation ONLY when the library was NOT allocator-unified (the genuine private-free-pointer
+case). When the allocator WAS unified, the library's other mutable globals are plain state →
+`relocateDataPtrs` them (preserves counters/0/-1; the Stage 0.7 range-scoped relocation leaves
+non-data-range values untouched). Verified: Phase 18 symbol-table tests still pass (non-unified path),
+all 5 capability libs + dynrt still pass (unified path now preserves their state). This was a LATENT
+bug — `__gc_reg` is the first merged mutable global that relies on its initial value.
+
+Diagnosis trail (worth remembering): the tell was `dynGcCellCount()` returning a nonzero garbage value
+(768) when the registry was DISABLED — proof the global being read wasn't the one being (not) written,
+i.e. an initial-value/relocation problem, not a logic bug.
 
 ## OPEN — single-physical-line function: nested-block `const` not declared as a WAT local (2026-06-22)
 

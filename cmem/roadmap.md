@@ -408,9 +408,19 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     `$__free(ptr,size)` links blocks ≥8B into a `$__free_list` (storing [size@0,next@4] in the block);
     `$__malloc` first-fits the list before bumping; no splitting v1; executable-only; dormant until the
     GC sweep calls free in P5; tested via new `__malloc`/`__free`/`__heapPtr` wasic intrinsics.
-    Remaining: P3 cell registry → P4 roots (shadow-stack) + mark → P5 sweep + `collect()` + triggers.
-    (functions-as-`any` still cross as opaque handles; `javyc` stays as the full-JS fallback — see the
-    retirement criteria in dynrt-design.md).
+    **Part 3 — cell registry — SHIPPED 2026-06-22** (test `18t`): every value cell flows through
+    `mkCell`/`mkCell5` → recorded in a registry list (`__gc_reg`) so P4/P5 can enumerate all
+    allocations; `dynGcCellCount()` hook; append inlined to limit recursion-depth cost. Surfaced + fixed
+    a latent wasmmerge bug (it clobbered ALL merged mutable globals to 131072, destroying `__gc_reg`'s
+    0-sentinel → corruption at ~3-4k cells; now gated to the non-allocator-unified case — see
+    compiler-bugs.md). **Part 4 root strategy DECIDED (owner): interpreter SHADOW-STACK** (precise, safe
+    mid-interpretation; won't collect `any` handles in arbitrary wasic locals — documented scope). Split
+    into P4a (mark mechanics) + P4b (wire shadow-stack). **Part 4a — mark phase — SHIPPED 2026-06-22**
+    (test `18u`): `gcMark(root)` recursively marks reachable cells; mark bit = tag bit 8 (uniform, no
+    extra storage, doubles as visited-set, cleared by collect()); follows array/object handles +
+    user-fn body/params/env; exports `dynGcMarkClear`/`dynGcMark`/`dynGcMarkedCount`. Remaining: P4b wire
+    the shadow-stack → P5 sweep + `collect()` + triggers. (functions-as-`any` still cross as opaque
+    handles; `javyc` stays as the full-JS fallback — see the retirement criteria in dynrt-design.md).
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
 2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1

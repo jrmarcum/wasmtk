@@ -1,7 +1,7 @@
 (module
   (import "wasi_snapshot_preview1" "proc_exit" (func $proc_exit (param i32)))
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
-  (memory (export "memory") 3)
+  (memory (export "memory") 2)
   (global $__heap_ptr (mut i32) (i32.const 1618))
   (global $__free_list (mut i32) (i32.const 0))
   (global $guard (mut i32) (i32.const 0))
@@ -2017,8 +2017,8 @@
     return)
 
   ;; globals from json
-  (global $json_global1 (mut i32) (i32.const 131072))
-  (global $json_global2 (mut i32) (i32.const 131072))
+  (global $json_global1 (mut i32) (i32.const 0))
+  (global $json_global2 (mut i32) (i32.const 0))
   ;; functions from json
   (func $json_cabi_realloc (param i32 i32 i32 i32) (result i32)
     local.get 3
@@ -3525,7 +3525,7 @@
     return)
 
   ;; globals from regex
-  (global $regex_global1 (mut i32) (i32.const 131072))
+  (global $regex_global1 (mut i32) (i32.const 0))
   ;; functions from regex
   (func $regex_cabi_realloc (param i32 i32 i32 i32) (result i32)
     local.get 3

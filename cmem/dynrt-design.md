@@ -514,6 +514,55 @@ a fresh `__malloc(48)` with an empty list bumps (ptr advances). **Edit gotcha:**
 shared one `parts.push(\`…\`)` with `$cabi_realloc`; splitting malloc into a mode if/else left
 `cabi_realloc` dangling — re-wrap it in its own `parts.push`.
 
+**Part 3 — cell registry — ✅ SHIPPED 2026-06-22** (test `18t`). Every boxed value cell now flows
+through `mkCell()` (4-slot) / `mkCell5()` (5-slot user-function), which allocate the cell AND record
+its pointer in a registry list `__gc_reg` (the self-managed Set/Map list idiom) — so P4 (mark) / P5
+(sweep) can ENUMERATE all allocations. Only value cells are registered; payloads (Float64Array /
+Uint8Array / container lists) are reached THROUGH a cell and will be freed by reading its fields.
+Exposed `dynGcCellCount()` for testing. The registry append is INLINED into `mkCell` (only the rare
+grow path calls listPush) because `mkCell` is the hot allocation site at the DEEPEST interpreter
+recursion point, and every extra WAT frame lowers the max depth before V8's call-stack overflows.
+
+**Three traps hit building P3 (all instructive):**
+1. **`replace_all` self-recursion.** Routing the 8 `new Int32Array(4)` cell sites through a new helper
+   via `replace_all` ALSO rewrote the `new Int32Array(4)` INSIDE the helper's own body → the helper
+   called itself → WASM stack overflow on EVERY dynrt program. (The helper was also renamed
+   `newCell`→**`mkCell`**; a name starting with `new` was a red herring — wasic parses `newCell()` fine
+   — but `mk*` avoids any confusion.)
+2. **V8 call-stack, not heap.** `mkCell`'s extra frame tightened the interpreter's max recursion
+   (bound by V8's WASM call stack, SEPARATE from the heap limit P1 lifted). Mitigated by inlining the
+   registry append; `18p` is fib(8), `18r`'s fib(15) still passes.
+3. **The merge mutable-global clobber (the real bug).** `__gc_reg`'s `0` sentinel was being rewritten
+   to 131072 by wasmmerge → registry never initialized → heap corruption / OOB at ~3–4k cells. Fixed
+   in `src/wasmmerge.ts` (see cmem/compiler-bugs.md "wasmmerge clobbered ALL merged mutable globals").
+   This is what unblocked P3 — and `dynGcCellCount()` returning garbage (768) with the registry
+   DISABLED was the diagnostic tell.
+
+**Registry overhead caveat (matters for P5):** until the sweep reclaims, the registry is pure overhead
+(tracks every cell + the list's doubling leaks old copies, nothing freed). P5's `collect()` is what
+makes it pay off — and should also free the registry's own stale doublings (via P2's `__free`).
+
+**Part 4 — roots + mark — ROOT STRATEGY DECIDED (owner 2026-06-22): interpreter SHADOW-STACK.** The
+dynrt interpreter will maintain an explicit stack of its live handles (push on bind/alloc, pop on
+scope exit); mark traverses from that stack + the env chain. Precise and safe to run mid-interpretation
+(reclaims fib-style churn — the real win). It does NOT collect `any` handles sitting in arbitrary
+compiled-wasic locals (not enumerable without compiler root-maps) — documented scope, not a bug.
+Part 4 is split into **P4a (mark mechanics, explicit roots)** and **P4b (wire the shadow-stack)**.
+
+**Part 4a — mark phase — ✅ SHIPPED 2026-06-22** (test `18u`). From a root handle, `gcMark` recursively
+marks every reachable cell. **Mark bit = bit 8 (256) of slot-0 tag** — uniform across 4-slot and
+5-slot cells, NO extra storage; real tag = `slot0 & 255`. The bit doubles as the visited set so cycles
+terminate. Only CELLS are followed: array/object element handles (the list at slot a) and a
+user-function's body/params/defEnv (slots 2/3/4 when slot1 = -1); number/string payloads + object key
+byte-pairs are owned non-cell allocations (the sweep frees them via the owning cell). Exports
+`dynGcMarkClear` / `dynGcMark(root)` / `dynGcMarkedCount`. **Key invariant:** the rest of the runtime
+never sees the mark bit because a full collect() clears every survivor's mark before returning, so
+between collections all tags are clean and `dynTag`/`dynTypeof` need no masking (only mark/sweep mask).
+Test verifies mark reaches exactly the live set across nesting (`obj → arr → 3 numbers` = 5) and leaves
+orphans unmarked. **Caveat:** `gcMark` is recursive — a very deep object graph could overflow the WAT
+stack; an explicit work-list is a later hardening if needed. **Next: P4b** (shadow-stack) then **P5**
+(sweep: free unmarked cells + their payloads via P2's `__free`, then clear marks; + trigger policy).
+
 ## Does 14.3 let us drop `javyc`? — retirement criteria (decided framing 2026-06-22)
 
 **No — not on 14.3 alone.** 14.3 is *wiring, not language growth*: it lowers `any` → a boxed handle,

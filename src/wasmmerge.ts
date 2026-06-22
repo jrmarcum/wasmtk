@@ -774,11 +774,26 @@ export function mergeWasmWat(
       // Use a function callback to prevent $1 backreference substitution in newName.
       let renamed = form.replace(/\(global\s+\(;(\d+);\)/, () => `(global ${newName}`);
       if (form.includes("(mut i32)")) {
-        // Other mutable i32 globals (non-heap-ptr — e.g. an imported library's
-        // own counter state): place at page-2 boundary (131072) to keep them
-        // out of the main module's static data + unified heap region.
-        renamed = renamed.replace(/\(i32\.const\s+\d+\)/, `(i32.const ${2 * 65536})`);
-        hasMutableGlobals = true;
+        if (droppedHeapPtrGlobalIdx !== null) {
+          // The library's bump allocator was UNIFIED into the host's (Stage 0.6) — so this library
+          // allocates from the shared host heap, and its OTHER mutable globals are ordinary STATE
+          // (counters, sentinels, parser cursors), NOT free-pointers into a private region. PRESERVE
+          // their initial values (relocateDataPtrs handles the rare data-pointer init; plain
+          // counters / 0 / -1 sit outside the data range and pass through untouched).
+          //
+          // The old blanket "→ 131072" rewrite corrupted any merged mutable global that RELIES on its
+          // initial value — e.g. a 0-sentinel "registry not yet created" pointer (#14 GC Part 3): it
+          // became 131072, the `=== 0` lazy-init check never fired, and writes through the bogus
+          // pointer trashed the page-2 region. Pre-existing dynrt globals (pos/lastLen) only survived
+          // because they are written before they are read. See cmem/compiler-bugs.md.
+          renamed = relocateDataPtrs(renamed);
+        } else {
+          // No allocator unification: a hand-written library carrying its OWN bump-allocator
+          // free-pointer global (e.g. the Phase 18 `18_symbol_table.wasm`). Place it at the page-2
+          // boundary (131072) to keep that private heap out of the main module's data + heap region.
+          renamed = renamed.replace(/\(i32\.const\s+\d+\)/, `(i32.const ${2 * 65536})`);
+          hasMutableGlobals = true;
+        }
       } else {
         renamed = relocateDataPtrs(renamed);
       }

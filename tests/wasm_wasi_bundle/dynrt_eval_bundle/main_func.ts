@@ -43,8 +43,9 @@ checkRun("function g(a, b) { return a; } return g(42);", 42); // missing arg →
 
 // ── recursion (needs the scope chain: the body resolves its own name in the defining env) ────────
 checkRun("function fact(n) { if (n < 2) { return 1; } return n * fact(n - 1); } return fact(5);", 120);
-// fib(8) — depth kept modest: each call allocates a fresh scope + reconstructs the body, and the
-// bump allocator never frees, so deep recursion is heap-bound (see cmem/dynrt-design.md).
+// fib(8) — depth kept modest: each call re-parses the body via a nested dynRun, so interpreter
+// recursion is bound by V8's WASM call-stack (separate from the heap limit GC Part 1 lifted). The
+// deep-recursion HEAP test is 18r's fib(15).
 checkRun("function fib(n) { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } return fib(8);", 21);
 
 // ── closure over the defining scope (outer variable visible in the body) ─────────────────────────
