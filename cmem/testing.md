@@ -72,7 +72,7 @@ deno publish --dry-run --allow-dirty   # THE gate: type-check + slow-types + pac
 deno doc --lint <all 15 exports>       # clean — guards the JSR doc-coverage score (≥0.80 symbols)
 deno lint main.ts src/                 # clean (18 files)
 deno fmt  --check main.ts src/         # clean as of 2026-06-02 (see design-decisions.md)
-deno run -A tests/wasi_tests.ts        # 329/329 as of 2026-06-22 (+18j..18q dynrt: …functions + 18q wasic `any` type/auto-merge; +54..61 async). HARDENED 2026-06-07: diffs run-ts vs run-wasm OUTPUT, not just exit codes. No open bugs; 6 tests legitimately diverge and carry `// @allow-output-diff`. A test FAILS on `output-mismatch` unless it opts out.
+deno run -A tests/wasi_tests.ts        # 329/329 as of 2026-06-22 (+18j..18q dynrt runtime/any; +18r..18u GC track P1-P4a: auto-grow / free-list / cell-registry / mark; +54..61 async). HARDENED 2026-06-07: diffs run-ts vs run-wasm OUTPUT, not just exit codes. No open bugs; 6 tests legitimately diverge and carry `// @allow-output-diff`. A test FAILS on `output-mismatch` unless it opts out.
 deno run -A tests/bindgen_tests.ts     # 104/104
 deno run -A tests/jstyper_tests.ts     # 73/73
 ```
