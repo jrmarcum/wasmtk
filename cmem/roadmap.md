@@ -329,9 +329,16 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     trap); robust identifier tokenisation; no new compiler gaps. **Scope split (rationale recorded):**
     calls + REAL short-circuit moved to 2c — short-circuit is only observable/testable with
     side-effecting operands (calls), and guarded member access makes 2b trap-safe without it.
-    **Next:** 2c calls + function values (tag 7) + real short-circuit; 2d statements + control flow +
-    `new Function` (the `rtcore`+hand-WAT decision is most likely revisited here); 3 wasic `any` +
-    auto-merge + migrate `hybrid --auto`'s dynamic target off `javyc`. Still the largest remaining track.
+    **Increment 2c — function values (tag 7) + calls + REAL short-circuit — SHIPPED 2026-06-22** (test
+    `18n`): function values dispatch via a STATIC switch on a built-in id (NOT a function table —
+    wasmmerge forbids `call_indirect` in a merged module), `dynStdEnv()` ships abs/sqrt/floor/ceil/
+    round/min/max/len + the side-effecting `inc`; `dynApply` dispatcher; calls in `parsePostfix`
+    (`f(args)`, any arity, nested); real short-circuit via an `evalLive` skip-parse flag guarding the
+    call dispatch (the only side-effecting op), proven observable via the `inc()` counter. Surfaced 1
+    wasic gap (i32 global / typed-array element as an f64 call-arg skips the `f64.convert` — bind to a
+    local; logged in compiler-bugs.md). **Next:** 2d statements + control flow + `new Function` (the
+    `rtcore`+hand-WAT decision is most likely revisited here); 3 wasic `any` + auto-merge + migrate
+    `hybrid --auto`'s dynamic target off `javyc`. Still the largest remaining track.
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
 2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1

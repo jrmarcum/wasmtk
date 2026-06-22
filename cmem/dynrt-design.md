@@ -162,6 +162,40 @@ together in 2c** where short-circuit becomes real and observable.
 *inside* the eval source (the driver builds them with the value-model API, but `dynEval("{a:1}")` /
 `dynEval("[1,2]")` literal syntax is not parsed yet).
 
+## Increment 2c — function values + calls + REAL short-circuit (SHIPPED 2026-06-22)
+
+**Function values (tag 7).** A function value is a boxed cell `[7, builtinId, …]`. Dispatch is a
+**static switch on the id** — NOT a function table — because **wasmmerge forbids `call_indirect` in a
+merged module** (the same constraint that keeps the Promise runtime inline). So callable values in the
+dynamic runtime are **built-ins keyed by id**; user-defined functions / `new Function` (which need a
+parsed body) are 2d. `dynBuiltin(id)` constructs one; `dynStdEnv()` returns an env pre-populated with
+`abs`/`sqrt`/`floor`/`ceil`/`round`/`min`/`max`/`len` + `inc`; `dynApply(callee, argsArr)` is the
+static-switch dispatcher (also exported for host-driven calls). `dynTypeof` of tag 7 → `5` (function).
+
+**Calls in the evaluator.** `parsePostfix` gained a `(args)` case: build a value-model array of arg
+boxes (any arity), then `dynApply`. Calling a non-function → `undefined` (guarded). Works over
+variables, nested as args (`max(abs(-5), 2)`), and composed (`abs(-3) + sqrt(9)`).
+
+**REAL short-circuit (deferred from 2b, now observable).** The direct-eval parser threads a
+module-level `evalLive` flag, saved/restored at each `&&`/`||`/`?:`; the branch that JS would skip is
+parsed with `evalLive = 0`. **The CALL dispatch is the ONLY side-effecting op**, so it is the only
+thing guarded by `evalLive` (skipped in a dead branch while args still parse to advance the cursor);
+pure ops run regardless (harmless). `inc()` (the one side-effecting built-in) + `dynSideEffectCount()`/
+`dynResetSideEffects()` make it testable: `false && inc()` → counter 0, `true && inc()` → 1,
+`true || inc()` → 0, `false ? inc() : 5` → 0, `max(false && inc(), true && inc())` → 1 (short-circuit
+inside call args), `inc() + inc()` → 2.
+
+- Same library; `wasmtk:dynrt` regenerated → 9664 bytes. Driver
+  `tests/wasm_wasi_bundle/dynrt_eval_bundle/main_calls.ts`; pipeline test
+  `tests/wasm_wasi/18n_DynRuntimeCalls.ts`. **PASS.** Surfaced one wasic gap (i32 global / typed-array
+  element as an f64 call-arg skips the `f64.convert` — bind to a local first; see compiler-gaps below)
+  and one driver-side gap (a module-level `const env = <call>` isn't visible inside nested driver
+  functions — thread it as a param, as the env/calls drivers do).
+
+**2c gaps (→ 2d):** user-defined functions + `new Function`; statements + control flow + assignment;
+`Math.x` namespace object (built-ins are bare names via `dynStdEnv`, not `Math.sqrt`); loose-equality
+coercion; string comparison; array/object literal syntax inside the eval source.
+
 ## Compiler gaps surfaced (worked around in the library; candidates for a real wasic fix)
 
 Like every Tier-1 cap, this increment surfaced wasic gaps. Both are worked around in the library and
@@ -194,9 +228,10 @@ recorded in `compiler-bugs.md`; each could later be fixed in `src/wasic.ts` and 
 - **2b — variables + environment + member/index access — ✅ SHIPPED 2026-06-22** (test `18m`; see
   above). Scope split: calls + real short-circuit moved to 2c (short-circuit is only observable with
   side-effecting calls; guarded member access makes 2b trap-safe without it).
-- **2c — calls + function values (tag 7) + REAL short-circuit** (next). `&&`/`||`/`?:` become real
-  short-circuit (skip-parse mode or a small AST) now that calls can have side effects.
-- **2d — statements + control flow + `new Function`** (a callable from a body string).
+- **2c — function values (tag 7) + calls + REAL short-circuit — ✅ SHIPPED 2026-06-22** (test `18n`;
+  see above). Built-ins via static-switch dispatch (no `call_indirect`, merge-safe); `evalLive`
+  skip-parse short-circuit guarding the call dispatch.
+- **2d — statements + control flow + `new Function`** (next; a callable from a body string).
   This is where the **`rtcore` extraction + hand-WAT** decision (authoring §3) is most likely
   revisited, if the subset hits a wall.
 - **3 — wasic `any` + auto-merge:** add an `any` type to wasic that lowers to a boxed-value handle;

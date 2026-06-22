@@ -186,6 +186,7 @@ export function dynTypeof(v: i32): i32 {
   if (t === 2) return 2; // boolean
   if (t === 3) return 3; // number
   if (t === 4) return 4; // string
+  if (t === 7) return 5; // function
   return 1;              // null / array / object → "object"
 }
 
@@ -540,6 +541,97 @@ export function dynGe(x: i32, y: i32): i32 {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────────────────────
+// Increment 2c — function VALUES (tag 7) + a calling convention.
+//
+// A function value is a boxed cell with tag 7 and a built-in id in slot a. Dispatch is a STATIC
+// switch on that id (NOT a function table) — wasmmerge forbids `call_indirect` in a merged module,
+// so the dynamic runtime cannot use an indirect-call table; built-ins keyed by id are the merge-safe
+// way to expose callable values. User-defined functions / `new Function` (which need a parsed body)
+// are increment 2d. Built-in ids: 0 abs, 1 sqrt, 2 floor, 3 ceil, 4 round, 5 min, 6 max, 7 len,
+// 8 inc (the one side-effecting built-in — increments `sideEffectCounter` — so short-circuit is
+// observable).
+// ──────────────────────────────────────────────────────────────────────────────────────────────
+
+/** A built-in function value with the given id (see the id table above). */
+/** @export */
+export function dynBuiltin(id: i32): i32 {
+  const n: Int32Array = new Int32Array(4);
+  n[0] = 7;
+  n[1] = id;
+  return n as unknown as i32;
+}
+
+/** Call a function value with an args array (a value-model array of arg handles). */
+/** @export */
+export function dynApply(callee: i32, argsArr: i32): i32 {
+  const cn: Int32Array = callee as unknown as Int32Array;
+  if (cn[0] !== 7) return dynUndefined(); // not callable → undefined (guarded)
+  const id: i32 = cn[1];
+  const argc: i32 = dynArrLen(argsArr);
+  if (id === 8) { // inc() — the observable side effect
+    sideEffectCounter = sideEffectCounter + 1;
+    // NOTE: `dynNumber(sideEffectCounter)` — passing an i32 GLOBAL directly as an f64 arg skips the
+    // f64.convert (an i32 LOCAL coerces fine); bind to a local first (a known wasic gap; see
+    // cmem/compiler-bugs.md).
+    const sc: i32 = sideEffectCounter;
+    return dynNumber(sc);
+  }
+  const a0: i32 = argc > 0 ? dynArrGet(argsArr, 0) : dynUndefined();
+  if (id === 7) { // len(x) — string byte length or array length
+    const t: i32 = dynTag(a0);
+    if (t === 4) {
+      const an: Int32Array = a0 as unknown as Int32Array;
+      const bl: i32 = an[2]; // bind to a local so the i32→f64 arg coercion fires (see note above)
+      return dynNumber(bl);
+    }
+    if (t === 5) {
+      const al: i32 = dynArrLen(a0);
+      return dynNumber(al);
+    }
+    return dynNumber(0);
+  }
+  const x: f64 = dynToNumber(a0);
+  if (id === 0) return dynNumber(Math.abs(x));
+  if (id === 1) return dynNumber(Math.sqrt(x));
+  if (id === 2) return dynNumber(Math.floor(x));
+  if (id === 3) return dynNumber(Math.ceil(x));
+  if (id === 4) return dynNumber(Math.round(x));
+  const a1: i32 = argc > 1 ? dynArrGet(argsArr, 1) : dynUndefined();
+  const y: f64 = dynToNumber(a1);
+  if (id === 5) return dynNumber(x < y ? x : y); // min
+  if (id === 6) return dynNumber(x > y ? x : y); // max
+  return dynUndefined();
+}
+
+/** A fresh environment object pre-populated with the built-in functions (abs/sqrt/…/inc). */
+/** @export */
+export function dynStdEnv(): i32 {
+  const e: i32 = dynObject();
+  dynSet(e, "abs", dynBuiltin(0));
+  dynSet(e, "sqrt", dynBuiltin(1));
+  dynSet(e, "floor", dynBuiltin(2));
+  dynSet(e, "ceil", dynBuiltin(3));
+  dynSet(e, "round", dynBuiltin(4));
+  dynSet(e, "min", dynBuiltin(5));
+  dynSet(e, "max", dynBuiltin(6));
+  dynSet(e, "len", dynBuiltin(7));
+  dynSet(e, "inc", dynBuiltin(8));
+  return e;
+}
+
+/** Read the observable side-effect counter (incremented by each live `inc()` call). */
+/** @export */
+export function dynSideEffectCount(): i32 {
+  return sideEffectCounter;
+}
+
+/** Reset the observable side-effect counter to 0. */
+/** @export */
+export function dynResetSideEffects(): void {
+  sideEffectCounter = 0;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────────────────────
 // Increment 2a — `eval` of a pure expression language → boxed value.
 //
 // A recursive-descent, DIRECT-eval parser (no separate AST) over a module-level cursor `evalPos`,
@@ -552,8 +644,10 @@ export function dynGe(x: i32, y: i32): i32 {
 // keywords, member access, and calls are 2b+. See cmem/dynrt-design.md.
 // ──────────────────────────────────────────────────────────────────────────────────────────────
 
-let evalPos: i32 = 0;  // read cursor into the eval source string
-let evalEnv: i32 = -1; // current environment object handle (names → values), or -1 for none
+let evalPos: i32 = 0;   // read cursor into the eval source string
+let evalEnv: i32 = -1;  // current environment object handle (names → values), or -1 for none
+let evalLive: i32 = 1;  // 1 = evaluate effects; 0 = inside a short-circuited (dead) branch
+let sideEffectCounter: i32 = 0; // observable side effect for the `inc()` builtin (short-circuit test)
 
 // Compare two wasic strings byte-for-byte (avoids relying on `===` over reconstructed substrings).
 function strEq(a: string, b: string): i32 {
@@ -775,6 +869,31 @@ function parsePostfix(s: string): i32 {
       evalSkipWs(s);
       if (evalPeek(s) === 93) evalPos = evalPos + 1; // ']'
       v = dynIndexValue(v, idx);
+    } else if (c === 40) { // (args)  — call
+      evalPos = evalPos + 1;
+      const argsArr: i32 = dynArray();
+      evalSkipWs(s);
+      if (evalPeek(s) === 41) {
+        evalPos = evalPos + 1; // ()
+      } else {
+        let more: i32 = 1;
+        while (more === 1) {
+          const a: i32 = parseExpr(s);
+          dynPush(argsArr, a);
+          evalSkipWs(s);
+          const cc: i32 = evalPeek(s);
+          if (cc === 44) {
+            evalPos = evalPos + 1; // ','
+          } else {
+            if (cc === 41) evalPos = evalPos + 1; // ')'
+            more = 0;
+          }
+        }
+      }
+      // The CALL is the only side-effecting op: skip the dispatch in a dead (short-circuited)
+      // branch, but still parse the args above so the cursor advances correctly.
+      if (evalLive === 1) v = dynApply(v, argsArr);
+      else v = dynUndefined();
     } else {
       go = 0;
     }
@@ -903,8 +1022,13 @@ function parseAnd(s: string): i32 {
     evalSkipWs(s);
     if (evalPeek(s) === 38 && evalPeek2(s) === 38) { // &&
       evalPos = evalPos + 2;
+      // a && b → b if truthy(a) else a. Right is dead (no effects) when left is falsy.
+      const takeRight: i32 = dynToBool(left);
+      const saved: i32 = evalLive;
+      if (takeRight === 0) evalLive = 0;
       const right: i32 = parseEq(s);
-      left = dynToBool(left) === 1 ? right : left; // a && b
+      evalLive = saved;
+      if (takeRight === 1) left = right;
     } else {
       go = 0;
     }
@@ -919,8 +1043,13 @@ function parseOr(s: string): i32 {
     evalSkipWs(s);
     if (evalPeek(s) === 124 && evalPeek2(s) === 124) { // ||
       evalPos = evalPos + 2;
+      // a || b → a if truthy(a) else b. Right is dead when left is truthy.
+      const leftTruthy: i32 = dynToBool(left);
+      const saved: i32 = evalLive;
+      if (leftTruthy === 1) evalLive = 0;
       const right: i32 = parseAnd(s);
-      left = dynToBool(left) === 1 ? left : right; // a || b
+      evalLive = saved;
+      if (leftTruthy === 0) left = right;
     } else {
       go = 0;
     }
@@ -933,11 +1062,19 @@ function parseExpr(s: string): i32 {
   evalSkipWs(s);
   if (evalPeek(s) === 63) { // ? :
     evalPos = evalPos + 1;
+    const c: i32 = dynToBool(cond);
+    const saved: i32 = evalLive;
+    // then-branch dead when cond is falsy
+    if (c === 0) evalLive = 0;
     const thenV: i32 = parseExpr(s);
+    evalLive = saved;
     evalSkipWs(s);
     if (evalPeek(s) === 58) evalPos = evalPos + 1; // ':'
+    // else-branch dead when cond is truthy
+    if (c === 1) evalLive = 0;
     const elseV: i32 = parseExpr(s);
-    return dynToBool(cond) === 1 ? thenV : elseV;
+    evalLive = saved;
+    return c === 1 ? thenV : elseV;
   }
   return cond;
 }
@@ -947,6 +1084,7 @@ function parseExpr(s: string): i32 {
 export function dynEval(s: string): i32 {
   evalPos = 0;
   evalEnv = -1;
+  evalLive = 1;
   return parseExpr(s);
 }
 
@@ -958,5 +1096,6 @@ export function dynEval(s: string): i32 {
 export function dynEvalEnv(s: string, env: i32): i32 {
   evalPos = 0;
   evalEnv = env;
+  evalLive = 1;
   return parseExpr(s);
 }

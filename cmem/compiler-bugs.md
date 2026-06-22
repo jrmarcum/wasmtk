@@ -1,18 +1,27 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 321/321**
-(`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-22** (+`18j` dynrt value-model + `18k` dynrt
-virtual import + `18l` dynrt eval + `18m` dynrt eval-env — 2a/2b added NO new gaps). 3 KNOWN wasic
+Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 322/322**
+(`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-22** (+`18j`–`18n` dynrt: value-model / virtual
+import / eval / eval-env / calls. 4 known wasic gaps are OPEN but worked around in the dynrt library
+— see next section). 3 KNOWN wasic
 gaps are OPEN but worked around in the dynrt library (so the suite stays green) — see the next
 section; each is a candidate for a real `src/wasic.ts` fix (then the lib workaround can be removed,
 the RegExp `&&` precedent). (Pre-18j: 317 = 307 at v1.7.0 + 2 Phase-53 tests + 8 async tests 54–61;
 `bindgen` 103→104 from the ABI return-side forward-alignment's `cabi_post` assertion.)
 
-## OPEN (worked around) — 3 gaps surfaced by the #14 dynamic runtime, increment 1 (2026-06-22)
+## OPEN (worked around) — 4 gaps surfaced by the #14 dynamic runtime (2026-06-22)
 
-Surfaced building `tests/wasm_wasi_bundle/dynrt_bundle/dynrt_lib_modc.ts` (boxed-value runtime in the
-wasic subset). All three are worked around IN the library; full design + context in
-[dynrt-design.md](dynrt-design.md). None fail the suite.
+Surfaced building `tests/wasm_wasi_bundle/dynrt_bundle/dynrt_lib_modc.ts` (boxed-value runtime +
+expression evaluator in the wasic subset). All four are worked around IN the library; full design +
+context in [dynrt-design.md](dynrt-design.md). None fail the suite.
+
+0. **i32 GLOBAL / typed-array-element as an f64 call-arg skips the `f64.convert`** (2c). `dynNumber(g)`
+   where `g` is an i32 module-global emitted `(call $dynNumber (global.get $g))` → `call[0] expected
+   f64, found global.get i32` at instantiate; same for an `Int32Array` element (`dynNumber(an[2])` →
+   `i32.load`). An i32 LOCAL coerces correctly, so the arg-type path inserts `f64.convert_i32_s` only
+   for locals. Workaround: bind the global/element to an `i32` local first, then pass. Fix site:
+   call-argument coercion in `emitExpr` (recognize global.get / typed-array-element i32 reads in an
+   f64 arg position, like the local path does). (Same family as the Float64Array-compare gap #2.)
 
 1. **`+` of two string-returning CALLS not supported.** `stringForm(a) + stringForm(b)` (both operands
    string-returning function calls) aborts with "Unsupported expression" — `emitStringAssign` doesn't
