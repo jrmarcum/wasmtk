@@ -400,6 +400,21 @@ function watTypeToWit(t: WatType | null): string | null {
   }
 }
 
+/**
+ * #14 follow-up: inject `(export …)` statements for the dynrt marshalling helpers — plus
+ * `cabi_realloc` (for boxing an `any` STRING from the host) when not already exported — before the
+ * module's closing paren, when an exported function has an `any` signature. No-op otherwise.
+ */
+function injectDynrtMarshalExports(wat: string, transpiler: WasicTranspiler): string {
+  const names = transpiler.dynrtMarshalExportNames();
+  if (names.length === 0) return wat;
+  let exps = names.map((n) => `(export "${n}" (func $dynrt_${n}))`).join("\n  ");
+  if (!/\(export\s+"cabi_realloc"/.test(wat)) {
+    exps += `\n  (export "cabi_realloc" (func $cabi_realloc))`;
+  }
+  return wat.replace(/\)\s*$/, `  ${exps}\n)`);
+}
+
 /** Converts camelCase or snake_case identifiers to WIT kebab-case. */
 function toKebabCase(s: string): string {
   return s
@@ -514,6 +529,7 @@ interface FuncParam {
   structType?: string; // set when param is a struct pointer (stores struct name, e.g. "Point")
   funcTypeInfo?: { params: WatType[]; result: WatType | null }; // set when param is a function type
   isRest?: boolean; // set when param is a rest parameter (...name: T[])
+  isAny?: boolean; // #14 follow-up: param's declared type is `any` (a boxed dynrt handle); for WIT/bindgen marshalling
 }
 
 interface StructField {
@@ -584,6 +600,8 @@ interface FuncDef {
   returnedByFactory?: string;
   /** Phase 12: original TypeScript return type annotation (e.g. "MatrixManager") for interface dispatch. */
   resultTsName?: string;
+  /** #14 follow-up: return type is `any` (a boxed dynrt handle); for WIT/bindgen marshalling. */
+  isAnyResult?: boolean;
   /** Phase 18: true for functions pre-registered from external .wasm imports. The real body is
    *  spliced in by mergeOneWasmImport; emitFunction must not emit any stub for these. */
   isPhase18Import?: boolean;
@@ -2354,6 +2372,7 @@ class WasicTranspiler {
         ? typeAnnotation
         : undefined;
       const resolvedType: WatType = structType ? "i32" : paramType;
+      const isAny = typeAnnotation === "any"; // #14: boxed dynrt handle — marked for WIT/bindgen
       // Split "type = defaultExpr" if an explicit default value is present
       const eqIdx = afterColon.indexOf("=");
       if (eqIdx !== -1) {
@@ -2364,6 +2383,7 @@ class WasicTranspiler {
           arrayElemType,
           arrayStructElemType,
           structType,
+          isAny,
         };
       }
       if (isOptional) {
@@ -2374,9 +2394,10 @@ class WasicTranspiler {
           arrayElemType,
           arrayStructElemType,
           structType,
+          isAny,
         };
       }
-      return { name, type: resolvedType, arrayElemType, arrayStructElemType, structType };
+      return { name, type: resolvedType, arrayElemType, arrayStructElemType, structType, isAny };
     });
   }
 
@@ -2700,6 +2721,7 @@ class WasicTranspiler {
         isClosureFactory: !!returnedArrow,
         returnedArrow: returnedArrow ?? undefined,
         resultTsName,
+        isAnyResult: rawResult === "any",
         sharedMutableCaptures,
         isAsync,
         asyncInner,
@@ -16158,6 +16180,11 @@ class WasicTranspiler {
       const m = line.match(/(?:const|let|var)\s+(\w+)\s*:\s*any\b/);
       if (m) this.anyVars.add(m[1]);
     }
+    // #14 follow-up: `any` PARAMS are now tracked too (FuncParam.isAny) — so `x as i32`, operators on
+    // `x`, and member/index/call on `x` work for an any-typed parameter (needed by host marshalling).
+    for (const p of fn.params) {
+      if (p.isAny) this.anyVars.add(p.name);
+    }
     this.currentFuncResultTsName = null;
     this.currentFuncIsNullableReturn = this.nullableFuncReturnType.has(fn.name);
     this.currentFuncAsyncInner = fn.asyncInner ?? null; // Phase 13 (#13 async)
@@ -17625,6 +17652,34 @@ class WasicTranspiler {
 
   // Phase 41: generate a WIT (WebAssembly Interface Types) file describing this module.
   // Must be called AFTER transpile() so usedExternalMethods is fully populated.
+  /** #14 follow-up: true when an EXPORTED function has an `any` param or return. */
+  hasAnyExportSignature(): boolean {
+    return this.functions.some(
+      (f) => f.exported && (f.isAnyResult === true || f.params.some((p) => p.isAny === true)),
+    );
+  }
+
+  /**
+   * #14 follow-up: WAT `(export …)` statements for the dynrt marshalling helpers — emitted when an
+   * exported function has an `any` signature so the host (bindgen) can box/unbox JS values across the
+   * boundary. The helpers are merged dynrt functions ($dynrt_*); exporting them keeps Binaryen from
+   * stripping them. Returns "" when no `any` signature is present. (cabi_realloc — for boxing an
+   * `any` STRING from the host — is added by the caller if not already exported.)
+   */
+  dynrtMarshalExportNames(): string[] {
+    if (!this.hasAnyExportSignature()) return [];
+    return [
+      "dynNumber",
+      "dynNumberValue",
+      "dynString",
+      "dynStrBytes",
+      "dynStrLen",
+      "dynBool",
+      "dynToBool",
+      "dynTypeof",
+    ];
+  }
+
   generateWit(moduleName: string): string {
     const pkg = toKebabCase(moduleName);
     const lines: string[] = [
@@ -17657,7 +17712,10 @@ class WasicTranspiler {
       const paramParts: string[] = [];
       for (const p of fn.params) {
         if (p.name === "__self") continue; // class `this` pointer — not part of public API
-        if (p.type === "string") {
+        if (p.isAny) {
+          // #14 follow-up: `any` is a wasmtk-extension WIT type — bindgen marshals JS↔boxed handle.
+          paramParts.push(`${toKebabCase(p.name)}: any`);
+        } else if (p.type === "string") {
           // Phase 50: emit WIT-native string type (bindgen maps this to ptr+len WASM ABI)
           paramParts.push(`${toKebabCase(p.name)}: string`);
         } else {
@@ -17666,7 +17724,7 @@ class WasicTranspiler {
         }
       }
       const paramStr = paramParts.join(", ");
-      const resultWit = watTypeToWit(fn.result);
+      const resultWit = fn.isAnyResult ? "any" : watTypeToWit(fn.result);
       const resultStr = resultWit ? ` -> ${resultWit}` : "";
       lines.push(`  export ${witName}: func(${paramStr})${resultStr};`);
     }
@@ -18871,6 +18929,10 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
     );
   }
 
+  // #14 follow-up: export the dynrt marshalling helpers (+ cabi_realloc for `any` strings) so bindgen
+  // can box/unbox JS values for `any`-signature functions. Injected before the module's closing `)`.
+  wat = injectDynrtMarshalExports(wat, transpiler);
+
   // Write WAT alongside the output for inspection / debugging
   await rt.writeTextFile(watPath, wat);
 
@@ -19011,6 +19073,9 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
       (_full, nStr) => `(memory (export "memory") ${Math.max(requiredPages, parseInt(nStr))})`,
     );
   }
+
+  // #14 follow-up: export dynrt marshalling helpers for `any`-signature functions (modc path too).
+  wat = injectDynrtMarshalExports(wat, transpiler);
 
   await rt.writeTextFile(watPath, wat);
 

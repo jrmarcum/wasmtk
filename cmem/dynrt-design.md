@@ -407,6 +407,35 @@ of 3.1–3.4 ships its own regression test (`18q…`/compiler tests) and must ke
 (output-diff). **Honest risk:** 3.2 (operator routing) + 3.4 (hybrid try/fallback) are the two
 highest-risk pieces; 3.1 is foundational and lower-risk.
 
+## #14 follow-up — any-signature host↔core marshalling (SHIPPED 2026-06-22)
+
+Closes the 3.4 gap: a function with an **`any` param or return** can now be called from the host with
+**real JS values** (number/string/boolean), not raw handles. Four components:
+
+1. **Track `any` signatures (`src/wasic.ts`):** `FuncParam.isAny` (set in `parseParams` when the
+   annotation is `any`) + `FuncDef.isAnyResult` (set in `parseFunctions` from `rawResult === "any"`).
+   Also: `emitFunction` now adds **any-PARAMS** to `anyVars` (the 3.1 gap — params lacked `isAny`
+   before), so `x as f64` / operators / member-access on an any param work inside the body.
+2. **WIT marker:** `generateWit` emits `x: any` / `-> any` (a **wasmtk-extension** WIT type) for any
+   params/results instead of `s32`.
+3. **Export the marshalling helpers:** `injectDynrtMarshalExports` (module-level helper, called
+   post-merge in BOTH `compileWasiTs` and `compileLibTs`) appends `(export "dynNumber" (func
+   $dynrt_dynNumber))` … for `dynNumber/dynNumberValue/dynString/dynStrBytes/dynStrLen/dynBool/
+   dynToBool/dynTypeof` (+ `cabi_realloc` if not already exported, for boxing an `any` string) when
+   `hasAnyExportSignature()` is true. Exporting keeps Binaryen from stripping them.
+4. **bindgen marshalling (`src/bindgen.ts`):** `WitType` gains `"any"`; `genLoadModule` emits `_box`
+   (JS number→`dynNumber`, boolean→`dynBool`, string→`_writeStr`+`dynString`) and `_unbox` (switch on
+   `dynTypeof`: 3→`dynNumberValue`, 4→read `dynStrBytes`+`dynStrLen`+`TextDecoder`, 2→`dynToBool`,
+   0→`undefined`, else→opaque handle). `any` params → `_box(arg)`; `any` returns → `_unbox(call)`.
+
+**Verified end-to-end** (`tests/wasm_wasi_bundle/anysig_bundle/`: `anysig_lib.ts` modc lib +
+`host.ts`): `identity(42|'hi'|true)` round-trips all three types; `addOne(41)=42` (any-param unbox +
+result box); `typeName(42|'x'|true)` → `"number"|"string"|"boolean"` (runtime tag dispatch + string
+return); `exclaim('wow')='wow!'` (string concat on an any). **Gaps:** objects/arrays/functions as
+`any` cross the boundary as **opaque handles** (number) — no structural marshalling in v1; boxing a
+typed VAR into `any` in-body still needs an explicit `dynNumber(...)` (the non-literal-RHS boxing gap
+from 3.1); `s64`/`bigint` any not handled.
+
 ## Does 14.3 let us drop `javyc`? — retirement criteria (decided framing 2026-06-22)
 
 **No — not on 14.3 alone.** 14.3 is *wiring, not language growth*: it lowers `any` → a boxed handle,

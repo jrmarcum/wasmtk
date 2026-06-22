@@ -381,10 +381,16 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     like `compileWasiTs`, so auto-merged `wasmtk:dynrt` failed in the modc core compile — now fixed.
     Verified: `dynamic_hybrid` (eval+any body) routes → `evalScaled(8)=50`; `dynamic_fallback_hybrid`
     falls back to host; `math_hybrid` unchanged. **`hybrid --auto`'s dynamic target is now the own
-    runtime, not `javyc`.** **#14 own-dynamic-runtime track — CORE COMPLETE.** Remaining are follow-ups
-    only: any-signature host↔core marshalling, coarse-fallback refinement, and an optional memory/GC
-    pass to lift the heap-bound-recursion limit (`javyc` stays as the full-JS fallback — see the
-    retirement criteria in dynrt-design.md).
+    runtime, not `javyc`.** **#14 own-dynamic-runtime track — CORE COMPLETE.** **Follow-up — any-signature
+    host↔core marshalling — SHIPPED 2026-06-22** (full detail in dynrt-design.md): a function with an
+    `any` param/return is now callable from the host with real JS values (number/string/bool) — wasic
+    tracks `any` sigs (`FuncParam.isAny`/`FuncDef.isAnyResult`; any-params added to `anyVars`),
+    `generateWit` emits an `any` WIT marker, the core exports the dynrt box/unbox helpers
+    (`injectDynrtMarshalExports`, both compile paths), and bindgen generates `_box`/`_unbox`. Verified
+    end-to-end (`tests/wasm_wasi_bundle/anysig_bundle/`); bindgen 104/104. Remaining follow-ups:
+    objects/arrays as `any` cross as opaque handles (structural marshalling deferred), coarse-fallback
+    refinement, and an optional memory/GC pass to lift the heap-bound-recursion limit (`javyc` stays as
+    the full-JS fallback — see the retirement criteria in dynrt-design.md).
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
 2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1

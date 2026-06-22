@@ -1,0 +1,10 @@
+import { loadModule } from "./anysig_lib.bindings.ts";
+const lib = await loadModule(new URL("./anysig_lib.wasm", import.meta.url));
+console.log("identity(42) =", lib.identity(42));
+console.log("identity('hi') =", lib.identity("hi"));
+console.log("identity(true) =", lib.identity(true));
+console.log("addOne(41) =", lib.addOne(41));
+console.log("typeName(42) =", lib.typeName(42));
+console.log("typeName('x') =", lib.typeName("x"));
+console.log("typeName(true) =", lib.typeName(true));
+console.log("exclaim('wow') =", lib.exclaim("wow"));

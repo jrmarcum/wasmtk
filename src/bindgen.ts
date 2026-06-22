@@ -21,7 +21,7 @@ import { rt } from "./rt.ts";
 // ── WIT type definitions ─────────────────────────────────────────────────────
 
 /** WIT primitive type that can appear as a parameter or return type in a world declaration. */
-export type WitType = "s32" | "s64" | "f32" | "f64" | "bool" | "string";
+export type WitType = "s32" | "s64" | "f32" | "f64" | "bool" | "string" | "any";
 
 /** A single parameter in a WIT function signature with its camelCase TypeScript name and WIT type. */
 export interface WitParam {
@@ -77,6 +77,8 @@ function parseWitType(raw: string): WitType {
       return "bool";
     case "string":
       return "string";
+    case "any":
+      return "any"; // #14 follow-up: wasmtk-extension WIT type — JS value boxed via the dynrt runtime
     default:
       return "s32";
   }
@@ -154,6 +156,8 @@ function witTypeToTs(t: WitType): string {
       return "boolean";
     case "string":
       return "string";
+    case "any":
+      return "any"; // #14 follow-up: a dynamic value (number | string | boolean | … boxed handle)
   }
 }
 
@@ -184,9 +188,15 @@ function genImportsInterface(fns: WitFunc[]): string {
 function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): string {
   const { imports: importedFns, exports: exportedFns } = parsed;
   const hasImports = importedFns.length > 0;
-  const needsMalloc = exportedFns.some((fn) => fn.params.some((p) => p.type === "string"));
+  // #14 follow-up: `any` params/returns box/unbox JS values via the dynrt helpers exported by the
+  // core; that needs memory (for `any` strings) + cabi_realloc (for `_writeStr`).
+  const needsAnyMarshal = exportedFns.some(
+    (fn) => fn.result === "any" || fn.params.some((p) => p.type === "any"),
+  );
+  const needsMalloc = needsAnyMarshal ||
+    exportedFns.some((fn) => fn.params.some((p) => p.type === "string"));
   const needsStrRet = exportedFns.some((fn) => fn.result === "string");
-  const needsMemory = needsMalloc || needsStrRet;
+  const needsMemory = needsMalloc || needsStrRet || needsAnyMarshal;
 
   const lines: string[] = [];
 
@@ -273,6 +283,38 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
   // allocated 8-byte [ptr, len] return area. The host reads ptr+len via DataView, decodes the
   // string, then calls the paired `cabi_post_<name>` export to release the buffer.
 
+  // #14 follow-up: `any` marshalling — box a JS number/string/boolean into a dynrt handle, and unbox
+  // a returned handle back to a JS value (via its runtime tag). Objects/arrays/functions are returned
+  // as opaque handles (number) in v1. The helpers below are exported by the core when an `any`
+  // signature is present.
+  if (needsAnyMarshal) {
+    lines.push(`  const _dynNumber = exp["dynNumber"] as (n: number) => number;`);
+    lines.push(`  const _dynNumberValue = exp["dynNumberValue"] as (h: number) => number;`);
+    lines.push(`  const _dynString = exp["dynString"] as (p: number, l: number) => number;`);
+    lines.push(`  const _dynStrBytes = exp["dynStrBytes"] as (h: number) => number;`);
+    lines.push(`  const _dynStrLen = exp["dynStrLen"] as (h: number) => number;`);
+    lines.push(`  const _dynBool = exp["dynBool"] as (b: number) => number;`);
+    lines.push(`  const _dynToBool = exp["dynToBool"] as (h: number) => number;`);
+    lines.push(`  const _dynTypeof = exp["dynTypeof"] as (h: number) => number;`);
+    lines.push(`  function _box(v: unknown): number {`);
+    lines.push(`    if (typeof v === "number") return _dynNumber(v);`);
+    lines.push(`    if (typeof v === "boolean") return _dynBool(v ? 1 : 0);`);
+    lines.push(`    if (typeof v === "string") { const [p, l] = _writeStr(v); return _dynString(p, l); }`);
+    lines.push(`    return _dynNumber(0); // null/undefined/object — not marshalled in v1`);
+    lines.push(`  }`);
+    lines.push(`  function _unbox(h: number): unknown {`);
+    lines.push(`    switch (_dynTypeof(h)) {`); // 0 undef · 1 obj · 2 bool · 3 num · 4 string · 5 fn
+    lines.push(`      case 3: return _dynNumberValue(h);`);
+    lines.push(
+      `      case 4: return new TextDecoder().decode(new Uint8Array(_mem.buffer, _dynStrBytes(h), _dynStrLen(h)));`,
+    );
+    lines.push(`      case 2: return _dynToBool(h) !== 0;`);
+    lines.push(`      case 0: return undefined;`);
+    lines.push(`      default: return h; // object / function — opaque handle (v1)`);
+    lines.push(`    }`);
+    lines.push(`  }`);
+  }
+
   // Return object
   lines.push(`  return {`);
   for (const fn of exportedFns) {
@@ -283,12 +325,18 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
 
     // Build WASM call args
     const callArgs = fn.params.map((p) => {
+      if (p.type === "any") return `_box(${p.name})`; // #14: JS value → boxed dynrt handle
       if (p.type === "string") return `..._writeStr(${p.name})`;
       if (p.type === "bool") return `${p.name} ? 1 : 0`;
       return p.name;
     }).join(", ");
 
-    if (fn.result === "string") {
+    if (fn.result === "any") {
+      // #14: unbox the returned handle to a JS value (number/string/boolean) via its runtime tag.
+      lines.push(
+        `    ${fn.tsName}(${paramStr}): any { return _unbox(${wasm}(${callArgs}) as number); },`,
+      );
+    } else if (fn.result === "string") {
       lines.push(`    ${fn.tsName}(${paramStr}): string {`);
       lines.push(`      const _r = ${wasm}(${callArgs}) as number;`);
       lines.push(`      const _v = new DataView(_mem.buffer);`);
