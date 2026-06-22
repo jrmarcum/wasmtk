@@ -552,7 +552,82 @@ export function dynGe(x: i32, y: i32): i32 {
 // keywords, member access, and calls are 2b+. See cmem/dynrt-design.md.
 // ──────────────────────────────────────────────────────────────────────────────────────────────
 
-let evalPos: i32 = 0; // read cursor into the eval source string
+let evalPos: i32 = 0;  // read cursor into the eval source string
+let evalEnv: i32 = -1; // current environment object handle (names → values), or -1 for none
+
+// Compare two wasic strings byte-for-byte (avoids relying on `===` over reconstructed substrings).
+function strEq(a: string, b: string): i32 {
+  if (a.length !== b.length) return 0;
+  let i: i32 = 0;
+  while (i < a.length) {
+    if (a.charCodeAt(i) !== b.charCodeAt(i)) return 0;
+    i = i + 1;
+  }
+  return 1;
+}
+
+// `obj.name` — TOTAL (guarded): object property (undefined if absent), array/string `.length`,
+// undefined for anything else. Never dereferences a non-container, so `undefined.x` → undefined
+// rather than a trap (a forgiving runtime; this also removes the only trap motivation for
+// short-circuit in 2b, so real short-circuit lands with calls in the next sub-increment).
+function dynMember(obj: i32, name: string): i32 {
+  const n: Int32Array = obj as unknown as Int32Array;
+  const t: i32 = n[0];
+  if (t === 6) { // object
+    const r: i32 = dynGet(obj, name);
+    return r === -1 ? dynUndefined() : r;
+  }
+  if (t === 5) { // array
+    if (strEq(name, "length") === 1) {
+      const ln: i32 = dynArrLen(obj);
+      return dynNumber(ln);
+    }
+    return dynUndefined();
+  }
+  if (t === 4) { // string
+    if (strEq(name, "length") === 1) {
+      const sl: i32 = n[2];
+      return dynNumber(sl);
+    }
+    return dynUndefined();
+  }
+  return dynUndefined();
+}
+
+// `container[idx]` — array element by numeric index, or object property by string key. Guarded.
+function dynIndexValue(container: i32, idxBox: i32): i32 {
+  const cn: Int32Array = container as unknown as Int32Array;
+  const ct: i32 = cn[0];
+  const it: i32 = dynTag(idxBox);
+  if (ct === 5) { // array
+    if (it === 3) {
+      const idxf: f64 = dynNumberValue(idxBox);
+      const ii: i32 = idxf as unknown as i32; // truncate toward zero
+      const len: i32 = dynArrLen(container);
+      if (ii < 0 || ii >= len) return dynUndefined();
+      return dynArrGet(container, ii);
+    }
+    return dynUndefined();
+  }
+  if (ct === 6) { // object
+    if (it === 4) {
+      const key: string = boxToStr(idxBox);
+      const r: i32 = dynGet(container, key);
+      return r === -1 ? dynUndefined() : r;
+    }
+    return dynUndefined();
+  }
+  return dynUndefined();
+}
+
+// Is `c` a valid identifier-start (A-Za-z_$) or, when `cont` is 1, also a digit?
+function isIdentChar(c: i32, cont: i32): i32 {
+  if (c >= 65 && c <= 90) return 1;  // A-Z
+  if (c >= 97 && c <= 122) return 1; // a-z
+  if (c === 95 || c === 36) return 1; // _ $
+  if (cont === 1 && c >= 48 && c <= 57) return 1; // 0-9
+  return 0;
+}
 
 function evalSkipWs(s: string): void {
   let go: i32 = 1;
@@ -655,23 +730,56 @@ function parsePrimary(s: string): i32 {
   if (c === 39 || c === 34) return parseStringLit(s); // ' or "
   if (c >= 48 && c <= 57) return parseNumLit(s);
   if (c === 46) return parseNumLit(s); // .5
-  if (c === 116) { // true
-    evalPos = evalPos + 4;
-    return dynBool(1);
-  }
-  if (c === 102) { // false
-    evalPos = evalPos + 5;
-    return dynBool(0);
-  }
-  if (c === 110) { // null
-    evalPos = evalPos + 4;
-    return dynNull();
-  }
-  if (c === 117) { // undefined
-    evalPos = evalPos + 9;
-    return dynUndefined();
+  if (isIdentChar(c, 0) === 1) {
+    // identifier / keyword: read the full [A-Za-z_$][A-Za-z0-9_$]* run, then dispatch
+    const start: i32 = evalPos;
+    let ch: i32 = c;
+    while (isIdentChar(ch, 1) === 1) {
+      evalPos = evalPos + 1;
+      ch = evalPeek(s);
+    }
+    const name: string = s.slice(start, evalPos);
+    if (strEq(name, "true") === 1) return dynBool(1);
+    if (strEq(name, "false") === 1) return dynBool(0);
+    if (strEq(name, "null") === 1) return dynNull();
+    if (strEq(name, "undefined") === 1) return dynUndefined();
+    // a bare identifier → look it up in the environment object
+    if (evalEnv === -1) return dynUndefined();
+    const v: i32 = dynGet(evalEnv, name);
+    return v === -1 ? dynUndefined() : v;
   }
   return dynUndefined(); // unrecognised → undefined (v1)
+}
+
+// Postfix member / index access: `expr.name`, `expr["key"]`, `arr[i]` (binds tighter than unary).
+function parsePostfix(s: string): i32 {
+  let v: i32 = parsePrimary(s);
+  let go: i32 = 1;
+  while (go === 1) {
+    evalSkipWs(s);
+    const c: i32 = evalPeek(s);
+    if (c === 46) { // .name
+      evalPos = evalPos + 1;
+      evalSkipWs(s);
+      const start: i32 = evalPos;
+      let ch: i32 = evalPeek(s);
+      while (isIdentChar(ch, 1) === 1) {
+        evalPos = evalPos + 1;
+        ch = evalPeek(s);
+      }
+      const name: string = s.slice(start, evalPos);
+      v = dynMember(v, name);
+    } else if (c === 91) { // [expr]
+      evalPos = evalPos + 1;
+      const idx: i32 = parseExpr(s);
+      evalSkipWs(s);
+      if (evalPeek(s) === 93) evalPos = evalPos + 1; // ']'
+      v = dynIndexValue(v, idx);
+    } else {
+      go = 0;
+    }
+  }
+  return v;
 }
 
 function parseUnary(s: string): i32 {
@@ -690,7 +798,7 @@ function parseUnary(s: string): i32 {
     const v: i32 = parseUnary(s);
     return dynNumber(dynToNumber(v));
   }
-  return parsePrimary(s);
+  return parsePostfix(s);
 }
 
 function parseMul(s: string): i32 {
@@ -834,9 +942,21 @@ function parseExpr(s: string): i32 {
   return cond;
 }
 
-/** Evaluate a pure JS expression string → boxed value handle (v1 expression subset). */
+/** Evaluate a JS expression string with no environment → boxed value handle. */
 /** @export */
 export function dynEval(s: string): i32 {
   evalPos = 0;
+  evalEnv = -1;
+  return parseExpr(s);
+}
+
+/**
+ * Evaluate a JS expression string against an environment object (`env`: names → boxed values), so
+ * the expression may reference variables and navigate them with `.prop` / `[i]` / `["key"]`.
+ */
+/** @export */
+export function dynEvalEnv(s: string, env: i32): i32 {
+  evalPos = 0;
+  evalEnv = env;
   return parseExpr(s);
 }

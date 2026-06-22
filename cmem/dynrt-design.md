@@ -128,6 +128,40 @@ gets them dead-stripped by Binaryen (reachable only from `dynEval`).
 function calls, `new Function`, statements + control flow, real short-circuit, string comparison,
 loose-equality coercion (`==`/`!=` are strict in v1).
 
+## Increment 2b — variables + environment + member/index access (SHIPPED 2026-06-22)
+
+`dynEvalEnv(s: string, env: i32): i32` — evaluate against an **environment object** (a value-model
+object, names → boxed values). Bare identifiers resolve via `dynGet(env, name)` (→ `undefined` if
+absent or no env); `dynEval(s)` is unchanged (no env). Robust identifier tokenisation replaced 2a's
+fragile first-char keyword detection (read the full `[A-Za-z_$][A-Za-z0-9_$]*` run via `isIdentChar`,
+then dispatch `true`/`false`/`null`/`undefined`, else look up). Added **postfix member/index access**
+(`parsePostfix`, binds tighter than unary): `obj.name`, `obj["key"]`, `arr[i]` (computed index works,
+e.g. `arr[x-9]`), and `.length` on arrays/strings.
+
+**`dynMember`/`dynIndexValue` are TOTAL (guarded):** object property → `undefined` if absent;
+array/string `.length`; member of a non-container (`undefined.x`) → `undefined`, never a trap. This is
+the load-bearing decision for the 2b scope split (below).
+
+**SCOPE SPLIT from the design's original 2b (rationale recorded):** the original 2b lumped in *calls*
+and *real short-circuit*. Both moved to the next sub-increment, because **real short-circuit is only
+OBSERVABLE — and only TESTABLE — with side-effecting operands, i.e. calls**: in 2b every operand is a
+pure read (variable lookup, guarded member access), so evaluating both sides of `&&`/`||`/`?:` and
+selecting is observationally identical to short-circuit, and the guarded (total) member access removes
+the only trap-safety motivation (`obj && obj.x` is already safe because `undefined.x` → `undefined`).
+So 2b ships the read/navigation layer; **calls + function values (tag 7) + real short-circuit land
+together in 2c** where short-circuit becomes real and observable.
+
+- Same library; `wasmtk:dynrt` regenerated → 8674 bytes. Driver
+  `tests/wasm_wasi_bundle/dynrt_eval_bundle/main_env.ts` (builds `{x,y,name,pt:{a,b},arr:[…]}`);
+  pipeline test `tests/wasm_wasi/18m_DynRuntimeEvalEnv.ts`. **PASS** on the first run — **no new
+  compiler gaps** (env lookup, `.prop`/`["key"]`/`[i]`, computed index, `.length`, guarded
+  `undefined.x`, variables in ternaries).
+
+**2b gaps (→ 2c):** calls + function values + REAL short-circuit; statements + control flow;
+`new Function`; loose-equality coercion; string/lexicographic comparison; nested array/object literals
+*inside* the eval source (the driver builds them with the value-model API, but `dynEval("{a:1}")` /
+`dynEval("[1,2]")` literal syntax is not parsed yet).
+
 ## Compiler gaps surfaced (worked around in the library; candidates for a real wasic fix)
 
 Like every Tier-1 cap, this increment surfaced wasic gaps. Both are worked around in the library and
@@ -157,10 +191,12 @@ recorded in `compiler-bugs.md`; each could later be fixed in `src/wasic.ts` and 
   Deferred extras (optional, not started): hashmap-backed property map; f64-aware `dynToNumber(string)`.
 - **2a — `eval` of a pure expression language — ✅ SHIPPED 2026-06-22** (test `18l`; see above).
   Authoring decision resolved: continue in the subset (no `rtcore`/hand-WAT needed yet).
-- **2b — variables + environment + member access + calls + real short-circuit** (next). Identifiers
-  resolve against a bindings object; `&&`/`||`/`?:` must become real short-circuit (skip-parse or a
-  small AST) once operands can have side effects.
-- **2c — statements + control flow + `new Function`** (a callable from a body string).
+- **2b — variables + environment + member/index access — ✅ SHIPPED 2026-06-22** (test `18m`; see
+  above). Scope split: calls + real short-circuit moved to 2c (short-circuit is only observable with
+  side-effecting calls; guarded member access makes 2b trap-safe without it).
+- **2c — calls + function values (tag 7) + REAL short-circuit** (next). `&&`/`||`/`?:` become real
+  short-circuit (skip-parse mode or a small AST) now that calls can have side effects.
+- **2d — statements + control flow + `new Function`** (a callable from a body string).
   This is where the **`rtcore` extraction + hand-WAT** decision (authoring §3) is most likely
   revisited, if the subset hits a wall.
 - **3 — wasic `any` + auto-merge:** add an `any` type to wasic that lowers to a boxed-value handle;

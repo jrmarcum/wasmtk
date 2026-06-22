@@ -323,10 +323,15 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     resolved — continue in the subset, no `rtcore`/hand-WAT needed yet); full operator precedence +
     parens + unary + ternary + string concat → boxed value; added the dynamic operators
     `dynSub/Mul/Div/Mod/Neg/Not/Lt/Gt/Le/Ge`; `parseFloat` works in modc; NO new compiler gaps.
-    **Next:** 2b variables + environment + member access + calls + real short-circuit; 2c statements +
-    control flow + `new Function` (the `rtcore`+hand-WAT decision is most likely revisited here); 3
-    wasic `any` + auto-merge + migrate `hybrid --auto`'s dynamic target off `javyc`. Still the largest
-    remaining track.
+    **Increment 2b — variables + environment + member/index access — SHIPPED 2026-06-22** (test `18m`):
+    `dynEvalEnv(s, env)` resolves bare identifiers against an env object; postfix `.prop`/`["key"]`/
+    `[i]` (computed index) + `.length`; TOTAL/guarded member access (`undefined.x` → undefined, no
+    trap); robust identifier tokenisation; no new compiler gaps. **Scope split (rationale recorded):**
+    calls + REAL short-circuit moved to 2c — short-circuit is only observable/testable with
+    side-effecting operands (calls), and guarded member access makes 2b trap-safe without it.
+    **Next:** 2c calls + function values (tag 7) + real short-circuit; 2d statements + control flow +
+    `new Function` (the `rtcore`+hand-WAT decision is most likely revisited here); 3 wasic `any` +
+    auto-merge + migrate `hybrid --auto`'s dynamic target off `javyc`. Still the largest remaining track.
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
 2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1

@@ -37,4 +37,5 @@ world dynrt-lib-modc {
   export dyn-le: func(x: s32, y: s32) -> s32;
   export dyn-ge: func(x: s32, y: s32) -> s32;
   export dyn-eval: func(s: string) -> s32;
+  export dyn-eval-env: func(s: string, env: s32) -> s32;
 }
