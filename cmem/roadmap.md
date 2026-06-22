@@ -391,10 +391,15 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     fallback refinement — SHIPPED 2026-06-22**: per-function fallback (was all-or-nothing) — on
     core-compile failure, probe each dynamic fn against the static context and move ONLY the failing
     ones to host (`parseHybridFile` `excludeFns` + `probeCompiles` to a cleaned-up `_probe.*` module);
-    safety ladders preserved. Verified `tests/hybrid_fixtures/dynamic_partial_hybrid.ts`. Remaining
-    follow-ups: objects/arrays as `any` cross as opaque handles (structural marshalling deferred), and
-    an optional memory/GC pass to lift the heap-bound-recursion limit (`javyc` stays as the full-JS
-    fallback — see the retirement criteria in dynrt-design.md).
+    safety ladders preserved. Verified `tests/hybrid_fixtures/dynamic_partial_hybrid.ts`. **Follow-up —
+    objects/arrays as `any` STRUCTURAL marshalling — SHIPPED 2026-06-22**: objects/arrays now cross the
+    host boundary as real, recursively-converted JS objects/arrays (was opaque handles) — dynrt gained
+    `dynObjKeyPtr`/`dynObjKeyLen`/`dynObjValAt`, the marshal-export + tsbundler auto-import lists gained
+    the container accessors, and bindgen `_box`/`_unbox` recurse on the raw `dynTag` (5=array/6=object).
+    Verified `tests/wasm_wasi_bundle/anysig_bundle/` (`makePoint`→`{x,y}`, `triple`→`[…]`,
+    `sumArr([…])`→sum, `getX({…})`→field). **Remaining #14 follow-up: only the optional memory/GC pass
+    to lift the heap-bound-recursion limit** (functions-as-`any` still cross as opaque handles; `javyc`
+    stays as the full-JS fallback — see the retirement criteria in dynrt-design.md).
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
 2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1

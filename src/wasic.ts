@@ -17669,6 +17669,7 @@ class WasicTranspiler {
   dynrtMarshalExportNames(): string[] {
     if (!this.hasAnyExportSignature()) return [];
     return [
+      // primitives (number / string / boolean) — box + unbox
       "dynNumber",
       "dynNumberValue",
       "dynString",
@@ -17677,6 +17678,20 @@ class WasicTranspiler {
       "dynBool",
       "dynToBool",
       "dynTypeof",
+      "dynTag",
+      "dynNull",
+      "dynUndefined",
+      // #14 follow-up: structural marshalling of object/array `any` values (host ↔ JS object/array)
+      "dynArray",
+      "dynArrLen",
+      "dynArrGet",
+      "dynPush",
+      "dynObject",
+      "dynObjLen",
+      "dynObjKeyPtr",
+      "dynObjKeyLen",
+      "dynObjValAt",
+      "dynSet",
     ];
   }
 

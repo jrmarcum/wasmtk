@@ -1732,6 +1732,26 @@
     (return (call $listLen (i32.load (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2))))))
   )
 
+  (func $dynObjKeyPtr (export "dynObjKeyPtr") (param $obj i32) (param $i i32) (result i32)
+    (local $n i32)
+    (local $kptr i32)
+    (local.set $n (local.get $obj))
+    (local.set $kptr (call $listGet (i32.load (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 3) (i32.const 2)))) (i32.mul (local.get $i) (i32.const 2))))
+    (return (i32.add (local.get $kptr) (i32.const 8)))
+  )
+
+  (func $dynObjKeyLen (export "dynObjKeyLen") (param $obj i32) (param $i i32) (result i32)
+    (local $n i32)
+    (local.set $n (local.get $obj))
+    (return (call $listGet (i32.load (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 3) (i32.const 2)))) (i32.add (i32.mul (local.get $i) (i32.const 2)) (i32.const 1))))
+  )
+
+  (func $dynObjValAt (export "dynObjValAt") (param $obj i32) (param $i i32) (result i32)
+    (local $n i32)
+    (local.set $n (local.get $obj))
+    (return (call $listGet (i32.load (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2)))) (local.get $i)))
+  )
+
   (func $dynPush (export "dynPush") (param $arr i32) (param $val i32) 
     (local $n i32)
     (local.set $n (local.get $arr))

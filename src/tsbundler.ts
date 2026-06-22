@@ -253,7 +253,8 @@ export async function bundleImportsEx(entryPath: string): Promise<BundleResult> 
           "dynAdd", "dynSub", "dynMul", "dynDiv", "dynMod", "dynNeg", "dynNot", "dynStrictEq",
           "dynLt", "dynGt", "dynLe", "dynGe", "dynApply", "dynMember", "dynIndexValue",
           "dynCall0", "dynCall1", "dynCall2", "dynCall3",
-          "dynEval", "dynEvalEnv", "dynObject", "dynArray", "dynSet", "dynGet", "dynPush",
+          "dynEval", "dynEvalEnv", "dynObject", "dynArray", "dynSet", "dynGet", "dynHas", "dynPush",
+          "dynObjLen", "dynArrLen", "dynArrGet", "dynObjKeyPtr", "dynObjKeyLen", "dynObjValAt",
           "dynMakeFunc", "dynStdEnv", "dynUndefined", "dynNull",
         ].join(", ");
         src = `import { ${ops} } from "wasmtk:dynrt";\n` + src;

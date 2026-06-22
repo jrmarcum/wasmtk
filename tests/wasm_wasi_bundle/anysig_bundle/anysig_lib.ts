@@ -22,3 +22,35 @@ export function typeName(x: any): any {
 export function exclaim(s: any): any {
   return dynAdd(s, dynString("!"));
 }
+
+// #14 structural marshalling — objects/arrays as `any`
+export function makePoint(a: f64, b: f64): any {
+  const o: any = dynObject();
+  dynSet(o, "x", dynNumber(a));
+  dynSet(o, "y", dynNumber(b));
+  return o;
+}
+
+export function triple(a: f64, b: f64, c: f64): any {
+  const arr: any = dynArray();
+  dynPush(arr, dynNumber(a));
+  dynPush(arr, dynNumber(b));
+  dynPush(arr, dynNumber(c));
+  return arr;
+}
+
+export function sumArr(arr: any): any {
+  const len: i32 = dynArrLen(arr);
+  let s: f64 = 0;
+  let i: i32 = 0;
+  while (i < len) {
+    const e: i32 = dynArrGet(arr, i);
+    s = s + dynNumberValue(e);
+    i = i + 1;
+  }
+  return dynNumber(s);
+}
+
+export function getX(o: any): any {
+  return o.x;
+}

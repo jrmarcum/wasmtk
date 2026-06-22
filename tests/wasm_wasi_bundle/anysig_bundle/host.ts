@@ -8,3 +8,7 @@ console.log("typeName(42) =", lib.typeName(42));
 console.log("typeName('x') =", lib.typeName("x"));
 console.log("typeName(true) =", lib.typeName(true));
 console.log("exclaim('wow') =", lib.exclaim("wow"));
+console.log("makePoint(3,4) =", JSON.stringify(lib.makePoint(3, 4)));
+console.log("triple(1,2,3) =", JSON.stringify(lib.triple(1, 2, 3)));
+console.log("sumArr([10,20,30]) =", lib.sumArr([10, 20, 30]));
+console.log("getX({x:42,y:7}) =", lib.getX({ x: 42, y: 7 }));

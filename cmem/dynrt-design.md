@@ -432,10 +432,22 @@ Closes the 3.4 gap: a function with an **`any` param or return** can now be call
 **Verified end-to-end** (`tests/wasm_wasi_bundle/anysig_bundle/`: `anysig_lib.ts` modc lib +
 `host.ts`): `identity(42|'hi'|true)` round-trips all three types; `addOne(41)=42` (any-param unbox +
 result box); `typeName(42|'x'|true)` → `"number"|"string"|"boolean"` (runtime tag dispatch + string
-return); `exclaim('wow')='wow!'` (string concat on an any). **Gaps:** objects/arrays/functions as
-`any` cross the boundary as **opaque handles** (number) — no structural marshalling in v1; boxing a
-typed VAR into `any` in-body still needs an explicit `dynNumber(...)` (the non-literal-RHS boxing gap
-from 3.1); `s64`/`bigint` any not handled.
+return); `exclaim('wow')='wow!'` (string concat on an any).
+
+**Objects/arrays — structural marshalling (SHIPPED 2026-06-22, extends this):** objects and arrays as
+`any` now cross the boundary as **real, recursively-converted JS objects/arrays** (not opaque
+handles). Added dynrt object-enumeration exports `dynObjKeyPtr`/`dynObjKeyLen`/`dynObjValAt` (key data
+ptr / key len / value handle by index); `dynrtMarshalExportNames()` now also exports the structural
+helpers (`dynTag`/`dynNull`/`dynUndefined`/`dynArray`/`dynArrLen`/`dynArrGet`/`dynPush`/`dynObject`/
+`dynObjLen`/`dynObjKeyPtr`/`dynObjKeyLen`/`dynObjValAt`/`dynSet`); the tsbundler auto-import list gained
+the container accessors so lib bodies can call them. bindgen's `_box` recurses (Array→`dynArray`+
+`dynPush`, object→`dynObject`+`dynSet`, null→`dynNull`, undefined→`dynUndefined`) and `_unbox`
+switches on the **RAW `dynTag`** (5=array→build JS array, 6=object→build JS object by enumerating keys,
+1=null, plus the primitives). Verified (`anysig_bundle`): `makePoint(3,4)`→`{x:3,y:4}`,
+`triple(1,2,3)`→`[1,2,3]`, `sumArr([10,20,30])`→60 (JS array boxed IN), `getX({x:42,y:7})`→42 (JS
+object boxed in + member access). **Remaining gaps:** FUNCTIONS as `any` still cross as opaque
+handles; boxing a typed VAR into `any` in-body still needs an explicit `dynNumber(...)` (the
+non-literal-RHS boxing gap from 3.1); `s64`/`bigint` any not handled; cyclic objects would infinite-loop.
 
 ## #14 follow-up — hybrid fallback refinement (per-function) (SHIPPED 2026-06-22)
 

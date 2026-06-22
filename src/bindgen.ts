@@ -295,22 +295,54 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
     lines.push(`  const _dynStrLen = exp["dynStrLen"] as (h: number) => number;`);
     lines.push(`  const _dynBool = exp["dynBool"] as (b: number) => number;`);
     lines.push(`  const _dynToBool = exp["dynToBool"] as (h: number) => number;`);
-    lines.push(`  const _dynTypeof = exp["dynTypeof"] as (h: number) => number;`);
+    lines.push(`  const _dynTag = exp["dynTag"] as (h: number) => number;`);
+    lines.push(`  const _dynNull = exp["dynNull"] as () => number;`);
+    lines.push(`  const _dynUndefined = exp["dynUndefined"] as () => number;`);
+    lines.push(`  const _dynArray = exp["dynArray"] as () => number;`);
+    lines.push(`  const _dynArrLen = exp["dynArrLen"] as (h: number) => number;`);
+    lines.push(`  const _dynArrGet = exp["dynArrGet"] as (h: number, i: number) => number;`);
+    lines.push(`  const _dynPush = exp["dynPush"] as (h: number, v: number) => void;`);
+    lines.push(`  const _dynObject = exp["dynObject"] as () => number;`);
+    lines.push(`  const _dynObjLen = exp["dynObjLen"] as (h: number) => number;`);
+    lines.push(`  const _dynObjKeyPtr = exp["dynObjKeyPtr"] as (h: number, i: number) => number;`);
+    lines.push(`  const _dynObjKeyLen = exp["dynObjKeyLen"] as (h: number, i: number) => number;`);
+    lines.push(`  const _dynObjValAt = exp["dynObjValAt"] as (h: number, i: number) => number;`);
+    lines.push(`  const _dynSet = exp["dynSet"] as (o: number, p: number, l: number, v: number) => void;`);
+    lines.push(`  const _dec = new TextDecoder();`);
+    // box: JS value → dynrt handle (recursive for arrays/objects)
     lines.push(`  function _box(v: unknown): number {`);
     lines.push(`    if (typeof v === "number") return _dynNumber(v);`);
     lines.push(`    if (typeof v === "boolean") return _dynBool(v ? 1 : 0);`);
     lines.push(`    if (typeof v === "string") { const [p, l] = _writeStr(v); return _dynString(p, l); }`);
-    lines.push(`    return _dynNumber(0); // null/undefined/object — not marshalled in v1`);
+    lines.push(`    if (v === null) return _dynNull();`);
+    lines.push(`    if (v === undefined) return _dynUndefined();`);
+    lines.push(`    if (Array.isArray(v)) { const h = _dynArray(); for (const e of v) _dynPush(h, _box(e)); return h; }`);
+    lines.push(`    if (typeof v === "object") {`);
+    lines.push(`      const h = _dynObject(); const o = v as Record<string, unknown>;`);
+    lines.push(`      for (const k of Object.keys(o)) { const [p, l] = _writeStr(k); _dynSet(h, p, l, _box(o[k])); }`);
+    lines.push(`      return h;`);
+    lines.push(`    }`);
+    lines.push(`    return _dynNumber(0); // functions/symbols — not marshalled`);
     lines.push(`  }`);
+    // unbox: dynrt handle → JS value (recursive). _dynTag is the RAW structural tag:
+    // 0 undef · 1 null · 2 bool · 3 number · 4 string · 5 array · 6 object · 7 function.
     lines.push(`  function _unbox(h: number): unknown {`);
-    lines.push(`    switch (_dynTypeof(h)) {`); // 0 undef · 1 obj · 2 bool · 3 num · 4 string · 5 fn
+    lines.push(`    switch (_dynTag(h)) {`);
     lines.push(`      case 3: return _dynNumberValue(h);`);
-    lines.push(
-      `      case 4: return new TextDecoder().decode(new Uint8Array(_mem.buffer, _dynStrBytes(h), _dynStrLen(h)));`,
-    );
+    lines.push(`      case 4: return _dec.decode(new Uint8Array(_mem.buffer, _dynStrBytes(h), _dynStrLen(h)));`);
     lines.push(`      case 2: return _dynToBool(h) !== 0;`);
+    lines.push(`      case 1: return null;`);
     lines.push(`      case 0: return undefined;`);
-    lines.push(`      default: return h; // object / function — opaque handle (v1)`);
+    lines.push(`      case 5: { const n = _dynArrLen(h); const a: unknown[] = []; for (let i = 0; i < n; i++) a.push(_unbox(_dynArrGet(h, i))); return a; }`);
+    lines.push(`      case 6: {`);
+    lines.push(`        const n = _dynObjLen(h); const o: Record<string, unknown> = {};`);
+    lines.push(`        for (let i = 0; i < n; i++) {`);
+    lines.push(`          const k = _dec.decode(new Uint8Array(_mem.buffer, _dynObjKeyPtr(h, i), _dynObjKeyLen(h, i)));`);
+    lines.push(`          o[k] = _unbox(_dynObjValAt(h, i));`);
+    lines.push(`        }`);
+    lines.push(`        return o;`);
+    lines.push(`      }`);
+    lines.push(`      default: return h; // function — opaque handle`);
     lines.push(`    }`);
     lines.push(`  }`);
   }

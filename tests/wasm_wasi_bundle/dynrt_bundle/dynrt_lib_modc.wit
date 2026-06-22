@@ -22,6 +22,9 @@ world dynrt-lib-modc {
   export dyn-get: func(obj: s32, key: string) -> s32;
   export dyn-has: func(obj: s32, key: string) -> s32;
   export dyn-obj-len: func(obj: s32) -> s32;
+  export dyn-obj-key-ptr: func(obj: s32, i: s32) -> s32;
+  export dyn-obj-key-len: func(obj: s32, i: s32) -> s32;
+  export dyn-obj-val-at: func(obj: s32, i: s32) -> s32;
   export dyn-push: func(arr: s32, val: s32);
   export dyn-arr-len: func(arr: s32) -> s32;
   export dyn-arr-get: func(arr: s32, i: s32) -> s32;

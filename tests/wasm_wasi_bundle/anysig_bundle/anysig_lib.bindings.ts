@@ -7,6 +7,10 @@ export interface ModuleExports {
   addOne(x: any): any;
   typeName(x: any): any;
   exclaim(s: any): any;
+  makePoint(a: number, b: number): any;
+  triple(a: number, b: number, c: number): any;
+  sumArr(arr: any): any;
+  getX(o: any): any;
 }
 
 export async function loadModule(
@@ -38,20 +42,51 @@ export async function loadModule(
   const _dynStrLen = exp["dynStrLen"] as (h: number) => number;
   const _dynBool = exp["dynBool"] as (b: number) => number;
   const _dynToBool = exp["dynToBool"] as (h: number) => number;
-  const _dynTypeof = exp["dynTypeof"] as (h: number) => number;
+  const _dynTag = exp["dynTag"] as (h: number) => number;
+  const _dynNull = exp["dynNull"] as () => number;
+  const _dynUndefined = exp["dynUndefined"] as () => number;
+  const _dynArray = exp["dynArray"] as () => number;
+  const _dynArrLen = exp["dynArrLen"] as (h: number) => number;
+  const _dynArrGet = exp["dynArrGet"] as (h: number, i: number) => number;
+  const _dynPush = exp["dynPush"] as (h: number, v: number) => void;
+  const _dynObject = exp["dynObject"] as () => number;
+  const _dynObjLen = exp["dynObjLen"] as (h: number) => number;
+  const _dynObjKeyPtr = exp["dynObjKeyPtr"] as (h: number, i: number) => number;
+  const _dynObjKeyLen = exp["dynObjKeyLen"] as (h: number, i: number) => number;
+  const _dynObjValAt = exp["dynObjValAt"] as (h: number, i: number) => number;
+  const _dynSet = exp["dynSet"] as (o: number, p: number, l: number, v: number) => void;
+  const _dec = new TextDecoder();
   function _box(v: unknown): number {
     if (typeof v === "number") return _dynNumber(v);
     if (typeof v === "boolean") return _dynBool(v ? 1 : 0);
     if (typeof v === "string") { const [p, l] = _writeStr(v); return _dynString(p, l); }
-    return _dynNumber(0); // null/undefined/object — not marshalled in v1
+    if (v === null) return _dynNull();
+    if (v === undefined) return _dynUndefined();
+    if (Array.isArray(v)) { const h = _dynArray(); for (const e of v) _dynPush(h, _box(e)); return h; }
+    if (typeof v === "object") {
+      const h = _dynObject(); const o = v as Record<string, unknown>;
+      for (const k of Object.keys(o)) { const [p, l] = _writeStr(k); _dynSet(h, p, l, _box(o[k])); }
+      return h;
+    }
+    return _dynNumber(0); // functions/symbols — not marshalled
   }
   function _unbox(h: number): unknown {
-    switch (_dynTypeof(h)) {
+    switch (_dynTag(h)) {
       case 3: return _dynNumberValue(h);
-      case 4: return new TextDecoder().decode(new Uint8Array(_mem.buffer, _dynStrBytes(h), _dynStrLen(h)));
+      case 4: return _dec.decode(new Uint8Array(_mem.buffer, _dynStrBytes(h), _dynStrLen(h)));
       case 2: return _dynToBool(h) !== 0;
+      case 1: return null;
       case 0: return undefined;
-      default: return h; // object / function — opaque handle (v1)
+      case 5: { const n = _dynArrLen(h); const a: unknown[] = []; for (let i = 0; i < n; i++) a.push(_unbox(_dynArrGet(h, i))); return a; }
+      case 6: {
+        const n = _dynObjLen(h); const o: Record<string, unknown> = {};
+        for (let i = 0; i < n; i++) {
+          const k = _dec.decode(new Uint8Array(_mem.buffer, _dynObjKeyPtr(h, i), _dynObjKeyLen(h, i)));
+          o[k] = _unbox(_dynObjValAt(h, i));
+        }
+        return o;
+      }
+      default: return h; // function — opaque handle
     }
   }
   return {
@@ -59,5 +94,9 @@ export async function loadModule(
     addOne(x: any): any { return _unbox((exp["addOne"] as (...a: unknown[]) => unknown)(_box(x)) as number); },
     typeName(x: any): any { return _unbox((exp["typeName"] as (...a: unknown[]) => unknown)(_box(x)) as number); },
     exclaim(s: any): any { return _unbox((exp["exclaim"] as (...a: unknown[]) => unknown)(_box(s)) as number); },
+    makePoint(a: number, b: number): any { return _unbox((exp["makePoint"] as (...a: unknown[]) => unknown)(a, b) as number); },
+    triple(a: number, b: number, c: number): any { return _unbox((exp["triple"] as (...a: unknown[]) => unknown)(a, b, c) as number); },
+    sumArr(arr: any): any { return _unbox((exp["sumArr"] as (...a: unknown[]) => unknown)(_box(arr)) as number); },
+    getX(o: any): any { return _unbox((exp["getX"] as (...a: unknown[]) => unknown)(_box(o)) as number); },
   };
 }

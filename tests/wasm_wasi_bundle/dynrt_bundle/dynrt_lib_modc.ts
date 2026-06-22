@@ -383,6 +383,33 @@ export function dynObjLen(obj: i32): i32 {
   return listLen(n[1]);
 }
 
+// #14 follow-up: object-entry enumeration by index — for the host to marshal an `any` object to a
+// real JS object. Keys are stored interleaved [keyPtr, keyLen] in the keys list (slot 3); values in
+// the values list (slot 1). `dynObjKeyPtr` returns the key's UTF-8 DATA pointer (+8 past the
+// Uint8Array header, like dynStrBytes).
+
+/** Byte pointer of the i-th own key's data. */
+/** @export */
+export function dynObjKeyPtr(obj: i32, i: i32): i32 {
+  const n: Int32Array = obj as unknown as Int32Array;
+  const kptr: i32 = listGet(n[3], i * 2);
+  return kptr + 8;
+}
+
+/** Byte length of the i-th own key. */
+/** @export */
+export function dynObjKeyLen(obj: i32, i: i32): i32 {
+  const n: Int32Array = obj as unknown as Int32Array;
+  return listGet(n[3], i * 2 + 1);
+}
+
+/** Value handle of the i-th own entry. */
+/** @export */
+export function dynObjValAt(obj: i32, i: i32): i32 {
+  const n: Int32Array = obj as unknown as Int32Array;
+  return listGet(n[1], i);
+}
+
 // ── Array ops ─────────────────────────────────────────────────────────────────────────────────
 
 /** Append `val` to an array. */
