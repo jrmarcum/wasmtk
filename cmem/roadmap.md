@@ -1,9 +1,17 @@
 # Roadmap, phase status & vision
 
-## Release status (2026-06-15)
+## Release status (2026-06-22)
 
-**Version 1.7.0 is PUBLISHED to JSR** (`@jrmarcum/wasmtk@1.7.0` is `latest`) and the **JSR package
-score is back to 100%** (`total: 18`). The two gaps that had dropped it to 94 are both fixed:
+**Version 1.8.0 is PUBLISHED to JSR** (`@jrmarcum/wasmtk@1.8.0` is `latest`). This is the release that
+ships the **full v1 `async`/Promise surface** for the `wasic` compiler (#13 track, sub-phases
+13.1a–13.5; design + log in [async-design.md](async-design.md), user-facing notes in `CHANGELOG.md`):
+`async`/`await`, `Promise.resolve`/`reject`, `.then`/`.catch`/`.finally`, `Promise.all`/`allSettled`,
+plus the `hybrid` async lift — all standalone, no embedded JS runtime. At the 1.8.0 tag the suite is
+**317/317** (8 async tests `54_*`–`61_*`), bindgen 104/104, jstyper 73/73. (The async track was
+committed post-1.7.0 and is now released as 1.8.0; what was previously "NOT yet published" is shipped.)
+
+The **JSR package score is 100%** (`total: 18`), carried forward from v1.7.0. The two gaps that had
+dropped it to 94 were fixed at 1.7.0 and remain fixed:
 - **`hasProvenance: true`** — provenance now works. It had been silently `false` across v1.6.2–v1.6.5
   even though every Action run succeeded; the committed `publish.yml` was always provenance-correct
   (`id-token: write` + clean `deno publish` + `v*` tag trigger, byte-identical at the tags), so the
@@ -16,11 +24,11 @@ score is back to 100%** (`total: 18`). The two gaps that had dropped it to 94 ar
   explicit type. `deno doc --lint` is now clean across all 15 entrypoints — keep it clean on future
   edits to hold the score.
 
-Suite **309/309** at the 1.7.0 tag (307 at 1.7.0 + 2 Phase-53 tests), bindgen 104/104, jstyper 73/73.
-**Post-1.7.0 the repo added the full #13 async/Promise track (2026-06-15, committed, NOT yet published
-to JSR) — current repo suite is 317/317** (8 async tests `54_*`–`61_*`); a future release will publish
-it. Release mechanism unchanged: `deno task publish` (sync-version → commit → tag `vX.Y.Z` →
-push → `publish.yml` Action runs `deno publish` with provenance).
+Prior release **v1.7.0** (2026-06-15, suite 309/309) shipped `Number.parseInt`/`parseFloat`,
+declaration-order-independent multi-level interface inheritance, and the Canonical ABI return-side
+forward-alignment (callee-allocated string returns + `cabi_post_<name>`). Release mechanism unchanged:
+`deno task publish` (sync-version → commit → tag `vX.Y.Z` → push → `publish.yml` Action runs
+`deno publish` with provenance).
 
 ## Compiler phase status
 
@@ -234,21 +242,28 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
 
 ### Big tracks (the "last items")
 
-12. **Ecosystem — `universalWasmLoader` (polyglot loaders)** — **substantially DONE 2026-06-15; full
-    detail + publishing matrix in [vision.md](vision.md).** Repos live under
+12. **Ecosystem — `universalWasmLoader` (polyglot loaders)** — **substantially DONE; updated
+    2026-06-22; full detail + publishing matrix in [vision.md](vision.md).** Repos live under
     `D:\Programs\_ProgramExamples\Example_Programs\GithubProjects\universalWasmLoader\` (each its own
     git repo, on `main`, with its own portable `cmem/`). **`SPEC.md` is at 3.0.0** (canonical
-    callee-allocated string returns + `cabi_post_<name>`). **Five ports implemented + verified on SPEC
-    3.0.0:** `-js` (reference — **PUBLISHED `@jrmarcum/universal-wasm-loader@1.0.8`, JSR score 100,
-    provenance true**), `-rs` (`cargo test` 24/24), `-py` (string tests pass), `-jvm` (`gradlew test`
-    24/24), `-dart` (**new, web-first** via `dart:js_interop`; `dart test -p chrome` 7/7). Each of
-    `-rs`/`-py`/`-jvm`/`-dart` has **`run:`-only publish CI + a bump mechanism** (pending owner
-    registry secrets — see vision.md matrix). **Runtime + WASI strategy decided 2026-06-15** (in
-    vision.md → "Loader runtime + WASI strategy"): native ports use **wasmtime** (`-go` = **wasmtime-go**
-    over wazero for speed; Zig/`-c` = wasmtime C API; `-dotnet` = Wasmtime NuGet) with built-in WASI;
-    web ports (`-js`, `-dart`-web) host `WebAssembly` + hand-rolled shim; `-jvm` keeps Chicory +
-    `chicory-wasi`; `-dart` dual-backend (web now / native `dart:ffi`→wasmtime later). **Remaining:**
-    stubs `-go`/`-dotnet`/`-c` (build fresh against 3.0.0; C→vcpkg, Zig→zigistry). **SPEC §10 loader
+    callee-allocated string returns + `cabi_post_<name>`). **ALL TEN ports are implemented on SPEC
+    3.0.0 — NO stubs remain (updated 2026-06-22):** `-js` (reference — **PUBLISHED
+    `@jrmarcum/universal-wasm-loader@1.0.8`, JSR score 100, provenance true**), `-v` (vlang — **PUBLISHED
+    to VPM**), `-zig` (**PUBLISHED to zigistry**), `-py` (**PUBLISHED to PyPI**; string tests pass),
+    `-rs` (`cargo test` 24/24), `-jvm` (`gradlew test` 24/24), `-dart` (web-first `dart:js_interop`;
+    `dart test -p chrome` 7/7), `-c` (header + vcpkg `ports/` + tests), `-go` (wazero, 7/7; commit
+    `c7d9bb0`), `-dotnet` (Wasmtime, 7/7; commit `98dcf2f`). **PUBLISHED so far = 4** (`-js`, `-v`,
+    `-zig`, `-py`). **The remaining #12 gap is PUBLISHING the other 6:** `-rs`→crates.io (awaiting
+    `CARGO_REGISTRY_TOKEN`), `-go`→pkg.go.dev (needs a `vX.Y.Z` tag), `-dart`→pub.dev, `-dotnet`→NuGet,
+    `-jvm`→Maven Central (local tags `v0.1.0`–`v0.1.2` exist but it is NOT live yet — pending
+    `io.github.jrmarcum` namespace verification + GPG/Sonatype secrets), `-c`→vcpkg port. Each of
+    `-rs`/`-py`/`-jvm`/`-dart` already has **`run:`-only publish CI
+    + a bump mechanism** (pending owner registry secrets — see vision.md matrix). **Runtime + WASI
+    strategy decided 2026-06-15** (in vision.md → "Loader runtime + WASI strategy"): native ports use
+    **wasmtime** (`-go` was decided as wasmtime-go but **shipped on wazero**; Zig/`-c` = wasmtime C API;
+    `-dotnet` = Wasmtime NuGet) with built-in WASI; web ports (`-js`, `-dart`-web) host `WebAssembly` +
+    hand-rolled shim; `-jvm` keeps Chicory + `chicory-wasi`; `-dart` dual-backend (web now / native
+    `dart:ffi`→wasmtime later). **SPEC §10 loader
     capabilities (`_initialize` call + minimal WASI-P1 shim) IMPLEMENTED in `-js` 2026-06-15** (suite
     24→26; lets I/O-using `modc`
     libraries load in a host with no native WASI) — propagation to `-rs`/`-py`/`-jvm`/`-dart` pending.
@@ -291,12 +306,15 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     51.** Largest single track; `javyc` (QuickJS) is the interim fallback until it lands.
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
-2026-06-15; **#13 async track COMPLETE 2026-06-15** (13.1a–13.5: full v1 Promise API surface + hybrid
-lift; suite 317/317); **#12 loaders substantially DONE 2026-06-15** (`-js` published;
-`-rs`/`-py`/`-jvm`/`-dart` implemented + SPEC-3.0.0-aligned + publish CI; stubs `-go`/`-dotnet`/`-c`
-remain — see vision.md). The remaining work is **#14 own dynamic runtime**, the deferred **P2 container**
-(embed component type — a wrap), and finishing **#12** (the 3 stub ports + SPEC §10 loader capabilities +
-owner registry secrets). A README pass to document the now-complete async surface is also due.
+2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1
+Promise API surface + hybrid lift; suite 317/317; README async surface documented — see lines ~197/
+834/1010 of README.md and `CHANGELOG.md`); **#12 loaders substantially DONE — updated 2026-06-22**
+(`-js` published; `-v` published to VPM; `-c`/`-zig`/`-py`/`-rs`/`-jvm`/`-dart` implemented on
+SPEC-3.0.0; **all 10 ports now implemented — no stubs remain**; **4 published** (`-js`, `-v`, `-zig`,
+`-py`), the other 6 are built-but-unpublished — see vision.md). The remaining work is **#14 own dynamic
+runtime**, the deferred **P2 container** (embed component type — a wrap), and finishing **#12**
+(PUBLISHING the 6 remaining built ports to their registries, SPEC §10 loader-cap propagation, and owner
+registry secrets).
 
 ## Congruent polyglot-producer goal + ABI posture (added 2026-06-03 — full detail in [polyglot-producers.md](polyglot-producers.md))
 
@@ -368,8 +386,11 @@ chains after a single-line `if` were dropped; regression `15_ElseChainForms`), p
 Suite **309/309**, bindgen 104/104,
 jstyper 73/73. **Phase 53 COMPLETE 2026-06-15** (`Number.parseInt`/`parseFloat` + bare forms;
 multi-level interface inheritance, declaration-order independent). **ABI forward-alignment
-(return side) COMPLETE 2026-06-15.** **#12 loaders substantially DONE 2026-06-15** (`-js` published
-`@jrmarcum/universal-wasm-loader@1.0.8`; `-rs`/`-py`/`-jvm`/`-dart` implemented + SPEC-3.0.0 + publish
-CI; stubs `-go`/`-dotnet`/`-c` remain). **#13 async COMPLETE 2026-06-15** (13.1a–13.5; suite 317/317).
-Remaining: #14 own runtime, the deferred P2 container, and finishing #12 (stub ports + SPEC §10 loader
-capabilities + owner registry secrets). Full analysis in CLAUDE.md § "TypeScript Feature Gap Analysis".
+(return side) COMPLETE 2026-06-15.** **#12 loaders substantially DONE — updated 2026-06-22:** all 10
+ports (`-js`/`-rs`/`-py`/`-jvm`/`-dart`/`-c`/`-zig`/`-v`/`-go`/`-dotnet`) implemented on SPEC-3.0.0,
+**no stubs remain**; **4 published** (`-js`→JSR, `-v`→VPM, `-zig`→zigistry, `-py`→PyPI); the other 6
+are built-but-unpublished (awaiting registry pushes/tags/secrets — e.g. `-jvm` has local tags
+`v0.1.0`–`v0.1.2` but isn't live on Maven Central yet). **#13 async COMPLETE + PUBLISHED as wasmtk
+v1.8.0 (2026-06-22; suite 317/317).** Remaining: #14 own runtime, the deferred P2 container, and
+finishing #12 (publish the 6 remaining built ports + SPEC §10 loader capabilities + owner registry
+secrets). Full analysis in CLAUDE.md § "TypeScript Feature Gap Analysis".

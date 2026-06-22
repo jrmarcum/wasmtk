@@ -184,9 +184,9 @@ with the same "update the project memory" / "look for code issues" triggers as w
 | `universalWasmLoader-js`     | TypeScript / JS     | WebAssembly (host) | JSR (+ npm compat) |
 | `universalWasmLoader-rs`     | Rust                | wasmtime crate     | crates.io        |
 | `universalWasmLoader-py`     | Python              | wasmtime-py        | PyPI             |
-| `universalWasmLoader-go`     | Go                  | wasmtime-go        | pkg.go.dev       |
+| `universalWasmLoader-go`     | Go                  | wazero (shipped; wasmtime-go was the decision) | pkg.go.dev |
 | `universalWasmLoader-jvm`    | Java / Kotlin       | Chicory            | Maven Central    |
-| `universalWasmLoader-dotnet` | C# / .NET           | wasmtime-dotnet*   | NuGet            |
+| `universalWasmLoader-dotnet` | C# / .NET           | Wasmtime (.NET)    | NuGet            |
 | `universalWasmLoader-dart`   | Dart (web-first)    | browser WASM (js_interop) | pub.dev   |
 | `universalWasmLoader-c`      | C (Zig/V/Julia)     | wasmtime C API     | header-only      |
 
@@ -205,7 +205,7 @@ alternative (wazero), so even `-go` uses **wasmtime-go** (CGO + native lib) rath
 | --- | --- | --- |
 | `-rs` | wasmtime crate | `wasmtime-wasi` (`WasiP1Ctx`; needs `Store<WasiP1Ctx>`) |
 | `-py` | wasmtime-py | `linker.define_wasi(WasiConfig())` |
-| `-go` | **wasmtime-go** (decided over wazero — speed) | wasmtime built-in |
+| `-go` | **decided: wasmtime-go** (over wazero — speed); **shipped: wazero** (pure-Go, no cgo — `c7d9bb0`) — swap to wasmtime-go is a future change | wazero built-in (as shipped) |
 | `-c`/`-cpp`, **Zig** | wasmtime C API (Zig via `@cImport`, cleanest) | wasmtime built-in |
 | `-dotnet` | Wasmtime NuGet | wasmtime built-in |
 | `-js` | host `WebAssembly` (Deno/Node/browser) | hand-rolled shim (`wasi.js`) ✅ |
@@ -248,22 +248,43 @@ tag `vX.Y.Z` → GitHub Action `deno publish` with provenance).
 |---|---|---|---|
 | `-js` | JSR | `deno.json` `version` | ✅ `deno task bump` / `deno task publish` — **PUBLISHED 1.0.8** (provenance, score 100) |
 | `-rs` | crates.io | `Cargo.toml` `version` | ✅ run:-only workflow + `scripts/bump.sh`/`release.sh` (2026-06-15). Secret: `CARGO_REGISTRY_TOKEN` |
-| `-py` | PyPI | `pyproject.toml` `version` | ✅ run:-only workflow + `pixi run bump`/`scripts/release.sh`. Secret: `PYPI_API_TOKEN` (project-scoped) |
-| `-go` | pkg.go.dev | **git tag `vX.Y.Z`** (no version file) | `git tag vX.Y.Z` + push → proxy auto-indexes (stub — no CI yet) |
+| `-py` | PyPI | `pyproject.toml` `version` | ✅ implemented **AND PUBLISHED to PyPI** (2026-06-22). run:-only workflow + `pixi run bump`/`scripts/release.sh`; secret `PYPI_API_TOKEN` (project-scoped) |
+| `-go` | pkg.go.dev | **git tag `vX.Y.Z`** (no version file) | ✅ implemented (wazero, SPEC 3.0.0, 7/7 tests; commit `c7d9bb0`) — **NOT yet published**: `git tag vX.Y.Z` + push → proxy auto-indexes (no tag yet) |
 | `-jvm` | Maven Central | `build.gradle.kts` `version` | ✅ run:-only workflow + `./gradlew bump`. Secrets: `MAVEN_CENTRAL_USERNAME/PASSWORD` + `GPG_PRIVATE_KEY/GPG_PASSPHRASE`; needs `io.github.jrmarcum` namespace verification |
-| `-dotnet` | NuGet | `.csproj` `<Version>` | `dotnet pack` + `dotnet nuget push` (stub — no CI yet) |
+| `-dotnet` | NuGet | `.csproj` `<Version>` | ✅ implemented (Wasmtime, SPEC 3.0.0, 7/7 tests; commit `98dcf2f`) — **NOT yet published**: `dotnet pack` + `dotnet nuget push` (no tag/CI yet) |
 | `-dart` | pub.dev | `pubspec.yaml` `version` | ✅ run:-only workflow + `scripts/bump.dart`/`release.sh`. Secret: `PUB_DEV_CREDENTIALS` (from `dart pub login`) |
-| `-c` (C/C++) | **vcpkg** ([vcpkg.io](https://vcpkg.io/en/)) | `vcpkg.json` `version` | a vcpkg **port** (`portfile.cmake` + `vcpkg.json`) submitted to the vcpkg registry (PR to `microsoft/vcpkg`) or served from a custom registry; the portfile fetches the repo at a tagged ref |
-| Zig | **zigistry** ([zigistry.dev](https://zigistry.dev/)) | `build.zig.zon` `.version` | public repo + git tag `vX.Y.Z`; zigistry.dev indexes GitHub Zig packages (those with a `build.zig.zon`), fetched by URL+hash |
+| `-c` (C/C++) | **vcpkg** ([vcpkg.io](https://vcpkg.io/en/)) | `vcpkg.json` `version` | ✅ implemented (header + `ports/` + tests). Publish = a vcpkg **port** (`portfile.cmake` + `vcpkg.json`) PR'd to `microsoft/vcpkg` or served from a custom registry; the portfile fetches the repo at a tagged ref |
+| `-zig` | **zigistry** ([zigistry.dev](https://zigistry.dev/)) | `build.zig.zon` `.version` | ✅ implemented **AND PUBLISHED to zigistry** (2026-06-22; own repo `build.zig`/`src/`, indexed by zigistry.dev from the tagged GitHub repo) |
+| `-v` (vlang) | **VPM** (V package manager) | `v.mod` `version` | ✅ implemented **AND PUBLISHED** to VPM (own repo: `uwl/` + `v.mod`) |
 
-`*` `-dotnet` runtime is unconfirmed (no `.csproj` yet — stub). **Maturity (2026-06-15):** `-js`
-(reference), `-rs`, `-py`, `-jvm`, and `-dart` are all real implementations **on SPEC 3.0.0**
-(canonical callee-allocated string returns + `cabi_post`) and **verified** against their own test
-suites (`-js` 24/24, `-rs` `cargo test` 24/24, `-jvm` `./gradlew test` 24/24, `-py` 3 string tests
+**Maturity (updated 2026-06-22): ALL TEN ports are now real implementations on SPEC 3.0.0** (canonical
+callee-allocated string returns + `cabi_post`) — **no stubs remain.** `-js` (reference), `-rs`, `-py`,
+`-jvm`, `-dart`, `-c`, `-zig`, `-v`, `-go`, **and `-dotnet`**. Verified against their own test suites
+where run: `-js` 24/24, `-rs` `cargo test` 24/24, `-jvm` `./gradlew test` 24/24, `-py` 3 string tests
 pass + 13 unrelated pre-existing `.wat`-harness failures, `-dart` `dart test -p chrome` 7/7 in real
-Chrome). `-dart` is **web-first** (`dart:js_interop` over browser `WebAssembly`; runtime decision
-RESOLVED 2026-06-15 — a native `dart:ffi` backend is a possible future add). `-go` / `-dotnet` are
-stubs (no source) → build fresh against SPEC 3.0.0. **C/Zig publishing RESOLVED (owner, 2026-06-15):**
+Chrome, `-go` 7/7, `-dotnet` 7/7. The remaining #12 gap is **publishing only** — most ports are built
+but not yet pushed to their registries:
+
+- **PUBLISHED (4):** `-js` (`@jrmarcum/universal-wasm-loader@1.0.8` on JSR, score 100, provenance
+  true); `-v` (vlang) on **VPM**; `-zig` on **zigistry** (owner-confirmed 2026-06-22); `-py` on
+  **PyPI** (owner-confirmed 2026-06-22).
+- **Completed, NOT yet published (6):** `-rs` (crates.io — `run:`-only CI wired, awaiting
+  `CARGO_REGISTRY_TOKEN`); `-go` (pkg.go.dev — needs a `vX.Y.Z` git tag; commit `c7d9bb0`); `-dart`
+  (pub.dev — workflow + `scripts/bump.dart` present, no tag); `-dotnet` (NuGet — `.csproj` +
+  `Loader.cs`/`Callbacks.cs`/`InstancePool.cs`/`WasmModule.cs`/`Wit.cs`, commit `98dcf2f`, no tag);
+  `-jvm` (Maven Central — `run:`-only workflow + **local tags `v0.1.0`/`v0.1.1`/`v0.1.2`**, but per
+  owner NOT yet live on Maven Central; pending `io.github.jrmarcum` namespace verification + GPG/
+  Sonatype secrets); `-c` (vcpkg — header + `ports/` + tests; needs a port PR / tagged ref).
+
+**`-dotnet`** is implemented **on Wasmtime** (the `.NET` runtime decision is now realized — it had a
+`*`-footnote "no `.csproj` yet — stub" that is now obsolete). **Deviation to note:** `-go` shipped on
+**wazero** (pure-Go, no cgo), NOT the **wasmtime-go** the runtime-strategy decision (2026-06-15) called
+for — a swap to wasmtime-go is a possible future change but wazero is what's implemented and tested.
+`-dart` is **web-first** (`dart:js_interop` over browser `WebAssembly`; runtime decision RESOLVED
+2026-06-15 — a native `dart:ffi` backend is a possible future add). `-c` ships the
+`universal_wasm_loader.h` header + vcpkg `ports/` + `tests/`; `-zig` is its own repo
+(`build.zig`/`build.zig.zon` + `src/`, vendored `wasmtime.dll`), no longer folded under `-c`. **C/Zig
+publishing RESOLVED (owner, 2026-06-15):**
 C/C++ → **vcpkg** (vcpkg.io); Zig → **zigistry.dev**. (Both are git-tag/source-fetch ecosystems rather
 than upload-a-blob registries — vcpkg via a port that fetches a tagged ref, zigistry via GitHub
 indexing of `build.zig.zon`.)
