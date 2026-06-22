@@ -315,9 +315,12 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     (`===`)/`dynAdd` (`+`). Surfaced 3 wasic gaps (worked around in the lib, logged in
     compiler-bugs.md): str-concat-of-two-calls, Float64Array-elem comparison mis-infers i32, and
     **empty-`[]` is a shared static cap-0 array whose cap-0 grow is broken** (the latter hardens any
-    future reconstruct-then-`push`). **Next:** 1b virtual `wasmtk:dynrt` import + tree-shake; 2 the
-    interpreter (eval/`new Function`; `rtcore`+hand-WAT revisit); 3 wasic `any` + auto-merge +
-    migrate `hybrid --auto`'s dynamic target off `javyc`. Still the largest remaining track.
+    future reconstruct-then-`push`). **Increment 1b — virtual `wasmtk:dynrt` import + tree-shake —
+    SHIPPED 2026-06-22** (embedded in `src/wasm/caps_bytes.ts` as a 6th registry entry via
+    `gen_caps_bytes.ts`; the `tsbundler` resolver is generic so no resolver change; no `modc` step;
+    pipeline test `18k`). **Next:** 2 the interpreter (eval/`new Function`; `rtcore`+hand-WAT
+    revisit); 3 wasic `any` + auto-merge + migrate `hybrid --auto`'s dynamic target off `javyc`.
+    Still the largest remaining track.
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
 2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1

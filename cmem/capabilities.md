@@ -38,6 +38,11 @@ recompiled fixtures. A program references a cap by NAME via the virtual specifie
 `import { setNew, setAdd } from "wasmtk:set"` (`:map` / `:date` / `:json` / `:regex`) — **no fixture
 `.wasm` on disk needed**, and the pipeline is just `wasic` + `run` (no separate `modc` step).
 
+**The #14 dynamic runtime rides this same mechanism** (2026-06-22): the own dynamic runtime
+(boxed-value + object model, a SEPARATE track — see [dynrt-design.md](dynrt-design.md)) is registered
+as a 6th embedded entry `id: "dynrt"` and imported via `wasmtk:dynrt`. It is not a Tier-1 stdlib cap;
+it just reuses the embed + virtual-import + tree-shake plumbing. Test `18k`.
+
 **Tree-shake:** `tsbundler` resolves `wasmtk:<cap>` to the registry entry and records a
 `WasmImportEntry` carrying the embedded `bytes` + `witText`; only capabilities a program actually
 imports get merged. Unknown ids throw a clear error listing the available caps.

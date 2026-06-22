@@ -69,8 +69,26 @@ identity) and `dynAdd` (`+`: string concat if either operand is a string, else n
 increment); prototype mutation; string→number coercion; array/object stringification in `dynAdd`
 (→ `""`); a hashmap-backed property map; UTF-16/multi-byte string fidelity (ASCII-accurate, as
 elsewhere in wasic). Absent object key returns sentinel −1 (the future wasic `any` lowering maps it
-to `undefined`). The `wasmtk:dynrt` virtual-import + embedded-bytes tree-shake delivery (like the
-caps' `18h`) is a follow-up — increment 1 uses the explicit `./dynrt_lib_modc.wasm` import pipeline.
+to `undefined`).
+
+## Increment 1b — virtual `wasmtk:dynrt` import + tree-shake (SHIPPED 2026-06-22)
+
+The runtime is now embedded in the compiler and importable BY NAME, exactly like the Tier-1 caps:
+`import { dynNumber, dynObject, … } from "wasmtk:dynrt"`. No `modc` step, no fixture `.wasm` on disk
+— the pipeline is just `wasic` + `run`, and the runtime is bundled only when imported (feature-level
+tree-shake, brief §7-#4). Wiring (one line each, the resolver in `tsbundler.ts` is generic):
+
+- `scripts/gen_caps_bytes.ts` — added `{ id: "dynrt", dir: "dynrt_bundle", base: "dynrt_lib_modc" }`
+  to the `CAPS` list; regenerated `src/wasm/caps_bytes.ts` (dynrt = 4470 bytes embedded). No resolver
+  change: `tsbundler.ts` slices `wasmtk:<id>` and looks it up in `CAPABILITIES` generically.
+- Driver `tests/wasm_wasi_bundle/dynrt_vcap_bundle/main_wasic.ts` imports from `wasmtk:dynrt`;
+  pipeline test `tests/wasm_wasi/18k_DynRuntimeVirtualImport.ts` (wasic → run). **PASS.**
+
+**To regenerate after editing the dynrt library:** `wasmtk modc
+tests/wasm_wasi_bundle/dynrt_bundle/dynrt_lib_modc.ts` → then `deno run --allow-read --allow-write
+scripts/gen_caps_bytes.ts` → then `deno task install` (so the installed binary carries the new bytes).
+
+Deferred from 1b (not blocking): a hashmap-backed property map and f64-aware `dynToNumber(string)`.
 
 ## Compiler gaps surfaced (worked around in the library; candidates for a real wasic fix)
 
@@ -94,10 +112,11 @@ recorded in `compiler-bugs.md`; each could later be fixed in `src/wasic.ts` and 
    lists (above). A real compiler fix would make `[]` heap-allocate with nonzero capacity and make the
    grow use `max(cap*2, MIN)` — this would also harden every future reconstruct-then-`push` user.
 
-## Next increments (planned, not started)
+## Next increments
 
-- **1b (small):** `wasmtk:dynrt` virtual-import + embedded bytes (tree-shake delivery, like `18h`);
-  optionally a hashmap-backed property map; f64-aware `dynToNumber(string)`.
+- **1a — value + object model — ✅ SHIPPED 2026-06-22** (test `18j`; see above).
+- **1b — `wasmtk:dynrt` virtual import + tree-shake — ✅ SHIPPED 2026-06-22** (test `18k`; see above).
+  Deferred extras (optional, not started): hashmap-backed property map; f64-aware `dynToNumber(string)`.
 - **2 — the interpreter:** a JS expression parser + tree-walking evaluator over boxed values for
   `eval`/`new Function`. This is where the **`rtcore` extraction + hand-WAT** decision (3 above)
   is revisited, since by then the exact shared-helper set is known.

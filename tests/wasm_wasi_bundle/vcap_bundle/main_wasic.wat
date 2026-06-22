@@ -1555,18 +1555,27 @@
     local.get 1
     i32.const 4
     i32.eq
-    local.get 1
-    i32.const 6
-    i32.eq
-    i32.or
-    local.get 1
-    i32.const 9
-    i32.eq
-    i32.or
-    local.get 1
-    i32.const 11
-    i32.eq
-    i32.or
+    if (result i32)  ;; label = @1
+      i32.const 1
+    else
+      local.get 1
+      i32.const 6
+      i32.eq
+    end
+    if (result i32)  ;; label = @1
+      i32.const 1
+    else
+      local.get 1
+      i32.const 9
+      i32.eq
+    end
+    if (result i32)  ;; label = @1
+      i32.const 1
+    else
+      local.get 1
+      i32.const 11
+      i32.eq
+    end
     if  ;; label = @1
       i32.const 30
       return
@@ -2163,18 +2172,27 @@
               local.get 3
               i32.const 32
               i32.eq
-              local.get 3
-              i32.const 9
-              i32.eq
-              i32.or
-              local.get 3
-              i32.const 10
-              i32.eq
-              i32.or
-              local.get 3
-              i32.const 13
-              i32.eq
-              i32.or
+              if (result i32)  ;; label = @6
+                i32.const 1
+              else
+                local.get 3
+                i32.const 9
+                i32.eq
+              end
+              if (result i32)  ;; label = @6
+                i32.const 1
+              else
+                local.get 3
+                i32.const 10
+                i32.eq
+              end
+              if (result i32)  ;; label = @6
+                i32.const 1
+              else
+                local.get 3
+                i32.const 13
+                i32.eq
+              end
               if  ;; label = @6
                 global.get $json_global1
                 i32.const 1
@@ -2191,18 +2209,18 @@
       end
     end)
   (func $json__fn8 (param i32 i32) (result i32)
-    (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
+    (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $json_global1
-    local.tee 12
+    local.tee 11
     i32.const 1
-    local.tee 13
+    local.tee 12
     i32.add
     global.set $json_global1
     global.get $json_global1
-    local.tee 14
+    local.tee 13
     local.set 2
     i32.const 1
-    local.tee 15
+    local.tee 14
     local.set 3
     block  ;; label = @1
       loop  ;; label = @2
@@ -2254,12 +2272,12 @@
       end
     end
     global.get $json_global1
-    local.tee 16
+    local.tee 15
     local.set 3
     local.get 3
-    local.tee 17
+    local.tee 16
     local.get 2
-    local.tee 18
+    local.tee 17
     i32.sub
     local.set 4
     i32.const 8
@@ -2273,7 +2291,7 @@
     i32.const 0
     local.set 6
     local.get 2
-    local.tee 19
+    local.tee 18
     local.set 2
     block  ;; label = @1
       loop  ;; label = @2
@@ -2295,7 +2313,7 @@
             if  ;; label = @5
               block  ;; label = @6
                 local.get 2
-                local.tee 8
+                local.tee 7
                 i32.const 1
                 i32.add
                 local.set 2
@@ -2303,13 +2321,72 @@
                 local.get 1
                 local.get 2
                 call $json__fn2
-                local.set 7
-                local.get 7
+                local.set 4
+                local.get 4
                 i32.const 110
                 i32.eq
                 if  ;; label = @7
                   i32.const 10
                   local.set 4
+                else
+                  local.get 4
+                  i32.const 116
+                  i32.eq
+                  if  ;; label = @8
+                    i32.const 9
+                    local.set 4
+                  else
+                    local.get 4
+                    i32.const 114
+                    i32.eq
+                    if  ;; label = @9
+                      i32.const 13
+                      local.set 4
+                    else
+                      local.get 4
+                      i32.const 98
+                      i32.eq
+                      if  ;; label = @10
+                        i32.const 8
+                        local.set 4
+                      else
+                        local.get 4
+                        i32.const 102
+                        i32.eq
+                        if  ;; label = @11
+                          i32.const 12
+                          local.set 4
+                        else
+                          local.get 4
+                          i32.const 34
+                          i32.eq
+                          if  ;; label = @12
+                            i32.const 34
+                            local.set 4
+                          else
+                            local.get 4
+                            i32.const 92
+                            i32.eq
+                            if  ;; label = @13
+                              i32.const 92
+                              local.set 4
+                            else
+                              local.get 4
+                              i32.const 47
+                              i32.eq
+                              if  ;; label = @14
+                                i32.const 47
+                                local.set 4
+                              else
+                                local.get 4
+                                local.set 4
+                              end
+                            end
+                          end
+                        end
+                      end
+                    end
+                  end
                 end
               end
             end
@@ -2321,14 +2398,14 @@
             local.get 4
             i32.store8
             local.get 6
-            local.tee 9
+            local.tee 8
             i32.const 1
-            local.tee 10
+            local.tee 9
             i32.add
             local.set 6
             local.get 2
-            local.tee 11
-            local.get 10
+            local.tee 10
+            local.get 9
             i32.add
             local.set 2
           end
@@ -2337,15 +2414,15 @@
       end
     end
     local.get 3
-    local.tee 20
+    local.tee 19
     i32.const 1
-    local.tee 21
+    local.tee 20
     i32.add
     global.set $json_global1
     local.get 6
     global.set $json_global2
     local.get 5
-    local.tee 22
+    local.tee 21
     return)
   (func $json__fn9 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32)
@@ -2433,10 +2510,13 @@
               local.get 5
               i32.const 48
               i32.lt_s
-              local.get 5
-              i32.const 57
-              i32.gt_s
-              i32.or
+              if (result i32)  ;; label = @6
+                i32.const 1
+              else
+                local.get 5
+                i32.const 57
+                i32.gt_s
+              end
               if  ;; label = @6
                 i32.const 0
                 local.set 4
@@ -2465,13 +2545,16 @@
     global.get $json_global1
     local.get 1
     i32.lt_s
-    local.get 0
-    local.get 1
-    global.get $json_global1
-    call $json__fn2
-    i32.const 46
-    i32.eq
-    i32.and
+    if (result i32)  ;; label = @1
+      local.get 0
+      local.get 1
+      global.get $json_global1
+      call $json__fn2
+      i32.const 46
+      i32.eq
+    else
+      i32.const 0
+    end
     if  ;; label = @1
       block  ;; label = @2
         global.get $json_global1
@@ -2506,13 +2589,21 @@
                   local.get 5
                   i32.const 48
                   i32.lt_s
-                  local.get 5
-                  i32.const 57
-                  i32.gt_s
-                  i32.or
+                  if (result i32)  ;; label = @8
+                    i32.const 1
+                  else
+                    local.get 5
+                    i32.const 57
+                    i32.gt_s
+                  end
                   if  ;; label = @8
                     i32.const 0
                     local.set 4
+                  else
+                    global.get $json_global1
+                    i32.const 1
+                    i32.add
+                    global.set $json_global1
                   end
                 end
               end
@@ -2535,10 +2626,13 @@
         local.get 4
         i32.const 101
         i32.eq
-        local.get 4
-        i32.const 69
-        i32.eq
-        i32.or
+        if (result i32)  ;; label = @3
+          i32.const 1
+        else
+          local.get 4
+          i32.const 69
+          i32.eq
+        end
         if  ;; label = @3
           block  ;; label = @4
             global.get $json_global1
@@ -2559,10 +2653,13 @@
                 local.get 4
                 i32.const 43
                 i32.eq
-                local.get 4
-                i32.const 45
-                i32.eq
-                i32.or
+                if (result i32)  ;; label = @7
+                  i32.const 1
+                else
+                  local.get 4
+                  i32.const 45
+                  i32.eq
+                end
                 if  ;; label = @7
                   global.get $json_global1
                   i32.const 1
@@ -2598,13 +2695,21 @@
                       local.get 5
                       i32.const 48
                       i32.lt_s
-                      local.get 5
-                      i32.const 57
-                      i32.gt_s
-                      i32.or
+                      if (result i32)  ;; label = @10
+                        i32.const 1
+                      else
+                        local.get 5
+                        i32.const 57
+                        i32.gt_s
+                      end
                       if  ;; label = @10
                         i32.const 0
                         local.set 4
+                      else
+                        global.get $json_global1
+                        i32.const 1
+                        i32.add
+                        global.set $json_global1
                       end
                     end
                   end
@@ -3419,10 +3524,13 @@
     local.get 0
     i32.const 48
     i32.ge_s
-    local.get 0
-    i32.const 57
-    i32.le_s
-    i32.and
+    if (result i32)  ;; label = @1
+      local.get 0
+      i32.const 57
+      i32.le_s
+    else
+      i32.const 0
+    end
     if  ;; label = @1
       i32.const 1
       return
@@ -3430,10 +3538,13 @@
     local.get 0
     i32.const 65
     i32.ge_s
-    local.get 0
-    i32.const 90
-    i32.le_s
-    i32.and
+    if (result i32)  ;; label = @1
+      local.get 0
+      i32.const 90
+      i32.le_s
+    else
+      i32.const 0
+    end
     if  ;; label = @1
       i32.const 1
       return
@@ -3441,10 +3552,13 @@
     local.get 0
     i32.const 97
     i32.ge_s
-    local.get 0
-    i32.const 122
-    i32.le_s
-    i32.and
+    if (result i32)  ;; label = @1
+      local.get 0
+      i32.const 122
+      i32.le_s
+    else
+      i32.const 0
+    end
     if  ;; label = @1
       i32.const 1
       return
@@ -3462,26 +3576,41 @@
     local.get 0
     i32.const 32
     i32.eq
-    local.get 0
-    i32.const 9
-    i32.eq
-    i32.or
-    local.get 0
-    i32.const 10
-    i32.eq
-    i32.or
-    local.get 0
-    i32.const 13
-    i32.eq
-    i32.or
-    local.get 0
-    i32.const 12
-    i32.eq
-    i32.or
-    local.get 0
-    i32.const 11
-    i32.eq
-    i32.or
+    if (result i32)  ;; label = @1
+      i32.const 1
+    else
+      local.get 0
+      i32.const 9
+      i32.eq
+    end
+    if (result i32)  ;; label = @1
+      i32.const 1
+    else
+      local.get 0
+      i32.const 10
+      i32.eq
+    end
+    if (result i32)  ;; label = @1
+      i32.const 1
+    else
+      local.get 0
+      i32.const 13
+      i32.eq
+    end
+    if (result i32)  ;; label = @1
+      i32.const 1
+    else
+      local.get 0
+      i32.const 12
+      i32.eq
+    end
+    if (result i32)  ;; label = @1
+      i32.const 1
+    else
+      local.get 0
+      i32.const 11
+      i32.eq
+    end
     if  ;; label = @1
       i32.const 1
       return
@@ -3665,12 +3794,15 @@
                 local.get 8
                 i32.const 92
                 i32.eq
-                local.get 4
-                i32.const 1
-                i32.add
-                local.get 1
-                i32.lt_s
-                i32.and
+                if (result i32)  ;; label = @7
+                  local.get 4
+                  i32.const 1
+                  i32.add
+                  local.get 1
+                  i32.lt_s
+                else
+                  i32.const 0
+                end
                 if  ;; label = @7
                   block  ;; label = @8
                     local.get 0
@@ -3687,13 +3819,52 @@
                       local.get 3
                       i32.const 48
                       i32.ge_s
-                      local.get 3
-                      i32.const 57
-                      i32.le_s
-                      i32.and
+                      if (result i32)  ;; label = @10
+                        local.get 3
+                        i32.const 57
+                        i32.le_s
+                      else
+                        i32.const 0
+                      end
                       if  ;; label = @10
                         i32.const 1
                         local.set 6
+                      end
+                    else
+                      local.get 8
+                      i32.const 119
+                      i32.eq
+                      if  ;; label = @10
+                        local.get 3
+                        call $regex__fn3
+                        i32.const 1
+                        i32.eq
+                        if  ;; label = @11
+                          i32.const 1
+                          local.set 6
+                        end
+                      else
+                        local.get 8
+                        i32.const 115
+                        i32.eq
+                        if  ;; label = @11
+                          local.get 3
+                          call $regex__fn4
+                          i32.const 1
+                          i32.eq
+                          if  ;; label = @12
+                            i32.const 1
+                            local.set 6
+                          end
+                        else
+                          local.get 3
+                          local.get 8
+                          i32.eq
+                          if  ;; label = @12
+                            i32.const 1
+                            local.set 6
+                          end
+                        end
                       end
                     end
                     local.get 4
@@ -3750,10 +3921,13 @@
                         local.get 3
                         local.get 8
                         i32.ge_s
-                        local.get 3
-                        local.get 9
-                        i32.le_s
-                        i32.and
+                        if (result i32)  ;; label = @11
+                          local.get 3
+                          local.get 9
+                          i32.le_s
+                        else
+                          i32.const 0
+                        end
                         if  ;; label = @11
                           i32.const 1
                           local.set 6
@@ -3837,10 +4011,13 @@
           local.get 3
           i32.const 48
           i32.ge_s
-          local.get 3
-          i32.const 57
-          i32.le_s
-          i32.and
+          if (result i32)  ;; label = @4
+            local.get 3
+            i32.const 57
+            i32.le_s
+          else
+            i32.const 0
+          end
           if (result i32)  ;; label = @4
             i32.const 1
           else
@@ -3855,10 +4032,13 @@
           local.get 3
           i32.const 48
           i32.ge_s
-          local.get 3
-          i32.const 57
-          i32.le_s
-          i32.and
+          if (result i32)  ;; label = @4
+            local.get 3
+            i32.const 57
+            i32.le_s
+          else
+            i32.const 0
+          end
           if (result i32)  ;; label = @4
             i32.const 0
           else
@@ -3989,54 +4169,61 @@
     (local i32)
     local.get 5
     local.get 3
-    i32.ge_s
-    if  ;; label = @1
+    i32.lt_s
+    if (result i32)  ;; label = @1
+      local.get 0
+      local.get 1
+      local.get 4
+      local.get 2
+      local.get 3
+      local.get 5
+      call $regex__fn2
+      call $regex__fn7
+      i32.const 1
+      i32.eq
+    else
       i32.const 0
-      return
     end
-    local.get 0
-    local.get 1
-    local.get 4
-    local.get 2
-    local.get 3
-    local.get 5
-    call $regex__fn2
-    call $regex__fn7
+    if (result i32)  ;; label = @1
+      i32.const 1
+    else
+      i32.const 0
+    end
     return)
   (func $regex__fn9 (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
     (local i32) (local i32) (local i32)
     i32.const 0
     local.set 8
-    i32.const 1
-    local.set 9
     block  ;; label = @1
       loop  ;; label = @2
         block  ;; label = @3
-          local.get 9
-          i32.const 1
-          i32.eq
-          i32.eqz
-          br_if 2 (;@1;)
-          local.get 0
-          local.get 1
-          local.get 2
-          local.get 3
-          local.get 4
           local.get 6
           local.get 8
           i32.add
-          call $regex__fn8
-          i32.const 1
-          i32.eq
-          if  ;; label = @4
+          local.get 3
+          i32.lt_s
+          if (result i32)  ;; label = @4
+            local.get 0
+            local.get 1
+            local.get 4
+            local.get 2
+            local.get 3
+            local.get 6
             local.get 8
-            i32.const 1
             i32.add
-            local.set 8
+            call $regex__fn2
+            call $regex__fn7
+            i32.const 1
+            i32.eq
           else
             i32.const 0
-            local.set 9
           end
+          i32.eqz
+          br_if 2 (;@1;)
+          local.get 8
+          i32.const 1
+          i32.add
+          local.set 8
           br 1 (;@2;)
         end
       end
@@ -4098,12 +4285,15 @@
     local.get 6
     i32.const 36
     i32.eq
-    local.get 4
-    i32.const 1
-    i32.add
-    local.get 1
-    i32.ge_s
-    i32.and
+    if (result i32)  ;; label = @1
+      local.get 4
+      i32.const 1
+      i32.add
+      local.get 1
+      i32.ge_s
+    else
+      i32.const 0
+    end
     if  ;; label = @1
       local.get 5
       local.get 3
@@ -4140,14 +4330,20 @@
         local.get 8
         i32.const 42
         i32.eq
-        local.get 8
-        i32.const 43
-        i32.eq
-        i32.or
-        local.get 8
-        i32.const 63
-        i32.eq
-        i32.or
+        if (result i32)  ;; label = @3
+          i32.const 1
+        else
+          local.get 8
+          i32.const 43
+          i32.eq
+        end
+        if (result i32)  ;; label = @3
+          i32.const 1
+        else
+          local.get 8
+          i32.const 63
+          i32.eq
+        end
         if  ;; label = @3
           local.get 8
           local.set 7

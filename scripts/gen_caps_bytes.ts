@@ -22,6 +22,7 @@ const CAPS: { id: string; dir: string; base: string }[] = [
   { id: "date", dir: "date_bundle", base: "date_lib_modc" },
   { id: "json", dir: "json_bundle", base: "json_lib_modc" },
   { id: "regex", dir: "regex_bundle", base: "regex_lib_modc" },
+  { id: "dynrt", dir: "dynrt_bundle", base: "dynrt_lib_modc" },
 ];
 
 const parts: string[] = [];
