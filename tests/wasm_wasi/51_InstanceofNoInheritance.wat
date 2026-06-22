@@ -4,11 +4,19 @@
   (memory (export "memory") 2)
   (global $__heap_ptr (mut i32) (i32.const 343))
   (global $guard (mut i32) (i32.const 0))
-  ;; Bump allocator — advances __heap_ptr and returns the old value
+  ;; Bump allocator — advances __heap_ptr and returns the old value (auto-grows in WASI mode).
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
     (local.set $ptr (global.get $__heap_ptr))
     (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))
+    (if (i32.gt_u (global.get $__heap_ptr) (i32.shl (memory.size) (i32.const 16)))
+      (then
+        (drop (memory.grow
+          (i32.shr_u
+            (i32.add
+              (i32.sub (global.get $__heap_ptr) (i32.shl (memory.size) (i32.const 16)))
+              (i32.const 65535))
+            (i32.const 16))))))
     (local.get $ptr)
   )
   ;; Canonical ABI allocator — fresh allocation (ptr==0) delegates to $__malloc;

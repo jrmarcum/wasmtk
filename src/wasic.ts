@@ -13779,11 +13779,27 @@ class WasicTranspiler {
   private emitHelpers(): string {
     const parts: string[] = [];
     // Bump allocator (Phase 10) — always emitted; Binaryen -Oz strips it when unused
-    parts.push(`  ;; Bump allocator — advances __heap_ptr and returns the old value
+    // GC Part 1 (memory pass): AUTO-GROW linear memory when the bump pointer runs past the allocated
+    // pages, so allocation never traps on the fixed initial page count (lifts the heap-bound limit
+    // that capped deep recursion / long dynamic loops). Grows by exactly ceil(deficit / 64KiB) pages.
+    // Emitted ONLY in executable (WASI) modules — a modc LIBRARY's $__malloc is dropped and replaced
+    // by the host module's during the wasmmerge allocator-unification pass (and the `memory.grow`
+    // opcodes would also defeat `detectBumpAllocator`), so the merged program still auto-grows via the
+    // surviving executable malloc.
+    const autoGrow = this.mode === "library" ? "" : `
+    (if (i32.gt_u (global.get $__heap_ptr) (i32.shl (memory.size) (i32.const 16)))
+      (then
+        (drop (memory.grow
+          (i32.shr_u
+            (i32.add
+              (i32.sub (global.get $__heap_ptr) (i32.shl (memory.size) (i32.const 16)))
+              (i32.const 65535))
+            (i32.const 16))))))`;
+    parts.push(`  ;; Bump allocator — advances __heap_ptr and returns the old value (auto-grows in WASI mode).
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
     (local.set $ptr (global.get $__heap_ptr))
-    (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))
+    (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))${autoGrow}
     (local.get $ptr)
   )
   ;; Canonical ABI allocator — fresh allocation (ptr==0) delegates to $__malloc;

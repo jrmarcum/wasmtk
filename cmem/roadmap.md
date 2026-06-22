@@ -397,9 +397,16 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     `dynObjKeyPtr`/`dynObjKeyLen`/`dynObjValAt`, the marshal-export + tsbundler auto-import lists gained
     the container accessors, and bindgen `_box`/`_unbox` recurse on the raw `dynTag` (5=array/6=object).
     Verified `tests/wasm_wasi_bundle/anysig_bundle/` (`makePoint`→`{x,y}`, `triple`→`[…]`,
-    `sumArr([…])`→sum, `getX({…})`→field). **Remaining #14 follow-up: only the optional memory/GC pass
-    to lift the heap-bound-recursion limit** (functions-as-`any` still cross as opaque handles; `javyc`
-    stays as the full-JS fallback — see the retirement criteria in dynrt-design.md).
+    `sumArr([…])`→sum, `getX({…})`→field). **#14 memory/GC track — building a full mark-sweep GC in
+    TESTED PARTS (owner 2026-06-22; the hard part is root-finding → an explicit shadow-stack in the
+    mark phase). Part 1 — auto-grow `$__malloc` — SHIPPED 2026-06-22** (test `18r`): `memory.grow` by
+    ceil(deficit/64KiB) pages when the bump ptr runs past the allocated pages, lifting the fixed
+    ~2-page limit to WASM's multi-GiB limit → `fib(15)` (≈1973 interpreter calls) now runs (was
+    overflowing at `fib(10)`); gated to executable/WASI modules (a merged lib's malloc is
+    dropped+replaced by the host's, and `memory.grow` defeats `detectBumpAllocator` + the wabt-ts merge
+    re-assembly). It doesn't FREE — that's P2–P5: free-list (`$__free`) → cell registry → roots
+    (shadow-stack) + mark → sweep + `collect()` + triggers. (functions-as-`any` still cross as opaque
+    handles; `javyc` stays as the full-JS fallback — see the retirement criteria in dynrt-design.md).
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
 2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1

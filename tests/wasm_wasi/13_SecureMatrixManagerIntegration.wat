@@ -6,11 +6,19 @@
   (tag $__exn_tag (export "__exn_tag") (param i32 i32))
   (type $ftype_i32_i32_i32_r_void (func (param i32) (param i32) (param i32)))
   (type $ftype_i32_i32_r_i32 (func (param i32) (param i32) (result i32)))
-  ;; Bump allocator — advances __heap_ptr and returns the old value
+  ;; Bump allocator — advances __heap_ptr and returns the old value (auto-grows in WASI mode).
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
     (local.set $ptr (global.get $__heap_ptr))
     (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $size)))
+    (if (i32.gt_u (global.get $__heap_ptr) (i32.shl (memory.size) (i32.const 16)))
+      (then
+        (drop (memory.grow
+          (i32.shr_u
+            (i32.add
+              (i32.sub (global.get $__heap_ptr) (i32.shl (memory.size) (i32.const 16)))
+              (i32.const 65535))
+            (i32.const 16))))))
     (local.get $ptr)
   )
   ;; Canonical ABI allocator — fresh allocation (ptr==0) delegates to $__malloc;

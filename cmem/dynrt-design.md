@@ -474,6 +474,30 @@ unaffected. **Cost:** one probe-compile per dynamic function (dynamic functions 
 **Gap:** a dynamic function that calls ANOTHER dynamic function is over-rejected to host (its
 static-only probe fails) — safe (host runs it), documented.
 
+## #14 — memory / GC track (mark-sweep, built in tested parts) (STARTED 2026-06-22)
+
+Decision (owner 2026-06-22): build a **full mark-sweep GC**, but **in parts that are each tested +
+integrated** (same cadence as the rest of #14). **The hard part is ROOT-FINDING:** wasic locals
+holding `any` handles aren't distinguishable from plain-i32 locals at runtime, so a precise collector
+eventually needs an explicit **shadow-stack** of live handles (a real but bounded redesign, in the
+mark phase). Staged plan: **P1 auto-grow** → P2 free-list (`$__free` + reuse) → P3 GC object headers /
+cell registry → P4 roots (shadow-stack) + mark → P5 sweep + `collect()` + trigger integration.
+
+**Part 1 — auto-grow `$__malloc` — ✅ SHIPPED 2026-06-22** (test `18r`). `$__malloc` now `memory.grow`s
+by `ceil(deficit / 64KiB)` pages when the bump pointer runs past the allocated pages, lifting the
+fixed ~2-page limit (that capped deep recursion / long dynamic loops) to WASM's multi-GiB memory
+limit. It does NOT free — a truly unbounded loop still exhausts eventually (that's P2–P5) — but it
+fixes the immediate symptom: `fib(10)` (≈177 interpreter calls) used to overflow; **`fib(15)` (≈1973
+calls) now runs** (`tests/wasm_wasi_bundle/dynrt_eval_bundle/main_gc.ts`).
+**CRITICAL gotcha:** auto-grow is emitted **only in executable (WASI) modules**, NOT modc libraries.
+A merged library's `$__malloc` is dropped + replaced by the host's during wasmmerge allocator
+unification, AND the `memory.grow`/`memory.size` opcodes defeat `detectBumpAllocator` (so the lib's
+malloc wouldn't be recognized/dropped) **and break the merge's wabt-ts re-assembly** ("Cannot read
+imported WASM"). Gating on `this.mode !== "library"` keeps libraries' malloc simple (merge-safe) while
+the surviving executable malloc auto-grows — so merged programs (incl. the dynrt interpreter) still
+benefit. (Unrelated bug noticed while testing: a `const x` inside a SINGLE-physical-line nested block
+isn't declared as a WAT local → "local $x cannot be resolved"; the test uses a multi-line `check`.)
+
 ## Does 14.3 let us drop `javyc`? — retirement criteria (decided framing 2026-06-22)
 
 **No — not on 14.3 alone.** 14.3 is *wiring, not language growth*: it lowers `any` → a boxed handle,
