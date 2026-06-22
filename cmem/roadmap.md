@@ -387,10 +387,14 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     tracks `any` sigs (`FuncParam.isAny`/`FuncDef.isAnyResult`; any-params added to `anyVars`),
     `generateWit` emits an `any` WIT marker, the core exports the dynrt box/unbox helpers
     (`injectDynrtMarshalExports`, both compile paths), and bindgen generates `_box`/`_unbox`. Verified
-    end-to-end (`tests/wasm_wasi_bundle/anysig_bundle/`); bindgen 104/104. Remaining follow-ups:
-    objects/arrays as `any` cross as opaque handles (structural marshalling deferred), coarse-fallback
-    refinement, and an optional memory/GC pass to lift the heap-bound-recursion limit (`javyc` stays as
-    the full-JS fallback — see the retirement criteria in dynrt-design.md).
+    end-to-end (`tests/wasm_wasi_bundle/anysig_bundle/`); bindgen 104/104. **Follow-up — hybrid
+    fallback refinement — SHIPPED 2026-06-22**: per-function fallback (was all-or-nothing) — on
+    core-compile failure, probe each dynamic fn against the static context and move ONLY the failing
+    ones to host (`parseHybridFile` `excludeFns` + `probeCompiles` to a cleaned-up `_probe.*` module);
+    safety ladders preserved. Verified `tests/hybrid_fixtures/dynamic_partial_hybrid.ts`. Remaining
+    follow-ups: objects/arrays as `any` cross as opaque handles (structural marshalling deferred), and
+    an optional memory/GC pass to lift the heap-bound-recursion limit (`javyc` stays as the full-JS
+    fallback — see the retirement criteria in dynrt-design.md).
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
 2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1

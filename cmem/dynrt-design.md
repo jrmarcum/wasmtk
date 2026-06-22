@@ -397,8 +397,9 @@ collectively as "14.3"):
   body) routes to WASM → runner prints `evalScaled(8)=50`; `dynamic_fallback_hybrid.ts` (uncompilable
   dynamic body) falls back to host (warning) while the static fn still routes → `plus1(41)=42`; the
   existing `math_hybrid` is unchanged. This realizes the §6 intent — `hybrid --auto`'s dynamic target
-  is now the own runtime (wasic+dynrt), not `javyc`. **Gaps:** any-SIGNATURE host↔core marshalling;
-  the fallback is coarse (all dynamic-bodied functions, not just the failing one).
+  is now the own runtime (wasic+dynrt), not `javyc`. **Follow-ups since shipped (both ✅):**
+  any-SIGNATURE host↔core marshalling (the section above) and the fallback refinement (the section
+  below — only the FAILING dynamic functions move to host now, not all of them).
 
 **Cross-cutting:** the `any` codegen calls the MERGED dynrt exports (prefixed names from the
 `wasmtk:dynrt` merge) — the compiler must emit the right merged symbol. **Heap/no-GC caveat applies**
@@ -435,6 +436,31 @@ return); `exclaim('wow')='wow!'` (string concat on an any). **Gaps:** objects/ar
 `any` cross the boundary as **opaque handles** (number) — no structural marshalling in v1; boxing a
 typed VAR into `any` in-body still needs an explicit `dynNumber(...)` (the non-literal-RHS boxing gap
 from 3.1); `s64`/`bigint` any not handled.
+
+## #14 follow-up — hybrid fallback refinement (per-function) (SHIPPED 2026-06-22)
+
+Refines the 3.4 all-or-nothing fallback (which moved EVERY dynamic-bodied function to the host when
+the core failed) to move only the FAILING ones (`src/hybrid.ts` `runHybrid`):
+
+- `parseHybridFile` gains `excludeFns?: Set<string>` (keep specifically-named functions in the host).
+- On full-core failure: partition routed functions into **static** (no `any`/`eval`) and **dynamic**;
+  **probe each dynamic function** with the static context (`probeCompiles` — compiles `[…statics, d]`
+  to a SEPARATE `${base}_probe.*` module that's cleaned up, so it never clobbers the real core);
+  collect the ones that fail into `bad`. Re-route only `bad` to the host (`excludeFns: bad`), keeping
+  the compilable dynamic functions in the WASM core. The warning names the moved functions.
+- **Safety ladders preserved:** if no single culprit is found (e.g. dynamic-calls-dynamic, where each
+  fails its static-only probe) → coarsen to all-dynamics-to-host; if the survivors still don't compile
+  (a static fn depends on a moved dynamic) → coarsen again; if nothing routable remains → host-only
+  runner. So it's strictly ≥ the 3.4 behavior.
+
+**Verified** (`tests/hybrid_fixtures/dynamic_partial_hybrid.ts`: one GOOD dynamic `goodDynamic`
+[`eval`+`any`, compiles] + one BAD `badDynamic` [undefined call] + a static `plus1`): only
+`badDynamic` is moved to host (warning: "1 dynamic function(s) … : badDynamic"); `goodDynamic` +
+`plus1` stay in the WASM core; runner prints `goodDynamic(8)=50` / `plus1(41)=42`. The single-bad
+(`dynamic_fallback_hybrid`), all-good (`dynamic_hybrid`), and static (`math_hybrid`) fixtures are
+unaffected. **Cost:** one probe-compile per dynamic function (dynamic functions are typically few).
+**Gap:** a dynamic function that calls ANOTHER dynamic function is over-rejected to host (its
+static-only probe fails) — safe (host runs it), documented.
 
 ## Does 14.3 let us drop `javyc`? — retirement criteria (decided framing 2026-06-22)
 

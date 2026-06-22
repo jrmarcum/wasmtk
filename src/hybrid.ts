@@ -147,7 +147,7 @@ function findCloseBrace(lines: string[], openLine: number): number {
  */
 export function parseHybridFile(
   src: string,
-  opts: { auto?: boolean; excludeDynamicBody?: boolean } = {},
+  opts: { auto?: boolean; excludeDynamicBody?: boolean; excludeFns?: Set<string> } = {},
 ): ParseResult {
   const auto = opts.auto === true;
   const lines = src.split("\n");
@@ -177,6 +177,11 @@ export function parseHybridFile(
     let route: boolean;
     if (auto) route = forceWasm || (sig.routable && !forceHost);
     else route = forceWasm;
+
+    // #14 follow-up (fallback refinement): a per-function exclusion set keeps specifically-named
+    // functions in the host (used to move ONLY the dynamic bodies that failed to compile, instead of
+    // all of them — see runHybrid's per-function fallback probe).
+    if (opts.excludeFns?.has(name)) route = false;
 
     if (!route) continue;
 
@@ -404,30 +409,79 @@ export async function runHybrid(
     }
   };
 
+  // Compile a candidate set to a SEPARATE probe module (so it can't clobber the real core), used to
+  // find WHICH dynamic function fails; cleans up its own artifacts.
+  const probeCompiles = async (funcs: WasmFunc[]): Promise<boolean> => {
+    const probeTs = join(outDir, `${base}_probe.ts`);
+    const probeWit = join(outDir, `${base}_probe.wit`);
+    try {
+      await rt.remove(probeWit);
+    } catch { /* not present */ }
+    await rt.writeTextFile(probeTs, generateCoreModule(funcs));
+    try {
+      await compileModule(probeTs);
+    } catch { /* fall through */ }
+    let ok = false;
+    try {
+      await rt.stat(probeWit);
+      ok = true;
+    } catch { /* failed */ }
+    for (const ext of [".ts", ".wasm", ".wat", ".wit"]) {
+      try {
+        await rt.remove(join(outDir, `${base}_probe${ext}`));
+      } catch { /* best-effort cleanup */ }
+    }
+    return ok;
+  };
+
+  const emitHostOnly = async (): Promise<void> => {
+    const runnerOnlyPath = join(outDir, `${base}_runner.ts`);
+    await rt.writeTextFile(runnerOnlyPath, remainingSrc);
+    console.log(`   hybrid: no WASM-routable functions remain — runner is host-only`);
+    console.log(`   hybrid: runner   → ${runnerOnlyPath}`);
+  };
+
   if (!(await compileCore(wasmFuncs))) {
-    const reparsed = parseHybridFile(src, { auto: opts.auto, excludeDynamicBody: true });
-    if (reparsed.wasmFuncs.length === wasmFuncs.length) {
+    // #14 follow-up (fallback refinement): probe each DYNAMIC (any/eval) function against the static
+    // context to find the specific culprits, and move ONLY those to the host — keeping the dynamic
+    // functions that DO compile in the WASM core (the 14.3.4 fallback moved them all).
+    const isDynamic = (fn: WasmFunc) => /\bany\b|\beval\s*\(/.test(fn.text);
+    const dynamics = wasmFuncs.filter(isDynamic);
+    if (dynamics.length === 0) {
       throw new Error(`hybrid: core module failed to compile (and no dynamic body to fall back)`);
     }
-    const moved = wasmFuncs.length - reparsed.wasmFuncs.length;
+    const statics = wasmFuncs.filter((f) => !isDynamic(f));
+    const bad = new Set<string>();
+    for (const d of dynamics) {
+      if (!(await probeCompiles([...statics, d]))) bad.add(d.name);
+    }
+    // No single culprit (e.g. dynamic-calls-dynamic): coarsen to moving all dynamic bodies to host.
+    if (bad.size === 0) for (const d of dynamics) bad.add(d.name);
     console.warn(
-      `⚠  hybrid: ${moved} dynamic function(s) (any/eval) did not compile to WASM — keeping them in ` +
-        `the TS host (fallback).`,
+      `⚠  hybrid: ${bad.size} dynamic function(s) did not compile to WASM — keeping them in the TS ` +
+        `host (fallback): ${[...bad].join(", ")}`,
     );
+    const reparsed = parseHybridFile(src, { auto: opts.auto, excludeFns: bad });
     wasmFuncs = reparsed.wasmFuncs;
     remainingSrc = reparsed.remainingSrc;
     if (wasmFuncs.length === 0) {
-      // nothing left to route — the whole program stays in the host (just emit it as the runner)
-      const runnerOnlyPath = join(outDir, `${base}_runner.ts`);
-      await rt.writeTextFile(runnerOnlyPath, remainingSrc);
-      console.log(`   hybrid: no WASM-routable functions remain — runner is host-only`);
-      console.log(`   hybrid: runner   → ${runnerOnlyPath}`);
+      await emitHostOnly();
       return;
     }
     if (!(await compileCore(wasmFuncs))) {
-      throw new Error(`hybrid: static core failed to compile after fallback`);
+      // Survivors still fail (a static fn depends on a moved dynamic) — coarsen: ALL dynamics → host.
+      const reparsed2 = parseHybridFile(src, { auto: opts.auto, excludeDynamicBody: true });
+      wasmFuncs = reparsed2.wasmFuncs;
+      remainingSrc = reparsed2.remainingSrc;
+      if (wasmFuncs.length === 0) {
+        await emitHostOnly();
+        return;
+      }
+      if (!(await compileCore(wasmFuncs))) {
+        throw new Error(`hybrid: static core failed to compile after fallback`);
+      }
     }
-    console.log(`   hybrid: core     → ${coreTsPath} (dynamic bodies kept in host)`);
+    console.log(`   hybrid: core     → ${coreTsPath} (${bad.size} dynamic function(s) kept in host)`);
   } else {
     console.log(`   hybrid: core     → ${coreTsPath}`);
   }
