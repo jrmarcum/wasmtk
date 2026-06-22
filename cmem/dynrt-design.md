@@ -319,6 +319,43 @@ Remaining for #14: **increment 3 — wasic `any` type + auto-merge + migrate `hy
 target off `javyc`** (lower a wasic `any` to a boxed-value handle and route dynamic-shaped functions
 to this runtime), plus an optional memory pass to lift the heap-bound-recursion limit.
 
+## Increment 3 — wasic `any` + auto-merge + hybrid migration — SCOPED 2026-06-22 (not started)
+
+**Decisions (owner 2026-06-22):** (1) **DEEP `any`** — box/unbox + operators + member/index/call on
+`any` route to `dynrt`; (2) **hybrid migration IN this increment** (repoint `hybrid --auto`'s dynamic
+route to wasic+dynrt, host fallback); (3) **auto-merge on `any`/`eval` usage** (inject a synthetic
+`wasmtk:dynrt` import). This is the **largest, most invasive increment of the whole #14 track** — it
+modifies the wasic COMPILER (type system, the hot binary-op path, member/call emission), not just the
+dynrt library. Recommended BUILD ORDER (land + full-suite-verify each before the next; delivered
+collectively as "14.3"):
+
+- **3.1 — `any` as a tracked type + box/unbox + auto-merge.** Add `any` to the type system as an i32
+  **boxed handle** (new tracked pseudo-type; `mapType("any")` currently falls through to f64 — must
+  branch first). Box typed→any implicitly (`dynNumber`/`dynBool`/`dynString`) on `const x: any = …` /
+  any-param / any-return; unbox any→typed via `as` (`dynNumberValue`+trunc / `dynToBool`; **any→string
+  needs a NEW dynrt export `dynStrBytes`** returning the buffer ptr so wasic gets ptr+len). Auto-merge:
+  detect `any`/`eval` usage → inject `import { …ops… } from "wasmtk:dynrt"` (reuse tsbundler virtual
+  import; inject the full op set, Binaryen DCE strips unused). Programs without `any` unaffected.
+- **3.2 — operators on `any`.** In `emitExpr`'s binary-op path: if either operand is `any`, box the
+  other and emit `dynAdd`/`dynSub`/`dynMul`/`dynDiv`/`dynMod`/`dynStrictEq`/`dynLt`/… → result is
+  `any`. `typeof x`(any)→`dynTypeof`; truthiness in `if`/`while` conds → `dynToBool`. **Hot-path risk
+  — the biggest single danger; output-verify broadly.**
+- **3.3 — member/index/call on `any` (the "deep" part).** `x.foo`→`dynMember`, `x[i]`→`dynIndexValue`,
+  `x(args)`→build args array + `dynApply`. **Requires EXPORTING `dynMember` + `dynIndexValue`** from
+  the dynrt library (currently internal). `eval(str)`→`dynEval` (returns `any`).
+- **3.4 — hybrid `--auto` migration + host fallback.** `analyzeSignature` currently disqualifies
+  `any`/dynamic → host. Change: `any`-typed functions become ROUTABLE to the wasic+dynrt core; since
+  the body may exceed dynrt's subset, hybrid must **try wasic compile, fall back to the TS host on
+  failure** (the safety net). This is where the §6 "route dynamic-shaped fns to the own runtime, not
+  javyc" intent lands.
+
+**Cross-cutting:** the `any` codegen calls the MERGED dynrt exports (prefixed names from the
+`wasmtk:dynrt` merge) — the compiler must emit the right merged symbol. **Heap/no-GC caveat applies**
+(§ retirement note below): `any`-heavy / eval-heavy programs inherit the bump-allocator limit. Each
+of 3.1–3.4 ships its own regression test (`18q…`/compiler tests) and must keep the full suite green
+(output-diff). **Honest risk:** 3.2 (operator routing) + 3.4 (hybrid try/fallback) are the two
+highest-risk pieces; 3.1 is foundational and lower-risk.
+
 ## Does 14.3 let us drop `javyc`? — retirement criteria (decided framing 2026-06-22)
 
 **No — not on 14.3 alone.** 14.3 is *wiring, not language growth*: it lowers `any` → a boxed handle,
