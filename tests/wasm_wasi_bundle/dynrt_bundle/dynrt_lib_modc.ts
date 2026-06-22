@@ -561,6 +561,46 @@ export function dynBuiltin(id: i32): i32 {
   return n as unknown as i32;
 }
 
+// A USER function value (increment 2d.2). Built-ins use a 4-slot cell with id ≥ 0 in slot 1; user
+// functions use a 5-slot cell with the marker id -1 in slot 1, plus body / params / defining-env:
+//   [7, -1, bodyStrBox, paramsArr(value-model array of param-name string boxes), defEnv]
+// `defEnv` is the scope the function was DEFINED in — the call scope links to it as its parent so the
+// body can see outer names (→ recursion + simple closures, via the `envLookup` chain).
+function makeUserFunc(paramsArr: i32, bodyBox: i32, defEnv: i32): i32 {
+  const n: Int32Array = new Int32Array(5);
+  n[0] = 7;
+  n[1] = -1;
+  n[2] = bodyBox;
+  n[3] = paramsArr;
+  n[4] = defEnv;
+  return n as unknown as i32;
+}
+
+/**
+ * Build a user function value from strings — the `new Function` capability (runtime code from
+ * strings). `paramsArr` is a value-model array of param-name string boxes; `bodyStr` is the body
+ * source; `defEnv` is the scope the function closes over (use the env you will run it against).
+ */
+/** @export */
+export function dynMakeFunc(paramsArr: i32, bodyStr: string, defEnv: i32): i32 {
+  const bodyBox: i32 = dynString(bodyStr);
+  return makeUserFunc(paramsArr, bodyBox, defEnv);
+}
+
+// Resolve `name` by walking the scope chain (current env → parent → …); -1 if unbound. An env's
+// parent is stored in slot 2 of the object cell (0 / -1 = no parent); host envs have no parent, a
+// function's call scope links to the function's defining env.
+function envLookup(env: i32, name: string): i32 {
+  let e: i32 = env;
+  while (e !== -1 && e !== 0) {
+    const r: i32 = dynGet(e, name);
+    if (r !== -1) return r;
+    const en: Int32Array = e as unknown as Int32Array;
+    e = en[2]; // parent link
+  }
+  return -1;
+}
+
 /** Call a function value with an args array (a value-model array of arg handles). */
 /** @export */
 export function dynApply(callee: i32, argsArr: i32): i32 {
@@ -568,6 +608,40 @@ export function dynApply(callee: i32, argsArr: i32): i32 {
   if (cn[0] !== 7) return dynUndefined(); // not callable → undefined (guarded)
   const id: i32 = cn[1];
   const argc: i32 = dynArrLen(argsArr);
+  if (id === -1) { // USER function (2d.2): run its body in a fresh scope linked to its defining env
+    const bodyBox: i32 = cn[2];
+    const paramsArr: i32 = cn[3];
+    const defEnv: i32 = cn[4];
+    const scope: i32 = dynObject();
+    const sn: Int32Array = scope as unknown as Int32Array;
+    sn[2] = defEnv; // parent link → outer names resolve (recursion + closures)
+    const pc: i32 = dynArrLen(paramsArr);
+    let i: i32 = 0;
+    while (i < pc) {
+      const pnameBox: i32 = dynArrGet(paramsArr, i);
+      const pname: string = boxToStr(pnameBox);
+      const aval: i32 = i < argc ? dynArrGet(argsArr, i) : dynUndefined();
+      dynSet(scope, pname, aval);
+      i = i + 1;
+    }
+    const bodySrc: string = boxToStr(bodyBox);
+    // dynRun resets the shared parser globals — save/restore them around the nested run so the
+    // OUTER parse resumes correctly (the source string `s` is a param, so it stays on the stack).
+    const savedPos: i32 = evalPos;
+    const savedEnv: i32 = evalEnv;
+    const savedLive: i32 = evalLive;
+    const savedRet: i32 = evalReturned;
+    const savedRetVal: i32 = evalReturnVal;
+    const savedLast: i32 = lastValue;
+    const result: i32 = dynRun(bodySrc, scope);
+    evalPos = savedPos;
+    evalEnv = savedEnv;
+    evalLive = savedLive;
+    evalReturned = savedRet;
+    evalReturnVal = savedRetVal;
+    lastValue = savedLast;
+    return result;
+  }
   if (id === 8) { // inc() — the observable side effect
     sideEffectCounter = sideEffectCounter + 1;
     // NOTE: `dynNumber(sideEffectCounter)` — passing an i32 GLOBAL directly as an f64 arg skips the
@@ -840,9 +914,9 @@ function parsePrimary(s: string): i32 {
     if (strEq(name, "false") === 1) return dynBool(0);
     if (strEq(name, "null") === 1) return dynNull();
     if (strEq(name, "undefined") === 1) return dynUndefined();
-    // a bare identifier → look it up in the environment object
+    // a bare identifier → resolve via the scope chain (current env → parent → …)
     if (evalEnv === -1) return dynUndefined();
-    const v: i32 = dynGet(evalEnv, name);
+    const v: i32 = envLookup(evalEnv, name);
     return v === -1 ? dynUndefined() : v;
   }
   return dynUndefined(); // unrecognised → undefined (v1)
@@ -1214,6 +1288,81 @@ function runWhile(s: string): void {
   }
 }
 
+// `function name(p0, p1, …) { body }` — the `function` keyword has already been consumed. Captures
+// the body's SOURCE TEXT (depth-scanning to the matching `}`, string-literal aware) into a string
+// box and binds a user function value (closing over the current env) under `name`.
+function runFuncDecl(s: string): void {
+  evalSkipWs(s);
+  const name: string = readIdent(s);
+  evalSkipWs(s);
+  const paramsArr: i32 = dynArray();
+  if (evalPeek(s) === 40) { // '('
+    evalPos = evalPos + 1;
+    evalSkipWs(s);
+    if (evalPeek(s) === 41) {
+      evalPos = evalPos + 1; // ()
+    } else {
+      let more: i32 = 1;
+      while (more === 1) {
+        evalSkipWs(s);
+        const pn: string = readIdent(s);
+        dynPush(paramsArr, dynString(pn));
+        evalSkipWs(s);
+        const cc: i32 = evalPeek(s);
+        if (cc === 44) {
+          evalPos = evalPos + 1; // ','
+        } else {
+          if (cc === 41) evalPos = evalPos + 1; // ')'
+          more = 0;
+        }
+      }
+    }
+  }
+  evalSkipWs(s);
+  let bodyBox: i32 = dynString("");
+  if (evalPeek(s) === 123) { // '{'
+    evalPos = evalPos + 1;
+    const bodyStart: i32 = evalPos;
+    let depth: i32 = 1;
+    let inStr: i32 = 0;
+    let q: i32 = 0;
+    let scanning: i32 = 1;
+    while (scanning === 1 && evalPos < s.length) {
+      const ch: i32 = s.charCodeAt(evalPos);
+      if (inStr === 1) {
+        if (ch === 92) {
+          evalPos = evalPos + 2; // backslash: skip the escaped char
+        } else if (ch === q) {
+          inStr = 0;
+          evalPos = evalPos + 1;
+        } else {
+          evalPos = evalPos + 1;
+        }
+      } else {
+        if (ch === 39 || ch === 34) {
+          inStr = 1;
+          q = ch;
+          evalPos = evalPos + 1;
+        } else if (ch === 123) {
+          depth = depth + 1;
+          evalPos = evalPos + 1;
+        } else if (ch === 125) {
+          depth = depth - 1;
+          if (depth === 0) scanning = 0; // leave evalPos AT the closing '}'
+          else evalPos = evalPos + 1;
+        } else {
+          evalPos = evalPos + 1;
+        }
+      }
+    }
+    const bodySrc: string = s.slice(bodyStart, evalPos);
+    bodyBox = dynString(bodySrc);
+    if (evalPeek(s) === 125) evalPos = evalPos + 1; // consume '}'
+  }
+  const f: i32 = makeUserFunc(paramsArr, bodyBox, evalEnv);
+  if (evalLive === 1) dynSet(evalEnv, name, f);
+}
+
 // Execute one statement at the cursor.
 function runStatement(s: string): void {
   evalSkipWs(s);
@@ -1239,6 +1388,7 @@ function runStatement(s: string): void {
     if (strEq(word, "if") === 1) { runIf(s); return; }
     if (strEq(word, "while") === 1) { runWhile(s); return; }
     if (strEq(word, "return") === 1) { runReturn(s); return; }
+    if (strEq(word, "function") === 1) { runFuncDecl(s); return; }
     // not a keyword: bare-identifier assignment `word = expr`, else an expression statement
     evalSkipWs(s);
     const nc: i32 = evalPeek(s);

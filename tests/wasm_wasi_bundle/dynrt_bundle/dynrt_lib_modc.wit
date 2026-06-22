@@ -37,6 +37,7 @@ world dynrt-lib-modc {
   export dyn-le: func(x: s32, y: s32) -> s32;
   export dyn-ge: func(x: s32, y: s32) -> s32;
   export dyn-builtin: func(id: s32) -> s32;
+  export dyn-make-func: func(params-arr: s32, body-str: string, def-env: s32) -> s32;
   export dyn-apply: func(callee: s32, args-arr: s32) -> s32;
   export dyn-std-env: func() -> s32;
   export dyn-side-effect-count: func() -> s32;

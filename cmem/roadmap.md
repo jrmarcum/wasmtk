@@ -343,10 +343,20 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     re-sets the cursor to the condition start each iteration; dead branches reuse the 2c `evalLive`
     skip-parse) so no AST is needed; ran factorial / fibonacci(10)=55 / nested loops / early return /
     builtin calls in statements. **Authoring decision held — STILL in the subset (no wall → no
-    `rtcore`/hand-WAT needed); NO new compiler gaps.** **Next:** 2d.2 user-defined functions +
-    `new Function` (function values holding a body + fresh scope on call + parser-reentrancy
-    save/restore); 3 wasic `any` + auto-merge + migrate `hybrid --auto`'s dynamic target off `javyc`.
-    Still the largest remaining track.
+    `rtcore`/hand-WAT needed); NO new compiler gaps.** **Increment 2d.2 — user-defined functions +
+    `new Function` — SHIPPED 2026-06-22 (COMPLETES interpreter increment 2)** (test `18p`): user
+    function values (5-slot cell = body + params + defining env), in-source `function name(params){…}`
+    declarations (body source captured by a brace scan) + `dynMakeFunc(params, bodyStr, env)` (the
+    `new Function` = runtime-code-from-strings capability); a call runs the body via `dynRun` in a
+    fresh scope whose parent is the defining env, so RECURSION + closures work via an `envLookup` scope
+    chain; the hard part — parser reentrancy — is handled by saving/restoring the shared parser
+    globals around the nested `dynRun`. Still authored in the subset (the `rtcore`/hand-WAT path was
+    never forced). Known limitation: deep recursion is heap-bound (bump allocator, no GC — `fib(10)`
+    overflows ~2 pages; `fib(8)` used). **#14 interpreter (2a–2d.2) DONE — the §6 `eval`/`new Function`
+    kernel is covered, entirely in the wasic subset.** **Remaining for #14:** increment 3 — wasic `any`
+    type + auto-merge + migrate `hybrid --auto`'s dynamic target off `javyc` (lower `any` to a
+    boxed-value handle, route dynamic-shaped fns to this runtime), + an optional memory pass to lift
+    the heap-bound-recursion limit.
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
 2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1

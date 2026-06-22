@@ -229,6 +229,47 @@ body + a fresh scope on call, and parser-reentrancy save/restore of `evalPos`/`e
 around the nested `dynRun`); no block scoping (all `let`/`const`/`var` share the one flat env); no
 `for`; no member-assignment (`obj.x = …` / `arr[i] = …`); `const` is not enforced (reassignable).
 
+## Increment 2d.2 — user-defined functions + `new Function` (SHIPPED 2026-06-22) — COMPLETES interpreter (#14 inc 2)
+
+**User function values.** Built-ins use a 4-slot cell with id ≥ 0; user functions use a **5-slot
+cell** `[7, -1, bodyStrBox, paramsArr, defEnv]` (marker id −1). `dynApply` branches on `id === -1`:
+create a fresh call scope (a `dynObject`) whose **parent link** (object cell slot 2) is the function's
+**defining env**, bind args→params, then `dynRun(bodySrc, scope)`. The parent link is what makes
+**recursion + closures-over-outer-vars** work: identifier resolution now walks the chain via new
+`envLookup(env, name)` (current → parent → …), replacing the flat `dynGet` in `parsePrimary`.
+
+**Two creation paths.** (1) In-source `function name(params){ body }` declarations — new `runFuncDecl`
+captures the body's SOURCE TEXT by a string-aware brace-depth scan, stores it in a string box, binds a
+user-function value (closing over the current env). (2) **`dynMakeFunc(paramsArr, bodyStr, defEnv)`**
+export — the **`new Function`** capability: build a callable from STRINGS at runtime, then call it
+(here via `dynEvalEnv`). The §6 kernel item "runtime code from strings" is now covered.
+
+**Parser reentrancy (the hard part).** A user call re-enters `dynRun`, which resets the shared parser
+globals (`evalPos`/`evalEnv`/`evalLive`/`evalReturned`/`evalReturnVal`/`lastValue`). `dynApply` saves
+all six to locals before the nested `dynRun` and restores them after, so the OUTER parse resumes
+correctly. This works because the source string `s` is a **parameter** (each source stays on its own
+call stack) — only the globals need save/restore. Nested/recursive calls each get their own saved
+locals.
+
+**Proven** (`tests/wasm_wasi_bundle/dynrt_eval_bundle/main_func.ts`, pipeline test
+`tests/wasm_wasi/18p_DynRuntimeFunctions.ts`, `wasmtk:dynrt` → 12185 bytes): in-source decls + calls,
+**recursion (factorial, fibonacci)**, **closure over an outer `let`**, mutually-calling functions, a
+function with its own locals + loop, functions calling built-ins, and **`new Function`** built from
+strings then called through eval. **PASS.** No new compiler gaps.
+
+**KNOWN LIMITATION — heap-bound recursion (no GC).** Each call allocates a fresh scope + reconstructs
+the body string (`boxToStr` is O(n²) concat) + re-parses, and the bump allocator never frees, so deep
+recursion / very many calls exhaust the merged module's ~2-page heap — `fib(10)` (≈177 calls)
+overflows; the test uses `fib(8)`. This is the no-GC bump-allocator reality (the same "bump allocator,
+no free" property of the whole DLL model). A future memory pass (bigger pages, body-string interning,
+or a real allocator/GC) would lift it; out of scope for the interpreter increment.
+
+**2d.2 gaps (→ later / increment 3):** function EXPRESSIONS (`const f = function(){…}`) + arrow
+functions; literal `new Function(...)` *expression syntax* in the eval source (the capability is
+`dynMakeFunc`; the sugar isn't parsed); proper block scoping + write-through assignment to outer vars
+(assignment writes the current scope); `for`; member-assignment; `const` enforcement; the heap limit
+above.
+
 ## Compiler gaps surfaced (worked around in the library; candidates for a real wasic fix)
 
 Like every Tier-1 cap, this increment surfaced wasic gaps. Both are worked around in the library and
@@ -267,10 +308,40 @@ recorded in `compiler-bugs.md`; each could later be fixed in `src/wasic.ts` and 
 - **2d.1 — statements + control flow (`dynRun`) — ✅ SHIPPED 2026-06-22** (test `18o`; see above).
   let/const/assignment, if/else, while, blocks, return; direct-eval re-parse loops; still in the
   subset (no wall → no `rtcore`/hand-WAT needed).
-- **2d.2 — user-defined functions + `new Function`** (next): function values holding a body + params;
-  `dynApply` runs the body via `dynRun` in a fresh scope, with parser-reentrancy save/restore of the
-  cursor/env/return state. (The `rtcore`/hand-WAT decision can be revisited here, but the subset has
-  carried everything so far.)
+- **2d.2 — user-defined functions + `new Function` — ✅ SHIPPED 2026-06-22** (test `18p`; see above).
+  **COMPLETES interpreter increment 2.** User function values (5-slot cell + scope-chain); in-source
+  `function` decls + `dynMakeFunc` (new Function); recursion/closures via `envLookup`; parser
+  reentrancy save/restore. Still in the subset — the `rtcore`/hand-WAT path was never forced.
+
+**Interpreter increment 2 (2a–2d.2) COMPLETE — the whole #14 §6 kernel-of-`eval`/`new Function` is
+covered, authored entirely in the wasic TS subset (no `rtcore` extraction / hand-WAT needed).**
+Remaining for #14: **increment 3 — wasic `any` type + auto-merge + migrate `hybrid --auto`'s dynamic
+target off `javyc`** (lower a wasic `any` to a boxed-value handle and route dynamic-shaped functions
+to this runtime), plus an optional memory pass to lift the heap-bound-recursion limit.
+
+## Does 14.3 let us drop `javyc`? — retirement criteria (decided framing 2026-06-22)
+
+**No — not on 14.3 alone.** 14.3 is *wiring, not language growth*: it lowers `any` → a boxed handle,
+auto-merges `dynrt`, and repoints `hybrid --auto`'s dynamic route from `javyc` → `dynrt`. It changes
+*which engine dynamic code lands on*; it does not expand what the interpreter understands. `dynrt` is a
+**v1 SUBSET interpreter**; `javyc`/QuickJS is a **full spec-compliant engine with a stdlib + GC**.
+
+So after 14.3, **keep `javyc` as the FALLBACK** (route the covered subset to `dynrt`, everything else
+to `javyc`) — matches the §7-#7 intent without over-claiming. The gap `javyc` still covers:
+
+- **Language:** arrow fns, function *expressions*, `for`/`for-of`/`for-in`, `switch`, `try/catch` in
+  eval, destructuring, spread, template literals, classes, generators, `async`/`await`, object/array
+  **literals in eval source**, member-assignment, real block scoping + write-through assignment.
+- **Stdlib / semantics:** prototype chains, `this`, `Array`/`String`/`Object`/`Map`/`Set`/`JSON`/
+  `RegExp` *as dynamic objects with methods*, `Symbol`.
+- **Runtime:** **no GC** in `dynrt` (bump allocator never frees → long-running / deep-recursion
+  dynamic code exhausts the heap; cf. the `fib(10)` overflow).
+
+**`javyc` is removable only when EITHER:** (1) `dynrt` grows to near-language-completeness + a dynamic
+stdlib + **GC / real memory management** (a large multi-increment track — think "2e language", "2f
+dynamic stdlib", "2g GC", beyond 14.3); OR (2) the uncovered remainder is **declared out of scope**
+(the brief's "route (a)") and `javyc` dropped by policy rather than coverage. Until one of those, the
+default flips to `dynrt` but `javyc` stays as the safety net.
 - **3 — wasic `any` + auto-merge:** add an `any` type to wasic that lowers to a boxed-value handle;
   auto-merge the runtime when `any`/dynamic features are used; migrate `hybrid --auto`'s dynamic
   routing target off `javyc` onto the own-runtime.
