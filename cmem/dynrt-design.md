@@ -196,6 +196,39 @@ inside call args), `inc() + inc()` → 2.
 `Math.x` namespace object (built-ins are bare names via `dynStdEnv`, not `Math.sqrt`); loose-equality
 coercion; string comparison; array/object literal syntax inside the eval source.
 
+## Increment 2d.1 — statements + control flow (`dynRun`) (SHIPPED 2026-06-22)
+
+A STATEMENT interpreter layered on the 2a–2c expression evaluator. `dynRun(s: string, env: i32): i32`
+executes a statement sequence against a mutable environment object (declarations + assignments mutate
+it via `dynSet`), returning the `return` value, else the last expression statement's value, else
+`undefined`. **Authoring decision held: continue in the subset — no wall** (the design flagged 2d as
+the likely `rtcore`/hand-WAT revisit; the statement layer turned out to be recursive-descent + a
+mutable env + cursor manipulation, all expressible — first-compile, first-run pass, NO new gaps).
+
+**Statements:** `let`/`const`/`var name [= expr];` (no init → `undefined`); bare-identifier assignment
+`name = expr;` (detected by an `=` not followed by `=`); `if (cond) stmt [else stmt]`; `while (cond)
+stmt`; `{ blocks }`; expression statements; `return [expr];`. New helpers `readIdent` +
+`runDecl`/`runReturn`/`runIf`/`runWhile`/`runStatement`/`runStatements`; new globals `evalReturned`/
+`evalReturnVal`/`lastValue`.
+
+**Control flow via the DIRECT-eval re-parse trick (no AST):** `while` records the condition's cursor
+position (`condStart`) and re-sets `evalPos = condStart` each iteration to re-parse condition + body
+(so it costs O(body × iterations) to *parse*, but needs no AST and no separate eval walker). Dead
+branches of `if`/`while` (and statements after a `return`) are parsed with `evalLive = 0` — reusing
+the 2c short-circuit machinery to advance the cursor while executing nothing. `return` sets
+`evalReturned`, which stops sequencing (and ends a loop). A 100M-iteration safety cap guards runaway
+loops.
+
+**Proven** (`tests/wasm_wasi_bundle/dynrt_eval_bundle/main_run.ts`, pipeline test
+`tests/wasm_wasi/18o_DynRuntimeStatements.ts`, `wasmtk:dynrt` → 11140 bytes): real programs — `x = x*2`
+chains, `if/else` (incl. no-else + early `return`), `while` sum/factorial/**fibonacci(10)=55**, nested
+loops, conditional accumulation, `return` out of a loop, and built-in calls inside statements. **PASS.**
+
+**2d.1 gaps (→ 2d.2):** **user-defined functions + `new Function`** (needs function values holding a
+body + a fresh scope on call, and parser-reentrancy save/restore of `evalPos`/`evalEnv`/`evalReturned`
+around the nested `dynRun`); no block scoping (all `let`/`const`/`var` share the one flat env); no
+`for`; no member-assignment (`obj.x = …` / `arr[i] = …`); `const` is not enforced (reassignable).
+
 ## Compiler gaps surfaced (worked around in the library; candidates for a real wasic fix)
 
 Like every Tier-1 cap, this increment surfaced wasic gaps. Both are worked around in the library and
@@ -231,9 +264,13 @@ recorded in `compiler-bugs.md`; each could later be fixed in `src/wasic.ts` and 
 - **2c — function values (tag 7) + calls + REAL short-circuit — ✅ SHIPPED 2026-06-22** (test `18n`;
   see above). Built-ins via static-switch dispatch (no `call_indirect`, merge-safe); `evalLive`
   skip-parse short-circuit guarding the call dispatch.
-- **2d — statements + control flow + `new Function`** (next; a callable from a body string).
-  This is where the **`rtcore` extraction + hand-WAT** decision (authoring §3) is most likely
-  revisited, if the subset hits a wall.
+- **2d.1 — statements + control flow (`dynRun`) — ✅ SHIPPED 2026-06-22** (test `18o`; see above).
+  let/const/assignment, if/else, while, blocks, return; direct-eval re-parse loops; still in the
+  subset (no wall → no `rtcore`/hand-WAT needed).
+- **2d.2 — user-defined functions + `new Function`** (next): function values holding a body + params;
+  `dynApply` runs the body via `dynRun` in a fresh scope, with parser-reentrancy save/restore of the
+  cursor/env/return state. (The `rtcore`/hand-WAT decision can be revisited here, but the subset has
+  carried everything so far.)
 - **3 — wasic `any` + auto-merge:** add an `any` type to wasic that lowers to a boxed-value handle;
   auto-merge the runtime when `any`/dynamic features are used; migrate `hybrid --auto`'s dynamic
   routing target off `javyc` onto the own-runtime.

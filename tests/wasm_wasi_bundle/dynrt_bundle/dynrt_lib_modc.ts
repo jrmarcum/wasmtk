@@ -648,6 +648,9 @@ let evalPos: i32 = 0;   // read cursor into the eval source string
 let evalEnv: i32 = -1;  // current environment object handle (names → values), or -1 for none
 let evalLive: i32 = 1;  // 1 = evaluate effects; 0 = inside a short-circuited (dead) branch
 let sideEffectCounter: i32 = 0; // observable side effect for the `inc()` builtin (short-circuit test)
+let evalReturned: i32 = 0;  // set when a `return` statement executes; stops statement sequencing
+let evalReturnVal: i32 = 0; // the value carried by the executed `return`
+let lastValue: i32 = 0;     // value of the last executed expression statement (dynRun's result)
 
 // Compare two wasic strings byte-for-byte (avoids relying on `===` over reconstructed substrings).
 function strEq(a: string, b: string): i32 {
@@ -1098,4 +1101,200 @@ export function dynEvalEnv(s: string, env: i32): i32 {
   evalEnv = env;
   evalLive = 1;
   return parseExpr(s);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────────────────────
+// Increment 2d.1 — STATEMENTS + control flow (`dynRun`).
+//
+// A statement interpreter layered on the 2a–2c expression evaluator. Declarations and assignments
+// mutate the (single, flat) environment object via `dynSet`. Control flow uses the same DIRECT-eval
+// re-parse trick: `while` re-sets `evalPos` to the condition start each iteration and re-parses the
+// condition + body (so it costs O(body × iterations) to parse, but needs no AST); dead branches of
+// `if`/`while` are parsed with `evalLive = 0` (execute nothing, just advance the cursor — reusing
+// the 2c short-circuit machinery). `return` sets `evalReturned`, which stops sequencing. NO block
+// scoping (all `let`/`const`/`var` land in the one env), NO `for`, NO member-assignment (`obj.x =`),
+// NO user functions (`new Function` is 2d.2 — it adds parser-reentrancy save/restore on top of this).
+// ──────────────────────────────────────────────────────────────────────────────────────────────
+
+// Read an identifier run at the cursor, advancing past it; returns the name.
+function readIdent(s: string): string {
+  const start: i32 = evalPos;
+  let ch: i32 = evalPeek(s);
+  while (isIdentChar(ch, 1) === 1) {
+    evalPos = evalPos + 1;
+    ch = evalPeek(s);
+  }
+  return s.slice(start, evalPos);
+}
+
+// `let`/`const`/`var name [= expr];` — the keyword has already been consumed.
+function runDecl(s: string): void {
+  evalSkipWs(s);
+  const name: string = readIdent(s);
+  evalSkipWs(s);
+  let val: i32 = dynUndefined();
+  if (evalPeek(s) === 61) { // '='
+    evalPos = evalPos + 1;
+    val = parseExpr(s);
+  }
+  if (evalLive === 1) dynSet(evalEnv, name, val);
+  evalSkipWs(s);
+  if (evalPeek(s) === 59) evalPos = evalPos + 1; // ';'
+}
+
+// `return [expr];` — the keyword has already been consumed.
+function runReturn(s: string): void {
+  evalSkipWs(s);
+  const c: i32 = evalPeek(s);
+  let val: i32 = dynUndefined();
+  if (c !== 59 && c !== 125 && c !== -1) { // not ';' '}' EOF
+    val = parseExpr(s);
+  }
+  if (evalLive === 1) {
+    evalReturnVal = val;
+    evalReturned = 1;
+  }
+  evalSkipWs(s);
+  if (evalPeek(s) === 59) evalPos = evalPos + 1;
+}
+
+// `if (cond) stmt [else stmt]` — the `if` keyword has already been consumed.
+function runIf(s: string): void {
+  const outer: i32 = evalLive;
+  evalSkipWs(s);
+  if (evalPeek(s) === 40) evalPos = evalPos + 1; // '('
+  const cond: i32 = parseExpr(s);
+  evalSkipWs(s);
+  if (evalPeek(s) === 41) evalPos = evalPos + 1; // ')'
+  const ct: i32 = (outer === 1 && dynToBool(cond) === 1) ? 1 : 0;
+  evalLive = (outer === 1 && ct === 1) ? 1 : 0;
+  runStatement(s); // then
+  evalLive = outer;
+  evalSkipWs(s);
+  if (isIdentChar(evalPeek(s), 0) === 1) {
+    const es: i32 = evalPos;
+    const w: string = readIdent(s);
+    if (strEq(w, "else") === 1) {
+      evalLive = (outer === 1 && ct === 0) ? 1 : 0;
+      runStatement(s); // else
+      evalLive = outer;
+    } else {
+      evalPos = es; // not `else` — rewind
+    }
+  }
+}
+
+// `while (cond) stmt` — the `while` keyword has already been consumed.
+function runWhile(s: string): void {
+  const outer: i32 = evalLive;
+  evalSkipWs(s);
+  if (evalPeek(s) === 40) evalPos = evalPos + 1; // '('
+  const condStart: i32 = evalPos;
+  let looping: i32 = 1;
+  let iters: i32 = 0;
+  while (looping === 1) {
+    evalPos = condStart;
+    const cond: i32 = parseExpr(s);
+    evalSkipWs(s);
+    if (evalPeek(s) === 41) evalPos = evalPos + 1; // ')'
+    const run: i32 = (outer === 1 && dynToBool(cond) === 1) ? 1 : 0;
+    if (run === 1) {
+      evalLive = 1;
+      runStatement(s); // body, live
+      evalLive = outer;
+      if (evalReturned === 1) looping = 0; // a `return` in the body ends the loop
+      iters = iters + 1;
+      if (iters > 100000000) looping = 0; // safety cap against a runaway loop
+    } else {
+      evalLive = 0;
+      runStatement(s); // body, dead — advance the cursor past it, then stop
+      evalLive = outer;
+      looping = 0;
+    }
+  }
+}
+
+// Execute one statement at the cursor.
+function runStatement(s: string): void {
+  evalSkipWs(s);
+  const c: i32 = evalPeek(s);
+  if (c === 123) { // '{' block
+    evalPos = evalPos + 1;
+    runStatements(s);
+    evalSkipWs(s);
+    if (evalPeek(s) === 125) evalPos = evalPos + 1; // '}'
+    return;
+  }
+  if (c === 59) { // empty ';'
+    evalPos = evalPos + 1;
+    return;
+  }
+  if (isIdentChar(c, 0) === 1) {
+    const start: i32 = evalPos;
+    const word: string = readIdent(s);
+    if (strEq(word, "let") === 1 || strEq(word, "const") === 1 || strEq(word, "var") === 1) {
+      runDecl(s);
+      return;
+    }
+    if (strEq(word, "if") === 1) { runIf(s); return; }
+    if (strEq(word, "while") === 1) { runWhile(s); return; }
+    if (strEq(word, "return") === 1) { runReturn(s); return; }
+    // not a keyword: bare-identifier assignment `word = expr`, else an expression statement
+    evalSkipWs(s);
+    const nc: i32 = evalPeek(s);
+    if (nc === 61 && evalPeek2(s) !== 61) { // '=' but not '=='
+      evalPos = evalPos + 1; // consume '='
+      const val: i32 = parseExpr(s);
+      if (evalLive === 1) dynSet(evalEnv, word, val);
+      evalSkipWs(s);
+      if (evalPeek(s) === 59) evalPos = evalPos + 1;
+      return;
+    }
+    // expression statement starting with an identifier — rewind and parse from the start
+    evalPos = start;
+    const v: i32 = parseExpr(s);
+    if (evalLive === 1) lastValue = v;
+    evalSkipWs(s);
+    if (evalPeek(s) === 59) evalPos = evalPos + 1;
+    return;
+  }
+  // expression statement (literal / '(' / unary …)
+  const v2: i32 = parseExpr(s);
+  if (evalLive === 1) lastValue = v2;
+  evalSkipWs(s);
+  if (evalPeek(s) === 59) evalPos = evalPos + 1;
+}
+
+// Run statements until end-of-input or a closing `}`.
+function runStatements(s: string): void {
+  let go: i32 = 1;
+  while (go === 1) {
+    evalSkipWs(s);
+    const c: i32 = evalPeek(s);
+    if (c === -1 || c === 125) { // EOF or '}'
+      go = 0;
+    } else {
+      const saved: i32 = evalLive;
+      if (evalReturned === 1) evalLive = 0; // statements after a `return` are parsed but not run
+      runStatement(s);
+      evalLive = saved;
+    }
+  }
+}
+
+/**
+ * Run a sequence of JS statements against an environment object (mutated in place by declarations
+ * and assignments). Returns the value carried by a `return`, else the last expression statement's
+ * value, else `undefined`.
+ */
+/** @export */
+export function dynRun(s: string, env: i32): i32 {
+  evalPos = 0;
+  evalEnv = env;
+  evalLive = 1;
+  evalReturned = 0;
+  evalReturnVal = dynUndefined();
+  lastValue = dynUndefined();
+  runStatements(s);
+  return evalReturned === 1 ? evalReturnVal : lastValue;
 }

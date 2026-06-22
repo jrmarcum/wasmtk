@@ -336,9 +336,17 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     (`f(args)`, any arity, nested); real short-circuit via an `evalLive` skip-parse flag guarding the
     call dispatch (the only side-effecting op), proven observable via the `inc()` counter. Surfaced 1
     wasic gap (i32 global / typed-array element as an f64 call-arg skips the `f64.convert` — bind to a
-    local; logged in compiler-bugs.md). **Next:** 2d statements + control flow + `new Function` (the
-    `rtcore`+hand-WAT decision is most likely revisited here); 3 wasic `any` + auto-merge + migrate
-    `hybrid --auto`'s dynamic target off `javyc`. Still the largest remaining track.
+    local; logged in compiler-bugs.md). **Increment 2d.1 — statements + control flow (`dynRun`) —
+    SHIPPED 2026-06-22** (test `18o`): a statement interpreter over the expression evaluator —
+    let/const/var + bare-identifier assignment (mutate the env via `dynSet`), if/else, while, `{ }`
+    blocks, expression statements, return; control flow uses the DIRECT-eval re-parse trick (while
+    re-sets the cursor to the condition start each iteration; dead branches reuse the 2c `evalLive`
+    skip-parse) so no AST is needed; ran factorial / fibonacci(10)=55 / nested loops / early return /
+    builtin calls in statements. **Authoring decision held — STILL in the subset (no wall → no
+    `rtcore`/hand-WAT needed); NO new compiler gaps.** **Next:** 2d.2 user-defined functions +
+    `new Function` (function values holding a body + fresh scope on call + parser-reentrancy
+    save/restore); 3 wasic `any` + auto-merge + migrate `hybrid --auto`'s dynamic target off `javyc`.
+    Still the largest remaining track.
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
 2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1

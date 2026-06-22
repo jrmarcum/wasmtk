@@ -43,4 +43,5 @@ world dynrt-lib-modc {
   export dyn-reset-side-effects: func();
   export dyn-eval: func(s: string) -> s32;
   export dyn-eval-env: func(s: string, env: s32) -> s32;
+  export dyn-run: func(s: string, env: s32) -> s32;
 }
