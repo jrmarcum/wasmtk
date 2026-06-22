@@ -6950,6 +6950,31 @@ class WasicTranspiler {
       expr = expr.replace(/\s+as\s+(?:unknown|any)\b/g, " ").replace(/\s{2,}/g, " ").trim();
     }
 
+    // #14.3.3: member / index / call on an `any` value → dynrt. Fires ONLY when the receiver is a
+    // simple `any` var; otherwise the typed handlers below run untouched. Single-level forms only
+    // (chained `x.a.b` / `x.a()` are a documented follow-up). Result is an `any` handle.
+    {
+      const am = expr.match(/^(\w+)\.(\w+)$/); // x.foo
+      if (am && this.anyVars.has(am[1])) {
+        return this.emitExpr(`dynrt_dynMember(${am[1]}, "${am[2]}")`, locals, "i32");
+      }
+      const ax = expr.match(/^(\w+)\[(.+)\]$/); // x[index]
+      if (ax && this.anyVars.has(ax[1]) && parenDepthNeverNegative(ax[2])) {
+        const idxBoxed = this.boxAnyOperand(ax[2], locals);
+        return `(call $dynrt_dynIndexValue (local.get $${ax[1]}) ${idxBoxed})`;
+      }
+      const ac = expr.match(/^(\w+)\((.*)\)$/); // x(args)
+      if (ac && this.anyVars.has(ac[1]) && parenDepthNeverNegative(ac[2])) {
+        const argStrs = this.splitArgs(ac[2]).map((s) => s.trim()).filter(Boolean);
+        if (argStrs.length <= 3) {
+          const boxed = argStrs.map((a) => this.boxAnyOperand(a, locals));
+          const fnWat = `(local.get $${ac[1]})`;
+          return `(call $dynrt_dynCall${argStrs.length} ${fnWat} ${boxed.join(" ")})`.trim();
+        }
+        // arity > 3 — documented gap; fall through
+      }
+    }
+
     // Phase 13 (#13 async): `await <promiseExpr>` — drain microtasks, then take the settled value.
     // 13.1a: applied directly to an async call or Promise.resolve(...). The awaited expression
     // evaluates to a promise ptr (i32); the inner type picks $__promise_await_i32 / _f64.
@@ -17740,6 +17765,9 @@ class WasicTranspiler {
       .replace(/(:\s*any\s*=\s*)true(\s*;)/g, "$1dynrt_dynBool(1)$2")
       .replace(/(:\s*any\s*=\s*)false(\s*;)/g, "$1dynrt_dynBool(0)$2")
       .replace(/(:\s*any\s*=\s*)(-?\d+(?:\.\d+)?)(\s*;)/g, "$1dynrt_dynNumber($2)$3");
+    // #14.3.3: `eval(...)` is the dynrt evaluator — rewrite to the merged `dynrt_dynEval`. (The
+    // bundler already injected the import + triggered the merge on the `eval(` it saw.)
+    this.src = this.src.replace(/\beval\s*\(/g, "dynrt_dynEval(");
     // Rewrite `const/let/var name = function(params): type { ... }` to `function name(params): type { ... }`
     // so parseFunctions() can recognize the pattern as a named function.
     this.src = this.src.replace(

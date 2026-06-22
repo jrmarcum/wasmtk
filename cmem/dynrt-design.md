@@ -368,9 +368,18 @@ collectively as "14.3"):
   `as` (same shape as 3.1's inline-cast gap); `typeof x`(any) still resolves at compile time (should
   be runtime `dynTypeof`); unary `-x`/`!x` on `any`; bitwise/shift on `any`; bare `if (anyVar)` needs
   `if (anyVar as bool)`; chained any-arith where an operand is a sub-expression (not a simple var).
-- **3.3 — member/index/call on `any` (the "deep" part).** `x.foo`→`dynMember`, `x[i]`→`dynIndexValue`,
-  `x(args)`→build args array + `dynApply`. **Requires EXPORTING `dynMember` + `dynIndexValue`** from
-  the dynrt library (currently internal). `eval(str)`→`dynEval` (returns `any`).
+- **3.3 — member/index/call on `any` + bare `eval` — ✅ SHIPPED 2026-06-22** (extends `18q`). A guarded
+  any-dispatch block near the top of `emitExpr` (fires ONLY when the receiver is a simple `any` var,
+  else typed handlers run untouched): `x.foo` → `dynrt_dynMember(x, "foo")`; `x[i]` →
+  `dynrt_dynIndexValue(x, boxedIndex)`; `x(args)` → `dynrt_dynCall0/1/2/3(x, …boxed args)`. Library:
+  **`dynMember` + `dynIndexValue` are now EXPORTED**, plus new fixed-arity **`dynCall0/1/2/3`** helpers
+  (build the args array + `dynApply` as a single expression — wasic can't build an array inline; arity
+  > 3 is a gap); all added to the auto-injected import set; caps bytes regenerated (12406). Bare
+  **`eval(...)`** → a transpile source pre-pass rewrites `eval(` → `dynrt_dynEval(` (the bundler
+  already injected the import + merged on the `eval(` it saw). All results are `any` handles. Proven:
+  `obj.x`, `arr[0]`/`arr[ix]` (computed index), `env.sqrt`→`sqrtFn(16)`=4 / `maxFn(3,8)`=8,
+  `eval("2 + 3 * 4")`=14. **Gaps (follow-ups):** chained `x.a.b` / `x.a()` (single-level only — use an
+  intermediate `: any` var); call arity > 3; member-ASSIGNMENT (`x.foo = …` / `x[i] = …`).
 - **3.4 — hybrid `--auto` migration + host fallback.** `analyzeSignature` currently disqualifies
   `any`/dynamic → host. Change: `any`-typed functions become ROUTABLE to the wasic+dynrt core; since
   the body may exceed dynrt's subset, hybrid must **try wasic compile, fall back to the TS host on

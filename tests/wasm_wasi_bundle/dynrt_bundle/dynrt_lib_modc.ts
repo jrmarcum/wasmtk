@@ -689,6 +689,39 @@ export function dynApply(callee: i32, argsArr: i32): i32 {
   return dynUndefined();
 }
 
+// #14.3.3: fixed-arity call helpers so the wasic compiler can emit `x(args)` on an `any` value as a
+// single expression (building the args array + dynApply inline). Args are already boxed handles.
+// Arity > 3 is a documented gap.
+/** @export */
+export function dynCall0(fn: i32): i32 {
+  const args: i32 = dynArray();
+  return dynApply(fn, args);
+}
+
+/** @export */
+export function dynCall1(fn: i32, a0: i32): i32 {
+  const args: i32 = dynArray();
+  dynPush(args, a0);
+  return dynApply(fn, args);
+}
+
+/** @export */
+export function dynCall2(fn: i32, a0: i32, a1: i32): i32 {
+  const args: i32 = dynArray();
+  dynPush(args, a0);
+  dynPush(args, a1);
+  return dynApply(fn, args);
+}
+
+/** @export */
+export function dynCall3(fn: i32, a0: i32, a1: i32, a2: i32): i32 {
+  const args: i32 = dynArray();
+  dynPush(args, a0);
+  dynPush(args, a1);
+  dynPush(args, a2);
+  return dynApply(fn, args);
+}
+
 /** A fresh environment object pre-populated with the built-in functions (abs/sqrt/…/inc). */
 /** @export */
 export function dynStdEnv(): i32 {
@@ -753,7 +786,9 @@ function strEq(a: string, b: string): i32 {
 // undefined for anything else. Never dereferences a non-container, so `undefined.x` → undefined
 // rather than a trap (a forgiving runtime; this also removes the only trap motivation for
 // short-circuit in 2b, so real short-circuit lands with calls in the next sub-increment).
-function dynMember(obj: i32, name: string): i32 {
+// (#14.3.3: exported so the wasic compiler can emit `x.foo` on an `any` value.)
+/** @export */
+export function dynMember(obj: i32, name: string): i32 {
   const n: Int32Array = obj as unknown as Int32Array;
   const t: i32 = n[0];
   if (t === 6) { // object
@@ -778,7 +813,9 @@ function dynMember(obj: i32, name: string): i32 {
 }
 
 // `container[idx]` — array element by numeric index, or object property by string key. Guarded.
-function dynIndexValue(container: i32, idxBox: i32): i32 {
+// (#14.3.3: exported so the wasic compiler can emit `x[i]` on an `any` value.)
+/** @export */
+export function dynIndexValue(container: i32, idxBox: i32): i32 {
   const cn: Int32Array = container as unknown as Int32Array;
   const ct: i32 = cn[0];
   const it: i32 = dynTag(idxBox);

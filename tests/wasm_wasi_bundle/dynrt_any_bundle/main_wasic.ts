@@ -120,4 +120,40 @@ check(andTF === 0 ? 1 : 0);
 const orFT: i32 = ff || tt;
 check(orFT === 1 ? 1 : 0);
 
+// ── 3.3: member / index / call on `any` + bare eval ───────────────────────────────────────────
+// member access: build an object, read properties via `obj.prop`
+const obj: any = dynObject();
+dynSet(obj, "x", dynNumber(5));
+dynSet(obj, "y", dynNumber(7));
+const xv: any = obj.x;
+check((xv as i32) === 5 ? 1 : 0);
+const yv: any = obj.y;
+check((yv as i32) === 7 ? 1 : 0);
+
+// index access: array elements via `arr[i]` (literal + computed index)
+const arr2: any = dynArray();
+dynPush(arr2, dynNumber(10));
+dynPush(arr2, dynNumber(20));
+dynPush(arr2, dynNumber(30));
+const el0: any = arr2[0];
+check((el0 as i32) === 10 ? 1 : 0);
+const el2: any = arr2[2];
+check((el2 as i32) === 30 ? 1 : 0);
+const ix: any = 1;
+const el1: any = arr2[ix]; // computed (any) index
+check((el1 as i32) === 20 ? 1 : 0);
+
+// call on `any`: a function value pulled from the std env, called via `fn(args)`
+const env: any = dynStdEnv();
+const sqrtFn: any = env.sqrt;
+const r1: any = sqrtFn(16); // dynCall1 → 4
+check((r1 as i32) === 4 ? 1 : 0);
+const maxFn: any = env.max;
+const r2: any = maxFn(3, 8); // dynCall2 → 8
+check((r2 as i32) === 8 ? 1 : 0);
+
+// bare `eval(...)` (rewritten to dynrt_dynEval)
+const ev: any = eval("2 + 3 * 4");
+check((ev as i32) === 14 ? 1 : 0);
+
 console.log("dynrt any foundation: all checks passed");

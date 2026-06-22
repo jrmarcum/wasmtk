@@ -40,9 +40,15 @@ world dynrt-lib-modc {
   export dyn-builtin: func(id: s32) -> s32;
   export dyn-make-func: func(params-arr: s32, body-str: string, def-env: s32) -> s32;
   export dyn-apply: func(callee: s32, args-arr: s32) -> s32;
+  export dyn-call0: func(fn: s32) -> s32;
+  export dyn-call1: func(fn: s32, a0: s32) -> s32;
+  export dyn-call2: func(fn: s32, a0: s32, a1: s32) -> s32;
+  export dyn-call3: func(fn: s32, a0: s32, a1: s32, a2: s32) -> s32;
   export dyn-std-env: func() -> s32;
   export dyn-side-effect-count: func() -> s32;
   export dyn-reset-side-effects: func();
+  export dyn-member: func(obj: s32, name: string) -> s32;
+  export dyn-index-value: func(container: s32, idx-box: s32) -> s32;
   export dyn-eval: func(s: string) -> s32;
   export dyn-eval-env: func(s: string, env: s32) -> s32;
   export dyn-run: func(s: string, env: s32) -> s32;

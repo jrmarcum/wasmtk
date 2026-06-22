@@ -365,9 +365,14 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     paths run untouched — the safety invariant for the hottest path); `boxAnyOperand` helper boxes the
     other operand; arithmetic `+ - * / %` → `dynrt_dynAdd/…` (an `any` handle), comparisons → raw i32
     0/1 (work in conditions), `&&`/`||` → truthiness short-circuit, string concat dispatches via
-    `dynAdd`. Full suite stayed green (zero impact on non-`any` code). **Remaining for #14:** 3.3
-    member/index/call on `any` → 3.4 hybrid `--auto` migration (route dynamic-shaped fns to dynrt, host
-    fallback); + an optional memory pass to lift the heap-bound-recursion limit.
+    `dynAdd`. Full suite stayed green (zero impact on non-`any` code). **3.3 — member/index/call on
+    `any` + bare `eval` — SHIPPED 2026-06-22** (test `18q`): a guarded any-dispatch block in `emitExpr`
+    routes `x.foo`→`dynrt_dynMember`, `x[i]`→`dynrt_dynIndexValue`, `x(args)`→`dynrt_dynCall0/1/2/3`
+    (the library now EXPORTS `dynMember`/`dynIndexValue` + new fixed-arity `dynCall0-3` helpers — wasic
+    can't build an args array inline); bare `eval(...)` rewritten to `dynrt_dynEval`. All results are
+    `any` handles; single-level forms (chained `x.a.b`/`x.a()` use an intermediate var). **Remaining
+    for #14:** 3.4 hybrid `--auto` migration (route dynamic-shaped fns to dynrt, host fallback); + an
+    optional memory pass to lift the heap-bound-recursion limit.
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
 2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1
