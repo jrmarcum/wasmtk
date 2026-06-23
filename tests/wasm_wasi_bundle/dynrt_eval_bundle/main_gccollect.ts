@@ -33,12 +33,15 @@ dynGcPopRoot();
 const after: i32 = dynGcCellCount();
 
 check(freed > 0 ? 1 : 0);                  // reclaimed something
-check(after === before - freed ? 1 : 0);   // registry compacted by exactly `freed`
-check(dynGcFreeCount() === freed ? 1 : 0); // freed cells are on the recycle list
+check(after === before - freed ? 1 : 0);   // registry compacted by exactly `freed` cells
+// each reclaimed number cell also frees its Float64Array payload, so the recycle list holds at least
+// `freed` blocks (cells + payloads)
+const freeAfterCollect: i32 = dynGcFreeCount();
+check(freeAfterCollect >= freed ? 1 : 0);
 check(dynNumberValue(dynGet(e, "keep")) === 42 ? 1 : 0); // live value survived intact
 
-// REUSE: new cell allocations consume the recycle list before bumping fresh memory
+// REUSE: new allocations consume the recycle list before bumping fresh memory
 makeGarbage(30);
-check(dynGcFreeCount() === freed - 30 ? 1 : 0); // 30 blocks reused, not freshly allocated
+check(dynGcFreeCount() < freeAfterCollect ? 1 : 0); // recycled blocks were reused, not freshly bumped
 
-console.log("GC Part5a collect: reclaimed", freed, "cells; live survived; reuse verified");
+console.log("GC Part5 collect: reclaimed", freed, "cells (+payloads); live survived; reuse verified");

@@ -68,7 +68,7 @@ export function dynBool(b: i32): i32 {
 /** A number value (real f64). */
 /** @export */
 export function dynNumber(x: f64): i32 {
-  const fv: Float64Array = new Float64Array(1);
+  const fv: Float64Array = dynAlloc(16) as unknown as Float64Array; // 8 header + 1*8 (GC-recycled)
   fv[0] = x;
   const n: Int32Array = mkCell() as unknown as Int32Array;
   n[0] = 3;
@@ -80,7 +80,7 @@ export function dynNumber(x: f64): i32 {
 /** @export */
 export function dynString(s: string): i32 {
   const len: i32 = s.length;
-  const buf: Uint8Array = new Uint8Array(len);
+  const buf: Uint8Array = dynAlloc(8 + len) as unknown as Uint8Array; // 8 header + len (GC-recycled)
   let i: i32 = 0;
   while (i < len) {
     buf[i] = s.charCodeAt(i);
@@ -102,7 +102,7 @@ export function dynString(s: string): i32 {
 const LIST_CAP0: i32 = 4;
 
 function listNew(): i32 {
-  const a: Int32Array = new Int32Array(LIST_CAP0 + 2);
+  const a: Int32Array = dynAlloc(8 + (LIST_CAP0 + 2) * 4) as unknown as Int32Array; // GC-recycled
   a[0] = 0;          // len
   a[1] = LIST_CAP0;  // cap
   return a as unknown as i32;
@@ -130,7 +130,7 @@ function listPush(lp: i32, v: i32): i32 {
   const cap: i32 = a[1];
   if (len >= cap) {
     const ncap: i32 = cap * 2;
-    const b: Int32Array = new Int32Array(ncap + 2);
+    const b: Int32Array = dynAlloc(8 + (ncap + 2) * 4) as unknown as Int32Array; // GC-recycled
     b[1] = ncap;
     let i: i32 = 0;
     while (i < len) {
@@ -156,6 +156,7 @@ function listPush(lp: i32, v: i32): i32 {
 // recycled (smaller ones leak — none of dynrt's recycled allocations are that small). Reused blocks
 // are zeroed (constructors rely on unset slots being 0 — e.g. a plain object's slot-2 parent link).
 let __dyn_free: i32 = 0; // free-list head (0 = empty)
+let __gc_threshold: i32 = 8192; // auto-collect (at interpreter statement boundaries) once the registry exceeds this
 
 function dynFreeBlock(ptr: i32, size: i32): void {
   if (size < 16) {
@@ -419,12 +420,46 @@ export function dynGcMarkRoots(): void {
   }
 }
 
+// Return a self-managed list's backing block (8 + (cap+2)*4 bytes) to the recycle pool.
+function freeList(lp: i32): void {
+  const a: Int32Array = lp as unknown as Int32Array;
+  dynFreeBlock(lp, 8 + (a[1] + 2) * 4);
+}
+
+// Free the non-cell PAYLOADS a garbage cell owns (called before the cell itself is freed, while its
+// slots are still readable). Number→Float64Array, string→Uint8Array, array→element list, object→
+// values list + keys list + each key byte-buffer. Referenced CELLS (array/object elements, an env's
+// parent, a user-fn's body/params/env) are NOT freed here — they're registered and swept on their own.
+function gcFreePayload(c: i32): void {
+  const n: Int32Array = c as unknown as Int32Array;
+  const t: i32 = n[0] & 255;
+  if (t === 3) {
+    dynFreeBlock(n[1], 16); // number payload
+  } else if (t === 4) {
+    dynFreeBlock(n[1], 8 + n[2]); // string bytes
+  } else if (t === 5) {
+    freeList(n[1]); // array element list
+  } else if (t === 6) {
+    freeList(n[1]); // object values list
+    const keys: i32 = n[3];
+    const klen: i32 = listLen(keys); // interleaved [keyPtr, keyLen] → 2 * entryCount
+    let i: i32 = 0;
+    while (i < klen) {
+      dynFreeBlock(listGet(keys, i), 8 + listGet(keys, i + 1)); // each key's Uint8Array
+      i = i + 2;
+    }
+    freeList(keys); // object keys list
+  }
+}
+
 /**
- * Full mark-sweep collection (#14 GC track, Part 5a). Mark from all roots, then sweep the registry:
- * every UNMARKED value cell is garbage → return it to dynrt's free list and drop it from the registry
- * (compacted in place); every marked cell survives with its mark cleared. Returns the number of cells
- * reclaimed. v5a reclaims the CELLS (24/28 bytes); their payloads (Float64Array / Uint8Array / lists)
- * are reclaimed in P5b. Safe to call between interpreter operations; the roots cover all live state.
+ * Full mark-sweep collection (#14 GC track, Part 5). Mark from all roots, then sweep the registry:
+ * every UNMARKED value cell is garbage → free its payloads + the cell into dynrt's recycle pool and
+ * drop it from the registry (compacted in place); every marked cell survives with its mark cleared.
+ * Returns the number of cells reclaimed. Reclaims CELLS (24/28 bytes) AND their payloads (the bulk),
+ * so a long interpreter loop runs in bounded memory. Allocation-free, so safe to call between
+ * interpreter operations (incl. the auto-trigger at statement boundaries); the roots cover all live
+ * state — there are no un-rooted temporaries at a statement boundary.
  */
 /** @export */
 export function dynGcCollect(): i32 {
@@ -445,9 +480,11 @@ export function dynGcCollect(): i32 {
       reg[write + 2] = c;
       write = write + 1;
     } else {
-      // garbage: a 5-slot user-function cell is 28 bytes, every other cell is 24. Read size BEFORE
-      // freeing (dynFreeBlock overwrites the first two slots with its [size, next] header).
+      // garbage: free its payloads FIRST (reads the cell's slots), then the cell. A 5-slot
+      // user-function cell is 28 bytes, every other cell is 24 — read the size before dynFreeBlock
+      // overwrites the first two slots with its [size, next] header.
       const sz: i32 = ((cn[0] & 255) === 7 && cn[1] === -1) ? 28 : 24;
+      gcFreePayload(c);
       dynFreeBlock(c, sz);
       freed = freed + 1;
     }
@@ -468,6 +505,21 @@ export function dynGcFreeCount(): i32 {
     count = count + 1;
   }
   return count;
+}
+
+// Auto-collect trigger (#14 GC track, Part 5b). Called at interpreter statement boundaries — a safe
+// collection point: the previous statement is complete and the next has not begun, so every live
+// value is reachable from a rooted scope (no un-rooted expression temporaries). Collects only when the
+// registry has grown past `__gc_threshold`, then raises the threshold to 2× the surviving live set
+// (min 8192) — the standard "grow the heap to amortize" heuristic, so a large live set doesn't force a
+// collection on every statement, while transient garbage (deep recursion / long loops) is reclaimed.
+function maybeCollect(): void {
+  if (dynGcCellCount() > __gc_threshold) {
+    dynGcCollect();
+    const live: i32 = dynGcCellCount();
+    const grown: i32 = live * 2;
+    __gc_threshold = grown > 8192 ? grown : 8192;
+  }
 }
 
 /** A fresh empty array. */
@@ -671,7 +723,7 @@ export function dynSet(obj: i32, key: string, val: i32): void {
   }
   // append: copy key bytes, push [keyPtr, keyLen] to the keys list and val to the values list
   const klen: i32 = key.length;
-  const kbuf: Uint8Array = new Uint8Array(klen);
+  const kbuf: Uint8Array = dynAlloc(8 + klen) as unknown as Uint8Array; // 8 header + klen (GC-recycled)
   let m: i32 = 0;
   while (m < klen) {
     kbuf[m] = key.charCodeAt(m);
@@ -1348,7 +1400,12 @@ function parsePostfix(s: string): i32 {
       v = dynIndexValue(v, idx);
     } else if (c === 40) { // (args)  — call
       evalPos = evalPos + 1;
+      // #14 GC P5b: the callee `v` and the args array (holding already-evaluated args) are live across
+      // the parsing of further args AND the call — both can run user functions that trigger a
+      // collection — so keep them rooted until the call returns.
+      gcPushRoot(v);
       const argsArr: i32 = dynArray();
+      gcPushRoot(argsArr);
       evalSkipWs(s);
       if (evalPeek(s) === 41) {
         evalPos = evalPos + 1; // ()
@@ -1371,6 +1428,8 @@ function parsePostfix(s: string): i32 {
       // branch, but still parse the args above so the cursor advances correctly.
       if (evalLive === 1) v = dynApply(v, argsArr);
       else v = dynUndefined();
+      gcPopRoot(); // argsArr
+      gcPopRoot(); // v
     } else {
       go = 0;
     }
@@ -1403,15 +1462,18 @@ function parseMul(s: string): i32 {
   while (go === 1) {
     evalSkipWs(s);
     const c: i32 = evalPeek(s);
-    if (c === 42) { // *
+    if (c === 42 || c === 47 || c === 37) { // * / %
       evalPos = evalPos + 1;
-      left = dynMul(left, parseUnary(s));
-    } else if (c === 47) { // /
-      evalPos = evalPos + 1;
-      left = dynDiv(left, parseUnary(s));
-    } else if (c === 37) { // %
-      evalPos = evalPos + 1;
-      left = dynMod(left, parseUnary(s));
+      gcPushRoot(left); // keep the accumulated operand alive across the right-operand parse — which
+      const r: i32 = parseUnary(s); // may run a user function → nested collection (#14 GC Part 5b)
+      gcPopRoot();
+      if (c === 42) {
+        left = dynMul(left, r);
+      } else if (c === 47) {
+        left = dynDiv(left, r);
+      } else {
+        left = dynMod(left, r);
+      }
     } else {
       go = 0;
     }
@@ -1425,12 +1487,16 @@ function parseAdd(s: string): i32 {
   while (go === 1) {
     evalSkipWs(s);
     const c: i32 = evalPeek(s);
-    if (c === 43) { // +
+    if (c === 43 || c === 45) { // + -
       evalPos = evalPos + 1;
-      left = dynAdd(left, parseMul(s));
-    } else if (c === 45) { // -
-      evalPos = evalPos + 1;
-      left = dynSub(left, parseMul(s));
+      gcPushRoot(left); // protect the accumulated operand across the right-operand parse (#14 GC P5b)
+      const r: i32 = parseMul(s);
+      gcPopRoot();
+      if (c === 43) {
+        left = dynAdd(left, r);
+      } else {
+        left = dynSub(left, r);
+      }
     } else {
       go = 0;
     }
@@ -1445,21 +1511,17 @@ function parseRel(s: string): i32 {
     evalSkipWs(s);
     const c: i32 = evalPeek(s);
     const c2: i32 = evalPeek2(s);
-    if (c === 60) { // <
-      if (c2 === 61) {
-        evalPos = evalPos + 2;
-        left = dynLe(left, parseAdd(s));
+    if (c === 60 || c === 62) { // < <= > >=
+      const isLt: i32 = c === 60 ? 1 : 0;
+      const orEq: i32 = c2 === 61 ? 1 : 0;
+      evalPos = orEq === 1 ? evalPos + 2 : evalPos + 1;
+      gcPushRoot(left); // protect the accumulated operand across the right-operand parse (#14 GC P5b)
+      const r: i32 = parseAdd(s);
+      gcPopRoot();
+      if (isLt === 1) {
+        left = orEq === 1 ? dynLe(left, r) : dynLt(left, r);
       } else {
-        evalPos = evalPos + 1;
-        left = dynLt(left, parseAdd(s));
-      }
-    } else if (c === 62) { // >
-      if (c2 === 61) {
-        evalPos = evalPos + 2;
-        left = dynGe(left, parseAdd(s));
-      } else {
-        evalPos = evalPos + 1;
-        left = dynGt(left, parseAdd(s));
+        left = orEq === 1 ? dynGe(left, r) : dynGt(left, r);
       }
     } else {
       go = 0;
@@ -1478,12 +1540,16 @@ function parseEq(s: string): i32 {
     if (c === 61 && c2 === 61) { // == or ===
       evalPos = evalPos + 2;
       if (evalPeek(s) === 61) evalPos = evalPos + 1; // consume the 3rd '='
+      gcPushRoot(left); // #14 GC P5b: protect left across the right-operand parse
       const right: i32 = parseRel(s);
+      gcPopRoot();
       left = dynBool(dynStrictEq(left, right));
     } else if (c === 33 && c2 === 61) { // != or !==
       evalPos = evalPos + 2;
       if (evalPeek(s) === 61) evalPos = evalPos + 1; // consume the 3rd '='
+      gcPushRoot(left); // #14 GC P5b: protect left across the right-operand parse
       const right: i32 = parseRel(s);
+      gcPopRoot();
       left = dynBool(dynStrictEq(left, right) === 0 ? 1 : 0);
     } else {
       go = 0;
@@ -1503,7 +1569,9 @@ function parseAnd(s: string): i32 {
       const takeRight: i32 = dynToBool(left);
       const saved: i32 = evalLive;
       if (takeRight === 0) evalLive = 0;
+      gcPushRoot(left); // #14 GC P5b: protect left across the right-operand parse
       const right: i32 = parseEq(s);
+      gcPopRoot();
       evalLive = saved;
       if (takeRight === 1) left = right;
     } else {
@@ -1524,7 +1592,9 @@ function parseOr(s: string): i32 {
       const leftTruthy: i32 = dynToBool(left);
       const saved: i32 = evalLive;
       if (leftTruthy === 1) evalLive = 0;
+      gcPushRoot(left); // #14 GC P5b: protect left across the right-operand parse
       const right: i32 = parseAnd(s);
+      gcPopRoot();
       evalLive = saved;
       if (leftTruthy === 0) left = right;
     } else {
@@ -1549,7 +1619,9 @@ function parseExpr(s: string): i32 {
     if (evalPeek(s) === 58) evalPos = evalPos + 1; // ':'
     // else-branch dead when cond is truthy
     if (c === 1) evalLive = 0;
+    gcPushRoot(thenV); // #14 GC P5b: protect the then-value across the else-branch parse
     const elseV: i32 = parseExpr(s);
+    gcPopRoot();
     evalLive = saved;
     return c === 1 ? thenV : elseV;
   }
@@ -1824,6 +1896,7 @@ function runStatements(s: string): void {
     if (c === -1 || c === 125) { // EOF or '}'
       go = 0;
     } else {
+      maybeCollect(); // statement boundary — safe to collect (all live values are rooted)
       const saved: i32 = evalLive;
       if (evalReturned === 1) evalLive = 0; // statements after a `return` are parsed but not run
       runStatement(s);

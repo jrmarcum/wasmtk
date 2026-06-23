@@ -5,6 +5,7 @@
   (global $__str_ret_len (mut i32) (i32.const 0))
   (global $LIST_CAP0 i32 (i32.const 4))
   (global $__dyn_free (mut i32) (i32.const 0))
+  (global $__gc_threshold (mut i32) (i32.const 8192))
   (global $__gc_reg (mut i32) (i32.const 0))
   (global $GC_MARK_BIT i32 (i32.const 256))
   (global $__gc_roots (mut i32) (i32.const 0))
@@ -1219,8 +1220,7 @@
   (func $dynNumber (export "dynNumber") (param $x f64) (result i32)
     (local $fv i32)
     (local $n i32)
-    (local.set $fv (call $__malloc (i32.const 16)))
-      (i32.store (local.get $fv) (i32.const 1))
+    (local.set $fv (call $dynAlloc (i32.const 16)))
     (f64.store (i32.add (i32.add (local.get $fv) (i32.const 8)) (i32.shl (i32.const 0) (i32.const 3))) (local.get $x))
     (local.set $n (call $mkCell ))
     (i32.store (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 0) (i32.const 2))) (i32.const 3))
@@ -1235,8 +1235,7 @@
     (local $n i32)
     (local $__iface_tmp i32)
     (local.set $len (local.get $s_len))
-    (local.set $buf (call $__malloc (i32.add (i32.const 8) (local.get $len))))
-      (i32.store (local.get $buf) (local.get $len))
+    (local.set $buf (call $dynAlloc (i32.add (i32.const 8) (local.get $len))))
     (local.set $i (i32.const 0))
     (block $break_0
       (loop $loop_0
@@ -1257,8 +1256,7 @@
 
   (func $listNew  (result i32)
     (local $a i32)
-    (local.set $a (call $__malloc (i32.add (i32.const 8) (i32.shl (i32.add (global.get $LIST_CAP0) (i32.const 2)) (i32.const 2)))))
-      (i32.store (local.get $a) (i32.add (global.get $LIST_CAP0) (i32.const 2)))
+    (local.set $a (call $dynAlloc (i32.add (i32.const 8) (i32.mul (i32.add (global.get $LIST_CAP0) (i32.const 2)) (i32.const 4)))))
     (i32.store (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.shl (i32.const 0) (i32.const 2))) (i32.const 0))
     (i32.store (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2))) (global.get $LIST_CAP0))
     (return (local.get $a))
@@ -1295,8 +1293,7 @@
     (if (i32.ge_s (local.get $len) (local.get $cap))
       (then
       (local.set $ncap (i32.mul (local.get $cap) (i32.const 2)))
-      (local.set $b (call $__malloc (i32.add (i32.const 8) (i32.shl (i32.add (local.get $ncap) (i32.const 2)) (i32.const 2)))))
-      (i32.store (local.get $b) (i32.add (local.get $ncap) (i32.const 2)))
+      (local.set $b (call $dynAlloc (i32.add (i32.const 8) (i32.mul (i32.add (local.get $ncap) (i32.const 2)) (i32.const 4)))))
       (i32.store (i32.add (i32.add (local.get $b) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2))) (local.get $ncap))
       (local.set $i (i32.const 0))
       (block $break_1
@@ -1624,6 +1621,66 @@
     )
   )
 
+  (func $freeList (param $lp i32) 
+    (local $a i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
+    (local.set $a (local.get $lp))
+    (call $dynFreeBlock (local.get $lp) (i32.add (i32.const 8) (i32.mul (i32.add (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2)))) (i32.const 2)) (i32.const 4))))
+  )
+
+  (func $gcFreePayload (param $c i32) 
+    (local $n i32)
+    (local $t i32)
+    (local $keys i32)
+    (local $klen i32)
+    (local $i i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
+    (local.set $n (local.get $c))
+    (local.set $t (i32.and (i32.load (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 0) (i32.const 2)))) (i32.const 255)))
+    (if (i32.eq (local.get $t) (i32.const 3))
+      (then
+      (call $dynFreeBlock (i32.load (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2)))) (i32.const 16))
+      )
+      (else
+      (if (i32.eq (local.get $t) (i32.const 4))
+        (then
+        (call $dynFreeBlock (i32.load (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2)))) (i32.add (i32.const 8) (i32.load (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 2) (i32.const 2))))))
+        )
+        (else
+        (if (i32.eq (local.get $t) (i32.const 5))
+          (then
+          (call $freeList (i32.load (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2)))))
+          )
+          (else
+          (if (i32.eq (local.get $t) (i32.const 6))
+            (then
+            (call $freeList (i32.load (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2)))))
+            (local.set $keys (i32.load (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 3) (i32.const 2)))))
+            (local.set $klen (call $listLen (local.get $keys)))
+            (local.set $i (i32.const 0))
+            (block $break_8
+              (loop $loop_8
+                (br_if $break_8 (i32.eqz (i32.lt_s (local.get $i) (local.get $klen))))
+                (block $cont_8
+                  (call $dynFreeBlock (call $listGet (local.get $keys) (local.get $i)) (i32.add (i32.const 8) (call $listGet (local.get $keys) (i32.add (local.get $i) (i32.const 1)))))
+                  (local.set $i (i32.add (local.get $i) (i32.const 2)))
+                )
+                (br $loop_8)
+              )
+            )
+            (call $freeList (local.get $keys))
+            )
+          )
+          )
+        )
+        )
+      )
+      )
+    )
+  )
+
   (func $dynGcCollect (export "dynGcCollect")  (result i32)
     (local $reg i32)
     (local $len i32)
@@ -1646,10 +1703,10 @@
     (local.set $write (i32.const 0))
     (local.set $read (i32.const 0))
     (local.set $freed (i32.const 0))
-    (block $break_8
-      (loop $loop_8
-        (br_if $break_8 (i32.eqz (i32.lt_s (local.get $read) (local.get $len))))
-        (block $cont_8
+    (block $break_9
+      (loop $loop_9
+        (br_if $break_9 (i32.eqz (i32.lt_s (local.get $read) (local.get $len))))
+        (block $cont_9
           (local.set $c (i32.load (i32.add (i32.add (local.get $reg) (i32.const 8)) (i32.shl (i32.add (local.get $read) (i32.const 2)) (i32.const 2)))))
           (local.set $cn (local.get $c))
           (if (i32.ne (i32.and (i32.load (i32.add (i32.add (local.get $cn) (i32.const 8)) (i32.shl (i32.const 0) (i32.const 2)))) (global.get $GC_MARK_BIT)) (i32.const 0))
@@ -1660,13 +1717,14 @@
             )
             (else
             (local.set $sz (if (result i32) (if (result i32) (i32.eq (i32.and (i32.load (i32.add (i32.add (local.get $cn) (i32.const 8)) (i32.shl (i32.const 0) (i32.const 2)))) (i32.const 255)) (i32.const 7)) (then (i32.eq (i32.load (i32.add (i32.add (local.get $cn) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2)))) (i32.const -1))) (else (i32.const 0))) (then (i32.const 28)) (else (i32.const 24))))
+            (call $gcFreePayload (local.get $c))
             (call $dynFreeBlock (local.get $c) (local.get $sz))
             (local.set $freed (i32.add (local.get $freed) (i32.const 1)))
             )
           )
           (local.set $read (i32.add (local.get $read) (i32.const 1)))
         )
-        (br $loop_8)
+        (br $loop_9)
       )
     )
     (i32.store (i32.add (i32.add (local.get $reg) (i32.const 8)) (i32.shl (i32.const 0) (i32.const 2))) (local.get $write))
@@ -1679,18 +1737,31 @@
     (local $cn i32)
     (local.set $cur (global.get $__dyn_free))
     (local.set $count (i32.const 0))
-    (block $break_9
-      (loop $loop_9
-        (br_if $break_9 (i32.eqz (i32.ne (local.get $cur) (i32.const 0))))
-        (block $cont_9
+    (block $break_10
+      (loop $loop_10
+        (br_if $break_10 (i32.eqz (i32.ne (local.get $cur) (i32.const 0))))
+        (block $cont_10
           (local.set $cn (local.get $cur))
           (local.set $cur (i32.load (i32.add (i32.add (local.get $cn) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2)))))
           (local.set $count (i32.add (local.get $count) (i32.const 1)))
         )
-        (br $loop_9)
+        (br $loop_10)
       )
     )
     (return (local.get $count))
+  )
+
+  (func $maybeCollect  
+    (local $live i32)
+    (local $grown i32)
+    (if (i32.gt_s (call $dynGcCellCount ) (global.get $__gc_threshold))
+      (then
+      (drop (call $dynGcCollect ))
+      (local.set $live (call $dynGcCellCount ))
+      (local.set $grown (i32.mul (local.get $live) (i32.const 2)))
+      (global.set $__gc_threshold (if (result i32) (i32.gt_s (local.get $grown) (i32.const 8192)) (then (local.get $grown)) (else (i32.const 8192))))
+      )
+    )
   )
 
   (func $dynArray (export "dynArray")  (result i32)
@@ -1880,10 +1951,10 @@
     (local.set $r_ptr (i32.const 260))
       (local.set $r_len (i32.const 0))
     (local.set $i (i32.const 0))
-    (block $break_10
-      (loop $loop_10
-        (br_if $break_10 (i32.eqz (i32.lt_s (local.get $i) (local.get $len))))
-        (block $cont_10
+    (block $break_11
+      (loop $loop_11
+        (br_if $break_11 (i32.eqz (i32.lt_s (local.get $i) (local.get $len))))
+        (block $cont_11
           (local.set $r_ptr (local.get $r_ptr))
       (local.set $r_len (local.get $r_len))
       (local.set $__str_op_ptr (call $__malloc (i32.const 1)))
@@ -1893,7 +1964,7 @@
       (local.set $r_ptr)
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
         )
-        (br $loop_10)
+        (br $loop_11)
       )
     )
     (local.set $__ret_str_ptr (local.get $r_ptr))
@@ -1998,10 +2069,10 @@
     (local.set $count (call $listLen (local.get $vlp)))
     (local.set $klen (local.get $key_len))
     (local.set $i (i32.const 0))
-    (block $break_11
-      (loop $loop_11
-        (br_if $break_11 (i32.eqz (i32.lt_s (local.get $i) (local.get $count))))
-        (block $cont_11
+    (block $break_12
+      (loop $loop_12
+        (br_if $break_12 (i32.eqz (i32.lt_s (local.get $i) (local.get $count))))
+        (block $cont_12
           (local.set $kl (call $listGet (local.get $klp) (i32.add (i32.mul (local.get $i) (i32.const 2)) (i32.const 1))))
           (if (i32.eq (local.get $kl) (local.get $klen))
             (then
@@ -2009,10 +2080,10 @@
             (local.set $kv (local.get $kptr))
             (local.set $eq (i32.const 1))
             (local.set $j (i32.const 0))
-            (block $break_12
-              (loop $loop_12
-                (br_if $break_12 (i32.eqz (i32.lt_s (local.get $j) (local.get $kl))))
-                (block $cont_12
+            (block $break_13
+              (loop $loop_13
+                (br_if $break_13 (i32.eqz (i32.lt_s (local.get $j) (local.get $kl))))
+                (block $cont_13
                   (if (i32.ne (i32.load8_u (i32.add (i32.add (local.get $kv) (i32.const 8)) (local.get $j))) (call $__str_char_code_at (local.get $key_ptr) (local.get $key_len) (local.get $j)))
                     (then
                     (local.set $eq (i32.const 0))
@@ -2023,7 +2094,7 @@
                     )
                   )
                 )
-                (br $loop_12)
+                (br $loop_13)
               )
             )
             (if (i32.eq (local.get $eq) (i32.const 1))
@@ -2035,7 +2106,7 @@
           )
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
         )
-        (br $loop_11)
+        (br $loop_12)
       )
     )
     (return (i32.const -1))
@@ -2059,17 +2130,16 @@
       )
     )
     (local.set $klen (local.get $key_len))
-    (local.set $kbuf (call $__malloc (i32.add (i32.const 8) (local.get $klen))))
-      (i32.store (local.get $kbuf) (local.get $klen))
+    (local.set $kbuf (call $dynAlloc (i32.add (i32.const 8) (local.get $klen))))
     (local.set $m (i32.const 0))
-    (block $break_13
-      (loop $loop_13
-        (br_if $break_13 (i32.eqz (i32.lt_s (local.get $m) (local.get $klen))))
-        (block $cont_13
+    (block $break_14
+      (loop $loop_14
+        (br_if $break_14 (i32.eqz (i32.lt_s (local.get $m) (local.get $klen))))
+        (block $cont_14
           (i32.store8 (i32.add (i32.add (local.get $kbuf) (i32.const 8)) (local.get $m)) (call $__str_char_code_at (local.get $key_ptr) (local.get $key_len) (local.get $m)))
           (local.set $m (i32.add (local.get $m) (i32.const 1)))
         )
-        (br $loop_13)
+        (br $loop_14)
       )
     )
     (local.set $kp0 (local.get $kbuf))
@@ -2204,10 +2274,10 @@
       (local.set $va (local.get $pa))
       (local.set $vb (local.get $pb))
       (local.set $i (i32.const 0))
-      (block $break_14
-        (loop $loop_14
-          (br_if $break_14 (i32.eqz (i32.lt_s (local.get $i) (local.get $len))))
-          (block $cont_14
+      (block $break_15
+        (loop $loop_15
+          (br_if $break_15 (i32.eqz (i32.lt_s (local.get $i) (local.get $len))))
+          (block $cont_15
             (if (i32.ne (i32.load8_u (i32.add (i32.add (local.get $va) (i32.const 8)) (local.get $i))) (i32.load8_u (i32.add (i32.add (local.get $vb) (i32.const 8)) (local.get $i))))
               (then
               (return (i32.const 0))
@@ -2215,7 +2285,7 @@
             )
             (local.set $i (i32.add (local.get $i) (i32.const 1)))
           )
-          (br $loop_14)
+          (br $loop_15)
         )
       )
       (return (i32.const 1))
@@ -2367,10 +2437,10 @@
     (local $r i32)
     (local $en i32)
     (local.set $e (local.get $env))
-    (block $break_15
-      (loop $loop_15
-        (br_if $break_15 (i32.eqz (if (result i32) (i32.ne (local.get $e) (i32.const -1)) (then (i32.ne (local.get $e) (i32.const 0))) (else (i32.const 0)))))
-        (block $cont_15
+    (block $break_16
+      (loop $loop_16
+        (br_if $break_16 (i32.eqz (if (result i32) (i32.ne (local.get $e) (i32.const -1)) (then (i32.ne (local.get $e) (i32.const 0))) (else (i32.const 0)))))
+        (block $cont_16
           (local.set $r (call $dynGet (local.get $e) (local.get $name_ptr) (local.get $name_len)))
           (if (i32.ne (local.get $r) (i32.const -1))
             (then
@@ -2380,7 +2450,7 @@
           (local.set $en (local.get $e))
           (local.set $e (i32.load (i32.add (i32.add (local.get $en) (i32.const 8)) (i32.shl (i32.const 2) (i32.const 2)))))
         )
-        (br $loop_15)
+        (br $loop_16)
       )
     )
     (return (i32.const -1))
@@ -2438,10 +2508,10 @@
       (i32.store (i32.add (i32.add (local.get $sn) (i32.const 8)) (i32.shl (i32.const 2) (i32.const 2))) (local.get $defEnv))
       (local.set $pc (call $dynArrLen (local.get $paramsArr)))
       (local.set $i (i32.const 0))
-      (block $break_16
-        (loop $loop_16
-          (br_if $break_16 (i32.eqz (i32.lt_s (local.get $i) (local.get $pc))))
-          (block $cont_16
+      (block $break_17
+        (loop $loop_17
+          (br_if $break_17 (i32.eqz (i32.lt_s (local.get $i) (local.get $pc))))
+          (block $cont_17
             (local.set $pnameBox (call $dynArrGet (local.get $paramsArr) (local.get $i)))
             (call $boxToStr (local.get $pnameBox))
 (local.set $pname_ptr (global.get $__str_ret_ptr))
@@ -2450,7 +2520,7 @@
             (call $dynSet (local.get $scope) (local.get $pname_ptr) (local.get $pname_len) (local.get $aval))
             (local.set $i (i32.add (local.get $i) (i32.const 1)))
           )
-          (br $loop_16)
+          (br $loop_17)
         )
       )
       (call $boxToStr (local.get $bodyBox))
@@ -2602,10 +2672,10 @@
       )
     )
     (local.set $i (i32.const 0))
-    (block $break_17
-      (loop $loop_17
-        (br_if $break_17 (i32.eqz (i32.lt_s (local.get $i) (local.get $a_len))))
-        (block $cont_17
+    (block $break_18
+      (loop $loop_18
+        (br_if $break_18 (i32.eqz (i32.lt_s (local.get $i) (local.get $a_len))))
+        (block $cont_18
           (if (i32.ne (call $__str_char_code_at (local.get $a_ptr) (local.get $a_len) (local.get $i)) (call $__str_char_code_at (local.get $b_ptr) (local.get $b_len) (local.get $i)))
             (then
             (return (i32.const 0))
@@ -2613,7 +2683,7 @@
           )
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
         )
-        (br $loop_17)
+        (br $loop_18)
       )
     )
     (return (i32.const 1))
@@ -2735,10 +2805,10 @@
     (local $c i32)
     (local $__iface_tmp i32)
     (local.set $go (i32.const 1))
-    (block $break_18
-      (loop $loop_18
-        (br_if $break_18 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
-        (block $cont_18
+    (block $break_19
+      (loop $loop_19
+        (br_if $break_19 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
+        (block $cont_19
           (if (i32.ge_s (global.get $evalPos) (local.get $s_len))
             (then
             (local.set $go (i32.const 0))
@@ -2756,7 +2826,7 @@
             )
           )
         )
-        (br $loop_18)
+        (br $loop_19)
       )
     )
   )
@@ -2791,28 +2861,28 @@
     (local $__str_op_len i32)
     (local.set $start (global.get $evalPos))
     (local.set $c (call $evalPeek (local.get $s_ptr) (local.get $s_len)))
-    (block $break_19
-      (loop $loop_19
-        (br_if $break_19 (i32.eqz (if (result i32) (i32.ge_s (local.get $c) (i32.const 48)) (then (i32.le_s (local.get $c) (i32.const 57))) (else (i32.const 0)))))
-        (block $cont_19
+    (block $break_20
+      (loop $loop_20
+        (br_if $break_20 (i32.eqz (if (result i32) (i32.ge_s (local.get $c) (i32.const 48)) (then (i32.le_s (local.get $c) (i32.const 57))) (else (i32.const 0)))))
+        (block $cont_20
           (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 1)))
           (local.set $c (call $evalPeek (local.get $s_ptr) (local.get $s_len)))
         )
-        (br $loop_19)
+        (br $loop_20)
       )
     )
     (if (i32.eq (local.get $c) (i32.const 46))
       (then
       (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 1)))
       (local.set $c (call $evalPeek (local.get $s_ptr) (local.get $s_len)))
-      (block $break_20
-        (loop $loop_20
-          (br_if $break_20 (i32.eqz (if (result i32) (i32.ge_s (local.get $c) (i32.const 48)) (then (i32.le_s (local.get $c) (i32.const 57))) (else (i32.const 0)))))
-          (block $cont_20
+      (block $break_21
+        (loop $loop_21
+          (br_if $break_21 (i32.eqz (if (result i32) (i32.ge_s (local.get $c) (i32.const 48)) (then (i32.le_s (local.get $c) (i32.const 57))) (else (i32.const 0)))))
+          (block $cont_21
             (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 1)))
             (local.set $c (call $evalPeek (local.get $s_ptr) (local.get $s_len)))
           )
-          (br $loop_20)
+          (br $loop_21)
         )
       )
       )
@@ -2827,14 +2897,14 @@
         (local.set $c (call $evalPeek (local.get $s_ptr) (local.get $s_len)))
         )
       )
-      (block $break_21
-        (loop $loop_21
-          (br_if $break_21 (i32.eqz (if (result i32) (i32.ge_s (local.get $c) (i32.const 48)) (then (i32.le_s (local.get $c) (i32.const 57))) (else (i32.const 0)))))
-          (block $cont_21
+      (block $break_22
+        (loop $loop_22
+          (br_if $break_22 (i32.eqz (if (result i32) (i32.ge_s (local.get $c) (i32.const 48)) (then (i32.le_s (local.get $c) (i32.const 57))) (else (i32.const 0)))))
+          (block $cont_22
             (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 1)))
             (local.set $c (call $evalPeek (local.get $s_ptr) (local.get $s_len)))
           )
-          (br $loop_21)
+          (br $loop_22)
         )
       )
       )
@@ -2861,10 +2931,10 @@
     (local.set $r_ptr (i32.const 260))
       (local.set $r_len (i32.const 0))
     (local.set $go (i32.const 1))
-    (block $break_22
-      (loop $loop_22
-        (br_if $break_22 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
-        (block $cont_22
+    (block $break_23
+      (loop $loop_23
+        (br_if $break_23 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
+        (block $cont_23
           (if (i32.ge_s (global.get $evalPos) (local.get $s_len))
             (then
             (local.set $go (i32.const 0))
@@ -2926,7 +2996,7 @@
             )
           )
         )
-        (br $loop_22)
+        (br $loop_23)
       )
     )
     (return (call $dynString (local.get $r_ptr) (local.get $r_len)))
@@ -2976,14 +3046,14 @@
       (then
       (local.set $start (global.get $evalPos))
       (local.set $ch (local.get $c))
-      (block $break_23
-        (loop $loop_23
-          (br_if $break_23 (i32.eqz (i32.eq (call $isIdentChar (local.get $ch) (i32.const 1)) (i32.const 1))))
-          (block $cont_23
+      (block $break_24
+        (loop $loop_24
+          (br_if $break_24 (i32.eqz (i32.eq (call $isIdentChar (local.get $ch) (i32.const 1)) (i32.const 1))))
+          (block $cont_24
             (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 1)))
             (local.set $ch (call $evalPeek (local.get $s_ptr) (local.get $s_len)))
           )
-          (br $loop_23)
+          (br $loop_24)
         )
       )
       (call $__str_slice (local.get $s_ptr) (local.get $s_len) (local.get $start) (global.get $evalPos))
@@ -3039,10 +3109,10 @@
     (local $__str_op_len i32)
     (local.set $v (call $parsePrimary (local.get $s_ptr) (local.get $s_len)))
     (local.set $go (i32.const 1))
-    (block $break_24
-      (loop $loop_24
-        (br_if $break_24 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
-        (block $cont_24
+    (block $break_25
+      (loop $loop_25
+        (br_if $break_25 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
+        (block $cont_25
           (call $evalSkipWs (local.get $s_ptr) (local.get $s_len))
           (local.set $c (call $evalPeek (local.get $s_ptr) (local.get $s_len)))
           (if (i32.eq (local.get $c) (i32.const 46))
@@ -3051,14 +3121,14 @@
             (call $evalSkipWs (local.get $s_ptr) (local.get $s_len))
             (local.set $start (global.get $evalPos))
             (local.set $ch (call $evalPeek (local.get $s_ptr) (local.get $s_len)))
-            (block $break_25
-              (loop $loop_25
-                (br_if $break_25 (i32.eqz (i32.eq (call $isIdentChar (local.get $ch) (i32.const 1)) (i32.const 1))))
-                (block $cont_25
+            (block $break_26
+              (loop $loop_26
+                (br_if $break_26 (i32.eqz (i32.eq (call $isIdentChar (local.get $ch) (i32.const 1)) (i32.const 1))))
+                (block $cont_26
                   (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 1)))
                   (local.set $ch (call $evalPeek (local.get $s_ptr) (local.get $s_len)))
                 )
-                (br $loop_25)
+                (br $loop_26)
               )
             )
             (call $__str_slice (local.get $s_ptr) (local.get $s_len) (local.get $start) (global.get $evalPos))
@@ -3083,7 +3153,9 @@
               (if (i32.eq (local.get $c) (i32.const 40))
                 (then
                 (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 1)))
+                (call $gcPushRoot (local.get $v))
                 (local.set $argsArr (call $dynArray ))
+                (call $gcPushRoot (local.get $argsArr))
                 (call $evalSkipWs (local.get $s_ptr) (local.get $s_len))
                 (if (i32.eq (call $evalPeek (local.get $s_ptr) (local.get $s_len)) (i32.const 41))
                   (then
@@ -3091,10 +3163,10 @@
                   )
                   (else
                   (local.set $more (i32.const 1))
-                  (block $break_26
-                    (loop $loop_26
-                      (br_if $break_26 (i32.eqz (i32.eq (local.get $more) (i32.const 1))))
-                      (block $cont_26
+                  (block $break_27
+                    (loop $loop_27
+                      (br_if $break_27 (i32.eqz (i32.eq (local.get $more) (i32.const 1))))
+                      (block $cont_27
                         (local.set $a (call $parseExpr (local.get $s_ptr) (local.get $s_len)))
                         (call $dynPush (local.get $argsArr) (local.get $a))
                         (call $evalSkipWs (local.get $s_ptr) (local.get $s_len))
@@ -3113,7 +3185,7 @@
                           )
                         )
                       )
-                      (br $loop_26)
+                      (br $loop_27)
                     )
                   )
                   )
@@ -3126,6 +3198,8 @@
                   (local.set $v (call $dynUndefined ))
                   )
                 )
+                (call $gcPopRoot )
+                (call $gcPopRoot )
                 )
                 (else
                 (local.set $go (i32.const 0))
@@ -3136,7 +3210,7 @@
             )
           )
         )
-        (br $loop_24)
+        (br $loop_25)
       )
     )
     (return (local.get $v))
@@ -3173,41 +3247,43 @@
     (local $left i32)
     (local $go i32)
     (local $c i32)
+    (local $r i32)
     (local.set $left (call $parseUnary (local.get $s_ptr) (local.get $s_len)))
     (local.set $go (i32.const 1))
-    (block $break_27
-      (loop $loop_27
-        (br_if $break_27 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
-        (block $cont_27
+    (block $break_28
+      (loop $loop_28
+        (br_if $break_28 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
+        (block $cont_28
           (call $evalSkipWs (local.get $s_ptr) (local.get $s_len))
           (local.set $c (call $evalPeek (local.get $s_ptr) (local.get $s_len)))
-          (if (i32.eq (local.get $c) (i32.const 42))
+          (if (if (result i32) (if (result i32) (i32.eq (local.get $c) (i32.const 42)) (then (i32.const 1)) (else (i32.eq (local.get $c) (i32.const 47)))) (then (i32.const 1)) (else (i32.eq (local.get $c) (i32.const 37))))
             (then
             (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 1)))
-            (local.set $left (call $dynMul (local.get $left) (call $parseUnary (local.get $s_ptr) (local.get $s_len))))
-            )
-            (else
-            (if (i32.eq (local.get $c) (i32.const 47))
+            (call $gcPushRoot (local.get $left))
+            (local.set $r (call $parseUnary (local.get $s_ptr) (local.get $s_len)))
+            (call $gcPopRoot )
+            (if (i32.eq (local.get $c) (i32.const 42))
               (then
-              (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 1)))
-              (local.set $left (call $dynDiv (local.get $left) (call $parseUnary (local.get $s_ptr) (local.get $s_len))))
+              (local.set $left (call $dynMul (local.get $left) (local.get $r)))
               )
               (else
-              (if (i32.eq (local.get $c) (i32.const 37))
+              (if (i32.eq (local.get $c) (i32.const 47))
                 (then
-                (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 1)))
-                (local.set $left (call $dynMod (local.get $left) (call $parseUnary (local.get $s_ptr) (local.get $s_len))))
+                (local.set $left (call $dynDiv (local.get $left) (local.get $r)))
                 )
                 (else
-                (local.set $go (i32.const 0))
+                (local.set $left (call $dynMod (local.get $left) (local.get $r)))
                 )
               )
               )
             )
+            )
+            (else
+            (local.set $go (i32.const 0))
             )
           )
         )
-        (br $loop_27)
+        (br $loop_28)
       )
     )
     (return (local.get $left))
@@ -3217,33 +3293,36 @@
     (local $left i32)
     (local $go i32)
     (local $c i32)
+    (local $r i32)
     (local.set $left (call $parseMul (local.get $s_ptr) (local.get $s_len)))
     (local.set $go (i32.const 1))
-    (block $break_28
-      (loop $loop_28
-        (br_if $break_28 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
-        (block $cont_28
+    (block $break_29
+      (loop $loop_29
+        (br_if $break_29 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
+        (block $cont_29
           (call $evalSkipWs (local.get $s_ptr) (local.get $s_len))
           (local.set $c (call $evalPeek (local.get $s_ptr) (local.get $s_len)))
-          (if (i32.eq (local.get $c) (i32.const 43))
+          (if (if (result i32) (i32.eq (local.get $c) (i32.const 43)) (then (i32.const 1)) (else (i32.eq (local.get $c) (i32.const 45))))
             (then
             (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 1)))
-            (local.set $left (call $dynAdd (local.get $left) (call $parseMul (local.get $s_ptr) (local.get $s_len))))
-            )
-            (else
-            (if (i32.eq (local.get $c) (i32.const 45))
+            (call $gcPushRoot (local.get $left))
+            (local.set $r (call $parseMul (local.get $s_ptr) (local.get $s_len)))
+            (call $gcPopRoot )
+            (if (i32.eq (local.get $c) (i32.const 43))
               (then
-              (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 1)))
-              (local.set $left (call $dynSub (local.get $left) (call $parseMul (local.get $s_ptr) (local.get $s_len))))
+              (local.set $left (call $dynAdd (local.get $left) (local.get $r)))
               )
               (else
-              (local.set $go (i32.const 0))
+              (local.set $left (call $dynSub (local.get $left) (local.get $r)))
               )
             )
+            )
+            (else
+            (local.set $go (i32.const 0))
             )
           )
         )
-        (br $loop_28)
+        (br $loop_29)
       )
     )
     (return (local.get $left))
@@ -3254,50 +3333,41 @@
     (local $go i32)
     (local $c i32)
     (local $c2 i32)
+    (local $isLt i32)
+    (local $orEq i32)
+    (local $r i32)
     (local.set $left (call $parseAdd (local.get $s_ptr) (local.get $s_len)))
     (local.set $go (i32.const 1))
-    (block $break_29
-      (loop $loop_29
-        (br_if $break_29 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
-        (block $cont_29
+    (block $break_30
+      (loop $loop_30
+        (br_if $break_30 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
+        (block $cont_30
           (call $evalSkipWs (local.get $s_ptr) (local.get $s_len))
           (local.set $c (call $evalPeek (local.get $s_ptr) (local.get $s_len)))
           (local.set $c2 (call $evalPeek2 (local.get $s_ptr) (local.get $s_len)))
-          (if (i32.eq (local.get $c) (i32.const 60))
+          (if (if (result i32) (i32.eq (local.get $c) (i32.const 60)) (then (i32.const 1)) (else (i32.eq (local.get $c) (i32.const 62))))
             (then
-            (if (i32.eq (local.get $c2) (i32.const 61))
+            (local.set $isLt (if (result i32) (i32.eq (local.get $c) (i32.const 60)) (then (i32.const 1)) (else (i32.const 0))))
+            (local.set $orEq (if (result i32) (i32.eq (local.get $c2) (i32.const 61)) (then (i32.const 1)) (else (i32.const 0))))
+            (global.set $evalPos (if (result i32) (i32.eq (local.get $orEq) (i32.const 1)) (then (i32.add (global.get $evalPos) (i32.const 2))) (else (i32.add (global.get $evalPos) (i32.const 1)))))
+            (call $gcPushRoot (local.get $left))
+            (local.set $r (call $parseAdd (local.get $s_ptr) (local.get $s_len)))
+            (call $gcPopRoot )
+            (if (i32.eq (local.get $isLt) (i32.const 1))
               (then
-              (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 2)))
-              (local.set $left (call $dynLe (local.get $left) (call $parseAdd (local.get $s_ptr) (local.get $s_len))))
+              (local.set $left (if (result i32) (i32.eq (local.get $orEq) (i32.const 1)) (then (call $dynLe (local.get $left) (local.get $r))) (else (call $dynLt (local.get $left) (local.get $r)))))
               )
               (else
-              (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 1)))
-              (local.set $left (call $dynLt (local.get $left) (call $parseAdd (local.get $s_ptr) (local.get $s_len))))
+              (local.set $left (if (result i32) (i32.eq (local.get $orEq) (i32.const 1)) (then (call $dynGe (local.get $left) (local.get $r))) (else (call $dynGt (local.get $left) (local.get $r)))))
               )
             )
             )
             (else
-            (if (i32.eq (local.get $c) (i32.const 62))
-              (then
-              (if (i32.eq (local.get $c2) (i32.const 61))
-                (then
-                (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 2)))
-                (local.set $left (call $dynGe (local.get $left) (call $parseAdd (local.get $s_ptr) (local.get $s_len))))
-                )
-                (else
-                (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 1)))
-                (local.set $left (call $dynGt (local.get $left) (call $parseAdd (local.get $s_ptr) (local.get $s_len))))
-                )
-              )
-              )
-              (else
-              (local.set $go (i32.const 0))
-              )
-            )
+            (local.set $go (i32.const 0))
             )
           )
         )
-        (br $loop_29)
+        (br $loop_30)
       )
     )
     (return (local.get $left))
@@ -3311,10 +3381,10 @@
     (local $right i32)
     (local.set $left (call $parseRel (local.get $s_ptr) (local.get $s_len)))
     (local.set $go (i32.const 1))
-    (block $break_30
-      (loop $loop_30
-        (br_if $break_30 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
-        (block $cont_30
+    (block $break_31
+      (loop $loop_31
+        (br_if $break_31 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
+        (block $cont_31
           (call $evalSkipWs (local.get $s_ptr) (local.get $s_len))
           (local.set $c (call $evalPeek (local.get $s_ptr) (local.get $s_len)))
           (local.set $c2 (call $evalPeek2 (local.get $s_ptr) (local.get $s_len)))
@@ -3326,7 +3396,9 @@
               (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 1)))
               )
             )
+            (call $gcPushRoot (local.get $left))
             (local.set $right (call $parseRel (local.get $s_ptr) (local.get $s_len)))
+            (call $gcPopRoot )
             (local.set $left (call $dynBool (call $dynStrictEq (local.get $left) (local.get $right))))
             )
             (else
@@ -3338,7 +3410,9 @@
                 (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 1)))
                 )
               )
+              (call $gcPushRoot (local.get $left))
               (local.set $right (call $parseRel (local.get $s_ptr) (local.get $s_len)))
+              (call $gcPopRoot )
               (local.set $left (call $dynBool (if (result i32) (i32.eq (call $dynStrictEq (local.get $left) (local.get $right)) (i32.const 0)) (then (i32.const 1)) (else (i32.const 0)))))
               )
               (else
@@ -3348,7 +3422,7 @@
             )
           )
         )
-        (br $loop_30)
+        (br $loop_31)
       )
     )
     (return (local.get $left))
@@ -3362,10 +3436,10 @@
     (local $right i32)
     (local.set $left (call $parseEq (local.get $s_ptr) (local.get $s_len)))
     (local.set $go (i32.const 1))
-    (block $break_31
-      (loop $loop_31
-        (br_if $break_31 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
-        (block $cont_31
+    (block $break_32
+      (loop $loop_32
+        (br_if $break_32 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
+        (block $cont_32
           (call $evalSkipWs (local.get $s_ptr) (local.get $s_len))
           (if (if (result i32) (i32.eq (call $evalPeek (local.get $s_ptr) (local.get $s_len)) (i32.const 38)) (then (i32.eq (call $evalPeek2 (local.get $s_ptr) (local.get $s_len)) (i32.const 38))) (else (i32.const 0)))
             (then
@@ -3377,7 +3451,9 @@
               (global.set $evalLive (i32.const 0))
               )
             )
+            (call $gcPushRoot (local.get $left))
             (local.set $right (call $parseEq (local.get $s_ptr) (local.get $s_len)))
+            (call $gcPopRoot )
             (global.set $evalLive (local.get $saved))
             (if (i32.eq (local.get $takeRight) (i32.const 1))
               (then
@@ -3390,7 +3466,7 @@
             )
           )
         )
-        (br $loop_31)
+        (br $loop_32)
       )
     )
     (return (local.get $left))
@@ -3404,10 +3480,10 @@
     (local $right i32)
     (local.set $left (call $parseAnd (local.get $s_ptr) (local.get $s_len)))
     (local.set $go (i32.const 1))
-    (block $break_32
-      (loop $loop_32
-        (br_if $break_32 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
-        (block $cont_32
+    (block $break_33
+      (loop $loop_33
+        (br_if $break_33 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
+        (block $cont_33
           (call $evalSkipWs (local.get $s_ptr) (local.get $s_len))
           (if (if (result i32) (i32.eq (call $evalPeek (local.get $s_ptr) (local.get $s_len)) (i32.const 124)) (then (i32.eq (call $evalPeek2 (local.get $s_ptr) (local.get $s_len)) (i32.const 124))) (else (i32.const 0)))
             (then
@@ -3419,7 +3495,9 @@
               (global.set $evalLive (i32.const 0))
               )
             )
+            (call $gcPushRoot (local.get $left))
             (local.set $right (call $parseAnd (local.get $s_ptr) (local.get $s_len)))
+            (call $gcPopRoot )
             (global.set $evalLive (local.get $saved))
             (if (i32.eq (local.get $leftTruthy) (i32.const 0))
               (then
@@ -3432,7 +3510,7 @@
             )
           )
         )
-        (br $loop_32)
+        (br $loop_33)
       )
     )
     (return (local.get $left))
@@ -3469,7 +3547,9 @@
         (global.set $evalLive (i32.const 0))
         )
       )
+      (call $gcPushRoot (local.get $thenV))
       (local.set $elseV (call $parseExpr (local.get $s_ptr) (local.get $s_len)))
+      (call $gcPopRoot )
       (global.set $evalLive (local.get $saved))
       (return (if (result i32) (i32.eq (local.get $c) (i32.const 1)) (then (local.get $thenV)) (else (local.get $elseV))))
       )
@@ -3501,14 +3581,14 @@
     (local $__str_op_len i32)
     (local.set $start (global.get $evalPos))
     (local.set $ch (call $evalPeek (local.get $s_ptr) (local.get $s_len)))
-    (block $break_33
-      (loop $loop_33
-        (br_if $break_33 (i32.eqz (i32.eq (call $isIdentChar (local.get $ch) (i32.const 1)) (i32.const 1))))
-        (block $cont_33
+    (block $break_34
+      (loop $loop_34
+        (br_if $break_34 (i32.eqz (i32.eq (call $isIdentChar (local.get $ch) (i32.const 1)) (i32.const 1))))
+        (block $cont_34
           (global.set $evalPos (i32.add (global.get $evalPos) (i32.const 1)))
           (local.set $ch (call $evalPeek (local.get $s_ptr) (local.get $s_len)))
         )
-        (br $loop_33)
+        (br $loop_34)
       )
     )
     (call $__str_slice (local.get $s_ptr) (local.get $s_len) (local.get $start) (global.get $evalPos))
@@ -3636,10 +3716,10 @@
     (local.set $condStart (global.get $evalPos))
     (local.set $looping (i32.const 1))
     (local.set $iters (i32.const 0))
-    (block $break_34
-      (loop $loop_34
-        (br_if $break_34 (i32.eqz (i32.eq (local.get $looping) (i32.const 1))))
-        (block $cont_34
+    (block $break_35
+      (loop $loop_35
+        (br_if $break_35 (i32.eqz (i32.eq (local.get $looping) (i32.const 1))))
+        (block $cont_35
           (global.set $evalPos (local.get $condStart))
           (local.set $cond (call $parseExpr (local.get $s_ptr) (local.get $s_len)))
           (call $evalSkipWs (local.get $s_ptr) (local.get $s_len))
@@ -3674,7 +3754,7 @@
             )
           )
         )
-        (br $loop_34)
+        (br $loop_35)
       )
     )
   )
@@ -3716,10 +3796,10 @@
         )
         (else
         (local.set $more (i32.const 1))
-        (block $break_35
-          (loop $loop_35
-            (br_if $break_35 (i32.eqz (i32.eq (local.get $more) (i32.const 1))))
-            (block $cont_35
+        (block $break_36
+          (loop $loop_36
+            (br_if $break_36 (i32.eqz (i32.eq (local.get $more) (i32.const 1))))
+            (block $cont_36
               (call $evalSkipWs (local.get $s_ptr) (local.get $s_len))
               (call $readIdent (local.get $s_ptr) (local.get $s_len))
 (local.set $pn_ptr (global.get $__str_ret_ptr))
@@ -3741,7 +3821,7 @@
                 )
               )
             )
-            (br $loop_35)
+            (br $loop_36)
           )
         )
         )
@@ -3758,10 +3838,10 @@
       (local.set $inStr (i32.const 0))
       (local.set $q (i32.const 0))
       (local.set $scanning (i32.const 1))
-      (block $break_36
-        (loop $loop_36
-          (br_if $break_36 (i32.eqz (if (result i32) (i32.eq (local.get $scanning) (i32.const 1)) (then (i32.lt_s (global.get $evalPos) (local.get $s_len))) (else (i32.const 0)))))
-          (block $cont_36
+      (block $break_37
+        (loop $loop_37
+          (br_if $break_37 (i32.eqz (if (result i32) (i32.eq (local.get $scanning) (i32.const 1)) (then (i32.lt_s (global.get $evalPos) (local.get $s_len))) (else (i32.const 0)))))
+          (block $cont_37
             (local.set $ch (call $__str_char_code_at (local.get $s_ptr) (local.get $s_len) (global.get $evalPos)))
             (if (i32.eq (local.get $inStr) (i32.const 1))
               (then
@@ -3819,7 +3899,7 @@
               )
             )
           )
-          (br $loop_36)
+          (br $loop_37)
         )
       )
       (call $__str_slice (local.get $s_ptr) (local.get $s_len) (local.get $bodyStart) (global.get $evalPos))
@@ -3962,10 +4042,10 @@
     (local $c i32)
     (local $saved i32)
     (local.set $go (i32.const 1))
-    (block $break_37
-      (loop $loop_37
-        (br_if $break_37 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
-        (block $cont_37
+    (block $break_38
+      (loop $loop_38
+        (br_if $break_38 (i32.eqz (i32.eq (local.get $go) (i32.const 1))))
+        (block $cont_38
           (call $evalSkipWs (local.get $s_ptr) (local.get $s_len))
           (local.set $c (call $evalPeek (local.get $s_ptr) (local.get $s_len)))
           (if (if (result i32) (i32.eq (local.get $c) (i32.const -1)) (then (i32.const 1)) (else (i32.eq (local.get $c) (i32.const 125))))
@@ -3973,6 +4053,7 @@
             (local.set $go (i32.const 0))
             )
             (else
+            (call $maybeCollect )
             (local.set $saved (global.get $evalLive))
             (if (i32.eq (global.get $evalReturned) (i32.const 1))
               (then
@@ -3984,7 +4065,7 @@
             )
           )
         )
-        (br $loop_37)
+        (br $loop_38)
       )
     )
   )

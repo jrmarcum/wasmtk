@@ -617,6 +617,45 @@ sweep) — payloads are the bulk, so this is what actually bounds memory; plus a
 (auto-collect at interpreter statement boundaries past a registry threshold) so deep recursion / long
 loops collect without an explicit call.
 
+**Part 5b — payload reclamation + auto-collect trigger — ✅ SHIPPED 2026-06-23. THE GC TRACK IS
+COMPLETE.** (test `18x`). Two pieces:
+
+(1) **Payloads reclaimed too.** The constructors' `Float64Array(1)` / `Uint8Array(len)` / list
+allocations now flow through `dynAlloc` (the same `... as unknown as TypedArray` view — base+8 data,
+no header length is ever read), and the sweep frees each garbage cell's payloads by tag (`gcFreePayload`
++ `freeList`): number→16, string→8+len, array→element list, object→values list + keys list + each key
+Uint8Array. Referenced CELLS are not freed here (registered + swept on their own). Payloads are ~⅔ of
+dynrt's memory, so this is what actually bounds memory.
+
+(2) **Auto-collect trigger.** `maybeCollect()` runs at every interpreter statement boundary in
+`runStatements` (a safe point: the previous statement is complete, the next hasn't begun); it collects
+once the registry passes `__gc_threshold`, then raises the threshold to 2× the surviving live set (min
+8192) — the standard grow-to-amortize heuristic.
+
+**The hard correctness piece — root mid-expression temporaries.** A statement boundary is safe ONLY
+for values already bound to a scope; a recursive-descent evaluator also holds **intermediate** operands
+(`left` in `a OP b`, the callee + partial args in a call) that live across a right-operand parse, and
+that parse can run a user function whose nested statement boundary triggers a collect. So
+`fib(n-1) + fib(n-2)` would let the nested `fib(n-2)` free the pending `fib(n-1)` → corruption (seen as
+`float unrepresentable in integer range` when the garbage NaN hit `$__f64_to_str`). Fix: the evaluator
+now `gcPushRoot`/`gcPopRoot` the accumulated operand across each right-operand parse at EVERY binary
+level (`parseMul`/`parseAdd`/`parseRel`/`parseEq`/`parseAnd`/`parseOr`/ternary) and the callee + args
+array across a call. **Gotcha hit:** wrapping `parseAnd`/`parseOr` accidentally dropped the
+short-circuit `evalLive = saved;` restore → `18n`'s `inc()` short-circuit test failed; restored.
+
+**Proof (`18x`):** a 10000-iteration interpreter loop (`s = s + (i+1)`) allocates ~30000 cells but runs
+in BOUNDED memory (auto-collect reclaims each iteration's garbage); the sum is correct (50005000 — no
+live value wrongly collected) and a final explicit collect leaves only **5** live cells. `18r`'s fib(15)
+also passes with auto-collect firing during the recursion.
+
+**GC track summary (P1–P5b, all shipped 2026-06-22/23):** auto-grow heap → free-list intrinsic → cell
+registry → mark (tag-bit-8, env-parent slot-2) → shadow-stack roots → collect (mark-sweep, dynrt-owned
+recycling `dynAlloc`/`dynFreeBlock`) → payload reclamation + auto-collect (intermediate-rooted). dynrt
+now runs long-lived dynamic code in bounded memory. **Remaining #14 odds-and-ends (not GC):**
+functions-as-`any` still cross the host boundary as opaque handles; small leaks for blocks <16 bytes
+(short strings/keys) and the registry's own doubling; no compaction of the recycle free list. None
+block the bounded-memory guarantee.
+
 ## Does 14.3 let us drop `javyc`? — retirement criteria (decided framing 2026-06-22)
 
 **No — not on 14.3 alone.** 14.3 is *wiring, not language growth*: it lowers `any` → a boxed handle,

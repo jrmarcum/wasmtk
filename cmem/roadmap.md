@@ -427,9 +427,14 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     sweep registry → reclaim unmarked cells + compact; dynrt now allocates cells through its OWN
     recycling free list (`dynAlloc`/`dynFreeBlock`/`__dyn_free`, reused blocks zeroed) so the GC reclaims
     into the same pool — NO wasmmerge `$__free` unification needed; `dynGcMarkRoots` also marks the
-    interpreter registers; exports `dynGcCollect`/`dynGcFreeCount`. Remaining: **P5b** — reclaim PAYLOADS
-    too (constructor Float64Array/Uint8Array/list allocs via `dynAlloc`; the bulk → bounds memory) + an
-    auto-collect trigger policy. (functions-as-`any` still cross as opaque
+    interpreter registers; exports `dynGcCollect`/`dynGcFreeCount`. **Part 5b — payloads + auto-collect —
+    SHIPPED 2026-06-23; GC TRACK COMPLETE** (test `18x`): constructor payload allocs now via `dynAlloc`
+    + sweep frees them by tag; `maybeCollect` auto-collects at interpreter statement boundaries (adaptive
+    threshold); the evaluator ROOTS mid-expression intermediates (across right-operand parses + calls) so
+    recursion like `fib(n-1)+fib(n-2)` is safe. A 10000-iter loop allocating ~30000 cells runs in BOUNDED
+    memory (5 live cells after a final collect). **#14 GC done (P1–P5b): dynrt runs long-lived dynamic
+    code in bounded memory.** Remaining #14 odds-and-ends (not GC): functions-as-`any` opaque across the
+    host boundary; <16B-block + registry-doubling leaks; no free-list compaction. (functions-as-`any` still cross as opaque
     handles; `javyc` stays as the full-JS fallback — see the retirement criteria in dynrt-design.md).
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
