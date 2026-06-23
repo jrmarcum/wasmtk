@@ -152,23 +152,24 @@ function listPush(lp: i32, v: i32): i32 {
 // REUSING ones the collector returned via `dynFreeBlock` before bumping fresh from `__malloc`. This is
 // a self-contained free list (head `__dyn_free`) so the GC reclaims into the SAME pool it allocates
 // from — without depending on wasmmerge unifying the wasic `$__free`. A freed block stores its
-// [size, next] in the first two view slots (base+8, base+12), so a block must be >= 16 bytes to be
-// recycled (smaller ones leak — none of dynrt's recycled allocations are that small). Reused blocks
+// [size, next] in the first two view slots (base+8, base+12), so it must be >= 16 bytes; both dynAlloc
+// AND dynFreeBlock round the size UP to 16 (`GC_MIN_BLOCK`), so EVERY block — including a short string
+// or object key (Uint8Array < 16B) — is recyclable (a few wasted bytes, but no leak). Reused blocks
 // are zeroed (constructors rely on unset slots being 0 — e.g. a plain object's slot-2 parent link).
+const GC_MIN_BLOCK: i32 = 16;
 let __dyn_free: i32 = 0; // free-list head (0 = empty)
 let __gc_threshold: i32 = 8192; // auto-collect (at interpreter statement boundaries) once the registry exceeds this
 
 function dynFreeBlock(ptr: i32, size: i32): void {
-  if (size < 16) {
-    return;
-  }
+  const sz: i32 = size < GC_MIN_BLOCK ? GC_MIN_BLOCK : size; // match dynAlloc's rounding
   const b: Int32Array = ptr as unknown as Int32Array;
-  b[0] = size;
+  b[0] = sz;
   b[1] = __dyn_free;
   __dyn_free = ptr;
 }
 
-function dynAlloc(size: i32): i32 {
+function dynAlloc(req: i32): i32 {
+  const size: i32 = req < GC_MIN_BLOCK ? GC_MIN_BLOCK : req; // every block is >= 16B → always recyclable
   let cur: i32 = __dyn_free;
   let prev: i32 = 0;
   while (cur !== 0) {
@@ -228,7 +229,12 @@ function mkCell(): i32 {
   const a: Int32Array = __gc_reg as unknown as Int32Array;
   const len: i32 = a[0];
   if (len >= a[1]) {
-    __gc_reg = listPush(__gc_reg, p); // grow (rare) — keeps the call
+    // grow (rare): listPush copies into a fresh, larger array — recycle the old backing array instead
+    // of leaking it (the registry's only doubling source; one-time once it reaches steady state).
+    const oldReg: i32 = __gc_reg;
+    const oldBytes: i32 = 8 + (a[1] + 2) * 4;
+    __gc_reg = listPush(__gc_reg, p);
+    dynFreeBlock(oldReg, oldBytes);
   } else {
     a[len + 2] = p;
     a[0] = len + 1;

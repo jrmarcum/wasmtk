@@ -433,8 +433,13 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     threshold); the evaluator ROOTS mid-expression intermediates (across right-operand parses + calls) so
     recursion like `fib(n-1)+fib(n-2)` is safe. A 10000-iter loop allocating ~30000 cells runs in BOUNDED
     memory (5 live cells after a final collect). **#14 GC done (P1–P5b): dynrt runs long-lived dynamic
-    code in bounded memory.** Remaining #14 odds-and-ends (not GC): functions-as-`any` opaque across the
-    host boundary; <16B-block + registry-doubling leaks; no free-list compaction. (functions-as-`any` still cross as opaque
+    code in bounded memory.** **GC polish SHIPPED 2026-06-23:** both leaks FIXED — `dynAlloc`/
+    `dynFreeBlock` round to `GC_MIN_BLOCK=16` (short-string/key payloads <16B now recycle — the only
+    growing leak), and `mkCell` frees the old registry array on grow. Remaining #14 odds-and-ends:
+    functions-as-`any` stay opaque across the host boundary — FUNDAMENTAL (a function is code → must stay
+    a handle, but host-held handles can't be rooted across collections → a proxy is use-after-free;
+    deferred pending a host-pin mechanism); free-list coalescing (low value, non-growing).
+    (functions-as-`any` still cross as opaque
     handles; `javyc` stays as the full-JS fallback — see the retirement criteria in dynrt-design.md).
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE

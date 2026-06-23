@@ -651,10 +651,25 @@ also passes with auto-collect firing during the recursion.
 **GC track summary (P1–P5b, all shipped 2026-06-22/23):** auto-grow heap → free-list intrinsic → cell
 registry → mark (tag-bit-8, env-parent slot-2) → shadow-stack roots → collect (mark-sweep, dynrt-owned
 recycling `dynAlloc`/`dynFreeBlock`) → payload reclamation + auto-collect (intermediate-rooted). dynrt
-now runs long-lived dynamic code in bounded memory. **Remaining #14 odds-and-ends (not GC):**
-functions-as-`any` still cross the host boundary as opaque handles; small leaks for blocks <16 bytes
-(short strings/keys) and the registry's own doubling; no compaction of the recycle free list. None
-block the bounded-memory guarantee.
+now runs long-lived dynamic code in bounded memory.
+
+**GC polish — ✅ SHIPPED 2026-06-23 (after P5b):** the two memory leaks noted at P5b are FIXED.
+(a) **<16-byte blocks** (short strings / object keys — Uint8Array < 16B) used to leak because the
+free-list header needs 16 bytes; now both `dynAlloc` AND `dynFreeBlock` round size UP to
+`GC_MIN_BLOCK = 16`, so EVERY block is recyclable (a few wasted bytes, no leak — this was the only
+*growing* leak). (b) **registry doubling** — `mkCell`'s grow branch now `dynFreeBlock`s the old
+backing array after `listPush` copies into the larger one (one-time recovery; the registry stops
+growing at steady state). No-regression verified (full dynrt set green). Not done (low value / out of
+scope): free-list **coalescing** of adjacent blocks (first-fit can fragment, but doesn't grow); the
+root-stack's own (tiny) doublings.
+
+**Remaining #14 odds-and-ends (NOT GC, won't fix soon):** **functions-as-`any`** still cross the host
+boundary as opaque handles — and this is fundamental, not a quick fix: unlike numbers/strings/objects
+(which bindgen deep-COPIES into JS values), a function is code, so it must stay a dynrt handle; but a
+host-held handle CAN'T be rooted across collections (the documented root-model limit — the GC only
+sees interpreter roots, not host locals), so a host-held function proxy would be unsafe the moment any
+later core call triggers a collect. Shipping it would be shipping a use-after-free. Deferred until/if
+there's a host-pinning mechanism (e.g. an explicit handle table the GC also roots).
 
 ## Does 14.3 let us drop `javyc`? — retirement criteria (decided framing 2026-06-22)
 
