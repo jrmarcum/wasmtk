@@ -440,8 +440,12 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     a handle, but host-held handles can't be rooted across collections → a proxy is use-after-free;
     deferred pending a host-pin mechanism). **Free-list SPLITTING SHIPPED 2026-06-23** (test `18y`):
     `dynAlloc` carves the leftover (≥16B) off an oversized reused block at `cur+size` (closes a slow
-    size-mismatch leak; only bit mixed-size workloads). Remaining: adjacency-coalescing only (low value,
-    non-growing).
+    size-mismatch leak; only bit mixed-size workloads). **Adjacency-coalescing SHIPPED 2026-06-23 as a
+    HYBRID allocator (test `18z`)**: coalesce-on-free hung (re-entrancy cycle), so re-done as segregated
+    buckets (16/24/28/32, O(1)) + Tier-2 general (first-fit+split) + a BATCH `defragFull` (snapshot, no
+    re-entrancy) triggered proactively (adaptive, amortized) + on-demand (free-bytes≥request). Integrity-
+    verified (`dynGcCheckHeap`) through the stress that hung the first attempt. Balance: hot path never
+    defrags; large/odd sizes get coalescing efficiency. See dynrt-design.md.
     (functions-as-`any` still cross as opaque
     handles; `javyc` stays as the full-JS fallback — see the retirement criteria in dynrt-design.md).
 

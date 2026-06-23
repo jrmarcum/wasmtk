@@ -7,6 +7,7 @@ world dynrt-lib-modc {
   export dyn-bool: func(b: s32) -> s32;
   export dyn-number: func(x: f64) -> s32;
   export dyn-string: func(s: string) -> s32;
+  export dyn-gc-check-heap: func() -> s32;
   export dyn-gc-cell-count: func() -> s32;
   export dyn-gc-mark-clear: func();
   export dyn-gc-mark: func(root: s32);

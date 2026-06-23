@@ -666,9 +666,32 @@ the leftover bytes were LOST (a slow size-mismatch leak). Now `dynAlloc` carves 
 off the chosen block as its own free block at `cur + size`, so nothing is lost. (Number-heavy code
 already did exact reuse via first-fit and never splits; this only bit mixed-size workloads.) Verified
 with a mixed-size build-large-array / drop / collect cycle that forces the split path — correctness
-holds and memory is fully reclaimed (0 live cells). No-regression verified (full dynrt set green). Not
-done (genuinely low value, NON-growing): adjacency **coalescing** (merging physically-adjacent free
-blocks — rare in an interleaved heap); the root-stack's own (tiny) doublings.
+holds and memory is fully reclaimed (0 live cells). No-regression verified (full dynrt set green).
+
+**(d) Adjacency-COALESCING via a HYBRID allocator — ✅ SHIPPED 2026-06-23 (test `18z`).** First
+attempt (address-sorted coalesce-ON-FREE) hung mid-allocation — a free-list CYCLE under split-churn +
+registry-array-free (NOT a double-free; a `cur===ptr` guard didn't fix it → a coalescing mis-link
+caused by **re-entrancy**: `dynAlloc` splits and frees the remainder *mid-allocation*, interleaving
+with the sorted-list pointers). Reverted, then RE-DONE as a three-tier hybrid that isolates the
+fragile part:
+  • **Segregated buckets** for the dominant exact sizes (16 number-payload / 24 4-cell / 28 5-cell /
+    32 smallest list) — pure LIFO push/pop, O(1), structurally CAN'T cycle. Number-heavy code lives
+    here and pays nothing; also gives perfect exact reuse (kills the residual sub-16 leftover loss).
+  • **Tier 2** (`__dyn_free`) general pool for other sizes — LIFO first-fit + split.
+  • **Batch `defragFull`** — the ONLY coalescing site: a SNAPSHOT pass (gather all lists → address
+    merge-sort (iterative merge, O(log n) recursion) → merge adjacent → redistribute), so it never
+    interleaves with allocation → the re-entrancy bug is impossible. Two triggers: PROACTIVE adaptive
+    node threshold (`__free_nodes > __defrag_threshold`, reset ×2 after → amortized O(1)/free) and
+    ON-DEMAND (`__free_bytes >= request` before bumping — recover freed runs for a large request only
+    when it could plausibly help). Counters `__free_nodes`/`__free_bytes` drive both.
+Verified with a `dynGcCheckHeap()` integrity hook (no cycle / valid sizes / counters consistent) run
+after every phase of the exact stress that hung the first attempt — all clean, memory fully reclaimed.
+**Balance achieved:** hot path O(1) bucket churn (never defrags), Tier-2 + large requests get
+coalescing memory-efficiency, defrag amortized + self-gated. **wasic gotchas hit:** an inline
+`(cur as Int32Array)[1]` index isn't supported (bind the view first); a `let` global initialized from
+a `const` identifier is mis-detected as immutable (init `__defrag_threshold` to a literal `512`); a
+ternary assigned to a global isn't supported (use `if`). Tunables (`GC_DEFRAG_BASE=512`, bucket sizes)
+are named constants. The root-stack's own (tiny) doublings are still left (negligible).
 
 **Minor wasic gap surfaced (worked around in the split test):** `f64call() | 0` (truncating a
 function call that returns f64, in an i32 context) miscompiles — `i32.add[1] expected i32, found call
@@ -682,6 +705,42 @@ host-held handle CAN'T be rooted across collections (the documented root-model l
 sees interpreter roots, not host locals), so a host-held function proxy would be unsafe the moment any
 later core call triggers a collect. Shipping it would be shipping a use-after-free. Deferred until/if
 there's a host-pinning mechanism (e.g. an explicit handle table the GC also roots).
+
+## Functions-as-`any` host↔core marshalling — SCOPE (drafted 2026-06-23, not yet implemented)
+
+**Goal:** let a dynrt function value (tag 7) cross the host boundary as a real callable. Two directions,
+very different difficulty:
+
+**Why it's not like other values.** Numbers/strings/objects/arrays are bindgen-DEEP-COPIED into JS
+values, so the host holds independent data. A function is CODE — it must stay a dynrt HANDLE. But the
+GC only roots interpreter state (the shadow-stack), not host-held handles, so a host-held function
+proxy is collectible the moment any later core call auto-collects → use-after-free. **The enabler is a
+host-PIN table.**
+
+**Pin table (the shared prerequisite).** dynrt's GC is NON-MOVING (sweep frees, never relocates), so a
+pinned handle's address stays valid — pinning just needs to keep it MARKED. Add `__gc_pins` (a
+slot list of pinned handles, 0 = empty); `dynGcMarkRoots` also `gcMark`s every non-zero pin. Exports:
+`dynGcPin(h) → slot` (store h in a free/appended slot, return index), `dynGcUnpin(slot)` (clear it).
+~30 lines + a test (pin → collect → survives; unpin → collect → reclaimed).
+
+**Phase 1 — core→host (the 80% case; MODERATE effort).** A function RETURNED from a core call becomes
+a JS function. bindgen `_unbox`, on `dynTag(h)===7`: `pin = dynGcPin(h)`; return a JS proxy
+`(...args) => _unbox(dynApply(h, buildArgsArr(args.map(_box))))`, with a `.release()` that
+`dynGcUnpin(pin)`s (+ a FinalizationRegistry backstop, since FR timing is non-deterministic). Needs
+`dynTag`/`dynArray`/`dynPush`/`dynApply`/`dynGcPin`/`dynGcUnpin` in the marshal-export set (most already
+exported). ~25 lines bindgen + a fixture (core returns a closure; host calls it). **Caveat:** pinned
+functions LEAK until released — host responsibility (documented), FR backstop helps.
+
+**Phase 2 — host→core (HARDER; defer).** A JS function passed INTO a core call must let the core call
+BACK into JS. Needs: a "foreign function" dynrt value (new tag-7 marker holding a callback id); an
+imported `env.__hostcall(id, argsArr) → resultHandle` (Phase-40-style import); the host maintains a JS
+callback registry and provides `__hostcall` (look up id, `_unbox` the args, call the JS fn, `_box` the
+result); and `dynApply` dispatches a foreign-function value to `__hostcall`. Bigger (import wiring +
+dispatch + arg/return marshalling across the boundary mid-interpretation). Reuses the pin table for the
+result/args lifetime.
+
+**Recommended order:** pin table → Phase 1 (core→host) → ship + document the leak caveat → Phase 2 later
+if needed. Phase 1 alone covers returning closures/callbacks from a core, which is the common ask.
 
 ## Does 14.3 let us drop `javyc`? — retirement criteria (decided framing 2026-06-22)
 

@@ -146,30 +146,101 @@ function listPush(lp: i32, v: i32): i32 {
   return lp;
 }
 
-// ── dynrt's own recycling allocator (#14 GC track, Part 5) ────────────────────────────────────
-// Every dynrt allocation is `8 + n*elemSize` bytes (the wasic TypedArray layout: 8-byte header then
-// data); a value handle / view reads its slots at base+8. `dynAlloc(size)` hands out such blocks,
-// REUSING ones the collector returned via `dynFreeBlock` before bumping fresh from `__malloc`. This is
-// a self-contained free list (head `__dyn_free`) so the GC reclaims into the SAME pool it allocates
-// from — without depending on wasmmerge unifying the wasic `$__free`. A freed block stores its
-// [size, next] in the first two view slots (base+8, base+12), so it must be >= 16 bytes; both dynAlloc
-// AND dynFreeBlock round the size UP to 16 (`GC_MIN_BLOCK`), so EVERY block — including a short string
-// or object key (Uint8Array < 16B) — is recyclable (a few wasted bytes, but no leak). Reused blocks
-// are zeroed (constructors rely on unset slots being 0 — e.g. a plain object's slot-2 parent link).
+// ── dynrt's own recycling allocator: HYBRID segregated buckets + batch coalescing (#14 GC track) ──
+// Every dynrt allocation is `8 + n*elemSize` bytes (wasic TypedArray layout: 8-byte header then data);
+// a value handle / view reads its slots at base+8, and a FREE block stores [size, next] in its first
+// two view slots (base+8/+12), so every block is rounded UP to GC_MIN_BLOCK=16. The GC reclaims into
+// the SAME pool it allocates from (no wasmmerge `$__free` dependency). Reused blocks are ZEROED
+// (constructors rely on unset slots being 0 — e.g. a plain object's slot-2 parent link).
+//
+// THREE TIERS, balancing speed vs memory:
+//  • SEGREGATED BUCKETS for the dominant exact sizes (16 number-payload, 24 4-slot cell, 28 5-slot
+//    cell, 32 smallest list) — pure LIFO push/pop, O(1), can NEVER cycle. Number-heavy code lives
+//    here and pays nothing.
+//  • TIER 2 (`__dyn_free`) general pool for other/odd sizes — LIFO first-fit + split.
+//  • BATCH DEFRAG (`defragFull`) — the ONLY place adjacency-coalescing happens: a snapshot pass
+//    (gather → address merge-sort → merge adjacent → redistribute), so it never interleaves with
+//    allocation (the re-entrancy that made coalesce-on-free cycle). Two triggers: a PROACTIVE
+//    adaptive node-count threshold (×2 after each defrag → amortized O(1)/free), and an ON-DEMAND
+//    pass gated by `__free_bytes >= request` (recover freed runs for a large request only when it
+//    could plausibly help, else bump). See cmem/dynrt-design.md.
 const GC_MIN_BLOCK: i32 = 16;
-let __dyn_free: i32 = 0; // free-list head (0 = empty)
-let __gc_threshold: i32 = 8192; // auto-collect (at interpreter statement boundaries) once the registry exceeds this
+const GC_DEFRAG_BASE: i32 = 512; // proactive-defrag node threshold floor (adaptive ×2 after each pass)
+let __bk16: i32 = 0; // segregated bucket heads (exact sizes)
+let __bk24: i32 = 0;
+let __bk28: i32 = 0;
+let __bk32: i32 = 0;
+let __dyn_free: i32 = 0; // Tier 2 general pool head
+let __free_nodes: i32 = 0; // total free blocks across all lists (drives the proactive defrag)
+let __free_bytes: i32 = 0; // total free bytes across all lists (gates the on-demand defrag)
+let __defrag_threshold: i32 = 512; // = GC_DEFRAG_BASE (literal init so wasic treats it as mutable)
+let __gc_threshold: i32 = 8192; // (unrelated: auto-collect threshold for the interpreter)
 
-function dynFreeBlock(ptr: i32, size: i32): void {
-  const sz: i32 = size < GC_MIN_BLOCK ? GC_MIN_BLOCK : size; // match dynAlloc's rounding
+// Push a block onto its size-class list; maintains the free counters. No defrag trigger.
+function rawPush(ptr: i32, sz: i32): void {
   const b: Int32Array = ptr as unknown as Int32Array;
   b[0] = sz;
-  b[1] = __dyn_free;
-  __dyn_free = ptr;
+  if (sz === 16) {
+    b[1] = __bk16;
+    __bk16 = ptr;
+  } else if (sz === 24) {
+    b[1] = __bk24;
+    __bk24 = ptr;
+  } else if (sz === 28) {
+    b[1] = __bk28;
+    __bk28 = ptr;
+  } else if (sz === 32) {
+    b[1] = __bk32;
+    __bk32 = ptr;
+  } else {
+    b[1] = __dyn_free;
+    __dyn_free = ptr;
+  }
+  __free_nodes = __free_nodes + 1;
+  __free_bytes = __free_bytes + sz;
 }
 
-function dynAlloc(req: i32): i32 {
-  const size: i32 = req < GC_MIN_BLOCK ? GC_MIN_BLOCK : req; // every block is >= 16B → always recyclable
+function dynFreeBlock(ptr: i32, size: i32): void {
+  const sz: i32 = size < GC_MIN_BLOCK ? GC_MIN_BLOCK : size;
+  rawPush(ptr, sz);
+  if (__free_nodes > __defrag_threshold) {
+    defragFull();
+  }
+}
+
+// Zero a block's data region (size-8 bytes) — clears the stale [size,next] header + old contents.
+function zeroBlock(ptr: i32, size: i32): void {
+  const v: Int32Array = ptr as unknown as Int32Array;
+  const words: i32 = (size - 8) >> 2;
+  let i: i32 = 0;
+  while (i < words) {
+    v[i] = 0;
+    i = i + 1;
+  }
+}
+
+// Pop the head of an exact-size bucket, or 0 if empty (zeroed on return).
+function bucketPop(size: i32): i32 {
+  let head: i32 = 0;
+  if (size === 16) head = __bk16;
+  else if (size === 24) head = __bk24;
+  else if (size === 28) head = __bk28;
+  else if (size === 32) head = __bk32;
+  if (head === 0) return 0;
+  const hn: Int32Array = head as unknown as Int32Array;
+  const next: i32 = hn[1];
+  if (size === 16) __bk16 = next;
+  else if (size === 24) __bk24 = next;
+  else if (size === 28) __bk28 = next;
+  else __bk32 = next;
+  __free_nodes = __free_nodes - 1;
+  __free_bytes = __free_bytes - size;
+  zeroBlock(head, size);
+  return head;
+}
+
+// First-fit the Tier 2 general pool for a block >= size, splitting the remainder. 0 if none fit.
+function tier2Alloc(size: i32): i32 {
   let cur: i32 = __dyn_free;
   let prev: i32 = 0;
   while (cur !== 0) {
@@ -177,34 +248,205 @@ function dynAlloc(req: i32): i32 {
     const blockSize: i32 = cn[0];
     if (blockSize >= size) {
       const next: i32 = cn[1];
-      // unlink this block from the free list (read size + next BEFORE the zero-fill overwrites them)
-      if (prev === 0) {
-        __dyn_free = next;
-      } else {
+      if (prev === 0) __dyn_free = next;
+      else {
         const pn: Int32Array = prev as unknown as Int32Array;
         pn[1] = next;
       }
-      // SPLIT: if the chosen block is larger than needed and the leftover can itself hold a free block
-      // (>= 16B), carve the remainder off as its own free block at `cur + size` instead of losing those
-      // bytes when this block is later freed at its smaller logical size (closes the size-mismatch leak).
+      __free_nodes = __free_nodes - 1;
+      __free_bytes = __free_bytes - blockSize;
       const leftover: i32 = blockSize - size;
       if (leftover >= GC_MIN_BLOCK) {
-        dynFreeBlock(cur + size, leftover);
+        rawPush(cur + size, leftover); // recycle the leftover (counters re-incremented inside)
       }
-      // zero the data region (size-8 bytes = (size-8)/4 i32 slots) — stale [size,next] + old contents
-      const words: i32 = (size - 8) >> 2;
-      let i: i32 = 0;
-      while (i < words) {
-        cn[i] = 0;
-        i = i + 1;
-      }
+      zeroBlock(cur, size);
       return cur;
     }
     prev = cur;
     cur = cn[1];
   }
-  // nothing reusable → fresh block from the bump allocator (WASM memory is already zero)
-  return __malloc(size);
+  return 0;
+}
+
+function dynAlloc(req: i32): i32 {
+  const size: i32 = req < GC_MIN_BLOCK ? GC_MIN_BLOCK : req;
+  const fromBucket: i32 = bucketPop(size); // 1. exact-size bucket — O(1) hot path
+  if (fromBucket !== 0) return fromBucket;
+  const fromT2: i32 = tier2Alloc(size); // 2. Tier 2 first-fit + split
+  if (fromT2 !== 0) return fromT2;
+  if (__free_bytes >= size) { // 3. on-demand defrag — only if it could plausibly serve the request
+    defragFull();
+    const b2: i32 = bucketPop(size);
+    if (b2 !== 0) return b2;
+    const t2b: i32 = tier2Alloc(size);
+    if (t2b !== 0) return t2b;
+  }
+  return __malloc(size); // 4. fresh bump (already-zero memory)
+}
+
+// ── Batch defrag (the only coalescing site) ───────────────────────────────────────────────────
+// Cut a free-list into two halves (slow/fast walk); returns the 2nd half, terminates the 1st.
+function listSplitHalf(head: i32): i32 {
+  let slow: i32 = head;
+  const h0: Int32Array = head as unknown as Int32Array;
+  let fast: i32 = h0[1];
+  while (fast !== 0) {
+    const fn: Int32Array = fast as unknown as Int32Array;
+    fast = fn[1];
+    if (fast !== 0) {
+      const sn: Int32Array = slow as unknown as Int32Array;
+      slow = sn[1];
+      const fn2: Int32Array = fast as unknown as Int32Array;
+      fast = fn2[1];
+    }
+  }
+  const sn2: Int32Array = slow as unknown as Int32Array;
+  const mid: i32 = sn2[1];
+  sn2[1] = 0;
+  return mid;
+}
+
+// Iterative merge of two ascending-address free-lists (O(1) stack).
+function listMergeAddr(a: i32, b: i32): i32 {
+  let head: i32 = 0;
+  let tail: i32 = 0;
+  while (a !== 0 && b !== 0) {
+    let pick: i32 = 0;
+    if (a < b) {
+      pick = a;
+      const an: Int32Array = a as unknown as Int32Array;
+      a = an[1];
+    } else {
+      pick = b;
+      const bn: Int32Array = b as unknown as Int32Array;
+      b = bn[1];
+    }
+    if (head === 0) {
+      head = pick;
+      tail = pick;
+    } else {
+      const tn: Int32Array = tail as unknown as Int32Array;
+      tn[1] = pick;
+      tail = pick;
+    }
+  }
+  let rest: i32 = a;
+  if (a === 0) rest = b;
+  if (head === 0) return rest;
+  const tn2: Int32Array = tail as unknown as Int32Array;
+  tn2[1] = rest;
+  return head;
+}
+
+// Merge-sort a free-list by ascending block address (O(n log n), O(log n) stack).
+function mergeSortAddr(head: i32): i32 {
+  if (head === 0) return 0;
+  const hn: Int32Array = head as unknown as Int32Array;
+  if (hn[1] === 0) return head;
+  const mid: i32 = listSplitHalf(head);
+  const left: i32 = mergeSortAddr(head);
+  const right: i32 = mergeSortAddr(mid);
+  return listMergeAddr(left, right);
+}
+
+// Move every node of the list at `head` onto the front of `acc`; returns the new `acc`.
+function drainOnto(head: i32, acc: i32): i32 {
+  let c: i32 = head;
+  let a: i32 = acc;
+  while (c !== 0) {
+    const cn: Int32Array = c as unknown as Int32Array;
+    const nx: i32 = cn[1];
+    cn[1] = a;
+    a = c;
+    c = nx;
+  }
+  return a;
+}
+
+// Gather ALL free blocks, address-sort, merge physically-adjacent blocks, redistribute. A pure batch
+// pass (snapshot → process), so it never interleaves with allocation — the failure mode that made
+// coalesce-on-free cycle. Resets the adaptive threshold to ~2× the surviving node count.
+function defragFull(): void {
+  let all: i32 = 0;
+  all = drainOnto(__bk16, all);
+  all = drainOnto(__bk24, all);
+  all = drainOnto(__bk28, all);
+  all = drainOnto(__bk32, all);
+  all = drainOnto(__dyn_free, all);
+  __bk16 = 0;
+  __bk24 = 0;
+  __bk28 = 0;
+  __bk32 = 0;
+  __dyn_free = 0;
+  __free_nodes = 0;
+  __free_bytes = 0;
+  all = mergeSortAddr(all);
+  // merge adjacent: absorb every run of blocks where p's end === the next block's start
+  let p: i32 = all;
+  while (p !== 0) {
+    const pn: Int32Array = p as unknown as Int32Array;
+    let q: i32 = pn[1];
+    let go: i32 = 1;
+    while (go === 1 && q !== 0) {
+      const qn: Int32Array = q as unknown as Int32Array;
+      if (p + pn[0] === q) {
+        pn[0] = pn[0] + qn[0];
+        pn[1] = qn[1];
+        q = pn[1];
+      } else {
+        go = 0;
+      }
+    }
+    p = pn[1];
+  }
+  // redistribute (rawPush routes each block to its bucket / Tier 2 and rebuilds the counters)
+  let r: i32 = all;
+  while (r !== 0) {
+    const rn: Int32Array = r as unknown as Int32Array;
+    const rnext: i32 = rn[1];
+    const rsz: i32 = rn[0];
+    rawPush(r, rsz);
+    r = rnext;
+  }
+  let nt: i32 = __free_nodes * 2;
+  if (nt < GC_DEFRAG_BASE) {
+    nt = GC_DEFRAG_BASE;
+  }
+  __defrag_threshold = nt;
+}
+
+/**
+ * Free-list integrity check (dev/test hook). Walks all five lists with a cycle guard and verifies
+ * every block is >= 16 bytes and the node/byte counters match the actual contents. Returns 0 = OK,
+ * 1 = cycle, 2 = node-count mismatch, 3 = byte-count mismatch, 4 = undersized block.
+ */
+/** @export */
+export function dynGcCheckHeap(): i32 {
+  let nodes: i32 = 0;
+  let bytes: i32 = 0;
+  let cap: i32 = 100000000; // cycle guard
+  let li: i32 = 0;
+  while (li < 5) {
+    let c: i32 = 0;
+    if (li === 0) c = __bk16;
+    else if (li === 1) c = __bk24;
+    else if (li === 2) c = __bk28;
+    else if (li === 3) c = __bk32;
+    else c = __dyn_free;
+    while (c !== 0) {
+      if (cap <= 0) return 1;
+      cap = cap - 1;
+      const cn: Int32Array = c as unknown as Int32Array;
+      if (cn[0] < GC_MIN_BLOCK) return 4;
+      bytes = bytes + cn[0];
+      nodes = nodes + 1;
+      c = cn[1];
+    }
+    li = li + 1;
+  }
+  if (nodes !== __free_nodes) return 2;
+  if (bytes !== __free_bytes) return 3;
+  return 0;
 }
 
 // ── GC cell registry (#14 GC track, Part 3) ───────────────────────────────────────────────────
@@ -509,17 +751,10 @@ export function dynGcCollect(): i32 {
   return freed;
 }
 
-/** Number of blocks currently on dynrt's recycling free list (test/introspection hook). */
+/** Number of blocks currently free across all recycling lists (buckets + Tier 2) — test hook. */
 /** @export */
 export function dynGcFreeCount(): i32 {
-  let cur: i32 = __dyn_free;
-  let count: i32 = 0;
-  while (cur !== 0) {
-    const cn: Int32Array = cur as unknown as Int32Array;
-    cur = cn[1];
-    count = count + 1;
-  }
-  return count;
+  return __free_nodes;
 }
 
 // Auto-collect trigger (#14 GC track, Part 5b). Called at interpreter statement boundaries — a safe
