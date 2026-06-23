@@ -720,7 +720,7 @@ survived (integrity-checked).
 **bindgen `_unbox` tag-7 proxy.** On `dynTag(h)===7`, `_dynGcPin(h)` then return a JS proxy
 `(...args) => _unbox(_dynApply(h, argsArr(args.map(_box))))` with a `.release()` (→ `_dynGcUnpin`) and a
 `FinalizationRegistry` backstop. Added `dynApply`/`dynGcPin`/`dynGcUnpin` to `dynrtMarshalExportNames`
-(wasic.ts) so they're exported post-merge. bindgen 113/113 (the proxy generates + type-checks; existing
+(wasic.ts) so they're exported post-merge. bindgen 119/119 (the proxy generates + type-checks; existing
 `any` marshalling unaffected).
 
 **Function PRODUCER + full END-TO-END — ✅ SHIPPED 2026-06-23.** Typed wasic source can now create a
