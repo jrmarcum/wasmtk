@@ -449,10 +449,13 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     **Functions-as-`any` — Phase 1 SHIPPED 2026-06-23 (the #14 final item):** host PIN TABLE
     (`dynGcPin`/`dynGcUnpin`, marked by `dynGcMarkRoots`; non-moving GC) + bindgen `_unbox` tag-7 JS
     proxy (pins, calls back via `dynApply`, `.release()` + FinalizationRegistry); marshal-exports
-    extended; tests `18za` + bindgen `testGenBindingsAnyFunction` (113/113). Remaining: a core-side
-    function-PRODUCER for the full host↔core end-to-end (typed source can't yet create a function value),
-    + Phase 2 (host→core `__hostcall`) — both small/deferred. `javyc` stays as the full-JS fallback — see
-    dynrt-design.md.
+    extended; tests `18za` + bindgen `testGenBindingsAnyFunction`. **PRODUCER + FULL END-TO-END SHIPPED
+    2026-06-23:** `Function(params, body)`/`new Function` lowers to a new dynrt `dynMakeFn` (auto-merge
+    `usesFunction` trigger); modc `getDoubler(): any { return Function("x","return x*2;"); }` → bindgen →
+    host `m.getDoubler()(21)` → 42 (bindgen `testIntegrationFnAny`, 119/119). Gotcha fixed: trigger
+    matched `Function(` in a COMMENT → now strip comments before sniffing. **Core→host functions-as-`any`
+    DONE end-to-end.** Phase 2 (host→core `__hostcall`) still deferred. `javyc` stays as the full-JS
+    fallback — see dynrt-design.md.
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
 2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1

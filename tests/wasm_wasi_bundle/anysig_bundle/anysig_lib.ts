@@ -54,3 +54,9 @@ export function sumArr(arr: any): any {
 export function getX(o: any): any {
   return o.x;
 }
+
+// #14 final item — functions-as-`any`: return a dynrt function value (built from strings via the
+// `Function(params, body)` producer) as `any`. bindgen wraps it as a callable JS proxy on the host.
+export function getDoubler(): any {
+  return Function("x", "return x * 2;");
+}

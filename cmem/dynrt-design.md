@@ -723,14 +723,22 @@ survived (integrity-checked).
 (wasic.ts) so they're exported post-merge. bindgen 113/113 (the proxy generates + type-checks; existing
 `any` marshalling unaffected).
 
-**Remaining gap (documented, small):** a full host-calls-core-returns-a-function END-TO-END demo needs
-the CORE to PRODUCE a function value as `any` — but typed wasic source has no way to express that yet
-(`eval(` lowers to `dynEval`, expression-only; `dynRun`/`new Function` aren't exposed to `any`-typed
-source). So the proxy is verified by generation + the equivalent core-side round-trip (`18za` does the
-exact pin+dynApply the proxy does, just from wasic instead of JS). Exposing a function-producer to
-source (e.g. a `Function(body)`-style construct → `dynMakeFunc`) is the small follow-up that lights up
-the end-to-end path. **Phase 2 (host→core, JS function INTO core via an imported `__hostcall`)** remains
-deferred (scope below).
+**Function PRODUCER + full END-TO-END — ✅ SHIPPED 2026-06-23.** Typed wasic source can now create a
+function value: **`Function(params, body)`** (and `new Function(...)`) lowers — via a wasic.ts pre-pass
+(`/\b(?:new\s+)?Function\s*\(/` → `dynrt_dynMakeFn(`) — to a new dynrt export `dynMakeFn(paramNames,
+body)` (splits the comma-separated names into a value-model array, builds a user function over a fresh
+env). The tsbundler trigger gained `usesFunction` + `dynMakeFn` in the auto-import set. **Full
+end-to-end verified** (bindgen `testIntegrationFnAny` + the `anysig_bundle` host): a modc lib
+`getDoubler(): any { return Function("x", "return x * 2;"); }` → bindgen → host calls
+`m.getDoubler()(21)` → **42** (the proxy boxes the arg, calls `dynApply`, unboxes the result; the
+handle is pinned). bindgen 119/119.
+**Gotcha (real bug hit + fixed):** the `usesFunction` trigger matched `Function(` inside dynrt's OWN
+doc-comment → the dynrt lib auto-merged ITSELF (circular, broke every dynrt test at the wasic step).
+Fixed by STRIPPING comments before the auto-merge triggers are sniffed (tsbundler) — which also hardens
+against a user's `Function(`/`eval(`/`: any` mentioned in a comment or string.
+**Phase 2 (host→core, a JS function INTO the core via an imported `__hostcall`)** remains deferred
+(scope below). With Phase 1 + the producer, the common direction (core returns a closure/callback the
+host calls) is fully working.
 
 ## Functions-as-`any` host↔core marshalling — SCOPE (drafted 2026-06-23)
 

@@ -1301,6 +1301,37 @@ export function dynMakeFunc(paramsArr: i32, bodyStr: string, defEnv: i32): i32 {
   return makeUserFunc(paramsArr, bodyBox, defEnv);
 }
 
+/**
+ * Function PRODUCER for typed wasic source (`Function(params, body)` → here). `paramNames` is a
+ * comma-separated parameter list ("" / "x" / "a, b"); `body` is the function body source. Splits the
+ * names into a value-model array of string boxes and builds a user function closing over a fresh env.
+ * This is the source-level door to a dynrt function value that can be returned as `any` and called
+ * from a host (via the bindgen tag-7 proxy + pin table).
+ */
+/** @export */
+export function dynMakeFn(paramNames: string, body: string): i32 {
+  const paramsArr: i32 = dynArray();
+  const plen: i32 = paramNames.length;
+  let start: i32 = 0;
+  let i: i32 = 0;
+  while (i <= plen) {
+    if (i === plen || paramNames.charCodeAt(i) === 44) { // ',' or end of string
+      let s: i32 = start;
+      let e: i32 = i;
+      while (s < e && paramNames.charCodeAt(s) === 32) s = s + 1; // trim leading spaces
+      while (e > s && paramNames.charCodeAt(e - 1) === 32) e = e - 1; // trim trailing
+      if (e > s) {
+        const name: string = paramNames.slice(s, e);
+        dynPush(paramsArr, dynString(name));
+      }
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  const env: i32 = dynObject();
+  return dynMakeFunc(paramsArr, body, env);
+}
+
 // Resolve `name` by walking the scope chain (current env → parent → …); -1 if unbound. An env's
 // parent is stored in slot 2 of the object cell (0 / -1 = no parent); host envs have no parent, a
 // function's call scope links to the function's defining env.

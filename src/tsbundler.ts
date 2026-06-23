@@ -244,9 +244,14 @@ export async function bundleImportsEx(entryPath: string): Promise<BundleResult> 
     // below merges it (and Binaryen DCE strips the dynrt functions the program doesn't call).
     // Only the ENTRY is scanned; programs without `any`/`eval` are byte-for-byte unaffected.
     if (isEntry && !/from\s+["']wasmtk:dynrt["']/.test(src)) {
-      const usesAny = /:\s*any\b/.test(src) || /\bany\[\]/.test(src) || /<\s*any\s*>/.test(src);
-      const usesEval = /\beval\s*\(/.test(src);
-      if (usesAny || usesEval) {
+      // Strip comments before sniffing for triggers — otherwise a `Function(` / `eval(` / `: any`
+      // mentioned in a comment (e.g. dynrt's own doc-comments) would falsely auto-merge the runtime,
+      // which for the dynrt library itself is circular.
+      const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+      const usesAny = /:\s*any\b/.test(code) || /\bany\[\]/.test(code) || /<\s*any\s*>/.test(code);
+      const usesEval = /\beval\s*\(/.test(code);
+      const usesFunction = /\bFunction\s*\(/.test(code); // the `Function(params, body)` producer
+      if (usesAny || usesEval || usesFunction) {
         const ops = [
           "dynNumber", "dynBool", "dynString", "dynNumberValue", "dynBoolValue", "dynToBool",
           "dynToNumber", "dynStrBytes", "dynStrLen", "dynStrCharAt", "dynTypeof", "dynTag",
@@ -255,7 +260,7 @@ export async function bundleImportsEx(entryPath: string): Promise<BundleResult> 
           "dynCall0", "dynCall1", "dynCall2", "dynCall3",
           "dynEval", "dynEvalEnv", "dynObject", "dynArray", "dynSet", "dynGet", "dynHas", "dynPush",
           "dynObjLen", "dynArrLen", "dynArrGet", "dynObjKeyPtr", "dynObjKeyLen", "dynObjValAt",
-          "dynMakeFunc", "dynStdEnv", "dynUndefined", "dynNull",
+          "dynMakeFunc", "dynMakeFn", "dynStdEnv", "dynUndefined", "dynNull",
         ].join(", ");
         src = `import { ${ops} } from "wasmtk:dynrt";\n` + src;
       }

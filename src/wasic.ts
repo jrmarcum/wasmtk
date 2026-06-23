@@ -17920,6 +17920,9 @@ class WasicTranspiler {
     // #14.3.3: `eval(...)` is the dynrt evaluator — rewrite to the merged `dynrt_dynEval`. (The
     // bundler already injected the import + triggered the merge on the `eval(` it saw.)
     this.src = this.src.replace(/\beval\s*\(/g, "dynrt_dynEval(");
+    // #14 final item: `Function(params, body)` (and `new Function(...)`) is the dynrt function
+    // PRODUCER — rewrite to the merged `dynrt_dynMakeFn` (returns a tag-7 handle, returnable as `any`).
+    this.src = this.src.replace(/\b(?:new\s+)?Function\s*\(/g, "dynrt_dynMakeFn(");
     // Rewrite `const/let/var name = function(params): type { ... }` to `function name(params): type { ... }`
     // so parseFunctions() can recognize the pattern as a named function.
     this.src = this.src.replace(

@@ -488,6 +488,59 @@ console.log(m.combine(10, 7));
   ok("combine(10, 7) = 17", lines[1]?.trim() === "17");
 }
 
+// ── 12b. Integration: functions-as-`any` end-to-end (#14 final item) ─────────
+
+async function testIntegrationFnAny() {
+  console.log(yellow(bold("\n── Integration: fnany_50 — function-as-any proxy + pin end-to-end")));
+
+  const fixtureSrc = join(FIXTURES, "fnany_50.ts");
+  const fixtureWasm = join(FIXTURES, "fnany_50.wasm");
+  const fixtureWit = join(FIXTURES, "fnany_50.wit");
+  const fixtureBinding = join(FIXTURES, "fnany_50.bindings.ts");
+  const hostRunner = join(FIXTURES, "fnany_50_host.ts");
+
+  // 1. compile the lib (uses `any` + `Function(...)` → auto-merges dynrt)
+  const compileResult = await run(WASMTK_BIN, ["modc", fixtureSrc, "-n", fixtureWasm]);
+  ok("modc compile succeeded", compileResult.success);
+  if (!compileResult.success) {
+    console.log(red("    stderr: " + compileResult.stderr.slice(0, 300)));
+    return;
+  }
+
+  // 2. WIT has the any-returning export
+  let witSrc = "";
+  try {
+    witSrc = await Deno.readTextFile(fixtureWit);
+  } catch { /**/ }
+  ok(".wit has export get-doubler", witSrc.includes("get-doubler"));
+  ok(".wit return type is any", /get-doubler:\s*func\(\)\s*->\s*any/.test(witSrc));
+
+  // 3. generate bindings
+  const ts = generateBindings(witSrc);
+  await Deno.writeTextFile(fixtureBinding, ts);
+  ok("binding written", true);
+
+  // 4. host calls getDoubler() → JS proxy → invoke it → unbox the result
+  const bindingUrl = toFileUrl(fixtureBinding).href;
+  const wasmUrl = toFileUrl(fixtureWasm).href;
+  const hostSrc = `
+import { loadModule } from "${bindingUrl}";
+const wasmBytes = await Deno.readFile(new URL("${wasmUrl}"));
+const m = await loadModule(wasmBytes);
+const dbl = m.getDoubler() as ((x: number) => number) & { release(): void };
+console.log(dbl(21));
+dbl.release();
+`;
+  await Deno.writeTextFile(hostRunner, hostSrc);
+  const hostResult = await run("deno", ["run", "--allow-read", hostRunner]);
+  ok("host runner succeeded", hostResult.success);
+  if (!hostResult.success) {
+    console.log(red("    stderr: " + hostResult.stderr.slice(0, 300)));
+  }
+  const lines = hostResult.stdout.trim().split("\n");
+  ok("getDoubler()(21) = 42 (core function called from host)", lines[0]?.trim() === "42");
+}
+
 // ── 13. CLI: wasmtk bindgen command ──────────────────────────────────────────
 
 async function testCli() {
@@ -543,6 +596,7 @@ await testIntegrationMath();
 await testIntegrationBool();
 await testIntegrationStrings();
 await testIntegrationImports();
+await testIntegrationFnAny();
 await testCli();
 
 // ── Summary ───────────────────────────────────────────────────────────────────

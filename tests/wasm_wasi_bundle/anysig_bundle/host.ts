@@ -12,3 +12,8 @@ console.log("makePoint(3,4) =", JSON.stringify(lib.makePoint(3, 4)));
 console.log("triple(1,2,3) =", JSON.stringify(lib.triple(1, 2, 3)));
 console.log("sumArr([10,20,30]) =", lib.sumArr([10, 20, 30]));
 console.log("getX({x:42,y:7}) =", lib.getX({ x: 42, y: 7 }));
+
+// #14 final item — a core function returned as a callable JS proxy (pinned, calls back via dynApply)
+const doubler = lib.getDoubler() as ((x: number) => number) & { release(): void };
+console.log("getDoubler()(21) =", doubler(21));
+doubler.release();
