@@ -13,15 +13,9 @@ function check(cond: i32): void {
   }
 }
 
-// (1) BALANCE: dynRun pushes its scope and pops it — incl. across nested function calls. After a
-// recursive run returns, the root stack is back to empty (every push had a matching pop).
-const e: i32 = dynObject();
-check(dynGcRootCount() === 0 ? 1 : 0);
-dynRun("function f(n){ if(n<1){ return 0; } return f(n-1); } return f(4);", e);
-check(dynGcRootCount() === 0 ? 1 : 0);
-
-// (2) DRIVER ROOTS + mark-from-roots — the mechanism P5's collect() will use. Build arr=[n1,n2,n3]
-// (4 cells), push it as a root, mark roots → exactly those 4 are marked. Pop → stack empty again.
+// (1) DRIVER ROOTS + mark-from-roots — the mechanism P5's collect() uses. Run FIRST, before any
+// dynRun, so the interpreter "registers" (evalEnv=-1, last/return=0) contribute nothing and the count
+// is exactly the pushed graph: arr=[n1,n2,n3] (4 cells). Push as a root, mark roots → exactly 4. Pop.
 const arr: i32 = dynArray();
 dynPush(arr, dynNumber(1));
 dynPush(arr, dynNumber(2));
@@ -31,6 +25,13 @@ check(dynGcRootCount() === 1 ? 1 : 0);
 dynGcMarkRoots();
 check(dynGcMarkedCount() === 4 ? 1 : 0);
 dynGcPopRoot();
+check(dynGcRootCount() === 0 ? 1 : 0);
+
+// (2) BALANCE: dynRun pushes its scope and pops it — incl. across nested function calls. After a
+// recursive run returns, the root stack is back to empty (every push had a matching pop).
+const e: i32 = dynObject();
+check(dynGcRootCount() === 0 ? 1 : 0);
+dynRun("function f(n){ if(n<1){ return 0; } return f(n-1); } return f(4);", e);
 check(dynGcRootCount() === 0 ? 1 : 0);
 
 // (3) CLOSURE CHAIN: a returned closure captures `cap` in its defining env. Marking the closure must

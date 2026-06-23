@@ -146,6 +146,56 @@ function listPush(lp: i32, v: i32): i32 {
   return lp;
 }
 
+// ── dynrt's own recycling allocator (#14 GC track, Part 5) ────────────────────────────────────
+// Every dynrt allocation is `8 + n*elemSize` bytes (the wasic TypedArray layout: 8-byte header then
+// data); a value handle / view reads its slots at base+8. `dynAlloc(size)` hands out such blocks,
+// REUSING ones the collector returned via `dynFreeBlock` before bumping fresh from `__malloc`. This is
+// a self-contained free list (head `__dyn_free`) so the GC reclaims into the SAME pool it allocates
+// from — without depending on wasmmerge unifying the wasic `$__free`. A freed block stores its
+// [size, next] in the first two view slots (base+8, base+12), so a block must be >= 16 bytes to be
+// recycled (smaller ones leak — none of dynrt's recycled allocations are that small). Reused blocks
+// are zeroed (constructors rely on unset slots being 0 — e.g. a plain object's slot-2 parent link).
+let __dyn_free: i32 = 0; // free-list head (0 = empty)
+
+function dynFreeBlock(ptr: i32, size: i32): void {
+  if (size < 16) {
+    return;
+  }
+  const b: Int32Array = ptr as unknown as Int32Array;
+  b[0] = size;
+  b[1] = __dyn_free;
+  __dyn_free = ptr;
+}
+
+function dynAlloc(size: i32): i32 {
+  let cur: i32 = __dyn_free;
+  let prev: i32 = 0;
+  while (cur !== 0) {
+    const cn: Int32Array = cur as unknown as Int32Array;
+    if (cn[0] >= size) {
+      // unlink this block from the free list
+      if (prev === 0) {
+        __dyn_free = cn[1];
+      } else {
+        const pn: Int32Array = prev as unknown as Int32Array;
+        pn[1] = cn[1];
+      }
+      // zero the data region (size-8 bytes = (size-8)/4 i32 slots) — stale [size,next] + old contents
+      const words: i32 = (size - 8) >> 2;
+      let i: i32 = 0;
+      while (i < words) {
+        cn[i] = 0;
+        i = i + 1;
+      }
+      return cur;
+    }
+    prev = cur;
+    cur = cn[1];
+  }
+  // nothing reusable → fresh block from the bump allocator (WASM memory is already zero)
+  return __malloc(size);
+}
+
 // ── GC cell registry (#14 GC track, Part 3) ───────────────────────────────────────────────────
 // Every boxed VALUE cell (the 4-slot [tag,a,b,c] nodes + the 5-slot user-function cell) is recorded
 // in a registry list so a future mark-sweep (P4 mark / P5 sweep) can ENUMERATE all live allocations
@@ -170,8 +220,7 @@ function gcRegister(cellPtr: i32): void {
 // WAT call frame here lowers the max recursion depth before V8's stack overflows. Only the rare grow
 // path calls listPush.
 function mkCell(): i32 {
-  const raw: Int32Array = new Int32Array(4);
-  const p: i32 = raw as unknown as i32;
+  const p: i32 = dynAlloc(24); // 4-slot cell: 8-byte header + 4*4 (recycled by the GC)
   if (__gc_reg === 0) {
     __gc_reg = listNew();
   }
@@ -188,8 +237,7 @@ function mkCell(): i32 {
 
 // Allocate + register a 5-slot value cell (user-function); returns the cell pointer.
 function mkCell5(): i32 {
-  const n: Int32Array = new Int32Array(5);
-  const p: i32 = n as unknown as i32;
+  const p: i32 = dynAlloc(28); // 5-slot cell: 8-byte header + 5*4 (recycled by the GC)
   gcRegister(p);
   return p;
 }
@@ -354,6 +402,12 @@ export function dynGcRootCount(): i32 {
 /** @export */
 export function dynGcMarkRoots(): void {
   dynGcMarkClear();
+  // The interpreter's "registers" are live roots too: the current scope and the last/return values
+  // (held in module globals, not on the scope stack). Marking them keeps a collection safe to run at
+  // any interpreter point or right after a dynRun returns. (All guard 0/-1 internally.)
+  gcMark(evalEnv);
+  gcMark(lastValue);
+  gcMark(evalReturnVal);
   if (__gc_roots === 0) {
     return;
   }
@@ -363,6 +417,57 @@ export function dynGcMarkRoots(): void {
     gcMark(listGet(__gc_roots, i));
     i = i + 1;
   }
+}
+
+/**
+ * Full mark-sweep collection (#14 GC track, Part 5a). Mark from all roots, then sweep the registry:
+ * every UNMARKED value cell is garbage → return it to dynrt's free list and drop it from the registry
+ * (compacted in place); every marked cell survives with its mark cleared. Returns the number of cells
+ * reclaimed. v5a reclaims the CELLS (24/28 bytes); their payloads (Float64Array / Uint8Array / lists)
+ * are reclaimed in P5b. Safe to call between interpreter operations; the roots cover all live state.
+ */
+/** @export */
+export function dynGcCollect(): i32 {
+  dynGcMarkRoots();
+  if (__gc_reg === 0) {
+    return 0;
+  }
+  const reg: Int32Array = __gc_reg as unknown as Int32Array;
+  const len: i32 = reg[0];
+  let write: i32 = 0;
+  let read: i32 = 0;
+  let freed: i32 = 0;
+  while (read < len) {
+    const c: i32 = reg[read + 2];
+    const cn: Int32Array = c as unknown as Int32Array;
+    if ((cn[0] & GC_MARK_BIT) !== 0) {
+      cn[0] = cn[0] & 255; // live: clear the mark, keep (compact toward the front)
+      reg[write + 2] = c;
+      write = write + 1;
+    } else {
+      // garbage: a 5-slot user-function cell is 28 bytes, every other cell is 24. Read size BEFORE
+      // freeing (dynFreeBlock overwrites the first two slots with its [size, next] header).
+      const sz: i32 = ((cn[0] & 255) === 7 && cn[1] === -1) ? 28 : 24;
+      dynFreeBlock(c, sz);
+      freed = freed + 1;
+    }
+    read = read + 1;
+  }
+  reg[0] = write;
+  return freed;
+}
+
+/** Number of blocks currently on dynrt's recycling free list (test/introspection hook). */
+/** @export */
+export function dynGcFreeCount(): i32 {
+  let cur: i32 = __dyn_free;
+  let count: i32 = 0;
+  while (cur !== 0) {
+    const cn: Int32Array = cur as unknown as Int32Array;
+    cur = cn[1];
+    count = count + 1;
+  }
+  return count;
 }
 
 /** A fresh empty array. */

@@ -586,6 +586,37 @@ recursion — `18r`'s fib(15) still passes. **Next: P5** — `collect()` = `dynG
 (free every unmarked registered cell + its payloads via P2's `__free`, compact the registry) → marks
 already cleared on survivors; + a trigger policy (collect when the registry passes a threshold).
 
+**Part 5a — mark-sweep collect (cells) — ✅ SHIPPED 2026-06-23** (test `18w`). The capstone:
+`dynGcCollect()` = `dynGcMarkRoots()` → sweep the registry → reclaim every UNMARKED cell and compact
+the registry in place; survivors keep their slot, mark cleared. Returns the count reclaimed.
+
+**Allocator decision — dynrt owns a recycling free list (does NOT reuse the wasic `$__free`).** The
+clean way to feed P2's `$__free` would need wasmmerge to UNIFY a `$__free_list` global across the
+merge (like `$__heap_ptr`) — extra surgery on the delicate merge, AND low memory (0–259, iov+scratch)
+has no safe fixed address for a shared head. Instead dynrt has its OWN free list: `dynAlloc(size)`
+hands out `8 + n*elemSize` blocks, REUSING ones `dynFreeBlock` returned (first-fit, head `__dyn_free`)
+before bumping via the `__malloc` intrinsic; `mkCell`/`mkCell5` now allocate through it. So the GC
+reclaims into the same pool it allocates from, fully inside the lib — no wasmmerge/wasic change. A
+freed block stores `[size, next]` in its first two view slots (base+8/+12) so it must be ≥16 bytes
+(cells are 24/28); **reused blocks are ZEROED** because constructors rely on unset slots being 0 (a
+plain object's slot-2 parent link especially — a stale value there would make `gcMark` follow a bogus
+parent). Sizes are exact from the wasic formula: 4-slot cell **24**, 5-slot **28**, number payload
+**16**, string **8+len**, list **8+(cap+2)*4**.
+
+`dynGcMarkRoots` was extended to also mark the interpreter "registers" (`evalEnv` / `lastValue` /
+`evalReturnVal`) so a collection is safe to run at any point / right after a `dynRun`. **Consequence
+(broke + fixed `18v`):** mark-from-roots now also marks those registers, so a test asserting an EXACT
+marked count from `dynGcMarkRoots` must run with clean interpreter state (before any `dynRun`, when
+`evalEnv=-1` / regs=0) — `18v`'s driver-root case was reordered to run first.
+
+Test verifies: collect reclaims the garbage, the registry shrinks by exactly `freed`, the freed cells
+land on the recycle list (`dynGcFreeCount`), a live value in a rooted env survives intact, and later
+allocations REUSE reclaimed blocks (free count drops). **P5b (remaining):** reclaim the PAYLOADS too
+(route the constructors' Float64Array/Uint8Array/list allocations through `dynAlloc`, free them in the
+sweep) — payloads are the bulk, so this is what actually bounds memory; plus a TRIGGER policy
+(auto-collect at interpreter statement boundaries past a registry threshold) so deep recursion / long
+loops collect without an explicit call.
+
 ## Does 14.3 let us drop `javyc`? — retirement criteria (decided framing 2026-06-22)
 
 **No — not on 14.3 alone.** 14.3 is *wiring, not language growth*: it lowers `any` → a boxed handle,

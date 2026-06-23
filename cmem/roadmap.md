@@ -422,8 +422,14 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     shadow-stack roots — SHIPPED 2026-06-23** (test `18v`): `dynRun` pushes/pops its scope on
     `__gc_roots`; `dynGcMarkRoots` marks from all roots; exports `dynGcPushRoot`/`dynGcPopRoot`/
     `dynGcRootCount`; companion fix — `gcMark` follows an env's parent link (object slot 2) + guards the
-    -1 no-env sentinel, so marking one scope keeps the whole lexical chain + closure captures. Remaining:
-    P5 sweep + `collect()` + trigger policy. (functions-as-`any` still cross as opaque
+    -1 no-env sentinel, so marking one scope keeps the whole lexical chain + closure captures. **Part 5a
+    — mark-sweep collect (cells) — SHIPPED 2026-06-23** (test `18w`): `dynGcCollect()` = mark-roots →
+    sweep registry → reclaim unmarked cells + compact; dynrt now allocates cells through its OWN
+    recycling free list (`dynAlloc`/`dynFreeBlock`/`__dyn_free`, reused blocks zeroed) so the GC reclaims
+    into the same pool — NO wasmmerge `$__free` unification needed; `dynGcMarkRoots` also marks the
+    interpreter registers; exports `dynGcCollect`/`dynGcFreeCount`. Remaining: **P5b** — reclaim PAYLOADS
+    too (constructor Float64Array/Uint8Array/list allocs via `dynAlloc`; the bulk → bounds memory) + an
+    auto-collect trigger policy. (functions-as-`any` still cross as opaque
     handles; `javyc` stays as the full-JS fallback — see the retirement criteria in dynrt-design.md).
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
