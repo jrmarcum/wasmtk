@@ -226,7 +226,9 @@ function cellMarked(c: i32): i32 {
 // (Uint8Array) and object key byte-pairs (slot c) are owned, non-cell allocations — not followed here
 // (the sweep frees them by reading the owning cell).
 function gcMark(c: i32): void {
-  if (c === 0) {
+  // 0 = null ptr, -1 = the "no env" sentinel (evalEnv / a top-level scope's parent link). Neither is
+  // a real cell — guard both so we never dereference them.
+  if (c === 0 || c === -1) {
     return;
   }
   if (cellMarked(c) === 1) {
@@ -243,6 +245,12 @@ function gcMark(c: i32): void {
     while (i < len) {
       gcMark(listGet(lst, i));
       i = i + 1;
+    }
+    // An ENV is a tag-6 object whose PARENT scope link lives in slot 2 (regular objects keep 0 there,
+    // so this is a harmless no-op for them). Following it marks the whole lexical scope chain — so
+    // marking an inner scope (or a closure's defining env) keeps every enclosing variable alive.
+    if (t === 6) {
+      gcMark(n[2]);
     }
   } else if (t === 7) {
     // user-function cell (marker -1 in slot 1): body box, params array, defining env are all cells
@@ -292,6 +300,69 @@ export function dynGcMarkedCount(): i32 {
     i = i + 1;
   }
   return count;
+}
+
+// ── GC roots: the interpreter shadow-stack (#14 GC track, Part 4b) ─────────────────────────────
+// A precise collector must know every LIVE handle. wasic locals holding `any` handles aren't
+// enumerable at runtime, but the INTERPRETER's live state is: it is exactly the chain of active
+// scopes. `__gc_roots` is an explicit stack of those scope handles — `dynRun` pushes its scope on
+// entry and pops on exit, so during a nested call the stack holds [driver-env, scope1, scope2, …]
+// (every frame that will resume). Marking from every root (each an env, whose parent chain + bound
+// values gcMark now follows) keeps all live interpreter state. A host/driver can also push its OWN
+// top-level roots (the env it holds) via dynGcPushRoot so P5's collect() won't free them.
+let __gc_roots: i32 = 0; // root-stack list ptr (0 = not yet created)
+
+function gcPushRoot(h: i32): void {
+  if (__gc_roots === 0) {
+    __gc_roots = listNew();
+  }
+  __gc_roots = listPush(__gc_roots, h);
+}
+
+function gcPopRoot(): void {
+  if (__gc_roots === 0) {
+    return;
+  }
+  const a: Int32Array = __gc_roots as unknown as Int32Array;
+  if (a[0] > 0) {
+    a[0] = a[0] - 1; // pop = shrink the length; the slot is overwritten on the next push
+  }
+}
+
+/** Push a root handle the collector must treat as live (host/driver top-level roots). */
+/** @export */
+export function dynGcPushRoot(h: i32): void {
+  gcPushRoot(h);
+}
+
+/** Pop the most recently pushed root. */
+/** @export */
+export function dynGcPopRoot(): void {
+  gcPopRoot();
+}
+
+/** Current depth of the GC root stack (test/introspection hook; 0 when no scope/root is active). */
+/** @export */
+export function dynGcRootCount(): i32 {
+  if (__gc_roots === 0) {
+    return 0;
+  }
+  return listLen(__gc_roots);
+}
+
+/** Clear all marks, then mark everything reachable from every root on the stack (the live set). */
+/** @export */
+export function dynGcMarkRoots(): void {
+  dynGcMarkClear();
+  if (__gc_roots === 0) {
+    return;
+  }
+  const len: i32 = listLen(__gc_roots);
+  let i: i32 = 0;
+  while (i < len) {
+    gcMark(listGet(__gc_roots, i));
+    i = i + 1;
+  }
 }
 
 /** A fresh empty array. */
@@ -1663,6 +1734,10 @@ function runStatements(s: string): void {
  */
 /** @export */
 export function dynRun(s: string, env: i32): i32 {
+  // GC Part 4b: `env` is an active scope for this run's duration — push it as a root so a collection
+  // triggered DURING this run (incl. nested calls, which each push their own scope) cannot free it or
+  // anything reachable from it. Single exit → one balanced pop.
+  gcPushRoot(env);
   evalPos = 0;
   evalEnv = env;
   evalLive = 1;
@@ -1670,5 +1745,7 @@ export function dynRun(s: string, env: i32): i32 {
   evalReturnVal = dynUndefined();
   lastValue = dynUndefined();
   runStatements(s);
-  return evalReturned === 1 ? evalReturnVal : lastValue;
+  const result: i32 = evalReturned === 1 ? evalReturnVal : lastValue;
+  gcPopRoot();
+  return result;
 }

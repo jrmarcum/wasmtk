@@ -563,6 +563,29 @@ orphans unmarked. **Caveat:** `gcMark` is recursive — a very deep object graph
 stack; an explicit work-list is a later hardening if needed. **Next: P4b** (shadow-stack) then **P5**
 (sweep: free unmarked cells + their payloads via P2's `__free`, then clear marks; + trigger policy).
 
+**Part 4b — interpreter shadow-stack (roots) — ✅ SHIPPED 2026-06-23** (test `18v`). A precise
+collector must know every live handle; wasic locals holding `any` aren't enumerable, but the
+interpreter's live state is exactly its chain of active scopes. New explicit root stack `__gc_roots`:
+`dynRun` `gcPushRoot(env)` on entry / `gcPopRoot()` on its single exit, so during a nested call the
+stack holds `[driver-env, scope1, scope2, …]` — every frame that will resume. `dynGcMarkRoots()`
+clears marks then marks from every root. Exports `dynGcPushRoot`/`dynGcPopRoot` (host registers its
+OWN top-level roots — needed by P5), `dynGcRootCount`, `dynGcMarkRoots`.
+
+**Critical companion fix to `gcMark`:** an ENV is a tag-6 object whose PARENT scope link lives in
+**slot 2** (`en[2]`; regular objects keep 0 there). P4a's `gcMark` did NOT follow slot 2, so marking
+an inner scope missed all enclosing scopes. Now `gcMark` follows `n[2]` for tag-6 cells (harmless
+no-op for regular objects) — so marking one scope (or a closure's defining env) keeps the whole
+lexical chain + captured vars alive. Also guarded the `-1` "no env" sentinel (`evalEnv`/top-level
+parent) alongside `0` so it's never dereferenced.
+
+Test verifies: push/pop **balance** (root count back to 0 after a nested `f(4)` run); **mark-from-
+roots** reaches a driver-pushed `[1,2,3]` graph (exactly 4 cells); and marking a returned **closure**
+traverses tag-7 → defEnv → bound values + slot-2 parent (≥5 cells). **Stack-depth note:** the
+push/pop calls return before `runStatements`, so they're NOT on the WAT stack during the deep
+recursion — `18r`'s fib(15) still passes. **Next: P5** — `collect()` = `dynGcMarkRoots()` → sweep
+(free every unmarked registered cell + its payloads via P2's `__free`, compact the registry) → marks
+already cleared on survivors; + a trigger policy (collect when the registry passes a threshold).
+
 ## Does 14.3 let us drop `javyc`? — retirement criteria (decided framing 2026-06-22)
 
 **No — not on 14.3 alone.** 14.3 is *wiring, not language growth*: it lowers `any` → a boxed handle,

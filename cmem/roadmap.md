@@ -418,8 +418,12 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     into P4a (mark mechanics) + P4b (wire shadow-stack). **Part 4a — mark phase — SHIPPED 2026-06-22**
     (test `18u`): `gcMark(root)` recursively marks reachable cells; mark bit = tag bit 8 (uniform, no
     extra storage, doubles as visited-set, cleared by collect()); follows array/object handles +
-    user-fn body/params/env; exports `dynGcMarkClear`/`dynGcMark`/`dynGcMarkedCount`. Remaining: P4b wire
-    the shadow-stack → P5 sweep + `collect()` + triggers. (functions-as-`any` still cross as opaque
+    user-fn body/params/env; exports `dynGcMarkClear`/`dynGcMark`/`dynGcMarkedCount`. **Part 4b —
+    shadow-stack roots — SHIPPED 2026-06-23** (test `18v`): `dynRun` pushes/pops its scope on
+    `__gc_roots`; `dynGcMarkRoots` marks from all roots; exports `dynGcPushRoot`/`dynGcPopRoot`/
+    `dynGcRootCount`; companion fix — `gcMark` follows an env's parent link (object slot 2) + guards the
+    -1 no-env sentinel, so marking one scope keeps the whole lexical chain + closure captures. Remaining:
+    P5 sweep + `collect()` + trigger policy. (functions-as-`any` still cross as opaque
     handles; `javyc` stays as the full-JS fallback — see the retirement criteria in dynrt-design.md).
 
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
