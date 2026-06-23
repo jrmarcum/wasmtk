@@ -8,7 +8,9 @@
 // (or run scripts/build_caps.ts) before regenerating, so the embedded bytes match
 // the current compiler.
 //
-// Usage: deno run --allow-read --allow-write scripts/gen_caps_bytes.ts
+// Usage: deno run --allow-read --allow-write --allow-run scripts/gen_caps_bytes.ts
+// (`--allow-run` lets it `deno fmt` its own output so the long byte-array lines pass
+//  `deno fmt --check`; without it the file is still written, just unformatted.)
 
 import { dirname, fromFileUrl, join } from "jsr:@std/path";
 
@@ -67,3 +69,18 @@ ${parts.join("\n")}
 const outPath = join(root, "src", "wasm", "caps_bytes.ts");
 await Deno.writeTextFile(outPath, out);
 console.log(`✅ Wrote ${outPath}`);
+
+// Format in place so the giant `new Uint8Array([...])` lines get wrapped and the file passes
+// `deno fmt --check` (otherwise every regen re-dirties the publish gate). Degrades gracefully if
+// `--allow-run` wasn't granted — the file is already written, just unformatted.
+try {
+  const fmt = new Deno.Command("deno", { args: ["fmt", outPath] });
+  const { code } = await fmt.output();
+  console.log(
+    code === 0
+      ? "✅ Formatted (deno fmt)"
+      : "⚠️  deno fmt returned nonzero — run `deno fmt src/wasm/caps_bytes.ts` manually",
+  );
+} catch {
+  console.log("⚠️  skipped auto-format (no --allow-run) — run `deno fmt src/wasm/caps_bytes.ts`");
+}
