@@ -307,7 +307,9 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
     lines.push(`  const _dynObjKeyPtr = exp["dynObjKeyPtr"] as (h: number, i: number) => number;`);
     lines.push(`  const _dynObjKeyLen = exp["dynObjKeyLen"] as (h: number, i: number) => number;`);
     lines.push(`  const _dynObjValAt = exp["dynObjValAt"] as (h: number, i: number) => number;`);
-    lines.push(`  const _dynSet = exp["dynSet"] as (o: number, p: number, l: number, v: number) => void;`);
+    lines.push(
+      `  const _dynSet = exp["dynSet"] as (o: number, p: number, l: number, v: number) => void;`,
+    );
     // #14 functions-as-`any`: a returned function stays a dynrt handle (code can't be deep-copied),
     // wrapped as a JS proxy that calls back via dynApply. The handle is PINNED so the GC keeps it alive
     // while the host holds the proxy; a FinalizationRegistry releases it when the proxy is collected
@@ -321,13 +323,19 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
     lines.push(`  function _box(v: unknown): number {`);
     lines.push(`    if (typeof v === "number") return _dynNumber(v);`);
     lines.push(`    if (typeof v === "boolean") return _dynBool(v ? 1 : 0);`);
-    lines.push(`    if (typeof v === "string") { const [p, l] = _writeStr(v); return _dynString(p, l); }`);
+    lines.push(
+      `    if (typeof v === "string") { const [p, l] = _writeStr(v); return _dynString(p, l); }`,
+    );
     lines.push(`    if (v === null) return _dynNull();`);
     lines.push(`    if (v === undefined) return _dynUndefined();`);
-    lines.push(`    if (Array.isArray(v)) { const h = _dynArray(); for (const e of v) _dynPush(h, _box(e)); return h; }`);
+    lines.push(
+      `    if (Array.isArray(v)) { const h = _dynArray(); for (const e of v) _dynPush(h, _box(e)); return h; }`,
+    );
     lines.push(`    if (typeof v === "object") {`);
     lines.push(`      const h = _dynObject(); const o = v as Record<string, unknown>;`);
-    lines.push(`      for (const k of Object.keys(o)) { const [p, l] = _writeStr(k); _dynSet(h, p, l, _box(o[k])); }`);
+    lines.push(
+      `      for (const k of Object.keys(o)) { const [p, l] = _writeStr(k); _dynSet(h, p, l, _box(o[k])); }`,
+    );
     lines.push(`      return h;`);
     lines.push(`    }`);
     lines.push(`    return _dynNumber(0); // functions/symbols — not marshalled`);
@@ -337,15 +345,21 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
     lines.push(`  function _unbox(h: number): unknown {`);
     lines.push(`    switch (_dynTag(h)) {`);
     lines.push(`      case 3: return _dynNumberValue(h);`);
-    lines.push(`      case 4: return _dec.decode(new Uint8Array(_mem.buffer, _dynStrBytes(h), _dynStrLen(h)));`);
+    lines.push(
+      `      case 4: return _dec.decode(new Uint8Array(_mem.buffer, _dynStrBytes(h), _dynStrLen(h)));`,
+    );
     lines.push(`      case 2: return _dynToBool(h) !== 0;`);
     lines.push(`      case 1: return null;`);
     lines.push(`      case 0: return undefined;`);
-    lines.push(`      case 5: { const n = _dynArrLen(h); const a: unknown[] = []; for (let i = 0; i < n; i++) a.push(_unbox(_dynArrGet(h, i))); return a; }`);
+    lines.push(
+      `      case 5: { const n = _dynArrLen(h); const a: unknown[] = []; for (let i = 0; i < n; i++) a.push(_unbox(_dynArrGet(h, i))); return a; }`,
+    );
     lines.push(`      case 6: {`);
     lines.push(`        const n = _dynObjLen(h); const o: Record<string, unknown> = {};`);
     lines.push(`        for (let i = 0; i < n; i++) {`);
-    lines.push(`          const k = _dec.decode(new Uint8Array(_mem.buffer, _dynObjKeyPtr(h, i), _dynObjKeyLen(h, i)));`);
+    lines.push(
+      `          const k = _dec.decode(new Uint8Array(_mem.buffer, _dynObjKeyPtr(h, i), _dynObjKeyLen(h, i)));`,
+    );
     lines.push(`          o[k] = _unbox(_dynObjValAt(h, i));`);
     lines.push(`        }`);
     lines.push(`        return o;`);

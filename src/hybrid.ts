@@ -456,7 +456,7 @@ export async function runHybrid(
       if (!(await probeCompiles([...statics, d]))) bad.add(d.name);
     }
     // No single culprit (e.g. dynamic-calls-dynamic): coarsen to moving all dynamic bodies to host.
-    if (bad.size === 0) for (const d of dynamics) bad.add(d.name);
+    if (bad.size === 0) { for (const d of dynamics) bad.add(d.name); }
     console.warn(
       `⚠  hybrid: ${bad.size} dynamic function(s) did not compile to WASM — keeping them in the TS ` +
         `host (fallback): ${[...bad].join(", ")}`,
@@ -481,7 +481,9 @@ export async function runHybrid(
         throw new Error(`hybrid: static core failed to compile after fallback`);
       }
     }
-    console.log(`   hybrid: core     → ${coreTsPath} (${bad.size} dynamic function(s) kept in host)`);
+    console.log(
+      `   hybrid: core     → ${coreTsPath} (${bad.size} dynamic function(s) kept in host)`,
+    );
   } else {
     console.log(`   hybrid: core     → ${coreTsPath}`);
   }
