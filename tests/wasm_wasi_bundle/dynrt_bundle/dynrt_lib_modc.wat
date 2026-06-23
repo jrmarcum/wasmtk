@@ -1332,7 +1332,10 @@
     (local $cur i32)
     (local $prev i32)
     (local $cn i32)
+    (local $blockSize i32)
+    (local $next i32)
     (local $pn i32)
+    (local $leftover i32)
     (local $words i32)
     (local $i i32)
     (local.set $size (if (result i32) (i32.lt_s (local.get $req) (global.get $GC_MIN_BLOCK)) (then (global.get $GC_MIN_BLOCK)) (else (local.get $req))))
@@ -1343,15 +1346,23 @@
         (br_if $break_2 (i32.eqz (i32.ne (local.get $cur) (i32.const 0))))
         (block $cont_2
           (local.set $cn (local.get $cur))
-          (if (i32.ge_s (i32.load (i32.add (i32.add (local.get $cn) (i32.const 8)) (i32.shl (i32.const 0) (i32.const 2)))) (local.get $size))
+          (local.set $blockSize (i32.load (i32.add (i32.add (local.get $cn) (i32.const 8)) (i32.shl (i32.const 0) (i32.const 2)))))
+          (if (i32.ge_s (local.get $blockSize) (local.get $size))
             (then
+            (local.set $next (i32.load (i32.add (i32.add (local.get $cn) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2)))))
             (if (i32.eq (local.get $prev) (i32.const 0))
               (then
-              (global.set $__dyn_free (i32.load (i32.add (i32.add (local.get $cn) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2)))))
+              (global.set $__dyn_free (local.get $next))
               )
               (else
               (local.set $pn (local.get $prev))
-              (i32.store (i32.add (i32.add (local.get $pn) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2))) (i32.load (i32.add (i32.add (local.get $cn) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2)))))
+              (i32.store (i32.add (i32.add (local.get $pn) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2))) (local.get $next))
+              )
+            )
+            (local.set $leftover (i32.sub (local.get $blockSize) (local.get $size)))
+            (if (i32.ge_s (local.get $leftover) (global.get $GC_MIN_BLOCK))
+              (then
+              (call $dynFreeBlock (i32.add (local.get $cur) (local.get $size)) (local.get $leftover))
               )
             )
             (local.set $words (i32.shr_s (i32.sub (local.get $size) (i32.const 8)) (i32.const 2)))

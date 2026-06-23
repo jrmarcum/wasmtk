@@ -659,9 +659,21 @@ free-list header needs 16 bytes; now both `dynAlloc` AND `dynFreeBlock` round si
 `GC_MIN_BLOCK = 16`, so EVERY block is recyclable (a few wasted bytes, no leak — this was the only
 *growing* leak). (b) **registry doubling** — `mkCell`'s grow branch now `dynFreeBlock`s the old
 backing array after `listPush` copies into the larger one (one-time recovery; the registry stops
-growing at steady state). No-regression verified (full dynrt set green). Not done (low value / out of
-scope): free-list **coalescing** of adjacent blocks (first-fit can fragment, but doesn't grow); the
-root-stack's own (tiny) doublings.
+growing at steady state). (c) **Free-list SPLITTING — ✅ SHIPPED 2026-06-23** (test `18y`): the real
+"coalescing" gap turned out to be the opposite — `dynAlloc` reused an oversized block without
+splitting, so when a big block served a small request and was later freed at its smaller logical size,
+the leftover bytes were LOST (a slow size-mismatch leak). Now `dynAlloc` carves the remainder (≥16B)
+off the chosen block as its own free block at `cur + size`, so nothing is lost. (Number-heavy code
+already did exact reuse via first-fit and never splits; this only bit mixed-size workloads.) Verified
+with a mixed-size build-large-array / drop / collect cycle that forces the split path — correctness
+holds and memory is fully reclaimed (0 live cells). No-regression verified (full dynrt set green). Not
+done (genuinely low value, NON-growing): adjacency **coalescing** (merging physically-adjacent free
+blocks — rare in an interleaved heap); the root-stack's own (tiny) doublings.
+
+**Minor wasic gap surfaced (worked around in the split test):** `f64call() | 0` (truncating a
+function call that returns f64, in an i32 context) miscompiles — `i32.add[1] expected i32, found call
+of type f64` — the `| 0` truncation doesn't fire on a call result. Worked around by comparing the f64
+elements directly. Logged in compiler-bugs.md.
 
 **Remaining #14 odds-and-ends (NOT GC, won't fix soon):** **functions-as-`any`** still cross the host
 boundary as opaque handles — and this is fundamental, not a quick fix: unlike numbers/strings/objects

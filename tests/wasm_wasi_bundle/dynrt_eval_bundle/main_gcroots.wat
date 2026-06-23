@@ -1870,7 +1870,7 @@
     local.tee 5
     global.set $dynrt_lib_modc_global5)
   (func $dynrt_lib_modc__fn20 (param i32) (result i32)
-    (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
+    (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     global.get $dynrt_lib_modc_global4
     i32.lt_s
@@ -1894,47 +1894,63 @@
           br_if 2 (;@1;)
           block  ;; label = @4
             local.get 2
-            local.tee 7
+            local.tee 12
             local.set 4
             local.get 4
             i32.const 8
             i32.add
             i32.load
+            local.set 5
+            local.get 5
             local.get 1
             i32.ge_s
             if  ;; label = @5
               block  ;; label = @6
+                local.get 4
+                i32.const 8
+                i32.add
+                i32.const 4
+                i32.add
+                i32.load
+                local.set 6
                 local.get 3
                 i32.eqz
                 if  ;; label = @7
-                  local.get 4
-                  i32.const 8
-                  i32.add
-                  i32.const 4
-                  i32.add
-                  i32.load
+                  local.get 6
                   global.set $dynrt_lib_modc_global5
                 else
                   block  ;; label = @8
                     local.get 3
-                    local.tee 5
+                    local.tee 7
                     local.set 3
                     local.get 3
                     i32.const 8
                     i32.add
                     i32.const 4
                     i32.add
-                    local.get 4
-                    i32.const 8
-                    i32.add
-                    i32.const 4
-                    i32.add
-                    i32.load
+                    local.get 6
                     i32.store
                   end
                 end
+                local.get 5
                 local.get 1
+                local.tee 9
+                i32.sub
+                local.set 3
+                local.get 3
+                global.get $dynrt_lib_modc_global4
+                i32.ge_s
+                if  ;; label = @7
+                  local.get 2
+                  local.get 1
+                  i32.add
+                  local.get 3
+                  call $dynrt_lib_modc__fn19
+                end
+                local.get 1
+                local.tee 10
                 i32.const 8
+                local.tee 11
                 i32.sub
                 i32.const 2
                 i32.shr_s
@@ -1960,7 +1976,7 @@
                         i32.const 0
                         i32.store
                         local.get 3
-                        local.tee 6
+                        local.tee 8
                         i32.const 1
                         i32.add
                         local.set 3
@@ -1974,7 +1990,7 @@
               end
             end
             local.get 2
-            local.tee 8
+            local.tee 13
             local.set 3
             local.get 4
             i32.const 8

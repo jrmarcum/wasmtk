@@ -1,15 +1,25 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 332/332**
+Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 333/333**
 (`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-22** (+`18j`–`18t` dynrt: value-model / virtual
 import / eval / eval-env / calls / statements / functions+`new Function` / `18q` wasic `any`
-type+auto-merge / `18r` GC Part 1 auto-grow heap / `18s`-`18x` GC Parts 2-5b COMPLETE (free-list / registry / mark / shadow-stack / collect / bounded-memory). 4 known wasic gaps are OPEN but worked around in the dynrt library — see next
+type+auto-merge / `18r` GC Part 1 auto-grow heap / `18s`-`18y` GC Parts 2-5b + polish COMPLETE (free-list / registry / mark / shadow-stack / collect / bounded-memory / splitting). 4 known wasic gaps are OPEN but worked around in the dynrt library — see next
 section; 2d.1/2d.2/3.1 added none. 3.1 has its own documented FOLLOW-UPS — see dynrt-design.md
 "Increment 3 → 3.1": any-param unbox, `as string` unbox, inline-cast comparison, non-literal boxing). 3 KNOWN wasic
 gaps are OPEN but worked around in the dynrt library (so the suite stays green) — see the next
 section; each is a candidate for a real `src/wasic.ts` fix (then the lib workaround can be removed,
 the RegExp `&&` precedent). (Pre-18j: 317 = 307 at v1.7.0 + 2 Phase-53 tests + 8 async tests 54–61;
 `bindgen` 103→104 from the ABI return-side forward-alignment's `cabi_post` assertion.)
+
+## OPEN (worked around) — `f64call() | 0` doesn't truncate a call result in i32 context (2026-06-23)
+
+`s = s + (dynNumberValue(x) | 0)` where `dynNumberValue` returns `f64` miscompiles:
+`i32.add[1] expected type i32, found call of type f64`. The `| 0` integer-truncation idiom doesn't fire
+when its operand is a direct **function call returning f64** (it works for f64 variables / arithmetic).
+Surfaced writing the GC split test (`18y`); worked around by comparing the f64 array elements directly
+instead of summing them with `| 0`. Likely the `| 0` handler doesn't recognize a call-typed operand as
+f64 needing `i32.trunc_f64_s`. Low severity. Fix site: the `| 0` / i32-coercion path in `emitExpr`
+(detect an f64-returning call operand). Bind the call to an `f64` local first as a workaround.
 
 ## FIXED — wasmmerge clobbered ALL merged mutable globals to 131072 (#14 GC Part 3, 2026-06-22)
 

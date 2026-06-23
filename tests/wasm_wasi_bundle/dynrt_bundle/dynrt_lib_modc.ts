@@ -174,13 +174,22 @@ function dynAlloc(req: i32): i32 {
   let prev: i32 = 0;
   while (cur !== 0) {
     const cn: Int32Array = cur as unknown as Int32Array;
-    if (cn[0] >= size) {
-      // unlink this block from the free list
+    const blockSize: i32 = cn[0];
+    if (blockSize >= size) {
+      const next: i32 = cn[1];
+      // unlink this block from the free list (read size + next BEFORE the zero-fill overwrites them)
       if (prev === 0) {
-        __dyn_free = cn[1];
+        __dyn_free = next;
       } else {
         const pn: Int32Array = prev as unknown as Int32Array;
-        pn[1] = cn[1];
+        pn[1] = next;
+      }
+      // SPLIT: if the chosen block is larger than needed and the leftover can itself hold a free block
+      // (>= 16B), carve the remainder off as its own free block at `cur + size` instead of losing those
+      // bytes when this block is later freed at its smaller logical size (closes the size-mismatch leak).
+      const leftover: i32 = blockSize - size;
+      if (leftover >= GC_MIN_BLOCK) {
+        dynFreeBlock(cur + size, leftover);
       }
       // zero the data region (size-8 bytes = (size-8)/4 i32 slots) — stale [size,next] + old contents
       const words: i32 = (size - 8) >> 2;

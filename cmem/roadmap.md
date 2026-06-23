@@ -438,7 +438,10 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     growing leak), and `mkCell` frees the old registry array on grow. Remaining #14 odds-and-ends:
     functions-as-`any` stay opaque across the host boundary — FUNDAMENTAL (a function is code → must stay
     a handle, but host-held handles can't be rooted across collections → a proxy is use-after-free;
-    deferred pending a host-pin mechanism); free-list coalescing (low value, non-growing).
+    deferred pending a host-pin mechanism). **Free-list SPLITTING SHIPPED 2026-06-23** (test `18y`):
+    `dynAlloc` carves the leftover (≥16B) off an oversized reused block at `cur+size` (closes a slow
+    size-mismatch leak; only bit mixed-size workloads). Remaining: adjacency-coalescing only (low value,
+    non-growing).
     (functions-as-`any` still cross as opaque
     handles; `javyc` stays as the full-JS fallback — see the retirement criteria in dynrt-design.md).
 
