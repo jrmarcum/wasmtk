@@ -16,6 +16,8 @@ world dynrt-lib-modc {
   export dyn-gc-pop-root: func();
   export dyn-gc-root-count: func() -> s32;
   export dyn-gc-mark-roots: func();
+  export dyn-gc-pin: func(h: s32) -> s32;
+  export dyn-gc-unpin: func(slot: s32);
   export dyn-gc-collect: func() -> s32;
   export dyn-gc-free-count: func() -> s32;
   export dyn-array: func() -> s32;

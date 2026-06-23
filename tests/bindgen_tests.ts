@@ -244,6 +244,28 @@ world imports-50 {
   contains("env_add wired up", ts, `env["env_add"]`);
 }
 
+// ── 8b. generateBindings — functions-as-`any` proxy + pin (#14 final item) ────
+
+function testGenBindingsAnyFunction() {
+  console.log(yellow(bold("\n── generateBindings — any function proxy + pin")));
+
+  const wit = `package local:fnany;
+world fnany {
+  export get-fn: func() -> any;
+}
+`;
+  const ts = generateBindings(wit);
+  contains("_unbox present", ts, "function _unbox(");
+  contains("tag-7 function case", ts, "case 7:");
+  contains("pins the returned handle", ts, "_dynGcPin(h)");
+  contains("proxy boxes its args", ts, "_dynPush(_a, _box(_x))");
+  contains("proxy calls back via dynApply", ts, "_dynApply(h, _a)");
+  contains("proxy result is unboxed", ts, "return _unbox(_dynApply(h, _a))");
+  contains(".release() unpins", ts, "_fn.release = () => _dynGcUnpin(_pin)");
+  contains("FinalizationRegistry backstop", ts, "new FinalizationRegistry");
+  contains("dynApply / pin helpers bound", ts, `exp["dynGcPin"]`);
+}
+
 // ── 9. Integration: compile math fixture → modc → bindgen → run host ─────────
 
 async function testIntegrationMath() {
@@ -514,6 +536,7 @@ testGenBindingsMath();
 testGenBindingsBool();
 testGenBindingsStrings();
 testGenBindingsImports();
+testGenBindingsAnyFunction();
 
 // Integration tests (async — require wasmtk binary)
 await testIntegrationMath();

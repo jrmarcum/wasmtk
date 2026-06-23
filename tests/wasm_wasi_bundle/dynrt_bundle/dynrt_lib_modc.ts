@@ -675,6 +675,55 @@ export function dynGcMarkRoots(): void {
     gcMark(listGet(__gc_roots, i));
     i = i + 1;
   }
+  // HOST PINS (functions-as-`any`): handles the host holds across calls. The GC can't see host
+  // locals, so a function value returned to the host (which can't be deep-copied like a number/object)
+  // would be collected on the next call. Pinning records it here so it stays marked until released.
+  if (__gc_pins !== 0) {
+    const plen: i32 = listLen(__gc_pins);
+    let pi: i32 = 0;
+    while (pi < plen) {
+      gcMark(listGet(__gc_pins, pi)); // gcMark guards 0 (released slot)
+      pi = pi + 1;
+    }
+  }
+}
+
+// ── Host pin table (functions-as-`any`, #14 final item) ───────────────────────────────────────
+// dynrt's GC is NON-MOVING, so pinning a handle just needs to keep it MARKED — pin/unpin record it
+// in a slot list the marker also walks. The pin list itself is allocated via listNew (NOT mkCell),
+// so it is never swept. Slots are reused (a released slot holds 0); `dynGcPin` returns a stable slot
+// index the host passes to `dynGcUnpin`.
+let __gc_pins: i32 = 0;
+
+/** Pin a handle so it survives collections while the host holds it; returns its slot index. */
+/** @export */
+export function dynGcPin(h: i32): i32 {
+  if (__gc_pins === 0) {
+    __gc_pins = listNew();
+  }
+  const len: i32 = listLen(__gc_pins);
+  let i: i32 = 0;
+  while (i < len) {
+    if (listGet(__gc_pins, i) === 0) {
+      listSet(__gc_pins, i, h); // reuse a released slot
+      return i;
+    }
+    i = i + 1;
+  }
+  __gc_pins = listPush(__gc_pins, h); // append a new slot
+  return len;
+}
+
+/** Release a previously pinned slot — the handle becomes collectible again. */
+/** @export */
+export function dynGcUnpin(slot: i32): void {
+  if (__gc_pins === 0) {
+    return;
+  }
+  if (slot < 0 || slot >= listLen(__gc_pins)) {
+    return;
+  }
+  listSet(__gc_pins, slot, 0);
 }
 
 // Return a self-managed list's backing block (8 + (cap+2)*4 bytes) to the recycle pool.

@@ -1,6 +1,6 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 334/334**
+Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 335/335**
 (`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-22** (+`18j`–`18t` dynrt: value-model / virtual
 import / eval / eval-env / calls / statements / functions+`new Function` / `18q` wasic `any`
 type+auto-merge / `18r` GC Part 1 auto-grow heap / `18s`-`18z` GC Parts 2-5b + polish COMPLETE (… / splitting / hybrid segregated+coalescing allocator). 4 known wasic gaps are OPEN but worked around in the dynrt library — see next

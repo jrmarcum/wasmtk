@@ -308,6 +308,14 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
     lines.push(`  const _dynObjKeyLen = exp["dynObjKeyLen"] as (h: number, i: number) => number;`);
     lines.push(`  const _dynObjValAt = exp["dynObjValAt"] as (h: number, i: number) => number;`);
     lines.push(`  const _dynSet = exp["dynSet"] as (o: number, p: number, l: number, v: number) => void;`);
+    // #14 functions-as-`any`: a returned function stays a dynrt handle (code can't be deep-copied),
+    // wrapped as a JS proxy that calls back via dynApply. The handle is PINNED so the GC keeps it alive
+    // while the host holds the proxy; a FinalizationRegistry releases it when the proxy is collected
+    // (and the proxy also exposes `.release()` for deterministic cleanup).
+    lines.push(`  const _dynApply = exp["dynApply"] as (fn: number, args: number) => number;`);
+    lines.push(`  const _dynGcPin = exp["dynGcPin"] as (h: number) => number;`);
+    lines.push(`  const _dynGcUnpin = exp["dynGcUnpin"] as (slot: number) => void;`);
+    lines.push(`  const _pinReg = new FinalizationRegistry((pin: number) => _dynGcUnpin(pin));`);
     lines.push(`  const _dec = new TextDecoder();`);
     // box: JS value → dynrt handle (recursive for arrays/objects)
     lines.push(`  function _box(v: unknown): number {`);
@@ -342,7 +350,18 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
     lines.push(`        }`);
     lines.push(`        return o;`);
     lines.push(`      }`);
-    lines.push(`      default: return h; // function — opaque handle`);
+    lines.push(`      case 7: {`);
+    lines.push(`        const _pin = _dynGcPin(h);`);
+    lines.push(`        const _fn = ((...args: unknown[]): unknown => {`);
+    lines.push(`          const _a = _dynArray();`);
+    lines.push(`          for (const _x of args) _dynPush(_a, _box(_x));`);
+    lines.push(`          return _unbox(_dynApply(h, _a));`);
+    lines.push(`        }) as ((...a: unknown[]) => unknown) & { release(): void };`);
+    lines.push(`        _fn.release = () => _dynGcUnpin(_pin);`);
+    lines.push(`        _pinReg.register(_fn, _pin);`);
+    lines.push(`        return _fn;`);
+    lines.push(`      }`);
+    lines.push(`      default: return h; // unknown tag — opaque handle`);
     lines.push(`    }`);
     lines.push(`  }`);
   }

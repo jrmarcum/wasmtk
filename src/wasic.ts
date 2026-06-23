@@ -17766,6 +17766,11 @@ class WasicTranspiler {
       "dynObjKeyLen",
       "dynObjValAt",
       "dynSet",
+      // #14 final item: functions-as-`any` — a returned function becomes a JS proxy that calls back
+      // via dynApply; the handle is pinned (dynGcPin/Unpin) so the GC keeps it alive while held.
+      "dynApply",
+      "dynGcPin",
+      "dynGcUnpin",
     ];
   }
 

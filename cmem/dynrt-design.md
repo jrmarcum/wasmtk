@@ -706,7 +706,33 @@ sees interpreter roots, not host locals), so a host-held function proxy would be
 later core call triggers a collect. Shipping it would be shipping a use-after-free. Deferred until/if
 there's a host-pinning mechanism (e.g. an explicit handle table the GC also roots).
 
-## Functions-as-`any` host↔core marshalling — SCOPE (drafted 2026-06-23, not yet implemented)
+## Functions-as-`any` — Phase 1 (pin table + core→host proxy) ✅ SHIPPED 2026-06-23
+
+The pin table + bindgen proxy are DONE (tests `18za` + bindgen `testGenBindingsAnyFunction`):
+
+**Pin table (dynrt lib).** `__gc_pins` slot-list; `dynGcMarkRoots` also marks every non-zero pin.
+Exports `dynGcPin(h) → slot` (reuses a released 0-slot, else appends) / `dynGcUnpin(slot)`. The list is
+allocated via listNew (not mkCell) so it's never swept. Non-moving GC ⇒ pinning only needs to keep the
+handle marked. Test `18za`: create a function via the interpreter, pin it, make it GC-unreachable
+except via the pin, collect under garbage, then call it via `dynApply` — correct result (42) proves it
+survived (integrity-checked).
+
+**bindgen `_unbox` tag-7 proxy.** On `dynTag(h)===7`, `_dynGcPin(h)` then return a JS proxy
+`(...args) => _unbox(_dynApply(h, argsArr(args.map(_box))))` with a `.release()` (→ `_dynGcUnpin`) and a
+`FinalizationRegistry` backstop. Added `dynApply`/`dynGcPin`/`dynGcUnpin` to `dynrtMarshalExportNames`
+(wasic.ts) so they're exported post-merge. bindgen 113/113 (the proxy generates + type-checks; existing
+`any` marshalling unaffected).
+
+**Remaining gap (documented, small):** a full host-calls-core-returns-a-function END-TO-END demo needs
+the CORE to PRODUCE a function value as `any` — but typed wasic source has no way to express that yet
+(`eval(` lowers to `dynEval`, expression-only; `dynRun`/`new Function` aren't exposed to `any`-typed
+source). So the proxy is verified by generation + the equivalent core-side round-trip (`18za` does the
+exact pin+dynApply the proxy does, just from wasic instead of JS). Exposing a function-producer to
+source (e.g. a `Function(body)`-style construct → `dynMakeFunc`) is the small follow-up that lights up
+the end-to-end path. **Phase 2 (host→core, JS function INTO core via an imported `__hostcall`)** remains
+deferred (scope below).
+
+## Functions-as-`any` host↔core marshalling — SCOPE (drafted 2026-06-23)
 
 **Goal:** let a dynrt function value (tag 7) cross the host boundary as a real callable. Two directions,
 very different difficulty:
