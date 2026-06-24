@@ -423,6 +423,69 @@ function toKebabCase(s: string): string {
     .toLowerCase();
 }
 
+/**
+ * Apply `transform` to the CODE spans of `src` only — string literals (`'`, `"`, `` ` ``) and comments
+ * (`//`, `/* … *​/`) are copied through verbatim. Used by source pre-passes (`eval(`→`dynrt_dynEval(`,
+ * `Function(`→`dynrt_dynMakeFn(`) so a literal `eval(` / `Function(` inside a printed string or a
+ * comment is never rewritten. A regex match can't span a string/comment boundary, so transforming each
+ * code span independently is sound. Template literals are treated as opaque in full — their `${…}`
+ * interpolations are NOT transformed (a rare, accepted under-reach, consistent with the bundler's
+ * auto-merge trigger sniff in tsbundler.ts). Regex literals are treated as code (the realistic
+ * `eval(`/`Function(` patterns require an unescaped `(` that a valid regex literal would escape).
+ */
+function rewriteOutsideStringsAndComments(
+  src: string,
+  transform: (code: string) => string,
+): string {
+  const n = src.length;
+  let out = "";
+  let code = "";
+  const flush = () => {
+    if (code.length > 0) {
+      out += transform(code);
+      code = "";
+    }
+  };
+  let i = 0;
+  while (i < n) {
+    const c = src[i];
+    const d = i + 1 < n ? src[i + 1] : "";
+    if (c === "/" && d === "/") { // line comment
+      flush();
+      const s = i;
+      while (i < n && src[i] !== "\n") i++;
+      out += src.slice(s, i);
+      continue;
+    }
+    if (c === "/" && d === "*") { // block comment
+      flush();
+      const s = i;
+      i += 2;
+      while (i < n && !(src[i] === "*" && src[i + 1] === "/")) i++;
+      i = Math.min(i + 2, n);
+      out += src.slice(s, i);
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") { // string / template literal
+      flush();
+      const s = i;
+      const q = c;
+      i++;
+      while (i < n && src[i] !== q) {
+        if (src[i] === "\\") i++; // skip escaped char
+        i++;
+      }
+      i = Math.min(i + 1, n); // consume closing quote
+      out += src.slice(s, i);
+      continue;
+    }
+    code += c;
+    i++;
+  }
+  flush();
+  return out;
+}
+
 /** Converts a WIT kebab-case name back to the original camelCase export name. */
 function kebabToCamel(s: string): string {
   return s.replace(/-([a-z0-9])/g, (_m, c: string) => c.toUpperCase());
@@ -17917,12 +17980,18 @@ class WasicTranspiler {
       .replace(/(:\s*any\s*=\s*)true(\s*;)/g, "$1dynrt_dynBool(1)$2")
       .replace(/(:\s*any\s*=\s*)false(\s*;)/g, "$1dynrt_dynBool(0)$2")
       .replace(/(:\s*any\s*=\s*)(-?\d+(?:\.\d+)?)(\s*;)/g, "$1dynrt_dynNumber($2)$3");
-    // #14.3.3: `eval(...)` is the dynrt evaluator — rewrite to the merged `dynrt_dynEval`. (The
-    // bundler already injected the import + triggered the merge on the `eval(` it saw.)
-    this.src = this.src.replace(/\beval\s*\(/g, "dynrt_dynEval(");
-    // #14 final item: `Function(params, body)` (and `new Function(...)`) is the dynrt function
-    // PRODUCER — rewrite to the merged `dynrt_dynMakeFn` (returns a tag-7 handle, returnable as `any`).
-    this.src = this.src.replace(/\b(?:new\s+)?Function\s*\(/g, "dynrt_dynMakeFn(");
+    // #14.3.3 + final item: rewrite the dynrt evaluator/producer call forms — `eval(...)` →
+    // `dynrt_dynEval(`, and `Function(params, body)` / `new Function(...)` → `dynrt_dynMakeFn(` (returns
+    // a tag-7 handle, returnable as `any`). Rewrite ONLY in real code: a literal `eval(`/`Function(`
+    // inside a printed string or a comment is left intact (the bundler already injected the import +
+    // triggered the merge on the same forms it saw, via the same code-only sniff).
+    this.src = rewriteOutsideStringsAndComments(
+      this.src,
+      (code) =>
+        code
+          .replace(/\beval\s*\(/g, "dynrt_dynEval(")
+          .replace(/\b(?:new\s+)?Function\s*\(/g, "dynrt_dynMakeFn("),
+    );
     // Rewrite `const/let/var name = function(params): type { ... }` to `function name(params): type { ... }`
     // so parseFunctions() can recognize the pattern as a named function.
     this.src = this.src.replace(

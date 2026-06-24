@@ -371,8 +371,17 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
     lines.push(`          for (const _x of args) _dynPush(_a, _box(_x));`);
     lines.push(`          return _unbox(_dynApply(h, _a));`);
     lines.push(`        }) as ((...a: unknown[]) => unknown) & { release(): void };`);
-    lines.push(`        _fn.release = () => _dynGcUnpin(_pin);`);
-    lines.push(`        _pinReg.register(_fn, _pin);`);
+    // release() must unpin EXACTLY once and cancel the FinalizationRegistry — otherwise an explicit
+    // release() followed by GC double-unpins the slot, and if that slot was reused by a newer pin in
+    // between, the newer (still-live) handle is wrongly unpinned (ABA → use-after-free).
+    lines.push(`        let _released = false;`);
+    lines.push(`        _fn.release = () => {`);
+    lines.push(`          if (_released) return;`);
+    lines.push(`          _released = true;`);
+    lines.push(`          _pinReg.unregister(_fn);`);
+    lines.push(`          _dynGcUnpin(_pin);`);
+    lines.push(`        };`);
+    lines.push(`        _pinReg.register(_fn, _pin, _fn); // 3rd arg = unregister token`);
     lines.push(`        return _fn;`);
     lines.push(`      }`);
     lines.push(`      default: return h; // unknown tag — opaque handle`);

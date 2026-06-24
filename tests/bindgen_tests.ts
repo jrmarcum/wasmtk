@@ -261,7 +261,10 @@ world fnany {
   contains("proxy boxes its args", ts, "_dynPush(_a, _box(_x))");
   contains("proxy calls back via dynApply", ts, "_dynApply(h, _a)");
   contains("proxy result is unboxed", ts, "return _unbox(_dynApply(h, _a))");
-  contains(".release() unpins", ts, "_fn.release = () => _dynGcUnpin(_pin)");
+  contains(".release() unpins", ts, "_dynGcUnpin(_pin)");
+  contains(".release() is idempotent", ts, "if (_released) return");
+  contains(".release() cancels the registry", ts, "_pinReg.unregister(_fn)");
+  contains("pin registered with unregister token", ts, "_pinReg.register(_fn, _pin, _fn)");
   contains("FinalizationRegistry backstop", ts, "new FinalizationRegistry");
   contains("dynApply / pin helpers bound", ts, `exp["dynGcPin"]`);
 }

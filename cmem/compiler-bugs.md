@@ -1,7 +1,6 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 335/335**
-(`bindgen` 104/104, `jstyper` 73/73) as of **2026-06-22** (+`18j`–`18t` dynrt: value-model / virtual
+Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 336/336** (`bindgen` 122/122, `jstyper` 73/73) as of **2026-06-24** (functions-as-`any` producer + post-publish audit) (+`18j`–`18t` dynrt: value-model / virtual
 import / eval / eval-env / calls / statements / functions+`new Function` / `18q` wasic `any`
 type+auto-merge / `18r` GC Part 1 auto-grow heap / `18s`-`18z` GC Parts 2-5b + polish COMPLETE (… / splitting / hybrid segregated+coalescing allocator). 4 known wasic gaps are OPEN but worked around in the dynrt library — see next
 section; 2d.1/2d.2/3.1 added none. 3.1 has its own documented FOLLOW-UPS — see dynrt-design.md
@@ -10,6 +9,45 @@ gaps are OPEN but worked around in the dynrt library (so the suite stays green) 
 section; each is a candidate for a real `src/wasic.ts` fix (then the lib workaround can be removed,
 the RegExp `&&` precedent). (Pre-18j: 317 = 307 at v1.7.0 + 2 Phase-53 tests + 8 async tests 54–61;
 `bindgen` 103→104 from the ABI return-side forward-alignment's `cabi_post` assertion.)
+
+## "look for code issues" audit of the functions-as-`any` work (2026-06-24, post-v1.9.0)
+
+Focused audit of the freshly-shipped functions-as-`any` code (pin table, `Function(` producer, bindgen
+tag-7 proxy, the tsbundler comment-strip). Suite **335/335 → 336/336** (item 3 added the `18zb`
+regression), bindgen **119 → 122**.
+
+- **FIXED — bindgen tag-7 proxy double-unpin (ABA → use-after-free), `src/bindgen.ts` ~line 374.** The
+  generated proxy did `_fn.release = () => _dynGcUnpin(_pin)` and `_pinReg.register(_fn, _pin)` with NO
+  unregister token. So an explicit `release()` followed by GC fired `_dynGcUnpin(_pin)` a SECOND time
+  via the FinalizationRegistry; if that pin slot was reused by a newer pin in between, the newer
+  (still-live) handle was wrongly unpinned and could be collected while the host held it. Fix: a
+  `let _released` idempotency guard + `_pinReg.unregister(_fn)` in `release()` + register with `_fn` as
+  the 3rd-arg unregister token. New assertions in `testGenBindingsAnyFunction` (idempotent / cancels
+  registry / unregister token). Severity was low-med (needs release()+GC+slot-reuse interleaving, and
+  FinalizationRegistry timing is non-deterministic) but it's a real correctness hole on a non-moving GC.
+- **FIXED — tsbundler auto-merge trigger sniffed over a fragile regex strip, `src/tsbundler.ts`.** The
+  earlier `Function(`-self-merge fix stripped comments with `…replace(/\/\/[^\n]*/g,"")`, but that eats
+  a `//` INSIDE a string literal (e.g. a URL) and the rest of that line with it — hiding a real
+  `: any`/`eval(`/`Function(` later on the same line (false-negative → confusing compile failure).
+  Blanking strings first instead would let an apostrophe in a comment (`// it's`) start a bogus string.
+  Replaced both with a single left-to-right scanner `stripCommentsAndStrings()` that tracks comment AND
+  string/template state correctly (string contents → a space, so a trigger inside a string is data and
+  doesn't count; comments removed). Verified: dynrt lib still does NOT self-merge (its doc-comment
+  `Function(` is blanked), and all existing `any`/`eval` tests still trigger (suite green).
+- **FIXED — wasic `Function(`/`eval(` source pre-passes rewrote inside string literals + comments,
+  `src/wasic.ts` ~line 17920.** `this.src.replace(/\beval\s*\(/g, …)` and the `Function(` variant
+  rewrote the RAW source, so a literal `console.log("call Function() …")` came out as
+  `…dynrt_dynMakeFn() …` (wrong OUTPUT, not a compile error — the rewritten token sits inside string
+  data). Pre-existing class (the `eval(` pre-pass shipped this way since #14.3.3). Fix: new module-level
+  `rewriteOutsideStringsAndComments(src, transform)` — a single left-to-right scanner that copies string
+  literals (`'`/`"`/`` ` ``) and comments through verbatim and applies the `eval(`/`Function(` regex
+  replacements only to the CODE spans between them. Both pre-passes route through it. Regression test
+  `18zb_PrepassStringSafety` (output-diff: a program that PRINTS `eval( … )` / `Function( … )` with no
+  real dynamic code — verifies the strings survive AND that dynrt is not spuriously merged). Templates
+  are opaque in full (their `${…}` interpolations are not rewritten — a rare accepted under-reach,
+  consistent with the tsbundler trigger sniff). The pin table (`dynGcPin`/`dynGcUnpin`, free-slot 0
+  sentinel — valid handles are never 0), `dynMakeFn`'s comma-scanner (relies on the now-shipped `||`
+  short-circuit), and the marshal-export DCE protection were all audited CLEAN.
 
 ## OPEN (worked around) — `f64call() | 0` doesn't truncate a call result in i32 context (2026-06-23)
 

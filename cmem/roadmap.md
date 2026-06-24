@@ -1,9 +1,19 @@
 # Roadmap, phase status & vision
 
-## Release status (2026-06-22)
+## Release status (2026-06-24)
 
-**Version 1.8.0 is PUBLISHED to JSR** (`@jrmarcum/wasmtk@1.8.0` is `latest`). This is the release that
-ships the **full v1 `async`/Promise surface** for the `wasic` compiler (#13 track, sub-phases
+**Version 1.9.0 is PUBLISHED to JSR** (`@jrmarcum/wasmtk@1.9.0` is `latest`). This release ships the
+**COMPLETE #14 own dynamic runtime** — value model → JS interpreter (`eval`/`new Function`) → wasic `any`
+integration → host↔core marshalling (numbers/strings/bools/objects/arrays **and functions**) →
+bounded-memory **mark-sweep GC** → **hybrid recycling allocator** → **functions-as-`any`** (the
+`Function(params, body)` producer + a callable, pinned host proxy), verified end-to-end
+(`getDoubler()(21)=42`). At the 1.9.0 tag: suite **336/336**, bindgen **122/122**, jstyper 73/73
+(the 122 includes a post-publish "look for code issues" audit that fixed 3 latent correctness bugs in the
+functions-as-`any` plumbing — see compiler-bugs.md; a 1.9.1 patch is the natural home for those). JSR
+score 100% (provenance `true`, docs clean — keep `deno doc --lint` clean to hold it).
+
+**Version 1.8.0** (2026-06-22) shipped the **full v1 `async`/Promise surface** for the `wasic` compiler
+(#13 track, sub-phases
 13.1a–13.5; design + log in [async-design.md](async-design.md), user-facing notes in `CHANGELOG.md`):
 `async`/`await`, `Promise.resolve`/`reject`, `.then`/`.catch`/`.finally`, `Promise.all`/`allSettled`,
 plus the `hybrid` async lift — all standalone, no embedded JS runtime. At the 1.8.0 tag the suite is
@@ -463,10 +473,15 @@ Promise API surface + hybrid lift; suite 317/317; README async surface documente
 834/1010 of README.md and `CHANGELOG.md`); **#12 loaders substantially DONE — updated 2026-06-22**
 (`-js` published; `-v` published to VPM; `-c`/`-zig`/`-py`/`-rs`/`-jvm`/`-dart` implemented on
 SPEC-3.0.0; **all 10 ports now implemented — no stubs remain**; **4 published** (`-js`, `-v`, `-zig`,
-`-py`), the other 6 are built-but-unpublished — see vision.md). The remaining work is **#14 own dynamic
-runtime**, the deferred **P2 container** (embed component type — a wrap), and finishing **#12**
-(PUBLISHING the 6 remaining built ports to their registries, SPEC §10 loader-cap propagation, and owner
-registry secrets).
+`-py`), the other 6 are built-but-unpublished — see vision.md). **#14 own dynamic runtime is now CORE+GC+FUNCTIONS COMPLETE** (value model →
+interpreter → `any` integration → host↔core marshalling incl. functions → bounded-memory mark-sweep GC
+→ hybrid recycling allocator → functions-as-`any` producer+proxy+pin, end-to-end; **published as
+v1.9.0 2026-06-24**) — the ONLY deferred #14 piece is **Phase 2 (host→core: pass a JS function INTO the
+core via an imported `__hostcall`)**. The other remaining work is the deferred **P2 container** (embed
+component type — a wrap), finishing **#12** (PUBLISHING the 6 remaining built loader ports, SPEC §10
+loader-cap propagation, owner registry secrets), **Go bindgen** string/aggregate host marshalling (needs
+ABI forward-alignment), the **asyncify pass in binaryen-ts** (unblocks goroutine Go without external
+`wasm-opt`), and the optional field-reshaping **utility-types** batch (Pick/Omit/Record/…).
 
 ## Congruent polyglot-producer goal + ABI posture (added 2026-06-03 — full detail in [polyglot-producers.md](polyglot-producers.md))
 

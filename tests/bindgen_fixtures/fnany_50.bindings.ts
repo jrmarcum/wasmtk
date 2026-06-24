@@ -90,8 +90,14 @@ export async function loadModule(
           for (const _x of args) _dynPush(_a, _box(_x));
           return _unbox(_dynApply(h, _a));
         }) as ((...a: unknown[]) => unknown) & { release(): void };
-        _fn.release = () => _dynGcUnpin(_pin);
-        _pinReg.register(_fn, _pin);
+        let _released = false;
+        _fn.release = () => {
+          if (_released) return;
+          _released = true;
+          _pinReg.unregister(_fn);
+          _dynGcUnpin(_pin);
+        };
+        _pinReg.register(_fn, _pin, _fn); // 3rd arg = unregister token
         return _fn;
       }
       default: return h; // unknown tag — opaque handle

@@ -734,8 +734,17 @@ end-to-end verified** (bindgen `testIntegrationFnAny` + the `anysig_bundle` host
 handle is pinned). bindgen 119/119.
 **Gotcha (real bug hit + fixed):** the `usesFunction` trigger matched `Function(` inside dynrt's OWN
 doc-comment → the dynrt lib auto-merged ITSELF (circular, broke every dynrt test at the wasic step).
-Fixed by STRIPPING comments before the auto-merge triggers are sniffed (tsbundler) — which also hardens
-against a user's `Function(`/`eval(`/`: any` mentioned in a comment or string.
+Fixed by NOT sniffing triggers over comments/strings.
+**Post-publish "look for code issues" audit (2026-06-24) — 3 latent correctness bugs fixed; full detail
+in compiler-bugs.md (bindgen 119→122, suite 336/336):** (1) the bindgen tag-7 proxy registered with a
+`FinalizationRegistry` WITHOUT an unregister token, so `release()` + later GC double-unpinned the slot →
+if reused by a newer pin in between, the live handle was wrongly unpinned (ABA → use-after-free) — fixed
+with an idempotent `_released` guard + `unregister(_fn)` + a 3rd-arg unregister token. (2) the tsbundler
+comment-only strip ate a `//` inside a string literal (URL) and the rest of that line, hiding a real
+trigger after it → replaced with a single-pass `stripCommentsAndStrings()` scanner that tracks comment
+AND string state. (3) the wasic `eval(`/`Function(` source pre-passes rewrote inside string literals +
+comments (a printed `"…Function()…"` came out `"…dynrt_dynMakeFn()…"`) → new code-only scanner
+`rewriteOutsideStringsAndComments()`; regression `18zb`.
 **Phase 2 (host→core, a JS function INTO the core via an imported `__hostcall`)** remains deferred
 (scope below). With Phase 1 + the producer, the common direction (core returns a closure/callback the
 host calls) is fully working.

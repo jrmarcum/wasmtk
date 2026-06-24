@@ -113,6 +113,48 @@ function modulePrefix(filePath: string): string {
 }
 
 /**
+ * Blank out comments and string/template literals in one left-to-right pass, so the auto-merge
+ * trigger sniff (below) only ever sees real CODE. A regex approach can't do this: stripping comments
+ * first lets a `//` inside a string eat the rest of the line (hiding a real `: any`/`eval(`/`Function(`
+ * after it → false-negative compile failure), while blanking strings first lets an apostrophe in a
+ * comment (`// it's`) start a bogus string that swallows code. A single scanner that tracks both
+ * states avoids both. String contents become a space (a trigger inside a string literal is data, not
+ * code, so it must NOT count). Template interpolations `${…}` are blanked with the rest of the
+ * template — a trigger living solely inside `${…}` is a rare, accepted miss.
+ */
+function stripCommentsAndStrings(s: string): string {
+  let out = "";
+  const n = s.length;
+  for (let i = 0; i < n;) {
+    const c = s[i];
+    const d = i + 1 < n ? s[i + 1] : "";
+    if (c === "/" && d === "/") {
+      while (i < n && s[i] !== "\n") i++;
+      continue;
+    }
+    if (c === "/" && d === "*") {
+      i += 2;
+      while (i < n && !(s[i] === "*" && s[i + 1] === "/")) i++;
+      i += 2;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      i++;
+      while (i < n && s[i] !== c) {
+        if (s[i] === "\\") i++; // skip the escaped char
+        i++;
+      }
+      i++; // consume the closing quote
+      out += " ";
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+/**
  * Parses a named clause `{ foo, bar as baz }` and returns a map of
  * **local/alias name → original name** (without any prefix applied).
  * Used when resolving re-exports against a child's exportRenames.
@@ -244,10 +286,11 @@ export async function bundleImportsEx(entryPath: string): Promise<BundleResult> 
     // below merges it (and Binaryen DCE strips the dynrt functions the program doesn't call).
     // Only the ENTRY is scanned; programs without `any`/`eval` are byte-for-byte unaffected.
     if (isEntry && !/from\s+["']wasmtk:dynrt["']/.test(src)) {
-      // Strip comments before sniffing for triggers — otherwise a `Function(` / `eval(` / `: any`
-      // mentioned in a comment (e.g. dynrt's own doc-comments) would falsely auto-merge the runtime,
-      // which for the dynrt library itself is circular.
-      const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+      // Sniff for triggers over CODE ONLY (comments + string literals blanked) — otherwise a
+      // `Function(` / `eval(` / `: any` mentioned in a comment (e.g. dynrt's own doc-comments) would
+      // falsely auto-merge the runtime, which for the dynrt library itself is circular; and a `//`
+      // inside a string could hide a real trigger later on the same line (false-negative).
+      const code = stripCommentsAndStrings(src);
       const usesAny = /:\s*any\b/.test(code) || /\bany\[\]/.test(code) || /<\s*any\s*>/.test(code);
       const usesEval = /\beval\s*\(/.test(code);
       const usesFunction = /\bFunction\s*\(/.test(code); // the `Function(params, body)` producer
