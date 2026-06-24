@@ -473,11 +473,22 @@ Promise API surface + hybrid lift; suite 317/317; README async surface documente
 834/1010 of README.md and `CHANGELOG.md`); **#12 loaders substantially DONE — updated 2026-06-22**
 (`-js` published; `-v` published to VPM; `-c`/`-zig`/`-py`/`-rs`/`-jvm`/`-dart` implemented on
 SPEC-3.0.0; **all 10 ports now implemented — no stubs remain**; **4 published** (`-js`, `-v`, `-zig`,
-`-py`), the other 6 are built-but-unpublished — see vision.md). **#14 own dynamic runtime is now CORE+GC+FUNCTIONS COMPLETE** (value model →
-interpreter → `any` integration → host↔core marshalling incl. functions → bounded-memory mark-sweep GC
-→ hybrid recycling allocator → functions-as-`any` producer+proxy+pin, end-to-end; **published as
-v1.9.0 2026-06-24**) — the ONLY deferred #14 piece is **Phase 2 (host→core: pass a JS function INTO the
-core via an imported `__hostcall`)**. The other remaining work is the deferred **P2 container** (embed
+`-py`), the other 6 are built-but-unpublished — see vision.md). **#14 own dynamic runtime — FINALIZED 2026-06-24 (shipped in v1.9.0).** The whole arc is COMPLETE (value
+model → interpreter → `any` integration → host↔core marshalling incl. functions → bounded-memory
+mark-sweep GC → hybrid recycling allocator → functions-as-`any` producer+proxy+pin, end-to-end). The ONE
+deferred #14 follow-up is **Phase 2 (host→core: pass a JS function INTO the core via an imported
+`__hostcall`)** — marshalling plumbing, does NOT retire `javyc`. **`dynrt` is now the PRIMARY dynamic
+engine; `javyc` is the FALLBACK.** **Retiring `javyc` from the codebase is a SEPARATE, larger track —
+FULLY SCOPED in [dynrt-design.md](dynrt-design.md) "javyc retirement — scoped task breakdown":** `javyc`
+is now a thin wrapper around the external Javy/QuickJS CLI whose ONLY wiring is the standalone `wasmtk
+javyc` command (hybrid `--auto` uses dynrt+host, not Javy). Two routes — **Route A (coverage):** grow
+`dynrt` via **2e (language: for/for-of/switch/try-catch/arrow/object+array+template literals/classes/
+generators/async — ~10 increments) + 2f (dynamic stdlib + prototype/`this`; several BRIDGE the existing
+JSON/Set/Map/RegExp capability libs — ~9 increments) + 2h (full-dynamic-compile entry + a Javy-parity
+conformance gate + delete `src/javyc.ts`)** — comparable in size to the #13 async track; **Route B
+(policy):** declare full-arbitrary-JS→WASM out of scope and drop `wasmtk javyc` + the Javy dependency in
+one small PR (2h only). **The 2g GC prerequisite is already DONE. ROUTE A CHOSEN (owner, 2026-06-24)** —
+build order starts at 2e.1 control flow (full sequence in dynrt-design.md). The other remaining work is the deferred **P2 container** (embed
 component type — a terminal wrap; **deferred WAITING FOR BROWSER-NATIVE WASI P2 / Component Model
 support** — until browsers load components natively, P1-core stays the browser-compatible artifact and a
 P2 wrap buys browser consumers nothing), finishing **#12** (PUBLISHING the 6 remaining built loader ports, SPEC §10

@@ -800,14 +800,124 @@ to `javyc`) — matches the §7-#7 intent without over-claiming. The gap `javyc`
   **literals in eval source**, member-assignment, real block scoping + write-through assignment.
 - **Stdlib / semantics:** prototype chains, `this`, `Array`/`String`/`Object`/`Map`/`Set`/`JSON`/
   `RegExp` *as dynamic objects with methods*, `Symbol`.
-- **Runtime:** **no GC** in `dynrt` (bump allocator never frees → long-running / deep-recursion
-  dynamic code exhausts the heap; cf. the `fib(10)` overflow).
+- **Runtime:** ~~no GC~~ — **GC gap CLOSED 2026-06-23** (the #14 mark-sweep GC P1–P5b + hybrid
+  recycling allocator: long-running / deep-recursion dynamic code now runs in bounded memory). This was
+  one of the three retirement gaps; the **Language** and **Stdlib/semantics** gaps above remain open.
+
+**Phase 2 (host→core callbacks) does NOT change this answer** — it is marshalling plumbing (passing a JS
+function INTO the core via an imported `__hostcall`), the reverse direction of the functions-as-`any`
+already shipped in v1.9.0. Like 14.3 it is *wiring, not language growth*: it does not expand what the
+interpreter understands, so it does not retire `javyc`.
 
 **`javyc` is removable only when EITHER:** (1) `dynrt` grows to near-language-completeness + a dynamic
-stdlib + **GC / real memory management** (a large multi-increment track — think "2e language", "2f
-dynamic stdlib", "2g GC", beyond 14.3); OR (2) the uncovered remainder is **declared out of scope**
-(the brief's "route (a)") and `javyc` dropped by policy rather than coverage. Until one of those, the
-default flips to `dynrt` but `javyc` stays as the safety net.
+stdlib (a large multi-increment track — "2e language", "2f dynamic stdlib"; the "2g GC" piece is now
+DONE); OR (2) the uncovered remainder is **declared out of scope** (the brief's "route (a)") and `javyc`
+dropped by policy rather than coverage. Until one of those, the default flips to `dynrt` but `javyc`
+stays as the safety net.
 - **3 — wasic `any` + auto-merge:** add an `any` type to wasic that lowers to a boxed-value handle;
   auto-merge the runtime when `any`/dynamic features are used; migrate `hybrid --auto`'s dynamic
   routing target off `javyc` onto the own-runtime.
+
+---
+
+## #14 own dynamic runtime — FINALIZED 2026-06-24 (shipped in v1.9.0)
+
+The #14 track — **wasmtk's own dynamic runtime** — is **COMPLETE** as the arc scoped in §6/§7-#7:
+value model (1) → virtual import + tree-shake (1b) → recursive-descent interpreter `eval`/`new
+Function` (2a–2d.2) → wasic `any` type + auto-merge + operators + member/index/call + hybrid `--auto`
+migration (3.1–3.4) → host↔core marshalling of all value kinds incl. **functions** → bounded-memory
+**mark-sweep GC** (P1–P5b) + **hybrid recycling allocator** → **functions-as-`any`** producer
+(`Function(params,body)`) + pinned host proxy, end-to-end (`getDoubler()(21)=42`). Published v1.9.0.
+
+**The ONE deferred #14 follow-up:** **Phase 2 — host→core callbacks** (pass a JS function INTO the core
+via an imported `__hostcall`; the reverse of the core→host functions-as-`any` already shipped). It is
+marshalling plumbing, independent of language coverage, and does NOT retire `javyc`.
+
+`dynrt` is now the **primary** dynamic engine; `javyc` is the **fallback**. Retiring `javyc` from the
+codebase is a SEPARATE, larger track scoped below.
+
+## javyc retirement — scoped task breakdown (2026-06-24)
+
+**Ground truth (verified 2026-06-24):**
+- `src/javyc.ts` (178 lines) is a **thin wrapper around the external `Javy` CLI** (which embeds
+  QuickJS) — `ensureJavy`/`getJavyInstallPath`/`detectJavyProvider`/`compileJavy`. It is NOT a
+  hand-written engine; it shells out to a downloaded binary.
+- **Only wiring left:** the standalone **`wasmtk javyc <file>`** command (`main.ts case "javyc"`, help
+  text, `deno.json` `./javyc` export) + its own runner `tests/wasi_javy_tests.ts`. **`hybrid --auto`
+  does NOT use `javyc`** — its dynamic route is `dynrt`, fallback is the HOST (keep-as-TS), not Javy.
+  So `javyc` is an *alternative full-JS→WASM compiler command*, not an internal fallback.
+- **dynrt interpreter coverage today** (`dynrt_lib_modc.ts`): full expression grammar
+  (`parsePrimary`→`parsePostfix`(member/index/call)→`parseUnary`→Mul/Add/Rel/Eq/And/Or→ternary);
+  statements `let`/`const`/`var`, `if`/`else`, `while`, `function` decls, `return`, assignment,
+  expression statements. **That is the whole grammar it parses.**
+
+**Two routes to retire `javyc` — ROUTE A DECIDED (owner, 2026-06-24):**
+- **✅ Route A — coverage (CHOSEN):** grow `dynrt` (the 2e/2f increments below) until a "compile the
+  whole program as dynamic" mode covers what `wasmtk javyc` users need, then remove `javyc`. Large,
+  multi-increment — keeps full-JS capability with NO external binary dependency.
+- ~~Route B — policy drop~~ (not chosen): would have declared arbitrary-full-JS→WASM out of scope and
+  dropped `wasmtk javyc` + the Javy dependency in one small PR. Rejected — the owner wants to keep the
+  full-JS capability, just without the external Javy/QuickJS binary.
+
+**Recommended build order (land + full-suite-verify each before the next, one increment per session like
+the #13/#14 cadence; each ships a `18*` test, output-diff green):**
+1. **2e.1 control flow** (`for`/`for-of`/`switch`/`break`-`continue` — highest real-JS frequency, builds
+   directly on `runWhile`/`runIf`).
+2. **2e.2 literals** (object/array/template) — unlocks most idiomatic dynamic code.
+3. **2e.4 assignment forms** (compound/`++`/member-assign/destructuring).
+4. **2e.3 functions** (arrow + function expressions), **2e.5 operators**, **2e.6 try/catch**, **2e.7
+   scoping**.
+5. **2f.1 prototype + `this`** (object-model upgrade) → unlocks **2e.8 classes**.
+6. **2f.2–2f.9 stdlib** — do the BRIDGES first (2f.5 JSON, 2f.6 Map/Set, 2f.7 RegExp reuse the existing
+   capability libs → cheap), then Array/String/Object/Math methods.
+7. **2e.9 generators**, then **2e.10 async/await** (hardest — needs a microtask loop; ties to #13).
+8. **2h removal** — the full-dynamic-compile entry + the Javy-parity conformance gate + delete
+   `src/javyc.ts` & wiring.
+
+The **2g GC** prerequisite is **already DONE**. Route A then = **2e (language) + 2f (stdlib) + 2h
+(removal)**:
+
+### 2e — interpreter language completeness (extend `dynRun`/`parseExpr` in the dynrt lib)
+Each increment mirrors the existing `runWhile`/`runIf`/`parsePrimary` pattern, ships a `18*` test, keeps
+the suite green (output-diff):
+- **2e.1 control flow:** `for` (C-style), `for-of`, `for-in`, `do-while`, `switch`, `break`/`continue`
+  (+ labels).
+- **2e.2 literals in source:** object literals `{k:v}`, array literals `[…]`, template literals.
+- **2e.3 function forms:** arrow functions, function *expressions*, default/rest params.
+- **2e.4 assignment forms:** compound (`+=`…), `++`/`--`, member/index assignment (`x.p=v`/`x[i]=v`),
+  destructuring assignment.
+- **2e.5 operators:** `typeof`/`instanceof`/`in`, `?.`, `??`, spread/rest, comma (ternary already done).
+- **2e.6 error handling:** `try`/`catch`/`finally`, `throw`.
+- **2e.7 scoping:** real lexical block scope for `let`/`const`, `var` hoisting.
+- **2e.8 classes:** class decl/expr, methods, fields, `this`, `extends`/`super` (needs the 2f.1 object
+  model).
+- **2e.9 generators + iterators** (`function*`/`yield`, `Symbol.iterator`).
+- **2e.10 async/await in dynamic source** (needs a microtask loop — heaviest; ties to #13 async).
+
+### 2f — dynamic stdlib + object semantics
+- **2f.1 prototype chain + `this` binding** — the object-model upgrade (method dispatch via prototype);
+  gates 2e.8.
+- **2f.2–2f.4** built-ins as dynamic objects with methods: `Array` (push/map/filter/reduce/…), `String`,
+  `Object` (keys/values/entries/assign), `Number`, `Math`.
+- **2f.5 `JSON.parse`/`stringify`** — can BRIDGE the existing JSON capability lib.
+- **2f.6 `Map`/`Set`/`WeakMap`/`WeakSet`** — can BRIDGE the existing Set/Map capability libs.
+- **2f.7 `RegExp`** dynamic objects — can BRIDGE the existing RegExp capability lib.
+- **2f.8 `Date`/`Symbol`/`BigInt`/`Promise`** (dynamic), **2f.9 globals** (`parseInt`/`parseFloat`/…).
+
+### 2h — removal (the actual retirement; the GATE)
+- **2h.1** add a "full dynamic compile" entry — a wasmtk mode that routes an ENTIRE TS/JS file through
+  `dynrt` (the `javyc` replacement). Decide surface: repoint `wasmtk javyc` to the dynrt backend, or a
+  new flag.
+- **2h.2 conformance corpus = the gate:** run `tests/wasi_javy_tests.ts`'s programs (+ a broader JS
+  corpus) through the dynrt path and require **output parity** before removal.
+- **2h.3** flip/deprecate `wasmtk javyc`; **drop the external Javy binary dependency**
+  (`ensureJavy`/download/install).
+- **2h.4** delete `src/javyc.ts`, the `case "javyc"`, `deno.json` `./javyc`, the Javy asset code; retire
+  `tests/wasi_javy_tests.ts`; update CLAUDE.md / README / cmem.
+
+**Effort:** 2e is ~10 interpreter increments, 2f is ~9 (several BRIDGE existing capability libs, cheaper),
+2h is the cutover. Comparable in size to the #13 async track or the whole #14 interpreter arc. **2f
+async (`2e.10`) + generators (`2e.9`) are the hardest**; everything else is incremental parser/stdlib
+growth on the proven dynrt scaffolding. **Recommendation:** get the Route A/B decision first — if the
+owner is willing to scope full-JS compile out, Route B retires `javyc` in a single small PR
+(`2h.3`/`2h.4` only) without any 2e/2f work.
