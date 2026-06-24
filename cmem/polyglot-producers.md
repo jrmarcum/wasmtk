@@ -174,12 +174,17 @@ simpler/faster in a pure host-glue world. Accepted: small runtime cost now to ma
 componentization mechanical. Also tighten the README/cmem "aligned with Canonical ABI" wording — true
 once (2) lands; today the return path is not aligned.
 
-**Consumer caveat (why P2-producer stays deferred):** for JS-runtime targets (Node/Deno/Bun/browser)
-NONE load components natively — jco transpiles a component back down to core wasm + ESM +
-preview2-shim to run. That transpiled shape ≈ wasmtk's current bucket-(b) output. So real P2 only
-pays off when the CONSUMER is a native component runtime (Wasmtime/WasmEdge/WAMR/Spin/wasmCloud).
-Forward-aligning the ABI (this decision) is worthwhile regardless; flipping to a P2 *producer* is
-not, until a native-component-runtime target exists.
+**Consumer caveat (why P2-producer stays deferred — the gating condition is BROWSER-NATIVE WASI P2 /
+Component Model support):** for JS-runtime targets (Node/Deno/Bun/**browser**) NONE load components
+natively — `jco` transpiles a component back down to core wasm + ESM + preview2-shim to run. That
+transpiled shape ≈ wasmtk's current bucket-(b) output. So real P2 only pays off when the CONSUMER is a
+native component runtime (Wasmtime/WasmEdge/WAMR/Spin/wasmCloud). **Crucially, flipping to a P2 producer
+would NOT lose browser compatibility — but it would not gain anything for the browser either, because a
+browser must transpile the component back to core wasm anyway.** So the item is parked specifically
+**waiting for browsers to load WASI P2 components natively**; until then, P1-core + sidecar `.wit` +
+bindgen remains the browser-compatible primary, and the P2 wrap is an optional terminal add-on.
+Forward-aligning the ABI (this decision) is worthwhile regardless; flipping to a P2 *producer* is not,
+until either a native-component-runtime target exists OR browsers gain native component support.
 
 ## Path to a real P2 producer (only if portability-to-any-host is pursued)
 
