@@ -473,11 +473,15 @@ Promise API surface + hybrid lift; suite 317/317; README async surface documente
 834/1010 of README.md and `CHANGELOG.md`); **#12 loaders substantially DONE — updated 2026-06-22**
 (`-js` published; `-v` published to VPM; `-c`/`-zig`/`-py`/`-rs`/`-jvm`/`-dart` implemented on
 SPEC-3.0.0; **all 10 ports now implemented — no stubs remain**; **4 published** (`-js`, `-v`, `-zig`,
-`-py`), the other 6 are built-but-unpublished — see vision.md). **#14 own dynamic runtime — FINALIZED 2026-06-24 (shipped in v1.9.0).** The whole arc is COMPLETE (value
+`-py`), the other 6 are built-but-unpublished — see vision.md). **#14 own dynamic runtime — COMPLETE 2026-06-24, NO deferred pieces.** The whole arc shipped (value
 model → interpreter → `any` integration → host↔core marshalling incl. functions → bounded-memory
-mark-sweep GC → hybrid recycling allocator → functions-as-`any` producer+proxy+pin, end-to-end). The ONE
-deferred #14 follow-up is **Phase 2 (host→core: pass a JS function INTO the core via an imported
-`__hostcall`)** — marshalling plumbing, does NOT retire `javyc`. **`dynrt` is now the PRIMARY dynamic
+mark-sweep GC → hybrid recycling allocator → functions-as-`any` producer+proxy+pin, in v1.9.0) — and
+**Phase 2 (host→core callbacks) SHIPPED 2026-06-24**: a JS function passed INTO the core as `any` is
+called back via an `env.__host_call` import (bindgen host-fn table + `dynMakeHostFn`); verified
+`applyTwice(n=>n+1,10)=12` / `combine((a,b)=>a*b,6,7)=42` (bindgen `testIntegrationHostFn`). Surfaced+fixed
+a real wasmmerge bug (non-WASI imports were spliced after function defs → malformed/OOB; see
+compiler-bugs.md). **functions-as-`any` is now bidirectional.** Phase 2 is marshalling, so it does NOT
+retire `javyc` (that's the separate Route A track). **`dynrt` is now the PRIMARY dynamic
 engine; `javyc` is the FALLBACK.** **Retiring `javyc` from the codebase is a SEPARATE, larger track —
 FULLY SCOPED in [dynrt-design.md](dynrt-design.md) "javyc retirement — scoped task breakdown":** `javyc`
 is now a thin wrapper around the external Javy/QuickJS CLI whose ONLY wiring is the standalone `wasmtk

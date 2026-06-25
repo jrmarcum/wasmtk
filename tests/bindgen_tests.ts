@@ -544,6 +544,61 @@ dbl.release();
   ok("getDoubler()(21) = 42 (core function called from host)", lines[0]?.trim() === "42");
 }
 
+// ── 12c. Integration: host→core callbacks (#14 Phase 2) ──────────────────────
+
+async function testIntegrationHostFn() {
+  console.log(yellow(bold("\n── Integration: hostfn_50 — host→core callbacks (#14 Phase 2)")));
+
+  const fixtureSrc = join(FIXTURES, "hostfn_50.ts");
+  const fixtureWasm = join(FIXTURES, "hostfn_50.wasm");
+  const fixtureWit = join(FIXTURES, "hostfn_50.wit");
+  const fixtureBinding = join(FIXTURES, "hostfn_50.bindings.ts");
+  const hostRunner = join(FIXTURES, "hostfn_50_host.ts");
+
+  // 1. compile the lib (any params that are functions → host callbacks via env.__host_call)
+  const compileResult = await run(WASMTK_BIN, ["modc", fixtureSrc, "-n", fixtureWasm]);
+  ok("modc compile succeeded", compileResult.success);
+  if (!compileResult.success) {
+    console.log(red("    stderr: " + compileResult.stderr.slice(0, 300)));
+    return;
+  }
+
+  // 2. WIT has the any-function params
+  let witSrc = "";
+  try {
+    witSrc = await Deno.readTextFile(fixtureWit);
+  } catch { /**/ }
+  ok(".wit has apply-twice with any fn param", /apply-twice:\s*func\(fn:\s*any/.test(witSrc));
+
+  // 3. generated binding boxes a passed JS function + wires the host-call import
+  const ts = generateBindings(witSrc);
+  await Deno.writeTextFile(fixtureBinding, ts);
+  ok("binding wires env.__host_call", ts.includes(`env["__host_call"]`));
+  ok("binding has a host-fn table", ts.includes("_hostFns"));
+  ok("binding boxes function args", ts.includes("_dynMakeHostFn(_hi)"));
+  ok("binding installs the host-call handler", ts.includes("_hostCallImpl ="));
+
+  // 4. host passes JS callbacks IN; the core calls them back
+  const bindingUrl = toFileUrl(fixtureBinding).href;
+  const wasmUrl = toFileUrl(fixtureWasm).href;
+  const hostSrc = `
+import { loadModule } from "${bindingUrl}";
+const wasmBytes = await Deno.readFile(new URL("${wasmUrl}"));
+const m = await loadModule(wasmBytes);
+console.log(m.applyTwice((n: number) => n + 1, 10));
+console.log(m.combine((a: number, b: number) => a * b, 6, 7));
+`;
+  await Deno.writeTextFile(hostRunner, hostSrc);
+  const hostResult = await run("deno", ["run", "--allow-read", hostRunner]);
+  ok("host runner succeeded", hostResult.success);
+  if (!hostResult.success) {
+    console.log(red("    stderr: " + hostResult.stderr.slice(0, 300)));
+  }
+  const lines = hostResult.stdout.trim().split("\n");
+  ok("applyTwice(n=>n+1, 10) = 12 (host fn called twice by core)", lines[0]?.trim() === "12");
+  ok("combine((a,b)=>a*b, 6, 7) = 42 (host fn called with 2 args)", lines[1]?.trim() === "42");
+}
+
 // ── 13. CLI: wasmtk bindgen command ──────────────────────────────────────────
 
 async function testCli() {
@@ -600,6 +655,7 @@ await testIntegrationBool();
 await testIntegrationStrings();
 await testIntegrationImports();
 await testIntegrationFnAny();
+await testIntegrationHostFn();
 await testCli();
 
 // ── Summary ───────────────────────────────────────────────────────────────────

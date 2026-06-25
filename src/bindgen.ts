@@ -206,8 +206,17 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
   lines.push(`  source: string | URL | BufferSource${importParam},`);
   lines.push(`): Promise<ModuleExports> {`);
 
+  // #14 Phase 2: host→core callbacks. A JS function passed INTO the core as `any` is stored in this
+  // table; the core calls back via the `env.__host_call` import. Declared at function scope (the env
+  // block and the marshal block below are sibling scopes); the real impl is assigned after _box/_unbox
+  // exist (it needs the exports), and `env.__host_call` forward-references it.
+  if (needsAnyMarshal) {
+    lines.push(`  const _hostFns: ((...a: unknown[]) => unknown)[] = [];`);
+    lines.push(`  let _hostCallImpl: (fnIdx: number, argsArr: number) => number = () => 0;`);
+  }
+
   // Import object
-  if (hasImports) {
+  if (hasImports || needsAnyMarshal) {
     lines.push(`  const env: Record<string, unknown> = {};`);
     for (const fn of importedFns) {
       const wasmName = kebabToWasmName(fn.name);
@@ -225,6 +234,11 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
           `  env["${wasmName}"] = (${argList}: number) => (imports?.env?.${fn.tsName}?.(${callArgs}) ?? 0);`,
         );
       }
+    }
+    if (needsAnyMarshal) {
+      lines.push(
+        `  env["__host_call"] = (fnIdx: number, argsArr: number) => _hostCallImpl(fnIdx, argsArr);`,
+      );
     }
     lines.push(`  const importObj = { env };`);
   } else {
@@ -318,6 +332,8 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
     lines.push(`  const _dynGcPin = exp["dynGcPin"] as (h: number) => number;`);
     lines.push(`  const _dynGcUnpin = exp["dynGcUnpin"] as (slot: number) => void;`);
     lines.push(`  const _pinReg = new FinalizationRegistry((pin: number) => _dynGcUnpin(pin));`);
+    // #14 Phase 2: wrap a host-table index as a callable dynrt value (host→core callbacks).
+    lines.push(`  const _dynMakeHostFn = exp["dynMakeHostFn"] as (index: number) => number;`);
     lines.push(`  const _dec = new TextDecoder();`);
     // box: JS value → dynrt handle (recursive for arrays/objects)
     lines.push(`  function _box(v: unknown): number {`);
@@ -338,7 +354,12 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
     );
     lines.push(`      return h;`);
     lines.push(`    }`);
-    lines.push(`    return _dynNumber(0); // functions/symbols — not marshalled`);
+    lines.push(`    if (typeof v === "function") {`); // #14 Phase 2: host fn INTO the core
+    lines.push(`      const _hi = _hostFns.length;`);
+    lines.push(`      _hostFns.push(v as (...a: unknown[]) => unknown);`);
+    lines.push(`      return _dynMakeHostFn(_hi);`);
+    lines.push(`    }`);
+    lines.push(`    return _dynNumber(0); // symbols / other — not marshalled`);
     lines.push(`  }`);
     // unbox: dynrt handle → JS value (recursive). _dynTag is the RAW structural tag:
     // 0 undef · 1 null · 2 bool · 3 number · 4 string · 5 array · 6 object · 7 function.
@@ -387,6 +408,16 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
     lines.push(`      default: return h; // unknown tag — opaque handle`);
     lines.push(`    }`);
     lines.push(`  }`);
+    // #14 Phase 2: now that _box/_unbox exist, install the real host-call handler. When the core calls
+    // a host function, unbox its args array → JS args, invoke the JS function, box the result.
+    lines.push(`  _hostCallImpl = (fnIdx: number, argsArr: number): number => {`);
+    lines.push(`    const _f = _hostFns[fnIdx];`);
+    lines.push(`    if (!_f) return _dynUndefined();`);
+    lines.push(`    const _n = _dynArrLen(argsArr);`);
+    lines.push(`    const _js: unknown[] = [];`);
+    lines.push(`    for (let _i = 0; _i < _n; _i++) _js.push(_unbox(_dynArrGet(argsArr, _i)));`);
+    lines.push(`    return _box(_f(..._js));`);
+    lines.push(`  };`);
   }
 
   // Return object

@@ -2,7 +2,7 @@
   ;; imports from dynrt
   (import "env" "__host_call" (func $dynrt___host_call (param i32 i32) (result i32)))
   (memory (export "memory") 2)
-  (global $__heap_ptr (mut i32) (i32.const 631))
+  (global $__heap_ptr (mut i32) (i32.const 617))
   ;; Bump allocator — advances __heap_ptr and returns the old value.
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
@@ -157,11 +157,13 @@
 
 
 
-  (func $getDoubler (export "getDoubler")  (result i32)
-    (return (call $dynrt_dynMakeFn (i32.const 260) (i32.const 1) (i32.const 261) (i32.const 13)))
+  (func $applyTwice (export "applyTwice") (param $fn i32) (param $x i32) (result i32)
+    (return (call $dynrt_dynCall1 (local.get $fn) (call $dynrt_dynCall1 (local.get $fn) (local.get $x))))
   )
-  (data (i32.const 260) "\78")
-  (data (i32.const 261) "\72\65\74\75\72\6e\20\78\20\2a\20\32\3b")
+
+  (func $combine (export "combine") (param $fn i32) (param $a i32) (param $b i32) (result i32)
+    (return (call $dynrt_dynCall2 (local.get $fn) (local.get $a) (local.get $b)))
+  )
 
   ;; globals from dynrt
   (global $dynrt_global1 (mut i32) (i32.const 0))
@@ -3683,7 +3685,7 @@
     local.get 1
     local.tee 11
     local.set 1
-    i32.const 534
+    i32.const 520
     local.set 3
     i32.const 0
     local.tee 12
@@ -3821,14 +3823,14 @@
         i32.eqz
         if  ;; label = @3
           block  ;; label = @4
-            i32.const 534
+            i32.const 520
             local.set 1
             i32.const 5
             local.set 2
           end
         else
           block  ;; label = @4
-            i32.const 539
+            i32.const 525
             local.set 1
             i32.const 4
             local.set 2
@@ -3846,7 +3848,7 @@
     i32.eq
     if  ;; label = @1
       block  ;; label = @2
-        i32.const 543
+        i32.const 529
         local.set 1
         i32.const 4
         local.set 2
@@ -3861,7 +3863,7 @@
     i32.eqz
     if  ;; label = @1
       block  ;; label = @2
-        i32.const 547
+        i32.const 533
         local.set 1
         i32.const 9
         local.set 2
@@ -3872,7 +3874,7 @@
         return
       end
     end
-    i32.const 534
+    i32.const 520
     local.set 1
     i32.const 0
     local.set 2
@@ -5378,55 +5380,55 @@
     call $dynrt_dynObject
     local.set 0
     local.get 0
-    i32.const 556
+    i32.const 542
     i32.const 3
     i32.const 0
     call $dynrt_dynBuiltin
     call $dynrt_dynSet
     local.get 0
-    i32.const 559
+    i32.const 545
     i32.const 4
     i32.const 1
     call $dynrt_dynBuiltin
     call $dynrt_dynSet
     local.get 0
-    i32.const 563
+    i32.const 549
     i32.const 5
     i32.const 2
     call $dynrt_dynBuiltin
     call $dynrt_dynSet
     local.get 0
-    i32.const 568
+    i32.const 554
     i32.const 4
     i32.const 3
     call $dynrt_dynBuiltin
     call $dynrt_dynSet
     local.get 0
-    i32.const 572
+    i32.const 558
     i32.const 5
     i32.const 4
     call $dynrt_dynBuiltin
     call $dynrt_dynSet
     local.get 0
-    i32.const 577
+    i32.const 563
     i32.const 3
     i32.const 5
     call $dynrt_dynBuiltin
     call $dynrt_dynSet
     local.get 0
-    i32.const 580
+    i32.const 566
     i32.const 3
     i32.const 6
     call $dynrt_dynBuiltin
     call $dynrt_dynSet
     local.get 0
-    i32.const 583
+    i32.const 569
     i32.const 3
     i32.const 7
     call $dynrt_dynBuiltin
     call $dynrt_dynSet
     local.get 0
-    i32.const 586
+    i32.const 572
     i32.const 3
     i32.const 8
     call $dynrt_dynBuiltin
@@ -5521,7 +5523,7 @@
       block  ;; label = @2
         local.get 1
         local.get 2
-        i32.const 589
+        i32.const 575
         i32.const 6
         call $dynrt__fn104
         i32.const 1
@@ -5548,7 +5550,7 @@
       block  ;; label = @2
         local.get 1
         local.get 2
-        i32.const 589
+        i32.const 575
         i32.const 6
         call $dynrt__fn104
         i32.const 1
@@ -6008,7 +6010,7 @@
     local.tee 16
     i32.add
     global.set $dynrt_global19
-    i32.const 534
+    i32.const 520
     local.set 3
     i32.const 0
     local.set 4
@@ -6283,7 +6285,7 @@
         local.set 2
         local.get 2
         local.get 3
-        i32.const 539
+        i32.const 525
         i32.const 4
         call $dynrt__fn104
         i32.const 1
@@ -6295,7 +6297,7 @@
         end
         local.get 2
         local.get 3
-        i32.const 534
+        i32.const 520
         i32.const 5
         call $dynrt__fn104
         i32.const 1
@@ -6307,7 +6309,7 @@
         end
         local.get 2
         local.get 3
-        i32.const 543
+        i32.const 529
         i32.const 4
         call $dynrt__fn104
         i32.const 1
@@ -6318,7 +6320,7 @@
         end
         local.get 2
         local.get 3
-        i32.const 547
+        i32.const 533
         i32.const 9
         call $dynrt__fn104
         i32.const 1
@@ -7580,7 +7582,7 @@
         local.set 6
         local.get 5
         local.get 6
-        i32.const 595
+        i32.const 581
         i32.const 4
         call $dynrt__fn104
         i32.const 1
@@ -7848,7 +7850,7 @@
     local.get 0
     local.get 1
     call $dynrt__fn108
-    i32.const 534
+    i32.const 520
     i32.const 0
     call $dynrt_dynString
     local.set 5
@@ -8116,7 +8118,7 @@
         local.set 4
         local.get 3
         local.get 4
-        i32.const 599
+        i32.const 585
         i32.const 3
         call $dynrt__fn104
         i32.const 1
@@ -8126,7 +8128,7 @@
         else
           local.get 3
           local.get 4
-          i32.const 602
+          i32.const 588
           i32.const 5
           call $dynrt__fn104
           i32.const 1
@@ -8137,7 +8139,7 @@
         else
           local.get 3
           local.get 4
-          i32.const 607
+          i32.const 593
           i32.const 3
           call $dynrt__fn104
           i32.const 1
@@ -8153,7 +8155,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 610
+        i32.const 596
         i32.const 2
         call $dynrt__fn104
         i32.const 1
@@ -8168,7 +8170,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 612
+        i32.const 598
         i32.const 5
         call $dynrt__fn104
         i32.const 1
@@ -8183,7 +8185,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 617
+        i32.const 603
         i32.const 6
         call $dynrt__fn104
         i32.const 1
@@ -8198,7 +8200,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 623
+        i32.const 609
         i32.const 8
         call $dynrt__fn104
         i32.const 1
@@ -8414,29 +8416,29 @@
     local.get 3
     return)
   ;; data from dynrt
-  (data (;0;) (i32.const 534) "")
-  (data (;1;) (i32.const 534) "false")
-  (data (;2;) (i32.const 539) "true")
-  (data (;3;) (i32.const 543) "null")
-  (data (;4;) (i32.const 547) "undefined")
-  (data (;5;) (i32.const 556) "abs")
-  (data (;6;) (i32.const 559) "sqrt")
-  (data (;7;) (i32.const 563) "floor")
-  (data (;8;) (i32.const 568) "ceil")
-  (data (;9;) (i32.const 572) "round")
-  (data (;10;) (i32.const 577) "min")
-  (data (;11;) (i32.const 580) "max")
-  (data (;12;) (i32.const 583) "len")
-  (data (;13;) (i32.const 586) "inc")
-  (data (;14;) (i32.const 589) "length")
-  (data (;15;) (i32.const 595) "else")
-  (data (;16;) (i32.const 599) "let")
-  (data (;17;) (i32.const 602) "const")
-  (data (;18;) (i32.const 607) "var")
-  (data (;19;) (i32.const 610) "if")
-  (data (;20;) (i32.const 612) "while")
-  (data (;21;) (i32.const 617) "return")
-  (data (;22;) (i32.const 623) "function")
+  (data (;0;) (i32.const 520) "")
+  (data (;1;) (i32.const 520) "false")
+  (data (;2;) (i32.const 525) "true")
+  (data (;3;) (i32.const 529) "null")
+  (data (;4;) (i32.const 533) "undefined")
+  (data (;5;) (i32.const 542) "abs")
+  (data (;6;) (i32.const 545) "sqrt")
+  (data (;7;) (i32.const 549) "floor")
+  (data (;8;) (i32.const 554) "ceil")
+  (data (;9;) (i32.const 558) "round")
+  (data (;10;) (i32.const 563) "min")
+  (data (;11;) (i32.const 566) "max")
+  (data (;12;) (i32.const 569) "len")
+  (data (;13;) (i32.const 572) "inc")
+  (data (;14;) (i32.const 575) "length")
+  (data (;15;) (i32.const 581) "else")
+  (data (;16;) (i32.const 585) "let")
+  (data (;17;) (i32.const 588) "const")
+  (data (;18;) (i32.const 593) "var")
+  (data (;19;) (i32.const 596) "if")
+  (data (;20;) (i32.const 598) "while")
+  (data (;21;) (i32.const 603) "return")
+  (data (;22;) (i32.const 609) "function")
   (export "dynNumber" (func $dynrt_dynNumber))
   (export "dynNumberValue" (func $dynrt_dynNumberValue))
   (export "dynString" (func $dynrt_dynString))

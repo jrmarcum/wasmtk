@@ -2,6 +2,8 @@
 package local:dynrt-lib-modc;
 
 world dynrt-lib-modc {
+  import --host-call: func(p0: s32, p1: s32) -> s32;
+
   export dyn-undefined: func() -> s32;
   export dyn-null: func() -> s32;
   export dyn-bool: func(b: s32) -> s32;
@@ -55,6 +57,7 @@ world dynrt-lib-modc {
   export dyn-ge: func(x: s32, y: s32) -> s32;
   export dyn-builtin: func(id: s32) -> s32;
   export dyn-make-func: func(params-arr: s32, body-str: string, def-env: s32) -> s32;
+  export dyn-make-host-fn: func(index: s32) -> s32;
   export dyn-make-fn: func(param-names: string, body: string) -> s32;
   export dyn-apply: func(callee: s32, args-arr: s32) -> s32;
   export dyn-call0: func(fn: s32) -> s32;

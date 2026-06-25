@@ -1,4 +1,5 @@
 (module
+  (import "env" "__host_call" (func $__host_call (param i32) (param i32) (result i32)))
   (memory (export "memory") 2)
   (global $__heap_ptr (mut i32) (i32.const 357))
   (global $__str_ret_ptr (mut i32) (i32.const 0))
@@ -2971,6 +2972,17 @@
     (return (call $makeUserFunc (local.get $paramsArr) (local.get $bodyBox) (local.get $defEnv)))
   )
 
+  (func $dynMakeHostFn (export "dynMakeHostFn") (param $index i32) (result i32)
+    (local $n i32)
+    (local.set $n (call $mkCell5 ))
+    (i32.store (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 0) (i32.const 2))) (i32.const 7))
+    (i32.store (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2))) (i32.const -2))
+    (i32.store (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 2) (i32.const 2))) (local.get $index))
+    (i32.store (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 3) (i32.const 2))) (i32.const 0))
+    (i32.store (i32.add (i32.add (local.get $n) (i32.const 8)) (i32.shl (i32.const 4) (i32.const 2))) (i32.const 0))
+    (return (local.get $n))
+  )
+
   (func $dynMakeFn (export "dynMakeFn") (param $paramNames_ptr i32) (param $paramNames_len i32) (param $body_ptr i32) (param $body_len i32) (result i32)
     (local $paramsArr i32)
     (local $plen i32)
@@ -3099,6 +3111,11 @@
       )
     )
     (local.set $id (i32.load (i32.add (i32.add (local.get $cn) (i32.const 8)) (i32.shl (i32.const 1) (i32.const 2)))))
+    (if (i32.eq (local.get $id) (i32.const -2))
+      (then
+      (return (call $__host_call (i32.load (i32.add (i32.add (local.get $cn) (i32.const 8)) (i32.shl (i32.const 2) (i32.const 2)))) (local.get $argsArr)))
+      )
+    )
     (local.set $argc (call $dynArrLen (local.get $argsArr)))
     (if (i32.eq (local.get $id) (i32.const -1))
       (then

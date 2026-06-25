@@ -17834,6 +17834,10 @@ class WasicTranspiler {
       "dynApply",
       "dynGcPin",
       "dynGcUnpin",
+      // #14 Phase 2: host→core callbacks — a JS function passed INTO the core as `any` is registered
+      // in a host table; dynMakeHostFn wraps the index as a tag-7 host-fn value that dynApply routes
+      // back to the host via the `env.__host_call` import (which bindgen's loader implements).
+      "dynMakeHostFn",
     ];
   }
 
@@ -18929,6 +18933,27 @@ function mergeOneWasmImport(
     console.log(`   ℹ️  WASI imports deduplicated from ${prefix}: ${unique.join(", ")}`);
   }
 
+  // Non-WASI imports the merged module needs (e.g. `env.__host_call`) MUST go in the import
+  // section — before any function/global/memory. Splice them right after the main module's last
+  // existing import. (Appending them with the functions makes the module malformed: npm:wabt rejects
+  // it and wabt-ts leniently mis-encodes the function index space → runtime OOB.)
+  let watBase = wat;
+  if (result.importWat) {
+    const lines = watBase.split("\n");
+    let lastImportLine = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (/^\s*\(import\s+"/.test(lines[i])) lastImportLine = i;
+    }
+    const importBlock = `  ;; imports from ${prefix}\n  ${result.importWat}`;
+    if (lastImportLine !== -1) {
+      lines.splice(lastImportLine + 1, 0, importBlock);
+    } else {
+      const modLine = lines.findIndex((l) => /\(module\b/.test(l));
+      lines.splice(modLine + 1, 0, importBlock);
+    }
+    watBase = lines.join("\n");
+  }
+
   // Splice merged fragments before the closing `)` of the module
   const fragments: string[] = [];
   if (result.globalWat) fragments.push(`  ;; globals from ${prefix}\n  ${result.globalWat}`);
@@ -18937,7 +18962,7 @@ function mergeOneWasmImport(
 
   if (fragments.length === 0) {
     return {
-      mergedWat: wat,
+      mergedWat: watBase,
       notices: result.notices,
       exportedFuncs: result.exportedFuncs,
       hasMutableGlobals: result.hasMutableGlobals,
@@ -18945,10 +18970,10 @@ function mergeOneWasmImport(
   }
 
   // Insert before the final `)` that closes the module
-  const closeIdx = wat.lastIndexOf(")");
+  const closeIdx = watBase.lastIndexOf(")");
   const mergedWat = closeIdx === -1
-    ? wat + "\n" + fragments.join("\n") + "\n)"
-    : wat.slice(0, closeIdx) + "\n" + fragments.join("\n") + "\n)";
+    ? watBase + "\n" + fragments.join("\n") + "\n)"
+    : watBase.slice(0, closeIdx) + "\n" + fragments.join("\n") + "\n)";
 
   return {
     mergedWat,

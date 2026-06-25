@@ -10,6 +10,25 @@ section; each is a candidate for a real `src/wasic.ts` fix (then the lib workaro
 the RegExp `&&` precedent). (Pre-18j: 317 = 307 at v1.7.0 + 2 Phase-53 tests + 8 async tests 54–61;
 `bindgen` 103→104 from the ABI return-side forward-alignment's `cabi_post` assertion.)
 
+## FIXED — wasmmerge placed a merged module's non-WASI import AFTER function definitions (#14 Phase 2, 2026-06-24)
+
+Surfaced building #14 Phase 2 (host→core callbacks): the dynrt lib gained ONE `env.__host_call` import
+(its first import). Adding it broke `18l` (explicit-path dynrt merge) with a runtime "memory access out
+of bounds" — while `18q`/`18za` (virtual-path) passed. Long diagnosis (isolation + GOOD/BAD WAT diff +
+npm:wabt cross-check) pinpointed it: `mergeWasmWat` pushed the merged module's non-WASI import into
+`funcParts` (the FUNCTION section), so it was spliced **after ~30 function definitions** instead of into
+the import section. WASM requires ALL imports before ANY function/global/memory. **npm:wabt rejects** such
+a module at parse time; **wabt-ts leniently assembles it** but the import lands at the wrong function
+index → the whole function index space is off by one → calls resolve to wrong functions → OOB. (The
+pre-binaryen merged WAT was the culprit — wabt-only assembly OOB'd too, ruling out binaryen.) **Fix:**
+`mergeWasmWat` now collects non-WASI imports into a separate `importWat` (new `WatMergeResult` field);
+`mergeOneWasmImport` splices `importWat` into the main module's import section (right after the last
+existing `(import …)`, before memory/globals/functions) instead of with the functions. Verified: import
+now at line 5 (before first func at line 11); `18l`/`18q`/`18za` + all 29 `18*` pass. **NOTE:** the
+`wasmbundle` CLI path (`src/wasmbundle.ts`) consumes `mergeWasmWat` but does not yet route `importWat`
+into its master WAT — a non-WASI import in a `wasmbundle`d module would be dropped (it was already
+mis-handled there pre-fix; no regression, no current test exercises it) — documented follow-up.
+
 ## "look for code issues" audit of the functions-as-`any` work (2026-06-24, post-v1.9.0)
 
 Focused audit of the freshly-shipped functions-as-`any` code (pin table, `Function(` producer, bindgen

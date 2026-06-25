@@ -745,9 +745,19 @@ trigger after it → replaced with a single-pass `stripCommentsAndStrings()` sca
 AND string state. (3) the wasic `eval(`/`Function(` source pre-passes rewrote inside string literals +
 comments (a printed `"…Function()…"` came out `"…dynrt_dynMakeFn()…"`) → new code-only scanner
 `rewriteOutsideStringsAndComments()`; regression `18zb`.
-**Phase 2 (host→core, a JS function INTO the core via an imported `__hostcall`)** remains deferred
-(scope below). With Phase 1 + the producer, the common direction (core returns a closure/callback the
-host calls) is fully working.
+**Phase 2 (host→core, a JS function INTO the core) — ✅ SHIPPED 2026-06-24.** A JS function passed into
+the core as `any` is registered in a bindgen host-fn table; `_box` wraps the index via a new dynrt export
+`dynMakeHostFn(index)` → a tag-7 cell with marker slot[1] = -2, slot[2] = index. `dynApply` routes such a
+value back to the host through a single `env.__host_call` import (declared in the dynrt lib via Phase 40
+`declare const __host: { call(...) }`). bindgen's loader implements `env.__host_call(fnIdx, argsArr)`:
+look up the JS fn, unbox the args array → JS args, invoke, box the result. The import↔impl chicken-and-egg
+(import needed at instantiate, impl needs the exports) is solved with a function-scoped `_hostCallImpl`
+holder assigned after `_box`/`_unbox` exist, forward-referenced by `env.__host_call`. Verified end-to-end
+(bindgen `testIntegrationHostFn`, fixture `hostfn_50`): `m.applyTwice(n=>n+1, 10)` → **12** (core calls the
+host fn twice), `m.combine((a,b)=>a*b, 6, 7)` → **42** (two args). Surfaced + FIXED a real wasmmerge bug
+(non-WASI imports were spliced after function definitions → malformed module / OOB; see compiler-bugs.md).
+**With Phase 2, functions-as-`any` is bidirectional and #14 is COMPLETE with no deferred pieces.**
+`dynMakeHostFn` added to the marshal-export set; bindgen 131/131.
 
 ## Functions-as-`any` host↔core marshalling — SCOPE (drafted 2026-06-23)
 

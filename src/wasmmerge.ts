@@ -89,6 +89,10 @@ export interface ExternalFuncDef {
 
 /** Result returned by mergeWasmWat — everything the caller needs to assemble the merged WAT. */
 export interface WatMergeResult {
+  /** Mangled (import ...) declarations (non-WASI env imports the merged module needs). These MUST be
+   * spliced into the main module's import section — before any function/global/memory — or the module
+   * is malformed (npm:wabt rejects it; wabt-ts leniently mis-encodes the func index space → OOB). */
+  importWat: string;
   /** Mangled (func ...) definitions ready to splice into the main module body. */
   funcWat: string;
   /** Mangled (global ...) definitions (excluding the heap-pointer global). */
@@ -668,6 +672,7 @@ export function mergeWasmWat(
 
   // ── Pass 2: Transform forms ───────────────────────────────────────────────
 
+  const importParts: string[] = [];
   const funcParts: string[] = [];
   const globalParts: string[] = [];
   const dataParts: string[] = [];
@@ -688,7 +693,8 @@ export function mergeWasmWat(
       const newName = funcName.get(idx) ?? `$${prefix}__fn${idx}`;
       // Use a function callback to avoid JavaScript's $1/$2 backreference substitution
       // in the replacement string — critical when newName starts with $1x (e.g. $18_prefix_...).
-      funcParts.push(form.replace(/\(func\s+\(;(\d+);\)/, () => `(func ${newName}`));
+      // Route to importParts (NOT funcParts) — imports must precede all definitions in the module.
+      importParts.push(form.replace(/\(func\s+\(;(\d+);\)/, () => `(func ${newName}`));
       continue;
     }
 
@@ -815,6 +821,7 @@ export function mergeWasmWat(
   }
 
   return {
+    importWat: importParts.join("\n  "),
     funcWat: funcParts.join("\n  "),
     globalWat: globalParts.join("\n  "),
     dataWat: dataParts.join("\n  "),

@@ -35,6 +35,13 @@
 type i32 = number;
 type f64 = number;
 
+// #14 Phase 2 (host→core callbacks): the ONE host import. When a host passes a JS function into the
+// core as `any`, bindgen boxes it as a tag-7 cell with marker slot[1] = -2 and slot[2] = a host
+// function-table index (see `dynMakeHostFn`); `dynApply` then calls back into the host through this
+// import. Maps to `(import "env" "__host_call" (func (param i32 i32) (result i32)))`, preserved
+// through the wasmmerge; the test runner stubs it (returns 0) and bindgen provides the real impl.
+declare const __host: { call(fnIndex: i32, argsArr: i32): i32 };
+
 // ── Tag constants (kept as literals at use sites; listed here for reference) ──────────────────
 //   0 undefined · 1 null · 2 boolean · 3 number · 4 string · 5 array · 6 object
 
@@ -1308,6 +1315,23 @@ export function dynMakeFunc(paramsArr: i32, bodyStr: string, defEnv: i32): i32 {
  * This is the source-level door to a dynrt function value that can be returned as `any` and called
  * from a host (via the bindgen tag-7 proxy + pin table).
  */
+/**
+ * #14 Phase 2 — wrap a HOST function-table index as a callable dynrt value. bindgen calls this when a
+ * JS function crosses INTO the core as `any`. The cell is tag 7 (function) with marker slot[1] = -2 and
+ * slot[2] = the host index; `dynApply` routes such a value back to the host via the `__host.call`
+ * import. Non-moving GC keeps the cell at a stable address; the index stays valid for the host's table.
+ */
+/** @export */
+export function dynMakeHostFn(index: i32): i32 {
+  const n: Int32Array = mkCell5() as unknown as Int32Array;
+  n[0] = 7; // function tag
+  n[1] = -2; // host-function marker (distinct from -1 = user fn, and from builtin ids)
+  n[2] = index; // host function-table index
+  n[3] = 0;
+  n[4] = 0;
+  return n as unknown as i32;
+}
+
 /** @export */
 export function dynMakeFn(paramNames: string, body: string): i32 {
   const paramsArr: i32 = dynArray();
@@ -1352,6 +1376,9 @@ export function dynApply(callee: i32, argsArr: i32): i32 {
   const cn: Int32Array = callee as unknown as Int32Array;
   if (cn[0] !== 7) return dynUndefined(); // not callable → undefined (guarded)
   const id: i32 = cn[1];
+  if (id === -2) { // #14 Phase 2: HOST function — call back into the host through the import
+    return __host.call(cn[2], argsArr);
+  }
   const argc: i32 = dynArrLen(argsArr);
   if (id === -1) { // USER function (2d.2): run its body in a fresh scope linked to its defining env
     const bodyBox: i32 = cn[2];
