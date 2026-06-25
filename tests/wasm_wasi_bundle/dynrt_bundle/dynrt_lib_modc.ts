@@ -1092,6 +1092,26 @@ export function dynObjValAt(obj: i32, i: i32): i32 {
   return listGet(n[1], i);
 }
 
+// #14 2e.1 (for-in) — key `i` as a STRING VALUE (keys are stored as raw bytes; build a tag-4 string
+// box by copying them, mirroring dynString).
+function dynObjKeyVal(obj: i32, i: i32): i32 {
+  const n: Int32Array = obj as unknown as Int32Array;
+  const kbase: i32 = listGet(n[3], i * 2); // key buffer cell ptr
+  const klen: i32 = listGet(n[3], i * 2 + 1);
+  const src: Uint8Array = kbase as unknown as Uint8Array; // view: element m = key byte m
+  const buf: Uint8Array = dynAlloc(8 + klen) as unknown as Uint8Array;
+  let m: i32 = 0;
+  while (m < klen) {
+    buf[m] = src[m];
+    m = m + 1;
+  }
+  const sn: Int32Array = mkCell() as unknown as Int32Array;
+  sn[0] = 4; // string tag
+  sn[1] = buf as unknown as i32;
+  sn[2] = klen;
+  return sn as unknown as i32;
+}
+
 // ── Array ops ─────────────────────────────────────────────────────────────────────────────────
 
 /** Append `val` to an array. */
@@ -1713,6 +1733,91 @@ function parsePrimary(s: string): i32 {
     return v;
   }
   if (c === 39 || c === 34) return parseStringLit(s); // ' or "
+  if (c === 91) { // '[' — array literal (#14 2e.2)
+    evalPos = evalPos + 1;
+    const arr: i32 = dynArray();
+    evalSkipWs(s);
+    let go: i32 = evalPeek(s) === 93 ? 0 : 1; // empty []
+    while (go === 1) {
+      const el: i32 = parseExpr(s);
+      dynPush(arr, el);
+      evalSkipWs(s);
+      if (evalPeek(s) === 44) {
+        evalPos = evalPos + 1; // ','
+        evalSkipWs(s);
+        if (evalPeek(s) === 93) go = 0; // trailing comma
+      } else {
+        go = 0;
+      }
+    }
+    evalSkipWs(s);
+    if (evalPeek(s) === 93) evalPos = evalPos + 1; // ']'
+    return arr;
+  }
+  if (c === 123) { // '{' — object literal (#14 2e.2). At expression position `{` is always an object;
+    evalPos = evalPos + 1; // statement-level `{` is handled as a block before reaching parseExpr.
+    const obj: i32 = dynObject();
+    evalSkipWs(s);
+    let go: i32 = evalPeek(s) === 125 ? 0 : 1; // empty {}
+    while (go === 1) {
+      evalSkipWs(s);
+      let key: string = "";
+      const kc: i32 = evalPeek(s);
+      if (kc === 39 || kc === 34) {
+        key = boxToStr(parseStringLit(s)); // "quoted" key
+      } else {
+        key = readIdent(s); // bare identifier key
+      }
+      evalSkipWs(s);
+      let val: i32 = 0;
+      if (evalPeek(s) === 58) { // ':'
+        evalPos = evalPos + 1;
+        val = parseExpr(s);
+      } else { // shorthand { x } → resolve x from the env
+        val = evalEnv === -1 ? dynUndefined() : envLookup(evalEnv, key);
+        if (val === -1) val = dynUndefined();
+      }
+      dynSet(obj, key, val);
+      evalSkipWs(s);
+      if (evalPeek(s) === 44) {
+        evalPos = evalPos + 1; // ','
+        evalSkipWs(s);
+        if (evalPeek(s) === 125) go = 0; // trailing comma
+      } else {
+        go = 0;
+      }
+    }
+    evalSkipWs(s);
+    if (evalPeek(s) === 125) evalPos = evalPos + 1; // '}'
+    return obj;
+  }
+  if (c === 96) { // '`' — template literal (#14 2e.2). Text parts are sliced raw (escape processing is
+    evalPos = evalPos + 1; // a v1 gap); `${expr}` parts coerce to string via dynAdd (JS `+` semantics).
+    let result: i32 = dynString("");
+    let textStart: i32 = evalPos;
+    let tgo: i32 = 1;
+    while (tgo === 1) {
+      const tc: i32 = evalPeek(s);
+      if (tc === -1) {
+        tgo = 0;
+      } else if (tc === 96) { // closing '`'
+        result = dynAdd(result, dynString(s.slice(textStart, evalPos)));
+        evalPos = evalPos + 1;
+        tgo = 0;
+      } else if (tc === 36 && evalPeek2(s) === 123) { // '${'
+        result = dynAdd(result, dynString(s.slice(textStart, evalPos)));
+        evalPos = evalPos + 2;
+        const ev: i32 = parseExpr(s);
+        result = dynAdd(result, ev); // string + value → string
+        evalSkipWs(s);
+        if (evalPeek(s) === 125) evalPos = evalPos + 1; // '}'
+        textStart = evalPos;
+      } else {
+        evalPos = evalPos + 1;
+      }
+    }
+    return result;
+  }
   if (c >= 48 && c <= 57) return parseNumLit(s);
   if (c === 46) return parseNumLit(s); // .5
   if (isIdentChar(c, 0) === 1) {
@@ -2176,7 +2281,7 @@ function runFor(s: string): void {
   if (evalPeek(s) === 40) evalPos = evalPos + 1; // '('
   const save: i32 = evalPos;
   evalSkipWs(s);
-  let isForOf: i32 = 0;
+  let kind: i32 = 0; // 0 = C-style, 1 = for-of, 2 = for-in
   let loopVar: string = "";
   if (isIdentChar(evalPeek(s), 0) === 1) {
     const w1: string = readIdent(s);
@@ -2189,16 +2294,58 @@ function runFor(s: string): void {
     if (isIdentChar(evalPeek(s), 0) === 1) {
       const w2: string = readIdent(s);
       if (strEq(w2, "of") === 1) {
-        isForOf = 1;
+        kind = 1;
+        loopVar = nameWord;
+      } else if (strEq(w2, "in") === 1) {
+        kind = 2;
         loopVar = nameWord;
       }
     }
   }
-  if (isForOf === 1) {
+  if (kind === 1) {
     runForOf(s, loopVar, outer);
+  } else if (kind === 2) {
+    runForIn(s, loopVar, outer);
   } else {
     evalPos = save;
     runForClassic(s, outer);
+  }
+}
+
+// `for (const k in obj) body` — iterate an object's keys (tag 6), binding `k` to each key string.
+function runForIn(s: string, loopVar: string, outer: i32): void {
+  const obj: i32 = parseExpr(s); // the object (cursor was just past `in`)
+  evalSkipWs(s);
+  if (evalPeek(s) === 41) evalPos = evalPos + 1; // ')'
+  const bodyStart: i32 = evalPos;
+  let len: i32 = 0;
+  const ov: Int32Array = obj as unknown as Int32Array;
+  if (outer === 1 && ov[0] === 6) len = dynObjLen(obj); // tag 6 = object
+  let looping: i32 = (outer === 1 && len > 0) ? 1 : 0;
+  if (looping === 0) {
+    evalLive = 0;
+    evalPos = bodyStart;
+    runStatement(s); // dead body — advance past it
+    evalLive = outer;
+    return;
+  }
+  let i: i32 = 0;
+  while (looping === 1) {
+    dynSet(evalEnv, loopVar, dynObjKeyVal(obj, i)); // bind the key string
+    evalPos = bodyStart;
+    evalLive = 1;
+    runStatement(s);
+    evalLive = outer;
+    if (evalReturned === 1) {
+      looping = 0;
+    } else if (evalBroke === 1) {
+      evalBroke = 0;
+      looping = 0;
+    } else {
+      if (evalContinued === 1) evalContinued = 0;
+      i = i + 1;
+      if (i >= len) looping = 0;
+    }
   }
 }
 
@@ -2290,6 +2437,138 @@ function runForClassic(s: string, outer: i32): void {
       evalLive = outer;
       looping = 0;
     }
+  }
+}
+
+// #14 2e.1 — `switch (disc) { case v: … default: … }`. Two passes over the body: (1) DEAD scan the
+// labels, evaluating each `case` expr `=== disc` to find the matching case's body start (and the
+// default's); (2) execute LIVE from that start with FALL-THROUGH (later case/default labels are
+// skipped, statements run) until `break`/`return` or `}`. `break` exits the switch only.
+function runSwitch(s: string): void {
+  const outer: i32 = evalLive;
+  evalSkipWs(s);
+  if (evalPeek(s) === 40) evalPos = evalPos + 1; // '('
+  const disc: i32 = parseExpr(s);
+  evalSkipWs(s);
+  if (evalPeek(s) === 41) evalPos = evalPos + 1; // ')'
+  evalSkipWs(s);
+  if (evalPeek(s) === 123) evalPos = evalPos + 1; // '{'
+  let matchStart: i32 = -1;
+  let defaultStart: i32 = -1;
+  let scanning: i32 = 1;
+  while (scanning === 1) {
+    evalSkipWs(s);
+    const c: i32 = evalPeek(s);
+    if (c === 125 || c === -1) {
+      scanning = 0;
+    } else if (isIdentChar(c, 0) === 1) {
+      const save: i32 = evalPos;
+      const w: string = readIdent(s);
+      if (strEq(w, "case") === 1) {
+        if (matchStart === -1) {
+          const cv: i32 = parseExpr(s);
+          evalSkipWs(s);
+          if (evalPeek(s) === 58) evalPos = evalPos + 1; // ':'
+          if (dynStrictEq(disc, cv) === 1) matchStart = evalPos; // dynStrictEq returns raw i32 1/0
+        } else {
+          const sl: i32 = evalLive; // already matched — skip the case expr dead
+          evalLive = 0;
+          parseExpr(s);
+          evalLive = sl;
+          evalSkipWs(s);
+          if (evalPeek(s) === 58) evalPos = evalPos + 1;
+        }
+        skipSwitchSegment(s);
+      } else if (strEq(w, "default") === 1) {
+        evalSkipWs(s);
+        if (evalPeek(s) === 58) evalPos = evalPos + 1; // ':'
+        defaultStart = evalPos;
+        skipSwitchSegment(s);
+      } else {
+        evalPos = save;
+        skipSwitchSegment(s); // stray statement before a label — skip dead
+      }
+    } else {
+      scanning = 0;
+    }
+  }
+  const switchEnd: i32 = evalPos; // at '}'
+  let startPos: i32 = matchStart;
+  if (startPos === -1) startPos = defaultStart;
+  if (outer === 1 && startPos !== -1) {
+    evalPos = startPos;
+    evalLive = 1;
+    execSwitchBody(s);
+    evalLive = outer;
+  }
+  evalPos = switchEnd; // cursor past the whole body, regardless of where pass 2 stopped
+  evalSkipWs(s);
+  if (evalPeek(s) === 125) evalPos = evalPos + 1; // '}'
+  if (evalBroke === 1) evalBroke = 0; // `break` exits the switch only — clear it
+}
+
+// Skip statements (DEAD) until the next case/default label or '}'; leaves the label for the caller.
+function skipSwitchSegment(s: string): void {
+  let go: i32 = 1;
+  while (go === 1) {
+    evalSkipWs(s);
+    const c: i32 = evalPeek(s);
+    if (c === 125 || c === -1) {
+      go = 0;
+    } else if (isIdentChar(c, 0) === 1) {
+      const save: i32 = evalPos;
+      const w: string = readIdent(s);
+      if (strEq(w, "case") === 1 || strEq(w, "default") === 1) {
+        evalPos = save; // leave the label
+        go = 0;
+      } else {
+        evalPos = save;
+        const sl: i32 = evalLive;
+        evalLive = 0;
+        runStatement(s);
+        evalLive = sl;
+      }
+    } else {
+      const sl: i32 = evalLive;
+      evalLive = 0;
+      runStatement(s);
+      evalLive = sl;
+    }
+  }
+}
+
+// Execute statements (LIVE) with fall-through: skip case/default labels, run everything else, until
+// `break`/`return`/`continue` or '}'.
+function execSwitchBody(s: string): void {
+  let go: i32 = 1;
+  while (go === 1) {
+    evalSkipWs(s);
+    const c: i32 = evalPeek(s);
+    if (c === 125 || c === -1) {
+      go = 0;
+    } else if (isIdentChar(c, 0) === 1) {
+      const save: i32 = evalPos;
+      const w: string = readIdent(s);
+      if (strEq(w, "case") === 1) {
+        const sl: i32 = evalLive;
+        evalLive = 0;
+        parseExpr(s); // skip the case expr (dead)
+        evalLive = sl;
+        evalSkipWs(s);
+        if (evalPeek(s) === 58) evalPos = evalPos + 1; // ':'
+      } else if (strEq(w, "default") === 1) {
+        evalSkipWs(s);
+        if (evalPeek(s) === 58) evalPos = evalPos + 1; // ':'
+      } else {
+        evalPos = save;
+        runStatement(s);
+      }
+    } else {
+      runStatement(s);
+    }
+    if (evalBroke === 1) go = 0; // break — runSwitch clears it
+    if (evalReturned === 1) go = 0;
+    if (evalContinued === 1) go = 0; // continue propagates to the enclosing loop
   }
 }
 
@@ -2394,6 +2673,7 @@ function runStatement(s: string): void {
     if (strEq(word, "while") === 1) { runWhile(s); return; }
     if (strEq(word, "do") === 1) { runDoWhile(s); return; }
     if (strEq(word, "for") === 1) { runFor(s); return; }
+    if (strEq(word, "switch") === 1) { runSwitch(s); return; }
     if (strEq(word, "return") === 1) { runReturn(s); return; }
     if (strEq(word, "function") === 1) { runFuncDecl(s); return; }
     if (strEq(word, "break") === 1) { // #14 2e.1

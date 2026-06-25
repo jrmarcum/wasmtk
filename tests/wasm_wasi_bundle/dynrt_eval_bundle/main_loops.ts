@@ -70,4 +70,16 @@ checkForOf("let s = 0; for (const x of items) { s = s + x; } return s;", 60);
 checkForOf("let s = 0; for (const x of items) { if (x === 20) { continue; } s = s + x; } return s;", 40);
 checkForOf("let s = 0; for (const x of items) { if (x === 20) { break; } s = s + x; } return s;", 10);
 
+// ── for…in over an object's keys ─────────────────────────────────────────────────────────────────
+checkRun("const o = {a: 1, b: 2, c: 3}; let n = 0; for (const k in o) { n++; } return n;", 3); // key count
+checkRun("const o = {a: 1, b: 2, c: 3}; let s = 0; for (const k in o) { s = s + o[k]; } return s;", 6); // sum via o[k]
+checkRun("const o = {a: 5, b: 10}; let s = 0; for (const k in o) { if (o[k] === 5) { continue; } s = s + o[k]; } return s;", 10);
+
+// ── switch (fall-through, break, default, literal disc) ──────────────────────────────────────────
+checkRun("let r = 0; const x = 2; switch (x) { case 1: r = 10; break; case 2: r = 20; break; case 3: r = 30; break; } return r;", 20);
+checkRun("let r = 0; const x = 9; switch (x) { case 1: r = 10; break; default: r = 99; } return r;", 99); // default
+checkRun("let r = 0; const x = 1; switch (x) { case 1: case 2: r = 5; break; case 3: r = 30; } return r;", 5); // empty-case fall-through
+checkRun("let r = 0; const x = 1; switch (x) { case 1: r = r + 1; case 2: r = r + 10; break; case 3: r = r + 100; } return r;", 11); // body fall-through
+checkRun("let r = 0; switch (3) { case 1: r = 1; break; case 3: r = 3; break; } return r;", 3); // literal discriminant
+
 console.log("dynrt 2e.1 control flow: all checks passed");

@@ -470,10 +470,11 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
 **Gating summary:** 51 → (13, 14). 52 + 53 COMPLETE; ABI forward-alignment (return side) COMPLETE
 2026-06-15; **#13 async track COMPLETE + PUBLISHED as v1.8.0 (2026-06-22)** (13.1a–13.5: full v1
 Promise API surface + hybrid lift; suite 317/317; README async surface documented — see lines ~197/
-834/1010 of README.md and `CHANGELOG.md`); **#12 loaders substantially DONE — updated 2026-06-22**
-(`-js` published; `-v` published to VPM; `-c`/`-zig`/`-py`/`-rs`/`-jvm`/`-dart` implemented on
-SPEC-3.0.0; **all 10 ports now implemented — no stubs remain**; **4 published** (`-js`, `-v`, `-zig`,
-`-py`), the other 6 are built-but-unpublished — see vision.md). **#14 own dynamic runtime — COMPLETE 2026-06-24, NO deferred pieces.** The whole arc shipped (value
+834/1010 of README.md and `CHANGELOG.md`); **#12 loaders — COMPLETE 2026-06-24: all 10
+universalWasmLoader ports IMPLEMENTED on SPEC-3.0.0 AND PUBLISHED to their registries** (`-js`→JSR,
+`-v`→VPM, `-zig`→zigistry, `-py`→PyPI, `-rs`→crates.io, `-go`→pkg.go.dev, `-dart`→pub.dev,
+`-dotnet`→NuGet, `-jvm`→Maven Central, `-c`→vcpkg) — see vision.md. (Remaining #12 polish: SPEC §10
+loader-cap propagation, if still open.) **#14 own dynamic runtime — COMPLETE 2026-06-24, NO deferred pieces.** The whole arc shipped (value
 model → interpreter → `any` integration → host↔core marshalling incl. functions → bounded-memory
 mark-sweep GC → hybrid recycling allocator → functions-as-`any` producer+proxy+pin, in v1.9.0) — and
 **Phase 2 (host→core callbacks) SHIPPED 2026-06-24**: a JS function passed INTO the core as `any` is
@@ -495,8 +496,8 @@ one small PR (2h only). **The 2g GC prerequisite is already DONE. ROUTE A CHOSEN
 build order starts at 2e.1 control flow (full sequence in dynrt-design.md). The other remaining work is the deferred **P2 container** (embed
 component type — a terminal wrap; **deferred WAITING FOR BROWSER-NATIVE WASI P2 / Component Model
 support** — until browsers load components natively, P1-core stays the browser-compatible artifact and a
-P2 wrap buys browser consumers nothing), finishing **#12** (PUBLISHING the 6 remaining built loader ports, SPEC §10
-loader-cap propagation, owner registry secrets), **Go bindgen** string/aggregate host marshalling (needs
+P2 wrap buys browser consumers nothing); **#12 loaders COMPLETE 2026-06-24 — all 10 ports published**
+(only the optional SPEC §10 loader-cap propagation may remain); **Go bindgen** string/aggregate host marshalling (needs
 ABI forward-alignment), the **asyncify pass in binaryen-ts** (unblocks goroutine Go without external
 `wasm-opt`), and the optional field-reshaping **utility-types** batch (Pick/Omit/Record/…).
 
@@ -570,11 +571,12 @@ chains after a single-line `if` were dropped; regression `15_ElseChainForms`), p
 Suite **309/309**, bindgen 104/104,
 jstyper 73/73. **Phase 53 COMPLETE 2026-06-15** (`Number.parseInt`/`parseFloat` + bare forms;
 multi-level interface inheritance, declaration-order independent). **ABI forward-alignment
-(return side) COMPLETE 2026-06-15.** **#12 loaders substantially DONE — updated 2026-06-22:** all 10
-ports (`-js`/`-rs`/`-py`/`-jvm`/`-dart`/`-c`/`-zig`/`-v`/`-go`/`-dotnet`) implemented on SPEC-3.0.0,
-**no stubs remain**; **4 published** (`-js`→JSR, `-v`→VPM, `-zig`→zigistry, `-py`→PyPI); the other 6
-are built-but-unpublished (awaiting registry pushes/tags/secrets — e.g. `-jvm` has local tags
-`v0.1.0`–`v0.1.2` but isn't live on Maven Central yet). **#13 async COMPLETE + PUBLISHED as wasmtk
-v1.8.0 (2026-06-22; suite 317/317).** Remaining: #14 own runtime, the deferred P2 container, and
-finishing #12 (publish the 6 remaining built ports + SPEC §10 loader capabilities + owner registry
-secrets). Full analysis in CLAUDE.md § "TypeScript Feature Gap Analysis".
+(return side) COMPLETE 2026-06-15.** **#12 loaders — COMPLETE 2026-06-24: all 10
+universalWasmLoader ports (`-js`/`-rs`/`-py`/`-jvm`/`-dart`/`-c`/`-zig`/`-v`/`-go`/`-dotnet`) implemented
+on SPEC-3.0.0 AND PUBLISHED to their registries** (JSR / crates.io / PyPI / Maven Central / pub.dev /
+vcpkg / zigistry / VPM / pkg.go.dev / NuGet). **#13 async COMPLETE + PUBLISHED as wasmtk
+v1.8.0 (2026-06-22; suite 317/317). #14 own dynamic runtime COMPLETE + PUBLISHED (v1.9.0 + Phase 2 in
+v1.10.0).** Remaining: the deferred P2 container (browser-native WASI P2 gating), Go bindgen
+aggregate marshalling, the binaryen-ts asyncify pass, the optional utility-types batch, and the
+in-progress **Route A (javyc retirement — dynrt language/stdlib growth, 2e/2f)**; optional #12 polish =
+SPEC §10 loader-cap propagation. Full analysis in CLAUDE.md § "TypeScript Feature Gap Analysis".

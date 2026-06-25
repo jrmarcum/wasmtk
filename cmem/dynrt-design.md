@@ -871,15 +871,25 @@ codebase is a SEPARATE, larger track scoped below.
 
 **Recommended build order (land + full-suite-verify each before the next, one increment per session like
 the #13/#14 cadence; each ships a `18*` test, output-diff green):**
-1. **2e.1 control flow** — **2e.1a SHIPPED 2026-06-24** (test `18zc`): C-style `for`, `for…of` (over an
-   array value), `do…while`, `break`/`continue`, and the `++`/`--`/`+=`/`-=`/`*=`/`/=` update forms
-   (added to `runStatement` + new `evalBroke`/`evalContinued` signals that loops clear; built on the
-   `runWhile` cursor-reset model). **Remaining 2e.1: `for-in` + `switch`** (and `for…of` over an INLINE
-   array literal needs 2e.2 literals — today the iterable must be a bound array value). **Lesson:** the
-   wasic/modc subset rejects a brace-LESS `if (c) stmt; else …` (orphans the `else`) — fully brace every
-   `if/else if/else`; and a `.wasm`-import in a driver must be SINGLE-LINE (the import detector is
-   line-based).
-2. **2e.2 literals** (object/array/template) — unlocks most idiomatic dynamic code.
+1. **2e.1 control flow** — **COMPLETE 2026-06-24** (test `18zc`). 2e.1a: C-style `for`, `for…of`,
+   `do…while`, `break`/`continue`, `++`/`--`/`+=`/`-=`/`*=`/`/=` (new `evalBroke`/`evalContinued` signals
+   that loops clear; built on the `runWhile` cursor-reset model). 2e.1b leftovers: **`for-in`** (binds
+   the key string via a new `dynObjKeyVal` that copies the raw key bytes into a tag-4 string box) and
+   **`switch`** (two-pass: DEAD scan the labels to find the matching `case`'s body-start — or `default`'s
+   — then execute LIVE with FALL-THROUGH until `break`/`return`/`}`; `break` exits the switch only).
+   **Lessons:** (a) the wasic/modc subset rejects a brace-LESS `if (c) stmt; else …` (orphans the `else`)
+   — fully brace every chain; (b) a driver's `.wasm` import AND every `checkRun(...)` call must be
+   SINGLE-LINE (wasic's import + statement detectors are line-based — add `// deno-fmt-ignore-file` so
+   fmt doesn't wrap long lines); (c) **`dynStrictEq`/`dynLt`/… return a RAW i32 (1/0), NOT a value box**
+   — use the result directly in an `=== 1` test; do NOT wrap in `dynToBool` (that treats `1` as a cell
+   pointer → OOB). The interpreter's own `parseEq` wraps with `dynBool(...)` only to make an `any` value.
+2. **2e.2 literals** — **SHIPPED 2026-06-24** (test `18zd`): array `[…]`, object `{…}` (with "quoted"
+   and shorthand `{x}` keys), and template `` `…${expr}…` `` literals, all in `parsePrimary`. Templates
+   coerce `${expr}` via `dynAdd` (JS `+` → string when either side is a string; uses `stringForm`). Also
+   unlocks **`for…of` over an inline array literal** (the 2e.1 deferred case). v1 gaps: template TEXT is
+   sliced raw (no `\n`/escape processing yet); object-literal `{` is an object only at EXPRESSION
+   position (statement-level `{` stays a block, JS-consistent). Member ASSIGNMENT (`o.x = v`) is still
+   2e.4.
 3. **2e.4 assignment forms** (compound/`++`/member-assign/destructuring).
 4. **2e.3 functions** (arrow + function expressions), **2e.5 operators**, **2e.6 try/catch**, **2e.7
    scoping**.
