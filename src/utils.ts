@@ -33,7 +33,7 @@ interface WabtModule {
 }
 
 /** The current version of the wasmtk toolkit. */
-export const VERSION = "1.10.0";
+export const VERSION = "1.10.1";
 
 let wasiInstance: WebAssembly.Instance | undefined;
 
