@@ -1,6 +1,6 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 336/336** (`bindgen` 122/122, `jstyper` 73/73) as of **2026-06-24** (functions-as-`any` producer + post-publish audit) (+`18j`–`18t` dynrt: value-model / virtual
+Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 339/339** (`bindgen` 131/131, `jstyper` 73/73) as of **2026-06-24** (functions-as-`any` producer + post-publish audit) (+`18j`–`18t` dynrt: value-model / virtual
 import / eval / eval-env / calls / statements / functions+`new Function` / `18q` wasic `any`
 type+auto-merge / `18r` GC Part 1 auto-grow heap / `18s`-`18z` GC Parts 2-5b + polish COMPLETE (… / splitting / hybrid segregated+coalescing allocator). 4 known wasic gaps are OPEN but worked around in the dynrt library — see next
 section; 2d.1/2d.2/3.1 added none. 3.1 has its own documented FOLLOW-UPS — see dynrt-design.md
@@ -9,6 +9,22 @@ gaps are OPEN but worked around in the dynrt library (so the suite stays green) 
 section; each is a candidate for a real `src/wasic.ts` fix (then the lib workaround can be removed,
 the RegExp `&&` precedent). (Pre-18j: 317 = 307 at v1.7.0 + 2 Phase-53 tests + 8 async tests 54–61;
 `bindgen` 103→104 from the ABI return-side forward-alignment's `cabi_post` assertion.)
+
+## FIXED — wasic arrow detection mis-fired on `=>` inside STRING LITERALS (#14 2e.3, 2026-06-24)
+
+Surfaced building #14 2e.3 (arrow functions in the dynrt interpreter): the test driver passes eval-source
+STRINGS like `"const add = (a, b) => a + b;"` to `dynRun`. wasic's two arrow-detection sites scanned the
+RAW source (string-blind) and mistook the `=>` inside those string literals for real arrows → either
+mangled the source (`parseArrowFunctions`) or split the line (`substituteOneArrow`) → "Unsupported
+statement: a + b; …". (Single-param `"f = (a) => …"` happened to pass only because it lacked a leading
+`const`.) **Two fixes in `src/wasic.ts`:** (1) `parseArrowFunctions` (the `const NAME = (` source pre-pass)
+now tracks string state in its existing pre-match scan and `continue`s when the match index lands inside a
+string literal; (2) `substituteOneArrow` replaced `line.indexOf("=>")` with a new module-level
+`firstCodeArrowIdx(line)` that returns the first `=>` outside strings/`//`-comments (-1 → no arrow). Both
+parallel the earlier `rewriteOutsideStringsAndComments` fix for `eval(`/`Function(`. General wasic
+improvement — any program with `=>` inside a string literal now compiles. (A 3rd, dynrt-side bug also
+fixed: `runStatement` treated a top-level `x => …` arrow statement as the assignment `x = …` because its
+`=` check didn't exclude `=>`; added `peek2 !== '>'`. See dynrt-design.md 2e.3.)
 
 ## FIXED — wasmmerge placed a merged module's non-WASI import AFTER function definitions (#14 Phase 2, 2026-06-24)
 

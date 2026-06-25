@@ -486,6 +486,33 @@ function rewriteOutsideStringsAndComments(
   return out;
 }
 
+/**
+ * Index of the first `=>` that occurs in CODE (not inside a string/template literal, not after a `//`
+ * comment), or -1. The arrow-lifting pass uses this so a `=>` inside a string literal — e.g. a dynrt
+ * driver passing `"(x) => x+1"` as eval source — is NOT mistaken for a real arrow function.
+ */
+function firstCodeArrowIdx(line: string): number {
+  let q = "";
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) {
+      if (c === "\\") {
+        i++;
+        continue;
+      }
+      if (c === q) q = "";
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      q = c;
+      continue;
+    }
+    if (c === "/" && line[i + 1] === "/") return -1; // line comment — nothing past it counts
+    if (c === "=" && line[i + 1] === ">") return i;
+  }
+  return -1;
+}
+
 /** Converts a WIT kebab-case name back to the original camelCase export name. */
 function kebabToCamel(s: string): string {
   return s.replace(/-([a-z0-9])/g, (_m, c: string) => c.toUpperCase());
@@ -1806,10 +1833,10 @@ class WasicTranspiler {
     bodyFuncTypes: Map<string, { params: WatType[]; result: WatType | null }> = new Map(),
     enclosingFn?: FuncDef,
   ): string {
-    if (!line.includes("=>")) return line;
-
-    // Find the first `=>` in the line
-    const arrowIdx = line.indexOf("=>");
+    // Find the first `=>` in CODE (not inside a string literal — a dynrt driver's eval-source string
+    // like `"(x) => x"` must not be mistaken for a real arrow).
+    const arrowIdx = firstCodeArrowIdx(line);
+    if (arrowIdx === -1) return line;
 
     // Scan left of `=>` to find the `)` closing the arrow's param list.
     // Skip optional `: ReturnType` annotation that may appear between `)` and `=>`.
@@ -2902,12 +2929,29 @@ class WasicTranspiler {
     let m: RegExpExecArray | null;
 
     while ((m = headerRe.exec(src)) !== null) {
-      // Count brace depth to detect whether this arrow is inside a function body
+      // Count brace depth to detect whether this arrow is inside a function body — AND track string
+      // state so a `const NAME = (` that appears inside a STRING LITERAL (e.g. a dynrt driver's eval
+      // source `"const f = (a,b) => a+b"`) is skipped, not mistaken for a real arrow declaration.
       let braceDepth = 0;
+      let inStr = false;
+      let q = "";
       for (let bi = 0; bi < m.index; bi++) {
-        if (src[bi] === "{") braceDepth++;
-        else if (src[bi] === "}") braceDepth--;
+        const ch = src[bi];
+        if (inStr) {
+          if (ch === "\\") {
+            bi++;
+            continue;
+          }
+          if (ch === q) inStr = false;
+          continue;
+        }
+        if (ch === '"' || ch === "'" || ch === "`") {
+          inStr = true;
+          q = ch;
+        } else if (ch === "{") braceDepth++;
+        else if (ch === "}") braceDepth--;
       }
+      if (inStr) continue; // the `const NAME = (` match is inside a string literal — not an arrow
 
       const name = m[1];
       const openParen = m.index + m[0].length - 1;

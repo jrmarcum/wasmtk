@@ -891,8 +891,19 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
    position (statement-level `{` stays a block, JS-consistent). Member ASSIGNMENT (`o.x = v`) is still
    2e.4.
 3. **2e.4 assignment forms** (compound/`++`/member-assign/destructuring).
-4. **2e.3 functions** (arrow + function expressions), **2e.5 operators**, **2e.6 try/catch**, **2e.7
-   scoping**.
+4. **2e.3 functions** — **SHIPPED 2026-06-24** (test `18ze`): anonymous `function (p) { … }` expressions
+   and arrow functions `(p) => …` / `p => …` / `() => …` (block or expression body) in `parsePrimary`,
+   building user-function VALUES that close over the current env — higher-order fns + closures + nested
+   arrows all work. Extracted `parseParams`/`parseBlockBody` helpers (shared with `runFuncDecl`); arrow
+   bodies: a block → its inner source, an expression → the expr SOURCE captured by dead-parsing to find
+   its extent (dynRun returns the last expression value, so no `return` needed); `isArrowAhead` lookahead
+   disambiguates `(…)=>` from a parenthesized expr. **Fixed 3 bugs:** (a) wasic `parseArrowFunctions`
+   matched `const NAME = (` inside STRING LITERALS (a driver's eval-source string `"const f=(a,b)=>…"`
+   was mis-detected as a real arrow → mangled source) — added string-state tracking to the pre-match
+   scan; (b) wasic `substituteOneArrow` used `line.indexOf("=>")` (string-blind) — added
+   `firstCodeArrowIdx`; (c) dynrt `runStatement` treated `x => …` as the assignment `x = …` (its `=`
+   check didn't exclude `=>`) — added `peek2 !== '>'`. **2e.5 operators**, **2e.6 try/catch**, **2e.7
+   scoping** remain.
 5. **2f.1 prototype + `this`** (object-model upgrade) → unlocks **2e.8 classes**.
 6. **2f.2–2f.9 stdlib** — do the BRIDGES first (2f.5 JSON, 2f.6 Map/Set, 2f.7 RegExp reuse the existing
    capability libs → cheap), then Array/String/Object/Math methods.

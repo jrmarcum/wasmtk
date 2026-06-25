@@ -1725,7 +1725,13 @@ function parseStringLit(s: string): i32 {
 function parsePrimary(s: string): i32 {
   evalSkipWs(s);
   const c: i32 = evalPeek(s);
-  if (c === 40) { // '('
+  if (c === 40) { // '(' — parenthesized expr OR an arrow param list (#14 2e.3)
+    if (isArrowAhead(s) === 1) {
+      const ap: i32 = parseParams(s); // consumes `(...)`
+      evalSkipWs(s);
+      if (evalPeek(s) === 61 && evalPeek2(s) === 62) evalPos = evalPos + 2; // '=>'
+      return makeUserFunc(ap, parseArrowBody(s), evalEnv);
+    }
     evalPos = evalPos + 1;
     const v: i32 = parseExpr(s);
     evalSkipWs(s);
@@ -1829,10 +1835,19 @@ function parsePrimary(s: string): i32 {
       ch = evalPeek(s);
     }
     const name: string = s.slice(start, evalPos);
+    if (strEq(name, "function") === 1) return parseFuncExpr(s); // #14 2e.3 function expression
     if (strEq(name, "true") === 1) return dynBool(1);
     if (strEq(name, "false") === 1) return dynBool(0);
     if (strEq(name, "null") === 1) return dynNull();
     if (strEq(name, "undefined") === 1) return dynUndefined();
+    // #14 2e.3 — single-param arrow `name => body`
+    evalSkipWs(s);
+    if (evalPeek(s) === 61 && evalPeek2(s) === 62) {
+      evalPos = evalPos + 2; // '=>'
+      const ap: i32 = dynArray();
+      dynPush(ap, dynString(name));
+      return makeUserFunc(ap, parseArrowBody(s), evalEnv);
+    }
     // a bare identifier → resolve via the scope chain (current env → parent → …)
     if (evalEnv === -1) return dynUndefined();
     const v: i32 = envLookup(evalEnv, name);
@@ -2575,10 +2590,9 @@ function execSwitchBody(s: string): void {
 // `function name(p0, p1, …) { body }` — the `function` keyword has already been consumed. Captures
 // the body's SOURCE TEXT (depth-scanning to the matching `}`, string-literal aware) into a string
 // box and binds a user function value (closing over the current env) under `name`.
-function runFuncDecl(s: string): void {
-  evalSkipWs(s);
-  const name: string = readIdent(s);
-  evalSkipWs(s);
+// Parse a `(p0, p1, …)` parameter list (cursor at `(`) → value-model array of name string boxes.
+// If there is no `(`, returns an empty array (cursor unchanged).
+function parseParams(s: string): i32 {
   const paramsArr: i32 = dynArray();
   if (evalPeek(s) === 40) { // '('
     evalPos = evalPos + 1;
@@ -2602,47 +2616,129 @@ function runFuncDecl(s: string): void {
       }
     }
   }
-  evalSkipWs(s);
-  let bodyBox: i32 = dynString("");
-  if (evalPeek(s) === 123) { // '{'
-    evalPos = evalPos + 1;
-    const bodyStart: i32 = evalPos;
-    let depth: i32 = 1;
-    let inStr: i32 = 0;
-    let q: i32 = 0;
-    let scanning: i32 = 1;
-    while (scanning === 1 && evalPos < s.length) {
-      const ch: i32 = s.charCodeAt(evalPos);
-      if (inStr === 1) {
-        if (ch === 92) {
-          evalPos = evalPos + 2; // backslash: skip the escaped char
-        } else if (ch === q) {
-          inStr = 0;
-          evalPos = evalPos + 1;
-        } else {
-          evalPos = evalPos + 1;
-        }
+  return paramsArr;
+}
+
+// Capture a `{ … }` block's INNER source (cursor at `{`) into a string box, depth-scanning to the
+// matching `}` (string-literal aware) and consuming the closing brace.
+function parseBlockBody(s: string): i32 {
+  evalPos = evalPos + 1; // '{'
+  const bodyStart: i32 = evalPos;
+  let depth: i32 = 1;
+  let inStr: i32 = 0;
+  let q: i32 = 0;
+  let scanning: i32 = 1;
+  while (scanning === 1 && evalPos < s.length) {
+    const ch: i32 = s.charCodeAt(evalPos);
+    if (inStr === 1) {
+      if (ch === 92) {
+        evalPos = evalPos + 2; // backslash: skip the escaped char
+      } else if (ch === q) {
+        inStr = 0;
+        evalPos = evalPos + 1;
       } else {
-        if (ch === 39 || ch === 34) {
-          inStr = 1;
-          q = ch;
-          evalPos = evalPos + 1;
-        } else if (ch === 123) {
-          depth = depth + 1;
-          evalPos = evalPos + 1;
-        } else if (ch === 125) {
-          depth = depth - 1;
-          if (depth === 0) scanning = 0; // leave evalPos AT the closing '}'
-          else evalPos = evalPos + 1;
-        } else {
-          evalPos = evalPos + 1;
-        }
+        evalPos = evalPos + 1;
+      }
+    } else {
+      if (ch === 39 || ch === 34) {
+        inStr = 1;
+        q = ch;
+        evalPos = evalPos + 1;
+      } else if (ch === 123) {
+        depth = depth + 1;
+        evalPos = evalPos + 1;
+      } else if (ch === 125) {
+        depth = depth - 1;
+        if (depth === 0) scanning = 0; // leave evalPos AT the closing '}'
+        else evalPos = evalPos + 1;
+      } else {
+        evalPos = evalPos + 1;
       }
     }
-    const bodySrc: string = s.slice(bodyStart, evalPos);
-    bodyBox = dynString(bodySrc);
-    if (evalPeek(s) === 125) evalPos = evalPos + 1; // consume '}'
   }
+  const bodySrc: string = s.slice(bodyStart, evalPos);
+  if (evalPeek(s) === 125) evalPos = evalPos + 1; // consume '}'
+  return dynString(bodySrc);
+}
+
+// #14 2e.3 — body after an arrow `=>` (cursor just past `=>`). Block body → its inner source; an
+// expression body → the expr SOURCE captured by dead-parsing to find its extent (when the arrow is
+// called, dynRun returns the last expression value, so a bare expr body works without a `return`).
+function parseArrowBody(s: string): i32 {
+  evalSkipWs(s);
+  if (evalPeek(s) === 123) return parseBlockBody(s); // '{' block body
+  const exprStart: i32 = evalPos;
+  const sl: i32 = evalLive;
+  evalLive = 0;
+  parseExpr(s); // dead-parse to locate the expression boundary (stops at , ) ] } ; …)
+  evalLive = sl;
+  return dynString(s.slice(exprStart, evalPos));
+}
+
+// #14 2e.3 — anonymous function expression (cursor past the `function` keyword): optional name (ignored
+// in v1 — no self-reference binding yet), `(params)`, `{ body }`. Closes over the current env.
+function parseFuncExpr(s: string): i32 {
+  evalSkipWs(s);
+  if (isIdentChar(evalPeek(s), 0) === 1) readIdent(s); // optional name, skipped
+  evalSkipWs(s);
+  const paramsArr: i32 = parseParams(s);
+  evalSkipWs(s);
+  let bodyBox: i32 = dynString("");
+  if (evalPeek(s) === 123) bodyBox = parseBlockBody(s);
+  return makeUserFunc(paramsArr, bodyBox, evalEnv);
+}
+
+// #14 2e.3 — lookahead from a `(` to decide arrow-param-list vs parenthesized expr: scan to the
+// matching `)` (string-aware), then check for `=>`. Restores the cursor. Returns 1 if an arrow.
+function isArrowAhead(s: string): i32 {
+  const save: i32 = evalPos;
+  let depth: i32 = 0;
+  let inStr: i32 = 0;
+  let q: i32 = 0;
+  let scanning: i32 = 1;
+  while (scanning === 1 && evalPos < s.length) {
+    const ch: i32 = s.charCodeAt(evalPos);
+    if (inStr === 1) {
+      if (ch === 92) {
+        evalPos = evalPos + 2;
+      } else if (ch === q) {
+        inStr = 0;
+        evalPos = evalPos + 1;
+      } else {
+        evalPos = evalPos + 1;
+      }
+    } else {
+      if (ch === 39 || ch === 34) {
+        inStr = 1;
+        q = ch;
+        evalPos = evalPos + 1;
+      } else if (ch === 40) {
+        depth = depth + 1;
+        evalPos = evalPos + 1;
+      } else if (ch === 41) {
+        depth = depth - 1;
+        evalPos = evalPos + 1;
+        if (depth === 0) scanning = 0;
+      } else {
+        evalPos = evalPos + 1;
+      }
+    }
+  }
+  evalSkipWs(s);
+  let found: i32 = 0;
+  if (evalPeek(s) === 61 && evalPeek2(s) === 62) found = 1; // '=>'
+  evalPos = save; // restore
+  return found;
+}
+
+function runFuncDecl(s: string): void {
+  evalSkipWs(s);
+  const name: string = readIdent(s);
+  evalSkipWs(s);
+  const paramsArr: i32 = parseParams(s);
+  evalSkipWs(s);
+  let bodyBox: i32 = dynString("");
+  if (evalPeek(s) === 123) bodyBox = parseBlockBody(s);
   const f: i32 = makeUserFunc(paramsArr, bodyBox, evalEnv);
   if (evalLive === 1) dynSet(evalEnv, name, f);
 }
@@ -2691,7 +2787,7 @@ function runStatement(s: string): void {
     // not a keyword: bare-identifier assignment `word = expr`, else an expression statement
     evalSkipWs(s);
     const nc: i32 = evalPeek(s);
-    if (nc === 61 && evalPeek2(s) !== 61) { // '=' but not '=='
+    if (nc === 61 && evalPeek2(s) !== 61 && evalPeek2(s) !== 62) { // '=' but not '==' or '=>'
       evalPos = evalPos + 1; // consume '='
       const val: i32 = parseExpr(s);
       if (evalLive === 1) dynSet(evalEnv, word, val);
