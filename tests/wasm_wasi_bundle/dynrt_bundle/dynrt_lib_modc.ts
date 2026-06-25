@@ -1530,6 +1530,11 @@ let sideEffectCounter: i32 = 0; // observable side effect for the `inc()` builti
 let evalReturned: i32 = 0;  // set when a `return` statement executes; stops statement sequencing
 let evalReturnVal: i32 = 0; // the value carried by the executed `return`
 let lastValue: i32 = 0;     // value of the last executed expression statement (dynRun's result)
+// #14 Route A 2e.1 — loop control flow. Like evalReturned, these stop statement sequencing inside the
+// loop body; the enclosing loop checks + clears them (break stops the loop; continue skips to the next
+// iteration). They never escape a loop (a loop clears them before returning to its caller).
+let evalBroke: i32 = 0;     // set by `break`
+let evalContinued: i32 = 0; // set by `continue`
 
 // Compare two wasic strings byte-for-byte (avoids relying on `===` over reconstructed substrings).
 function strEq(a: string, b: string): i32 {
@@ -2105,12 +2110,183 @@ function runWhile(s: string): void {
       evalLive = 1;
       runStatement(s); // body, live
       evalLive = outer;
-      if (evalReturned === 1) looping = 0; // a `return` in the body ends the loop
+      if (evalReturned === 1) {
+        looping = 0; // a `return` in the body ends the loop
+      } else if (evalBroke === 1) {
+        evalBroke = 0; // `break` — clear + stop
+        looping = 0;
+      } else if (evalContinued === 1) {
+        evalContinued = 0; // `continue` — clear + fall through to re-test the condition
+      }
       iters = iters + 1;
       if (iters > 100000000) looping = 0; // safety cap against a runaway loop
     } else {
       evalLive = 0;
       runStatement(s); // body, dead — advance the cursor past it, then stop
+      evalLive = outer;
+      looping = 0;
+    }
+  }
+}
+
+// #14 2e.1 — `do { body } while (cond);`. Re-parses the body + the trailing `while (cond)` each
+// iteration (same cursor-reset model as runWhile). The body runs at least once.
+function runDoWhile(s: string): void {
+  const outer: i32 = evalLive;
+  evalSkipWs(s);
+  const bodyStart: i32 = evalPos;
+  let looping: i32 = 1;
+  let iters: i32 = 0;
+  while (looping === 1) {
+    evalPos = bodyStart;
+    evalLive = outer;
+    runStatement(s); // body
+    evalLive = outer;
+    // trailing `while ( cond )` — re-parse it so the cursor lands past the whole statement
+    evalSkipWs(s);
+    if (isIdentChar(evalPeek(s), 0) === 1) readIdent(s); // 'while'
+    evalSkipWs(s);
+    if (evalPeek(s) === 40) evalPos = evalPos + 1; // '('
+    const cond: i32 = parseExpr(s);
+    evalSkipWs(s);
+    if (evalPeek(s) === 41) evalPos = evalPos + 1; // ')'
+    evalSkipWs(s);
+    if (evalPeek(s) === 59) evalPos = evalPos + 1; // optional ';'
+    if (outer === 0) {
+      looping = 0;
+    } else if (evalReturned === 1) {
+      looping = 0;
+    } else if (evalBroke === 1) {
+      evalBroke = 0;
+      looping = 0;
+    } else {
+      if (evalContinued === 1) evalContinued = 0;
+      looping = dynToBool(cond) === 1 ? 1 : 0;
+    }
+    iters = iters + 1;
+    if (iters > 100000000) looping = 0;
+  }
+}
+
+// #14 2e.1 — `for (...)`. Detects `for (decl? x of iterable)` (for-of) vs C-style `for (init; cond;
+// update)` by reading the header; dispatches to the matching runner.
+function runFor(s: string): void {
+  const outer: i32 = evalLive;
+  evalSkipWs(s);
+  if (evalPeek(s) === 40) evalPos = evalPos + 1; // '('
+  const save: i32 = evalPos;
+  evalSkipWs(s);
+  let isForOf: i32 = 0;
+  let loopVar: string = "";
+  if (isIdentChar(evalPeek(s), 0) === 1) {
+    const w1: string = readIdent(s);
+    let nameWord: string = w1;
+    if (strEq(w1, "const") === 1 || strEq(w1, "let") === 1 || strEq(w1, "var") === 1) {
+      evalSkipWs(s);
+      nameWord = readIdent(s);
+    }
+    evalSkipWs(s);
+    if (isIdentChar(evalPeek(s), 0) === 1) {
+      const w2: string = readIdent(s);
+      if (strEq(w2, "of") === 1) {
+        isForOf = 1;
+        loopVar = nameWord;
+      }
+    }
+  }
+  if (isForOf === 1) {
+    runForOf(s, loopVar, outer);
+  } else {
+    evalPos = save;
+    runForClassic(s, outer);
+  }
+}
+
+// `for (const x of arr) body` — iterate an array value (tag 5). The loop var is bound in the current
+// env each iteration (var-like; a per-iteration fresh binding is a later refinement).
+function runForOf(s: string, loopVar: string, outer: i32): void {
+  const arr: i32 = parseExpr(s); // the iterable (cursor was just past `of`)
+  evalSkipWs(s);
+  if (evalPeek(s) === 41) evalPos = evalPos + 1; // ')'
+  const bodyStart: i32 = evalPos;
+  let len: i32 = 0;
+  const av: Int32Array = arr as unknown as Int32Array;
+  if (outer === 1 && av[0] === 5) len = dynArrLen(arr); // tag 5 = array
+  let looping: i32 = (outer === 1 && len > 0) ? 1 : 0;
+  if (looping === 0) {
+    evalLive = 0;
+    evalPos = bodyStart;
+    runStatement(s); // dead body — advance the cursor past it
+    evalLive = outer;
+    return;
+  }
+  let i: i32 = 0;
+  while (looping === 1) {
+    dynSet(evalEnv, loopVar, dynArrGet(arr, i));
+    evalPos = bodyStart;
+    evalLive = 1;
+    runStatement(s);
+    evalLive = outer;
+    if (evalReturned === 1) {
+      looping = 0;
+    } else if (evalBroke === 1) {
+      evalBroke = 0;
+      looping = 0;
+    } else {
+      if (evalContinued === 1) evalContinued = 0;
+      i = i + 1;
+      if (i >= len) looping = 0;
+    }
+  }
+}
+
+// C-style `for (init; cond; update) body`. The cursor is at the init clause. Re-parses cond/update/
+// body each iteration (cursor-reset). init + update reuse runStatement (which handles assignment /
+// `++` / `+=` / bare expr); cond is a bare expression; any clause may be empty.
+function runForClassic(s: string, outer: i32): void {
+  evalLive = outer;
+  runStatement(s); // init (consumes its own ';')
+  const condStart: i32 = evalPos;
+  let looping: i32 = 1;
+  let iters: i32 = 0;
+  while (looping === 1) {
+    evalPos = condStart;
+    evalSkipWs(s);
+    let condTrue: i32 = 1; // empty cond → true
+    if (evalPeek(s) !== 59) condTrue = dynToBool(parseExpr(s));
+    evalSkipWs(s);
+    if (evalPeek(s) === 59) evalPos = evalPos + 1; // ';' after cond
+    const updateStart: i32 = evalPos;
+    // skip the update (dead) to locate the body start
+    evalLive = 0;
+    if (evalPeek(s) !== 41) runStatement(s);
+    evalSkipWs(s);
+    if (evalPeek(s) === 41) evalPos = evalPos + 1; // ')'
+    const bodyStart: i32 = evalPos;
+    const run: i32 = (outer === 1 && condTrue === 1) ? 1 : 0;
+    if (run === 1) {
+      evalPos = bodyStart;
+      evalLive = 1;
+      runStatement(s); // body, live
+      evalLive = outer;
+      if (evalReturned === 1) {
+        looping = 0;
+      } else if (evalBroke === 1) {
+        evalBroke = 0;
+        looping = 0;
+      } else {
+        if (evalContinued === 1) evalContinued = 0;
+        evalPos = updateStart; // run the update, live
+        evalLive = outer;
+        if (evalPeek(s) !== 41) runStatement(s);
+        evalLive = outer;
+      }
+      iters = iters + 1;
+      if (iters > 100000000) looping = 0;
+    } else {
+      evalPos = bodyStart;
+      evalLive = 0;
+      runStatement(s); // dead body — advance past it
       evalLive = outer;
       looping = 0;
     }
@@ -2216,8 +2392,22 @@ function runStatement(s: string): void {
     }
     if (strEq(word, "if") === 1) { runIf(s); return; }
     if (strEq(word, "while") === 1) { runWhile(s); return; }
+    if (strEq(word, "do") === 1) { runDoWhile(s); return; }
+    if (strEq(word, "for") === 1) { runFor(s); return; }
     if (strEq(word, "return") === 1) { runReturn(s); return; }
     if (strEq(word, "function") === 1) { runFuncDecl(s); return; }
+    if (strEq(word, "break") === 1) { // #14 2e.1
+      if (evalLive === 1) evalBroke = 1;
+      evalSkipWs(s);
+      if (evalPeek(s) === 59) evalPos = evalPos + 1;
+      return;
+    }
+    if (strEq(word, "continue") === 1) {
+      if (evalLive === 1) evalContinued = 1;
+      evalSkipWs(s);
+      if (evalPeek(s) === 59) evalPos = evalPos + 1;
+      return;
+    }
     // not a keyword: bare-identifier assignment `word = expr`, else an expression statement
     evalSkipWs(s);
     const nc: i32 = evalPeek(s);
@@ -2225,6 +2415,44 @@ function runStatement(s: string): void {
       evalPos = evalPos + 1; // consume '='
       const val: i32 = parseExpr(s);
       if (evalLive === 1) dynSet(evalEnv, word, val);
+      evalSkipWs(s);
+      if (evalPeek(s) === 59) evalPos = evalPos + 1;
+      return;
+    }
+    if (nc === 43 && evalPeek2(s) === 43) { // '++' (#14 2e.1 — postfix, statement form)
+      evalPos = evalPos + 2;
+      if (evalLive === 1) {
+        const cur: i32 = envLookup(evalEnv, word);
+        dynSet(evalEnv, word, dynAdd(cur, dynNumber(1)));
+      }
+      evalSkipWs(s);
+      if (evalPeek(s) === 59) evalPos = evalPos + 1;
+      return;
+    }
+    if (nc === 45 && evalPeek2(s) === 45) { // '--'
+      evalPos = evalPos + 2;
+      if (evalLive === 1) {
+        const cur: i32 = envLookup(evalEnv, word);
+        dynSet(evalEnv, word, dynSub(cur, dynNumber(1)));
+      }
+      evalSkipWs(s);
+      if (evalPeek(s) === 59) evalPos = evalPos + 1;
+      return;
+    }
+    if ((nc === 43 || nc === 45 || nc === 42 || nc === 47) && evalPeek2(s) === 61) {
+      // compound assignment '+=' '-=' '*=' '/=' (#14 2e.1 — common in loop bodies/updates)
+      const op: i32 = nc;
+      evalPos = evalPos + 2; // consume operator + '='
+      const rhs: i32 = parseExpr(s);
+      if (evalLive === 1) {
+        const cur: i32 = envLookup(evalEnv, word);
+        let nv: i32 = cur;
+        if (op === 43) nv = dynAdd(cur, rhs);
+        else if (op === 45) nv = dynSub(cur, rhs);
+        else if (op === 42) nv = dynMul(cur, rhs);
+        else nv = dynDiv(cur, rhs);
+        dynSet(evalEnv, word, nv);
+      }
       evalSkipWs(s);
       if (evalPeek(s) === 59) evalPos = evalPos + 1;
       return;
@@ -2255,7 +2483,8 @@ function runStatements(s: string): void {
     } else {
       maybeCollect(); // statement boundary — safe to collect (all live values are rooted)
       const saved: i32 = evalLive;
-      if (evalReturned === 1) evalLive = 0; // statements after a `return` are parsed but not run
+      // statements after a return/break/continue are parsed (to advance the cursor) but not run
+      if (evalReturned === 1 || evalBroke === 1 || evalContinued === 1) evalLive = 0;
       runStatement(s);
       evalLive = saved;
     }

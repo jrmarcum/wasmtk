@@ -871,8 +871,14 @@ codebase is a SEPARATE, larger track scoped below.
 
 **Recommended build order (land + full-suite-verify each before the next, one increment per session like
 the #13/#14 cadence; each ships a `18*` test, output-diff green):**
-1. **2e.1 control flow** (`for`/`for-of`/`switch`/`break`-`continue` — highest real-JS frequency, builds
-   directly on `runWhile`/`runIf`).
+1. **2e.1 control flow** — **2e.1a SHIPPED 2026-06-24** (test `18zc`): C-style `for`, `for…of` (over an
+   array value), `do…while`, `break`/`continue`, and the `++`/`--`/`+=`/`-=`/`*=`/`/=` update forms
+   (added to `runStatement` + new `evalBroke`/`evalContinued` signals that loops clear; built on the
+   `runWhile` cursor-reset model). **Remaining 2e.1: `for-in` + `switch`** (and `for…of` over an INLINE
+   array literal needs 2e.2 literals — today the iterable must be a bound array value). **Lesson:** the
+   wasic/modc subset rejects a brace-LESS `if (c) stmt; else …` (orphans the `else`) — fully brace every
+   `if/else if/else`; and a `.wasm`-import in a driver must be SINGLE-LINE (the import detector is
+   line-based).
 2. **2e.2 literals** (object/array/template) — unlocks most idiomatic dynamic code.
 3. **2e.4 assignment forms** (compound/`++`/member-assign/destructuring).
 4. **2e.3 functions** (arrow + function expressions), **2e.5 operators**, **2e.6 try/catch**, **2e.7
