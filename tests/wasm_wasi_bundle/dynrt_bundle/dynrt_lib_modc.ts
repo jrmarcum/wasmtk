@@ -1777,8 +1777,29 @@ function parsePrimary(s: string): i32 {
     evalSkipWs(s);
     let go: i32 = evalPeek(s) === 93 ? 0 : 1; // empty []
     while (go === 1) {
-      const el: i32 = parseExpr(s);
-      dynPush(arr, el);
+      evalSkipWs(s);
+      // #14 2e.5 spread: `...arr` splices that array's elements into this literal
+      let isSpread: i32 = 0;
+      if (evalPeek(s) === 46 && evalPeek2(s) === 46) {
+        if (evalPos + 2 < s.length) {
+          if (s.charCodeAt(evalPos + 2) === 46) isSpread = 1;
+        }
+      }
+      if (isSpread === 1) {
+        evalPos = evalPos + 3; // consume '...'
+        const spreadArr: i32 = parseExpr(s);
+        const sn: Int32Array = spreadArr as unknown as Int32Array;
+        if (sn[0] === 5) { // array
+          const slen: i32 = dynArrLen(spreadArr);
+          let si: i32 = 0;
+          while (si < slen) {
+            dynPush(arr, dynArrGet(spreadArr, si));
+            si = si + 1;
+          }
+        }
+      } else {
+        dynPush(arr, parseExpr(s));
+      }
       evalSkipWs(s);
       if (evalPeek(s) === 44) {
         evalPos = evalPos + 1; // ','
@@ -1892,10 +1913,41 @@ function parsePrimary(s: string): i32 {
 function parsePostfix(s: string): i32 {
   let v: i32 = parsePrimary(s);
   let go: i32 = 1;
-  while (go === 1) {
+  let optDead: i32 = 0; // #14 2e.5: set once an optional `?.` hits a null/undefined receiver — the rest
+  while (go === 1) { //                of the chain then short-circuits to undefined (still parsed).
     evalSkipWs(s);
-    const c: i32 = evalPeek(s);
-    if (c === 46) { // .name
+    let c: i32 = evalPeek(s);
+    let handled: i32 = 0;
+    if (c === 63 && evalPeek2(s) === 46) { // `?.` optional chaining
+      evalPos = evalPos + 2;
+      if (optDead === 0) {
+        const vn: Int32Array = v as unknown as Int32Array;
+        const vt: i32 = vn[0];
+        if (vt === 0 || vt === 1) optDead = 1; // null/undefined receiver → kill the chain
+      }
+      evalSkipWs(s);
+      const ac: i32 = evalPeek(s); // access kind after `?.`: '[' (index) / ident (member) — inline.
+      if (ac === 91) { // `?.[k]` optional index
+        evalPos = evalPos + 1; // '['
+        const oidx: i32 = parseExpr(s);
+        evalSkipWs(s);
+        if (evalPeek(s) === 93) evalPos = evalPos + 1; // ']'
+        v = optDead === 1 ? dynUndefined() : dynIndexValue(v, oidx);
+      } else { // `?.name` optional member
+        const start: i32 = evalPos;
+        let ch: i32 = evalPeek(s);
+        while (isIdentChar(ch, 1) === 1) {
+          evalPos = evalPos + 1;
+          ch = evalPeek(s);
+        }
+        const name: string = s.slice(start, evalPos);
+        v = optDead === 1 ? dynUndefined() : dynMember(v, name);
+      }
+      handled = 1; // optional access done — keep looping for any further chain
+    }
+    if (handled === 1) {
+      // `?.name` already applied above — fall back to the loop for any further access
+    } else if (c === 46) { // .name
       evalPos = evalPos + 1;
       evalSkipWs(s);
       const start: i32 = evalPos;
@@ -1905,13 +1957,13 @@ function parsePostfix(s: string): i32 {
         ch = evalPeek(s);
       }
       const name: string = s.slice(start, evalPos);
-      v = dynMember(v, name);
+      v = optDead === 1 ? dynUndefined() : dynMember(v, name);
     } else if (c === 91) { // [expr]
       evalPos = evalPos + 1;
       const idx: i32 = parseExpr(s);
       evalSkipWs(s);
       if (evalPeek(s) === 93) evalPos = evalPos + 1; // ']'
-      v = dynIndexValue(v, idx);
+      v = optDead === 1 ? dynUndefined() : dynIndexValue(v, idx);
     } else if (c === 40) { // (args)  — call
       evalPos = evalPos + 1;
       // #14 GC P5b: the callee `v` and the args array (holding already-evaluated args) are live across
@@ -1939,8 +1991,8 @@ function parsePostfix(s: string): i32 {
         }
       }
       // The CALL is the only side-effecting op: skip the dispatch in a dead (short-circuited)
-      // branch, but still parse the args above so the cursor advances correctly.
-      if (evalLive === 1) v = dynApply(v, argsArr);
+      // branch or a killed optional chain, but still parse the args above so the cursor advances.
+      if (evalLive === 1 && optDead === 0) v = dynApply(v, argsArr);
       else v = dynUndefined();
       gcPopRoot(); // argsArr
       gcPopRoot(); // v
@@ -1949,6 +2001,18 @@ function parsePostfix(s: string): i32 {
     }
   }
   return v;
+}
+
+// #14 2e.5 — `typeof v` as a string value. typeof null === "object" (the JS quirk); array/object → object.
+function dynTypeofStr(v: i32): i32 {
+  const vn: Int32Array = v as unknown as Int32Array;
+  const t: i32 = vn[0];
+  if (t === 0) return dynString("undefined");
+  if (t === 2) return dynString("boolean");
+  if (t === 3) return dynString("number");
+  if (t === 4) return dynString("string");
+  if (t === 7) return dynString("function");
+  return dynString("object"); // null (1) / array (5) / object (6)
 }
 
 function parseUnary(s: string): i32 {
@@ -1966,6 +2030,12 @@ function parseUnary(s: string): i32 {
     evalPos = evalPos + 1;
     const v: i32 = parseUnary(s);
     return dynNumber(dynToNumber(v));
+  }
+  if (c === 116) { // 't' — maybe the `typeof` operator (#14 2e.5)
+    const save: i32 = evalPos;
+    const w: string = readIdent(s);
+    if (strEq(w, "typeof") === 1) return dynTypeofStr(parseUnary(s));
+    evalPos = save; // not typeof — restore and fall through
   }
   return parsePostfix(s);
 }
@@ -2111,6 +2181,19 @@ function parseOr(s: string): i32 {
       gcPopRoot();
       evalLive = saved;
       if (leftTruthy === 0) left = right;
+    } else if (evalPeek(s) === 63 && evalPeek2(s) === 63) { // ?? nullish coalescing (#14 2e.5)
+      evalPos = evalPos + 2;
+      // a ?? b → a unless a is null/undefined, then b. Right is dead when left is non-nullish.
+      const ln: Int32Array = left as unknown as Int32Array;
+      const lt: i32 = ln[0];
+      const leftNullish: i32 = (lt === 0 || lt === 1) ? 1 : 0;
+      const saved: i32 = evalLive;
+      if (leftNullish === 0) evalLive = 0;
+      gcPushRoot(left);
+      const right: i32 = parseAnd(s);
+      gcPopRoot();
+      evalLive = saved;
+      if (leftNullish === 1) left = right;
     } else {
       go = 0;
     }

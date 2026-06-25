@@ -17998,8 +17998,9 @@ class WasicTranspiler {
   }
 
   transpile(_moduleName: string): string {
-    // Phase 49: optional chaining — strip ?. to . (safe for non-nullable types)
-    this.src = this.src.replace(/[?][.]/g, ".");
+    // Phase 49: optional chaining — strip ?. to . (safe for non-nullable types). CODE ONLY: a `?.`
+    // inside a string literal (e.g. a dynrt driver's eval source `"o?.x"`) must be left intact.
+    this.src = rewriteOutsideStringsAndComments(this.src, (code) => code.replace(/[?][.]/g, "."));
     // Pre-pass: expand generic templates by monomorphization before any other parsing
     this.src = this.expandGenerics(this.src);
     // Phase 30: expand namespace blocks into prefixed top-level declarations

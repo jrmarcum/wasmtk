@@ -26,6 +26,13 @@ improvement — any program with `=>` inside a string literal now compiles. (A 3
 fixed: `runStatement` treated a top-level `x => …` arrow statement as the assignment `x = …` because its
 `=` check didn't exclude `=>`; added `peek2 !== '>'`. See dynrt-design.md 2e.3.)
 
+**Same class, 2026-06-24 (#14 2e.5):** the Phase-49 optional-chaining strip `this.src.replace(/[?][.]/g,
+".")` in `transpile()` was ALSO string-blind, mangling a `?.` inside a dynrt driver's eval-source string
+(`"o?.x"`→`"o.x"`). `?.name` "worked" by accident (`o?.x?.y`→`o.x.y` — same result when nothing is null)
+but `?.[k]` broke (`.[` is invalid → undefined → trap). Fixed by routing through
+`rewriteOutsideStringsAndComments` (code-only). General wasic fix — any program with `?.` inside a string
+literal now compiles correctly.
+
 ## FIXED — wasmmerge placed a merged module's non-WASI import AFTER function definitions (#14 Phase 2, 2026-06-24)
 
 Surfaced building #14 Phase 2 (host→core callbacks): the dynrt lib gained ONE `env.__host_call` import

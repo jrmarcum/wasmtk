@@ -910,6 +910,19 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
    `firstCodeArrowIdx`; (c) dynrt `runStatement` treated `x => …` as the assignment `x = …` (its `=`
    check didn't exclude `=>`) — added `peek2 !== '>'`. **2e.5 operators**, **2e.6 try/catch**, **2e.7
    scoping** remain.
+5. **2e.5 operators** — **SHIPPED 2026-06-24** (test `18zg`): `typeof` (parseUnary → type string via
+   `dynTypeofStr`; `typeof null === "object"`), nullish coalescing `??` (parseOr — 0/false are NOT
+   nullish, unlike `||`), optional chaining `?.` (parsePostfix — `?.name`/`?.[k]`, both inline; `optDead`
+   flag short-circuits the rest of the chain when a receiver is null/undefined, propagating through a
+   following `()` call), and array spread `[...a, ...b]` (parsePrimary). **Fixed a general wasic bug:**
+   the Phase-49 `?.`→`.` strip (`transpile()`) ran over the RAW source, so a `?.` inside a STRING LITERAL
+   (a dynrt driver's eval source `"o?.x"`) was mangled to `.` — `?.name` then "worked" by accident
+   (`o?.x?.y`→`o.x.y`) but `?.[k]` broke (`.[` is invalid). Now routed through
+   `rewriteOutsideStringsAndComments` (code-only), same as the earlier `=>`/`eval(`/`Function(` fixes.
+   **wasic-subset lessons:** inline `(v as Int32Array)[0]` is unsupported — bind the view to a local
+   first; a multi-line `if (...)` CONDITION is unsupported — keep it on one line or use nested ifs.
+   **Deferred:** `instanceof` (needs classes — 2e.8), object spread `{...o}`, call spread `f(...args)`,
+   direct optional call `o?.()`. **2e.6 try/catch**, **2e.7 scoping** remain.
 5. **2f.1 prototype + `this`** (object-model upgrade) → unlocks **2e.8 classes**.
 6. **2f.2–2f.9 stdlib** — do the BRIDGES first (2f.5 JSON, 2f.6 Map/Set, 2f.7 RegExp reuse the existing
    capability libs → cheap), then Array/String/Object/Math methods.
