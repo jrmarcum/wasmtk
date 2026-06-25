@@ -890,7 +890,13 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
    sliced raw (no `\n`/escape processing yet); object-literal `{` is an object only at EXPRESSION
    position (statement-level `{` stays a block, JS-consistent). Member ASSIGNMENT (`o.x = v`) is still
    2e.4.
-3. **2e.4 assignment forms** (compound/`++`/member-assign/destructuring).
+3. **2e.4 assignment forms** — **member/index assignment SHIPPED 2026-06-24** (test `18zf`): `o.x = v`,
+   `o[k] = v`, `arr[i] = v` (plain + `+=`/`-=`/`*=`/`/=` compound), nested targets (`o.p.v`, `m[i][j]`),
+   computed keys, in-loop mutation. `runStatement` walks the member/index path (navigating all but the
+   last segment via `dynMember`/`dynIndexValue`), then sets via new `dynArrSet`/`dynIndexSet` (or rewinds
+   to an expression statement if no assignment operator follows — distinguishes `o.x = v` from
+   `o.foo()`). `dynArrSet` appends when `i === length`. (Variable `++`/`--`/`+=` were done in 2e.1;
+   **destructuring assignment `[a,b] = …` still remains** — pairs with destructuring in 2e.x.)
 4. **2e.3 functions** — **SHIPPED 2026-06-24** (test `18ze`): anonymous `function (p) { … }` expressions
    and arrow functions `(p) => …` / `p => …` / `() => …` (block or expression body) in `parsePrimary`,
    building user-function VALUES that close over the current env — higher-order fns + closures + nested

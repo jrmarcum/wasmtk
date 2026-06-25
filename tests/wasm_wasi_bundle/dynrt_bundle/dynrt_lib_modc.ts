@@ -1135,6 +1135,38 @@ export function dynArrGet(arr: i32, i: i32): i32 {
   return listGet(n[1], i);
 }
 
+// #14 2e.4 — set array element `i` (in-bounds overwrite; `i === length` appends, extending the array;
+// sparse `i > length` and negative `i` are ignored in v1).
+function dynArrSet(arr: i32, i: i32, val: i32): void {
+  const n: Int32Array = arr as unknown as Int32Array;
+  const len: i32 = listLen(n[1]);
+  if (i >= 0 && i < len) {
+    listSet(n[1], i, val);
+  } else if (i === len) {
+    n[1] = listPush(n[1], val);
+  }
+}
+
+// #14 2e.4 — `container[idx] = val` for arrays (number index) and objects (string key); mirrors
+// dynIndexValue's dispatch. Non-matching container/index kinds are no-ops in v1.
+function dynIndexSet(container: i32, idxBox: i32, val: i32): void {
+  const cn: Int32Array = container as unknown as Int32Array;
+  const ct: i32 = cn[0];
+  const it: i32 = dynTag(idxBox);
+  if (ct === 5) { // array
+    if (it === 3) {
+      const idxf: f64 = dynNumberValue(idxBox);
+      const ii: i32 = idxf as unknown as i32; // truncate toward zero
+      dynArrSet(container, ii, val);
+    }
+  } else if (ct === 6) { // object
+    if (it === 4) {
+      const key: string = boxToStr(idxBox);
+      dynSet(container, key, val);
+    }
+  }
+}
+
 // ── Operators ─────────────────────────────────────────────────────────────────────────────────
 
 /** JS `===` (strict equality): primitives by value, objects/arrays by reference. */
@@ -2829,6 +2861,74 @@ function runStatement(s: string): void {
         else nv = dynDiv(cur, rhs);
         dynSet(evalEnv, word, nv);
       }
+      evalSkipWs(s);
+      if (evalPeek(s) === 59) evalPos = evalPos + 1;
+      return;
+    }
+    if (nc === 46 || nc === 91) {
+      // #14 2e.4 — member/index path: `word.a.b = v` / `word[k] = v` (incl. `+=`-style), OR an
+      // expression statement (e.g. `word.foo()`). Walk the path; navigate into all but the last
+      // segment, then if the next token is an assignment operator, set; otherwise rewind + parse expr.
+      let container: i32 = evalEnv === -1 ? dynUndefined() : envLookup(evalEnv, word);
+      if (container === -1) container = dynUndefined();
+      let isAssign: i32 = 0;
+      let scanning: i32 = 1;
+      while (scanning === 1) {
+        evalSkipWs(s);
+        const ac: i32 = evalPeek(s);
+        let isDot: i32 = 0;
+        let segKey: string = "";
+        let segIdx: i32 = 0;
+        if (ac === 46) { // '.name'
+          evalPos = evalPos + 1;
+          segKey = readIdent(s);
+          isDot = 1;
+        } else if (ac === 91) { // '[expr]'
+          evalPos = evalPos + 1;
+          segIdx = parseExpr(s);
+          evalSkipWs(s);
+          if (evalPeek(s) === 93) evalPos = evalPos + 1; // ']'
+        } else {
+          scanning = 0;
+        }
+        if (scanning === 1) {
+          evalSkipWs(s);
+          const op0: i32 = evalPeek(s);
+          const op1: i32 = evalPeek2(s);
+          const plain: i32 = (op0 === 61 && op1 !== 61 && op1 !== 62) ? 1 : 0;
+          const compound: i32 = ((op0 === 43 || op0 === 45 || op0 === 42 || op0 === 47) && op1 === 61) ? 1 : 0;
+          if (plain === 1 || compound === 1) {
+            if (plain === 1) evalPos = evalPos + 1; // '='
+            else evalPos = evalPos + 2; // 'op='
+            const rhs: i32 = parseExpr(s);
+            if (evalLive === 1) {
+              let nv: i32 = rhs;
+              if (compound === 1) {
+                const cur: i32 = isDot === 1 ? dynMember(container, segKey) : dynIndexValue(container, segIdx);
+                if (op0 === 43) nv = dynAdd(cur, rhs);
+                else if (op0 === 45) nv = dynSub(cur, rhs);
+                else if (op0 === 42) nv = dynMul(cur, rhs);
+                else nv = dynDiv(cur, rhs);
+              }
+              if (isDot === 1) dynSet(container, segKey, nv);
+              else dynIndexSet(container, segIdx, nv);
+            }
+            isAssign = 1;
+            scanning = 0;
+          } else {
+            container = isDot === 1 ? dynMember(container, segKey) : dynIndexValue(container, segIdx);
+          }
+        }
+      }
+      if (isAssign === 1) {
+        evalSkipWs(s);
+        if (evalPeek(s) === 59) evalPos = evalPos + 1;
+        return;
+      }
+      // not an assignment (method call / member read) — rewind and parse as an expression statement
+      evalPos = start;
+      const ev: i32 = parseExpr(s);
+      if (evalLive === 1) lastValue = ev;
       evalSkipWs(s);
       if (evalPeek(s) === 59) evalPos = evalPos + 1;
       return;
