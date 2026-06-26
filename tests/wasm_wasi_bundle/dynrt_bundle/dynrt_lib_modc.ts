@@ -1999,6 +1999,46 @@ function parsePrimary(s: string): i32 {
       }
       evalPos = save; // not Object.create(…) — fall through to normal resolution
     }
+    if (strEq(name, "new") === 1) { // #14 2e.8 — `new Class(args)`
+      evalSkipWs(s);
+      const cstart: i32 = evalPos; // constructor name (v1: a bare identifier)
+      let cch: i32 = evalPeek(s);
+      while (isIdentChar(cch, 1) === 1) {
+        evalPos = evalPos + 1;
+        cch = evalPeek(s);
+      }
+      const cnm: string = s.slice(cstart, evalPos);
+      const cls: i32 = evalEnv === -1 ? dynUndefined() : envLookup(evalEnv, cnm);
+      const classVal: i32 = cls === -1 ? dynUndefined() : cls;
+      const argsArr: i32 = dynArray();
+      gcPushRoot(argsArr);
+      evalSkipWs(s);
+      if (evalPeek(s) === 40) { // '(args)'
+        evalPos = evalPos + 1;
+        evalSkipWs(s);
+        if (evalPeek(s) === 41) {
+          evalPos = evalPos + 1;
+        } else {
+          let more: i32 = 1;
+          while (more === 1) {
+            const a: i32 = parseExpr(s);
+            dynPush(argsArr, a);
+            evalSkipWs(s);
+            const cc: i32 = evalPeek(s);
+            if (cc === 44) {
+              evalPos = evalPos + 1; // ','
+            } else {
+              if (cc === 41) evalPos = evalPos + 1; // ')'
+              more = 0;
+            }
+          }
+        }
+      }
+      let inst: i32 = dynUndefined();
+      if (evalLive === 1) inst = dynNew(classVal, argsArr);
+      gcPopRoot();
+      return inst;
+    }
     // #14 2e.3 — single-param arrow `name => body`
     evalSkipWs(s);
     if (evalPeek(s) === 61 && evalPeek2(s) === 62) {
@@ -3101,6 +3141,72 @@ function runFuncDecl(s: string): void {
   if (evalLive === 1) dynSet(evalEnv, name, f);
 }
 
+// #14 2e.8 — `class Name { constructor(p){…} method(p){…} … }`. Builds a class value: a small object
+// carrying the prototype (an object holding the methods) under key "__proto" and the constructor function
+// under "__ctor". `new Name(args)` (dynNew) instantiates it. Methods reuse the object-method machinery
+// (makeUserFunc + the prototype-chain dispatch from 2f.1). No extends/super/static/fields in v1.
+function runClassDecl(s: string): void {
+  evalSkipWs(s);
+  const cname: string = readIdent(s);
+  evalSkipWs(s);
+  // optional `extends Base` — not supported in v1; consume the clause so the body still parses
+  if (isIdentChar(evalPeek(s), 0) === 1) {
+    const w: string = readIdent(s);
+    if (strEq(w, "extends") === 1) {
+      evalSkipWs(s);
+      readIdent(s); // base name — ignored in v1
+      evalSkipWs(s);
+    }
+  }
+  const proto: i32 = dynObject();
+  let ctor: i32 = -1;
+  if (evalPeek(s) === 123) evalPos = evalPos + 1; // '{'
+  evalSkipWs(s);
+  while (evalPeek(s) !== 125 && evalPeek(s) !== -1) {
+    if (evalPeek(s) === 59) { // stray ';' between members
+      evalPos = evalPos + 1;
+      evalSkipWs(s);
+    } else {
+      const mname: string = readIdent(s);
+      evalSkipWs(s);
+      const mp: i32 = parseParams(s);
+      evalSkipWs(s);
+      const mb: i32 = parseBlockBody(s);
+      const fn: i32 = makeUserFunc(mp, mb, evalEnv);
+      if (strEq(mname, "constructor") === 1) {
+        ctor = fn;
+      } else {
+        dynSet(proto, mname, fn);
+      }
+      evalSkipWs(s);
+    }
+  }
+  if (evalPeek(s) === 125) evalPos = evalPos + 1; // '}'
+  const classObj: i32 = dynObject();
+  dynSet(classObj, "__proto", proto);
+  if (ctor !== -1) dynSet(classObj, "__ctor", ctor);
+  if (evalLive === 1) dynSet(evalEnv, cname, classObj);
+}
+
+// #14 2e.8 — `new Class(args)`: a fresh instance whose __proto__ (slot 2) is the class prototype; run the
+// constructor with this=instance (so `this.field = …` populates the instance); return the instance.
+function dynNew(classVal: i32, argsArr: i32): i32 {
+  const cn: Int32Array = classVal as unknown as Int32Array;
+  if (cn[0] !== 6) return dynUndefined(); // not a class object → undefined (guarded)
+  const inst: i32 = dynObject();
+  const proto: i32 = dynGet(classVal, "__proto");
+  if (proto !== -1) {
+    const in2: Int32Array = inst as unknown as Int32Array;
+    in2[2] = proto; // instance.__proto__ = class prototype → method lookup walks here (2f.1)
+  }
+  const ctor: i32 = dynGet(classVal, "__ctor");
+  if (ctor !== -1) {
+    const ctorN: Int32Array = ctor as unknown as Int32Array;
+    if (ctorN[0] === 7) dynApplyThis(ctor, argsArr, inst);
+  }
+  return inst;
+}
+
 // Execute one statement at the cursor.
 function runStatement(s: string): void {
   evalSkipWs(s);
@@ -3169,6 +3275,10 @@ function runStatement(s: string): void {
     }
     if (strEq(word, "function") === 1) {
       runFuncDecl(s);
+      return;
+    }
+    if (strEq(word, "class") === 1) { // #14 2e.8
+      runClassDecl(s);
       return;
     }
     if (strEq(word, "break") === 1) { // #14 2e.1

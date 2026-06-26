@@ -1001,6 +1001,22 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
    interpreter-side.** Suite 348/348 (+`18zn`), bindgen 131/131 (the proto-walk is a no-op for the
    slot-2=0 plain objects the `any`-marshalling path uses). One modc-subset gotcha hit + fixed: a
    brace-less `} else v = …;` is unsupported — brace the else.
+5e. **2e.8 classes** — **SHIPPED 2026-06-26** (test `18zo`): `class Name { constructor(p){…} method(p){…} }`.
+   `runClassDecl` builds a class value = a small object carrying the prototype (an object holding the
+   methods, built with `makeUserFunc`) under key `"__proto"` and the constructor under `"__ctor"`; binds
+   `Name` in the env. `new Class(args)` is a `new` operator in `parsePrimary` → `dynNew`: fresh
+   `dynObject` instance whose slot-2 `__proto__` is the class prototype, run the constructor via
+   `dynApplyThis(ctor, args, inst)` (so `this.field = …` populates the instance), return it. Method calls
+   reuse the 2f.1 machinery (prototype-chain `dynMember` + `this`-binding dispatch). Verified: constructor
+   fields, method args, mutating methods across calls, method-calls-sibling-via-`this`, INDEPENDENT
+   instances, no-constructor class. **Purely interpreter-side EXCEPT one general wasic fix:** `parseClasses`
+   was string-blind (its `class…{` regex ran over raw source) so a `class …{}` inside the driver's
+   eval-source STRINGS was parsed as a real wasic class (11 bogus "Unsupported statement: this.x = x"
+   errors). Fixed by detecting over a `maskCode` code-only mask (slicing bodies from the real source) —
+   same string-blind class as the `=>`/`?.` fixes; `maskCode` (from `src/varscope.ts`) is now the shared
+   code-only primitive. Suite 349/349 (real Phase 9/16/17/47 class tests unaffected). **v1 gaps (→ 2e.8a):**
+   `extends`/`super`, `static` members, getters/setters, and class FIELDS (`x = 5;` in the body) — use the
+   constructor (`this.x = …`) for now; class EXPRESSIONS (`const C = class {…}`) are statement-only in v1.
 6. **2f.2–2f.9 stdlib** — do the BRIDGES first (2f.5 JSON, 2f.6 Map/Set, 2f.7 RegExp reuse the existing
    capability libs → cheap), then Array/String/Object/Math methods.
 7. **2e.9 generators**, then **2e.10 async/await** (hardest — needs a microtask loop; ties to #13).

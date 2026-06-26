@@ -1,6 +1,6 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 348/348** (`bindgen` 131/131, `jstyper` 73/73) as of **2026-06-26** (#14 Route A 2e.6 try/catch `18zh` + 2e.7 block scoping `18zi` + 2e.7a per-iteration let `18zj` + 2e.7b var→let gate `18zk`/`18zl`/`18zm` + 2f.1 this+prototype `18zn`) (+`18j`–`18t` dynrt: value-model / virtual
+Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 349/349** (`bindgen` 131/131, `jstyper` 73/73) as of **2026-06-26** (#14 Route A 2e.6 try/catch `18zh` + 2e.7 block scoping `18zi` + 2e.7a per-iteration let `18zj` + 2e.7b var→let gate `18zk`/`18zl`/`18zm` + 2f.1 this+prototype `18zn` + 2e.8 classes `18zo`) (+`18j`–`18t` dynrt: value-model / virtual
 import / eval / eval-env / calls / statements / functions+`new Function` / `18q` wasic `any`
 type+auto-merge / `18r` GC Part 1 auto-grow heap / `18s`-`18z` GC Parts 2-5b + polish COMPLETE (… / splitting / hybrid segregated+coalescing allocator). 4 known wasic gaps are OPEN but worked around in the dynrt library — see next
 section; 2d.1/2d.2/3.1 added none. 3.1 has its own documented FOLLOW-UPS — see dynrt-design.md
@@ -9,6 +9,23 @@ gaps are OPEN but worked around in the dynrt library (so the suite stays green) 
 section; each is a candidate for a real `src/wasic.ts` fix (then the lib workaround can be removed,
 the RegExp `&&` precedent). (Pre-18j: 317 = 307 at v1.7.0 + 2 Phase-53 tests + 8 async tests 54–61;
 `bindgen` 103→104 from the ABI return-side forward-alignment's `cabi_post` assertion.)
+
+## FIXED — wasic `parseClasses` was string-blind: `class …{}` inside a STRING parsed as a real class (#14 2e.8, 2026-06-26)
+
+Surfaced building #14 2e.8 (classes in the dynrt interpreter): the test driver passes eval-source STRINGS
+like `"class Point { constructor(x){ this.x = x; } … } const p = new Point(5); …"` to `dynRun`. wasic's
+`parseClasses` (`src/wasic.ts`) ran its `class\s+(\w+)…{` regex over the RAW `this.src` (string-blind), so
+it matched `class Point {` INSIDE the driver string, brace-counted the body over the raw source (string
+braces miscounted), and extracted a bogus class — leaking its constructor/method bodies as 11 "Unsupported
+statement: this.x = x;" errors. **Fix:** detection now runs over a CODE-ONLY mask
+(`maskCode(this.src)` from `src/varscope.ts` — string/comment chars → spaces, length preserved) for BOTH
+the `classRe` match and the body brace-count; the class body is still SLICED from the real source (valid
+because maskCode preserves positions). Same string-blind class as the earlier `=>` / `?.` / `eval(` /
+`Function(` fixes — `maskCode` is now the shared code-only primitive (it also backs the 2e.7b var gate).
+General wasic improvement: any real wasic program with `class …{}` text inside a string literal now
+compiles. Regression test: `18zo` (the 2e.8 pipeline). Full suite re-validated 349/349 — real class tests
+(Phase 9/16/17/47) unaffected (maskCode only blanks string/comment CONTENT, leaving real `class` decls
+visible).
 
 ## FIXED — `deno fmt` wrapped a deeply-indented ternary that modc can't parse (process bug, 2026-06-26)
 

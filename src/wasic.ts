@@ -122,7 +122,7 @@ import { basename, dirname } from "@std/path";
 import { rt } from "./rt.ts";
 import { bundleImportsEx } from "./tsbundler.ts";
 import { type ExternalFuncDef, mergeWasmWat, type WasmWatType } from "./wasmmerge.ts";
-import { gateVarToLet } from "./varscope.ts";
+import { gateVarToLet, maskCode } from "./varscope.ts";
 import { MATHLIB_BYTES } from "./wasm/mathlib_bytes.ts";
 import {
   type ClosureVarLookup,
@@ -4254,20 +4254,24 @@ class WasicTranspiler {
    */
   private parseClasses(): void {
     const src = this.src;
+    // Detection runs over a CODE-ONLY mask (string/comment chars blanked, length preserved) so a
+    // `class … { … }` inside a STRING LITERAL — e.g. a dynrt driver's eval source — is never parsed as
+    // a real class. m.index / lengths are valid in both; class bodies are sliced from the real source.
+    const masked = maskCode(src);
     const classRe = /(?:export\s+)?class\s+(\w+)(?:\s+extends\s+(\w+))?\s*\{/g;
     let m: RegExpExecArray | null;
 
-    while ((m = classRe.exec(src)) !== null) {
+    while ((m = classRe.exec(masked)) !== null) {
       const className = m[1];
       const baseName = m[2] ?? null;
       if (baseName !== null) this.classInheritance.set(className, baseName);
       const classBodyStart = m.index + m[0].length;
 
-      // Find end of class body by brace counting
+      // Find end of class body by brace counting over the mask (so braces inside strings don't count)
       let depth = 1, ci = classBodyStart;
-      while (ci < src.length && depth > 0) {
-        if (src[ci] === "{") depth++;
-        else if (src[ci] === "}") depth--;
+      while (ci < masked.length && depth > 0) {
+        if (masked[ci] === "{") depth++;
+        else if (masked[ci] === "}") depth--;
         ci++;
       }
       const classBodyEnd = ci - 1;
