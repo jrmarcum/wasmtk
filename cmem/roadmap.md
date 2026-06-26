@@ -1,16 +1,23 @@
 # Roadmap, phase status & vision
 
-## Release status (2026-06-24)
+## Release status (2026-06-26)
 
-**Version 1.9.0 is PUBLISHED to JSR** (`@jrmarcum/wasmtk@1.9.0` is `latest`). This release ships the
-**COMPLETE #14 own dynamic runtime** — value model → JS interpreter (`eval`/`new Function`) → wasic `any`
-integration → host↔core marshalling (numbers/strings/bools/objects/arrays **and functions**) →
-bounded-memory **mark-sweep GC** → **hybrid recycling allocator** → **functions-as-`any`** (the
-`Function(params, body)` producer + a callable, pinned host proxy), verified end-to-end
-(`getDoubler()(21)=42`). At the 1.9.0 tag: suite **336/336**, bindgen **122/122**, jstyper 73/73
-(the 122 includes a post-publish "look for code issues" audit that fixed 3 latent correctness bugs in the
-functions-as-`any` plumbing — see compiler-bugs.md; a 1.9.1 patch is the natural home for those). JSR
-score 100% (provenance `true`, docs clean — keep `deno doc --lint` clean to hold it).
+**Version 1.10.6 is PUBLISHED to JSR** (`@jrmarcum/wasmtk@1.10.6` is `latest`). The 1.10.x line is the
+**Route A javyc-retirement track** — growing the `#14` own dynamic runtime (dynrt) interpreter toward
+full-JS coverage, one increment per patch release: **1.10.1–1.10.5** added control flow, array/object/
+template literals, function expressions + arrow functions, member/index assignment, and operators
+(`typeof`/`??`/`?.`/array spread); **1.10.6** adds **exception handling** — `throw`/`try`/`catch`/`finally`
+in dynamic source, with throws propagating through statements, loops, and function calls (2e.6, test
+`18zh`, purely interpreter-side). Earlier in the line, **1.10.0** shipped bidirectional functions-as-`any`
+(host→core callbacks via `env.__host_call`). At the 1.10.6 tag: `tests/wasm_wasi` suite **342/342**,
+bindgen 131/131, jstyper 73/73. JSR score 100% (provenance `true`, docs clean — keep `deno doc --lint`
+clean to hold it).
+
+**Version 1.9.0** (2026-06-24) shipped the **COMPLETE #14 own dynamic runtime** — value model → JS
+interpreter (`eval`/`new Function`) → wasic `any` integration → host↔core marshalling (numbers/strings/
+bools/objects/arrays **and functions**) → bounded-memory **mark-sweep GC** → **hybrid recycling
+allocator** → **functions-as-`any`** (the `Function(params, body)` producer + a callable, pinned host
+proxy), verified end-to-end (`getDoubler()(21)=42`).
 
 **Version 1.8.0** (2026-06-22) shipped the **full v1 `async`/Promise surface** for the `wasic` compiler
 (#13 track, sub-phases
