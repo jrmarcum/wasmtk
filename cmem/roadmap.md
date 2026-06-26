@@ -2,29 +2,25 @@
 
 ## Release status (2026-06-26)
 
-**Version 1.10.7 is PUBLISHED to JSR** (`@jrmarcum/wasmtk@1.10.7` is `latest`). The 1.10.x line is the
+**Version 1.10.8 is PUBLISHED to JSR** (`@jrmarcum/wasmtk@1.10.8` is `latest`). The 1.10.x line is the
 **Route A javyc-retirement track** — growing the `#14` own dynamic runtime (dynrt) interpreter toward
-full-JS coverage, one increment per patch release: **1.10.1–1.10.5** added control flow, array/object/
-template literals, function expressions + arrow functions, member/index assignment, and operators
-(`typeof`/`??`/`?.`/array spread); **1.10.6** added **exception handling** — `throw`/`try`/`catch`/`finally`
-in dynamic source, with throws propagating through statements, loops, and function calls (2e.6, test
-`18zh`); **1.10.7** adds **lexical block scoping** — each `{ }` block / `for` loop / `catch` runs in a
-fresh child scope so `let`/`const` don't leak, and bare assignment walks the scope chain to update the
-declaring binding not a shadow (2e.7, test `18zi`; also fixed a latent process bug — `deno fmt` had
-wrapped dynrt ternaries past what modc can parse, so the v1.10.6 lib SOURCE didn't round-trip; the shipped
-binary was unaffected). Both increments are purely interpreter-side. Earlier in the line, **1.10.0**
-shipped bidirectional functions-as-`any` (host→core callbacks via `env.__host_call`). At the 1.10.7 tag:
-`tests/wasm_wasi` suite **343/343**, bindgen 131/131, jstyper 73/73. JSR score 100% (provenance `true`,
-docs clean — keep `deno doc --lint` clean to hold it).
+full-JS coverage, one increment per patch release. **1.10.8 is a big OOP batch** — five increments:
+**2e.7a** per-iteration `let` binding (loop-closure capture; `var` stays a single shared binding — `18zj`);
+**2e.7b** the `var`→`let` consumption gate (`src/varscope.ts`, the FIRST wasic-compiler change in the 2e.x
+series: auto-repair provably-safe `var`→`let`, hard-error unsafe ones — establishes **ES6 as the base
+preferred consumption format**; `18zk`/`18zl`/`18zm` + `tests/varscope_tests.ts`); **2f.1** `this` +
+prototype (object-literal method shorthand, `obj.m()` binds `this`, `Object.create(proto)` + prototype-chain
+lookup — `18zn`); **2e.8** classes (`class Name { constructor(){…} method(){…} }` + `new Name(args)`;
+`18zo` — also fixed a general wasic bug where `parseClasses` was string-blind, now `maskCode` code-only);
+and **2e.8a** class COMPLETION (`extends` + `super` + `static` + instance fields + getters/setters — the
+class feature is now complete bar class-expressions; `18zp`). At the 1.10.8 tag: `tests/wasm_wasi` suite
+**350/350**, bindgen 131/131, jstyper 73/73. JSR score 100% (provenance `true`, docs clean — keep
+`deno doc --lint` clean to hold it).
 
-**Unreleased on `main` (pending the next release, suite 348/348):** **2e.7a** per-iteration `let` binding
-(loop-closure capture; `var` stays a single shared binding — test `18zj`); **2e.7b** the `var`→`let`
-consumption gate (`src/varscope.ts` — the FIRST wasic-compiler change in the 2e.x series: auto-repair
-provably-safe `var`→`let`, hard-error unsafe ones; tests `18zk`/`18zl`/`18zm` + `tests/varscope_tests.ts`),
-which establish **ES6 as the base preferred consumption format** (see dynrt-design.md "Language consumption
-profile"); and **2f.1** `this` + prototype (object-literal method shorthand, `obj.m()` binds `this`,
-`this.field` r/w, `Object.create(proto)` + prototype-chain lookup — the object-model foundation that
-unblocks **2e.8 classes**; test `18zn`). bindgen 131/131, jstyper 73/73 unchanged.
+**Earlier in the 1.10.x line:** 1.10.1–1.10.5 (control flow / literals / function-exprs+arrows /
+member-index assignment / operators), 1.10.6 (exception handling `throw`/`try`/`catch`/`finally`), 1.10.7
+(lexical block scoping; also fixed a latent `deno fmt`-vs-modc source round-trip bug, shipped binary
+unaffected), 1.10.0 (bidirectional functions-as-`any`).
 
 **Version 1.9.0** (2026-06-24) shipped the **COMPLETE #14 own dynamic runtime** — value model → JS
 interpreter (`eval`/`new Function`) → wasic `any` integration → host↔core marshalling (numbers/strings/
