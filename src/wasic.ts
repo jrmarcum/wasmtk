@@ -425,7 +425,7 @@ function toKebabCase(s: string): string {
 
 /**
  * Apply `transform` to the CODE spans of `src` only — string literals (`'`, `"`, `` ` ``) and comments
- * (`//`, `/* … *​/`) are copied through verbatim. Used by source pre-passes (`eval(`→`dynrt_dynEval(`,
+ * (both line and block comments) are copied through verbatim. Used by source pre-passes (`eval(`→`dynrt_dynEval(`,
  * `Function(`→`dynrt_dynMakeFn(`) so a literal `eval(` / `Function(` inside a printed string or a
  * comment is never rewritten. A regex match can't span a string/comment boundary, so transforming each
  * code span independently is sound. Template literals are treated as opaque in full — their `${…}`

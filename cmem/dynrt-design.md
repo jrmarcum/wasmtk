@@ -923,6 +923,19 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
    first; a multi-line `if (...)` CONDITION is unsupported — keep it on one line or use nested ifs.
    **Deferred:** `instanceof` (needs classes — 2e.8), object spread `{...o}`, call spread `f(...args)`,
    direct optional call `o?.()`. **2e.6 try/catch**, **2e.7 scoping** remain.
+6. **2e.6 try/catch/throw** — **SHIPPED 2026-06-26** (test `18zh`): `throw expr`, `try { } catch (e) { }`,
+   binding-less `catch { }`, `finally { }`, and `try/finally` (no catch). New control globals `evalThrew`
+   /`evalThrowVal` mirror `evalReturned`: a throw stops statement sequencing (`runStatements`), all five
+   loops, and `switch` — and unlike a return it is NOT consumed at a function-call boundary (`dynApply`
+   doesn't save/restore `evalThrew`), so it unwinds through callers until `runTry` catches it. `runTry`
+   runs the try block, then (if `evalThrew && live`) clears the throw + binds `e` via `dynSet` + runs the
+   catch; `finally` runs last with all in-flight control (throw/return/break/continue) saved-cleared-
+   restored so it always executes but a control-flow statement INSIDE finally wins (JS semantics). `dynRun`
+   resets `evalThrew=0` at start (fresh run / clears a leftover uncaught top-level throw). **Purely
+   interpreter-side — no wasic compiler change.** **Known v1 gap:** a throw mid-expression (`f()+g()` where
+   `f` throws) still evaluates `g()` — propagation is enforced at statement/loop/call boundaries, not
+   inside one expression; and the catch binding lives in the current env (no fresh catch scope — lands with
+   2e.7). **2e.7 scoping** next.
 5. **2f.1 prototype + `this`** (object-model upgrade) → unlocks **2e.8 classes**.
 6. **2f.2–2f.9 stdlib** — do the BRIDGES first (2f.5 JSON, 2f.6 Map/Set, 2f.7 RegExp reuse the existing
    capability libs → cheap), then Array/String/Object/Math methods.

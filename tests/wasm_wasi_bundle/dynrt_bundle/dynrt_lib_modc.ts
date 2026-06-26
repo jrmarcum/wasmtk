@@ -110,8 +110,8 @@ const LIST_CAP0: i32 = 4;
 
 function listNew(): i32 {
   const a: Int32Array = dynAlloc(8 + (LIST_CAP0 + 2) * 4) as unknown as Int32Array; // GC-recycled
-  a[0] = 0;          // len
-  a[1] = LIST_CAP0;  // cap
+  a[0] = 0; // len
+  a[1] = LIST_CAP0; // cap
   return a as unknown as i32;
 }
 
@@ -869,7 +869,7 @@ export function dynTypeof(v: i32): i32 {
   if (t === 3) return 3; // number
   if (t === 4) return 4; // string
   if (t === 7) return 5; // function
-  return 1;              // null / array / object → "object"
+  return 1; // null / array / object → "object"
 }
 
 // ── Typed accessors (assert nothing; caller is expected to check the tag) ─────────────────────
@@ -932,11 +932,11 @@ export function dynToBool(v: i32): i32 {
     const p: i32 = n[1];
     const fv: Float64Array = p as unknown as Float64Array;
     const x: f64 = fv[0];
-    if (x !== x) return 0;      // NaN is falsy
-    return x === 0 ? 0 : 1;     // 0 and -0 are falsy
+    if (x !== x) return 0; // NaN is falsy
+    return x === 0 ? 0 : 1; // 0 and -0 are falsy
   }
   if (t === 4) return n[2] === 0 ? 0 : 1; // "" is falsy
-  return 1;                                // array / object are truthy
+  return 1; // array / object are truthy
 }
 
 /** JS ToNumber (v1: string/array/object → NaN). */
@@ -944,14 +944,14 @@ export function dynToBool(v: i32): i32 {
 export function dynToNumber(v: i32): f64 {
   const n: Int32Array = v as unknown as Int32Array;
   const t: i32 = n[0];
-  if (t === 1) return 0;          // null → 0
+  if (t === 1) return 0; // null → 0
   if (t === 2) return n[1] === 0 ? 0 : 1; // bool → 0/1
   if (t === 3) {
     const p: i32 = n[1];
     const fv: Float64Array = p as unknown as Float64Array;
     return fv[0];
   }
-  return Number.NaN;              // undefined / string / array / object → NaN (v1)
+  return Number.NaN; // undefined / string / array / object → NaN (v1)
 }
 
 // ── Internal: reconstruct a wasic string from a string box's bytes ────────────────────────────
@@ -1575,18 +1575,23 @@ export function dynResetSideEffects(): void {
 // keywords, member access, and calls are 2b+. See cmem/dynrt-design.md.
 // ──────────────────────────────────────────────────────────────────────────────────────────────
 
-let evalPos: i32 = 0;   // read cursor into the eval source string
-let evalEnv: i32 = -1;  // current environment object handle (names → values), or -1 for none
-let evalLive: i32 = 1;  // 1 = evaluate effects; 0 = inside a short-circuited (dead) branch
+let evalPos: i32 = 0; // read cursor into the eval source string
+let evalEnv: i32 = -1; // current environment object handle (names → values), or -1 for none
+let evalLive: i32 = 1; // 1 = evaluate effects; 0 = inside a short-circuited (dead) branch
 let sideEffectCounter: i32 = 0; // observable side effect for the `inc()` builtin (short-circuit test)
-let evalReturned: i32 = 0;  // set when a `return` statement executes; stops statement sequencing
+let evalReturned: i32 = 0; // set when a `return` statement executes; stops statement sequencing
 let evalReturnVal: i32 = 0; // the value carried by the executed `return`
-let lastValue: i32 = 0;     // value of the last executed expression statement (dynRun's result)
+let lastValue: i32 = 0; // value of the last executed expression statement (dynRun's result)
 // #14 Route A 2e.1 — loop control flow. Like evalReturned, these stop statement sequencing inside the
 // loop body; the enclosing loop checks + clears them (break stops the loop; continue skips to the next
 // iteration). They never escape a loop (a loop clears them before returning to its caller).
-let evalBroke: i32 = 0;     // set by `break`
+let evalBroke: i32 = 0; // set by `break`
 let evalContinued: i32 = 0; // set by `continue`
+// #14 2e.6 — exception control. `throw` sets evalThrew=1 + evalThrowVal; it propagates up (stopping
+// statement sequencing + loops, like evalReturned) until a `try`/`catch` clears it. Unlike a return,
+// a throw is NOT consumed by a function call boundary (dynApply) — it unwinds through callers.
+let evalThrew: i32 = 0;
+let evalThrowVal: i32 = 0;
 
 // Compare two wasic strings byte-for-byte (avoids relying on `===` over reconstructed substrings).
 function strEq(a: string, b: string): i32 {
@@ -1659,7 +1664,7 @@ export function dynIndexValue(container: i32, idxBox: i32): i32 {
 
 // Is `c` a valid identifier-start (A-Za-z_$) or, when `cont` is 1, also a digit?
 function isIdentChar(c: i32, cont: i32): i32 {
-  if (c >= 65 && c <= 90) return 1;  // A-Z
+  if (c >= 65 && c <= 90) return 1; // A-Z
   if (c >= 97 && c <= 122) return 1; // a-z
   if (c === 95 || c === 36) return 1; // _ $
   if (cont === 1 && c >= 48 && c <= 57) return 1; // 0-9
@@ -1740,8 +1745,8 @@ function parseStringLit(s: string): i32 {
         evalPos = evalPos + 1;
         const e: i32 = s.charCodeAt(evalPos);
         let d: i32 = e;
-        if (e === 110) d = 10;      // \n
-        else if (e === 116) d = 9;  // \t
+        if (e === 110) d = 10; // \n
+        else if (e === 116) d = 9; // \t
         else if (e === 114) d = 13; // \r
         r = r + String.fromCharCode(d);
         evalPos = evalPos + 1;
@@ -2345,7 +2350,7 @@ function runWhile(s: string): void {
       evalLive = 1;
       runStatement(s); // body, live
       evalLive = outer;
-      if (evalReturned === 1) {
+      if (evalReturned === 1 || evalThrew === 1) {
         looping = 0; // a `return` in the body ends the loop
       } else if (evalBroke === 1) {
         evalBroke = 0; // `break` — clear + stop
@@ -2389,7 +2394,7 @@ function runDoWhile(s: string): void {
     if (evalPeek(s) === 59) evalPos = evalPos + 1; // optional ';'
     if (outer === 0) {
       looping = 0;
-    } else if (evalReturned === 1) {
+    } else if (evalReturned === 1 || evalThrew === 1) {
       looping = 0;
     } else if (evalBroke === 1) {
       evalBroke = 0;
@@ -2466,7 +2471,7 @@ function runForIn(s: string, loopVar: string, outer: i32): void {
     evalLive = 1;
     runStatement(s);
     evalLive = outer;
-    if (evalReturned === 1) {
+    if (evalReturned === 1 || evalThrew === 1) {
       looping = 0;
     } else if (evalBroke === 1) {
       evalBroke = 0;
@@ -2504,7 +2509,7 @@ function runForOf(s: string, loopVar: string, outer: i32): void {
     evalLive = 1;
     runStatement(s);
     evalLive = outer;
-    if (evalReturned === 1) {
+    if (evalReturned === 1 || evalThrew === 1) {
       looping = 0;
     } else if (evalBroke === 1) {
       evalBroke = 0;
@@ -2546,7 +2551,7 @@ function runForClassic(s: string, outer: i32): void {
       evalLive = 1;
       runStatement(s); // body, live
       evalLive = outer;
-      if (evalReturned === 1) {
+      if (evalReturned === 1 || evalThrew === 1) {
         looping = 0;
       } else if (evalBroke === 1) {
         evalBroke = 0;
@@ -2698,7 +2703,89 @@ function execSwitchBody(s: string): void {
     }
     if (evalBroke === 1) go = 0; // break — runSwitch clears it
     if (evalReturned === 1) go = 0;
+    if (evalThrew === 1) go = 0; // #14 2e.6: a throw exits the switch (and unwinds)
     if (evalContinued === 1) go = 0; // continue propagates to the enclosing loop
+  }
+}
+
+// #14 2e.6 — `try { … } [catch (e) { … }] [finally { … }]`. Runs the try block; if it threw and a
+// catch is present, clears the throw, binds `e`, runs the catch; runs finally last (it overrides any
+// in-flight throw/return). `throw` sets evalThrew, which unwinds until caught here.
+function runTry(s: string): void {
+  const outer: i32 = evalLive;
+  evalSkipWs(s);
+  evalLive = outer;
+  runStatement(s); // the `{ … }` try block
+  evalLive = outer;
+
+  // optional `catch (e)`
+  evalSkipWs(s);
+  let hasCatch: i32 = 0;
+  const saveCatch: i32 = evalPos;
+  if (isIdentChar(evalPeek(s), 0) === 1) {
+    const w: string = readIdent(s);
+    if (strEq(w, "catch") === 1) hasCatch = 1;
+    else evalPos = saveCatch;
+  }
+  if (hasCatch === 1) {
+    let catchVar: string = "";
+    evalSkipWs(s);
+    if (evalPeek(s) === 40) { // '(e)'
+      evalPos = evalPos + 1;
+      evalSkipWs(s);
+      catchVar = readIdent(s);
+      evalSkipWs(s);
+      if (evalPeek(s) === 41) evalPos = evalPos + 1; // ')'
+    }
+    evalSkipWs(s);
+    if (evalThrew === 1 && outer === 1) {
+      const tv: i32 = evalThrowVal;
+      evalThrew = 0; // caught
+      if (catchVar.length > 0) dynSet(evalEnv, catchVar, tv);
+      evalLive = 1;
+      runStatement(s); // catch block
+      evalLive = outer;
+    } else {
+      evalLive = 0;
+      runStatement(s); // dead — advance past the catch block
+      evalLive = outer;
+    }
+  }
+
+  // optional `finally`
+  evalSkipWs(s);
+  let hasFinally: i32 = 0;
+  const saveFin: i32 = evalPos;
+  if (isIdentChar(evalPeek(s), 0) === 1) {
+    const w2: string = readIdent(s);
+    if (strEq(w2, "finally") === 1) hasFinally = 1;
+    else evalPos = saveFin;
+  }
+  if (hasFinally === 1) {
+    // save in-flight control from try/catch; run finally with it cleared; restore unless finally
+    // produced its own control flow (which then wins, per JS).
+    const sThrew: i32 = evalThrew;
+    const sThrowVal: i32 = evalThrowVal;
+    const sRet: i32 = evalReturned;
+    const sRetVal: i32 = evalReturnVal;
+    const sBroke: i32 = evalBroke;
+    const sCont: i32 = evalContinued;
+    evalThrew = 0;
+    evalReturned = 0;
+    evalBroke = 0;
+    evalContinued = 0;
+    evalSkipWs(s);
+    evalLive = outer;
+    runStatement(s); // finally block
+    evalLive = outer;
+    if (evalThrew === 0 && evalReturned === 0 && evalBroke === 0 && evalContinued === 0) {
+      evalThrew = sThrew;
+      evalThrowVal = sThrowVal;
+      evalReturned = sRet;
+      evalReturnVal = sRetVal;
+      evalBroke = sBroke;
+      evalContinued = sCont;
+    }
   }
 }
 
@@ -2880,13 +2967,48 @@ function runStatement(s: string): void {
       runDecl(s);
       return;
     }
-    if (strEq(word, "if") === 1) { runIf(s); return; }
-    if (strEq(word, "while") === 1) { runWhile(s); return; }
-    if (strEq(word, "do") === 1) { runDoWhile(s); return; }
-    if (strEq(word, "for") === 1) { runFor(s); return; }
-    if (strEq(word, "switch") === 1) { runSwitch(s); return; }
-    if (strEq(word, "return") === 1) { runReturn(s); return; }
-    if (strEq(word, "function") === 1) { runFuncDecl(s); return; }
+    if (strEq(word, "if") === 1) {
+      runIf(s);
+      return;
+    }
+    if (strEq(word, "while") === 1) {
+      runWhile(s);
+      return;
+    }
+    if (strEq(word, "do") === 1) {
+      runDoWhile(s);
+      return;
+    }
+    if (strEq(word, "for") === 1) {
+      runFor(s);
+      return;
+    }
+    if (strEq(word, "switch") === 1) {
+      runSwitch(s);
+      return;
+    }
+    if (strEq(word, "try") === 1) {
+      runTry(s);
+      return;
+    }
+    if (strEq(word, "throw") === 1) { // #14 2e.6
+      const tv: i32 = parseExpr(s);
+      if (evalLive === 1) {
+        evalThrew = 1;
+        evalThrowVal = tv;
+      }
+      evalSkipWs(s);
+      if (evalPeek(s) === 59) evalPos = evalPos + 1;
+      return;
+    }
+    if (strEq(word, "return") === 1) {
+      runReturn(s);
+      return;
+    }
+    if (strEq(word, "function") === 1) {
+      runFuncDecl(s);
+      return;
+    }
     if (strEq(word, "break") === 1) { // #14 2e.1
       if (evalLive === 1) evalBroke = 1;
       evalSkipWs(s);
@@ -2979,7 +3101,8 @@ function runStatement(s: string): void {
           const op0: i32 = evalPeek(s);
           const op1: i32 = evalPeek2(s);
           const plain: i32 = (op0 === 61 && op1 !== 61 && op1 !== 62) ? 1 : 0;
-          const compound: i32 = ((op0 === 43 || op0 === 45 || op0 === 42 || op0 === 47) && op1 === 61) ? 1 : 0;
+          const compound: i32 =
+            ((op0 === 43 || op0 === 45 || op0 === 42 || op0 === 47) && op1 === 61) ? 1 : 0;
           if (plain === 1 || compound === 1) {
             if (plain === 1) evalPos = evalPos + 1; // '='
             else evalPos = evalPos + 2; // 'op='
@@ -2987,7 +3110,9 @@ function runStatement(s: string): void {
             if (evalLive === 1) {
               let nv: i32 = rhs;
               if (compound === 1) {
-                const cur: i32 = isDot === 1 ? dynMember(container, segKey) : dynIndexValue(container, segIdx);
+                const cur: i32 = isDot === 1
+                  ? dynMember(container, segKey)
+                  : dynIndexValue(container, segIdx);
                 if (op0 === 43) nv = dynAdd(cur, rhs);
                 else if (op0 === 45) nv = dynSub(cur, rhs);
                 else if (op0 === 42) nv = dynMul(cur, rhs);
@@ -2999,7 +3124,9 @@ function runStatement(s: string): void {
             isAssign = 1;
             scanning = 0;
           } else {
-            container = isDot === 1 ? dynMember(container, segKey) : dynIndexValue(container, segIdx);
+            container = isDot === 1
+              ? dynMember(container, segKey)
+              : dynIndexValue(container, segIdx);
           }
         }
       }
@@ -3042,8 +3169,10 @@ function runStatements(s: string): void {
     } else {
       maybeCollect(); // statement boundary — safe to collect (all live values are rooted)
       const saved: i32 = evalLive;
-      // statements after a return/break/continue are parsed (to advance the cursor) but not run
-      if (evalReturned === 1 || evalBroke === 1 || evalContinued === 1) evalLive = 0;
+      // statements after a return/break/continue/throw are parsed (to advance the cursor) but not run
+      if (evalReturned === 1 || evalBroke === 1 || evalContinued === 1 || evalThrew === 1) {
+        evalLive = 0;
+      }
       runStatement(s);
       evalLive = saved;
     }
@@ -3066,6 +3195,7 @@ export function dynRun(s: string, env: i32): i32 {
   evalLive = 1;
   evalReturned = 0;
   evalReturnVal = dynUndefined();
+  evalThrew = 0; // #14 2e.6: fresh run — clears any leftover uncaught throw from a prior run
   lastValue = dynUndefined();
   runStatements(s);
   const result: i32 = evalReturned === 1 ? evalReturnVal : lastValue;
