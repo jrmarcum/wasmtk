@@ -947,9 +947,9 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
    collection across nested calls). **Purely interpreter-side — no wasic compiler change. Known v1 gaps
    (remediation DECIDED 2026-06-26, see "Language consumption profile" below):** (1) no per-iteration fresh
    `let` binding for closures capturing a loop var → **2e.7a (SHIPPED 2026-06-26, test `18zj`)**; (2) `var`
-   is treated block-scoped like `let` (not function-hoisted) → handled by **2e.7b** (auto-repair
-   provably-safe `var`→`let`, HARD-ERROR unsafe ones — now unblocked, since 2e.7a made `let`≠`var`
-   observable). **2e.8 classes** (needs 2f.1) next.
+   is treated block-scoped like `let` (not function-hoisted) → **handled by 2e.7b (SHIPPED 2026-06-26,
+   `src/varscope.ts`): auto-repair provably-safe `var`→`let`, HARD-ERROR unsafe ones.** **2e.8 classes**
+   (needs 2f.1) next.
 7a. **2e.7a per-iteration `let`** — **SHIPPED 2026-06-26** (test `18zj`): `for (let i…)` / `for (const x
    of…)` / `for (const k in…)` give each iteration a FRESH binding of the loop variable, so a closure made
    in the body captures THAT iteration's value (`0,1,2`), not the shared/final value (`3,3,3`). New
@@ -972,6 +972,22 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
      to single-line `if/else` (fmt-stable, modc-parseable). **Lesson:** after `deno fmt`-ing the dynrt lib,
      ALWAYS re-run `modc` on the post-fmt source before committing — `deno fmt` and the modc subset are not
      fully compatible for deeply-indented ternaries. See `cmem/compiler-bugs.md`.
+7b. **2e.7b `var`→`let` consumption gate** — **SHIPPED 2026-06-26** (tests `18zk`/`18zl`/`18zm` +
+   `tests/varscope_tests.ts`). **The FIRST wasic-COMPILER change in the 2e.x series** (2e.1–2e.7a were all
+   interpreter-side). New `src/varscope.ts` `gateVarToLet(src)` runs FIRST in `transpile()` (so both wasic
+   and modc go through it): a provably-safe `var` is auto-repaired to `let`; an UNSAFE `var` hard-errors
+   with `line:col` + reason. CODE-ONLY via `maskCode` (string/comment chars → spaces, length-preserving), so
+   a `var` inside a string literal — e.g. a dynrt driver's eval source — is invisible to the gate. Unsafe =
+   (1) block-escape (referenced after its block closes), (2) use-before-declaration, (3) redeclaration in
+   one function, (4) `for (var i…)` whose body has a closure (`=>`/`function`). Reference resolution: a
+   brace-stack scope model with a function-body heuristic (`{` after `=>` or after `)` of a non-control
+   signature) → enclosing function/block ranges → whole-word ref scan excluding `.prop` access. CONSERVATIVE
+   + SOUND: ambiguous → hard error, never a silent rewrite. **Zero-risk landing: the entire wasic/dynrt
+   codebase is already `let`/`const` (0 real `var`), so the gate no-ops everywhere except deliberate tests.**
+   Suite 347/347 (+3), bindgen 131/131, jstyper 73/73; `varscope_tests.ts` 12/12 (each safe pattern rewrites,
+   each unsafe pattern errors, maskCode hides in-string var). **Closes Gap 1.** Known heuristic limits
+   (documented in the module): the function-body detector is heuristic; genuinely ambiguous constructs err
+   toward a (sound) hard error.
 5. **2f.1 prototype + `this`** (object-model upgrade) → unlocks **2e.8 classes**.
 6. **2f.2–2f.9 stdlib** — do the BRIDGES first (2f.5 JSON, 2f.6 Map/Set, 2f.7 RegExp reuse the existing
    capability libs → cheap), then Array/String/Object/Math methods.
@@ -988,17 +1004,21 @@ outright**: where a construct can be transformed to its ES6 equivalent **provabl
 diagnostic** (it never silently "repairs" an unsafe case — silent-wrong is the exact failure mode we are
 eliminating). "Preferred ES6, auto-upgrade the safe older stuff, reject the rest with a clear message."
 
-**First instance — `var` → `let` (this is 2e.7b):**
+**First instance — `var` → `let` — SHIPPED 2026-06-26 as 2e.7b (`src/varscope.ts`):**
 - **Provably safe** (no leak past its block, no redeclaration, no use-before-declaration, no loop-closure
-  capture — i.e. it passes a `block-scoped-var`/`no-redeclare`-equivalent check) → rewrite to `let`
-  (code-only, via `rewriteOutsideStringsAndComments`).
-- **Unsafe** (relies on any `var`-specific behavior) → compile error naming the construct + location.
-- **Soundness is mandatory:** "safe" must mean PROVABLY safe (full reference + block-containment analysis,
-  not a regex heuristic) or it reintroduces silent-wrong. Needs a small dedicated scope-analysis pass.
-- **Sequencing:** **2e.7a (per-iteration `let`) SHIPPED 2026-06-26**, so `let`≠`var` is now observable in
-  dynrt (`let` loop vars are per-iteration; `var` stays a single shared binding) and the gate is UNBLOCKED.
-  (wasic still lowers all decls to function-scoped WAT locals — confirm exact wasic handling when wiring the
-  gate into that front-end.)
+  capture — i.e. it passes a `block-scoped-var`/`no-redeclare`-equivalent check) → rewritten to `let`
+  (code-only via the module's own `maskCode`).
+- **Unsafe** (relies on any `var`-specific behavior) → compile error naming the construct + `line:col`.
+- **Soundness:** implemented as a dedicated scope-analysis pass (`gateVarToLet`), NOT a blind regex —
+  brace-stack scopes + function-body heuristic + whole-word reference scan (excluding `.prop`); conservative
+  (ambiguous → hard error). 12/12 unit tests in `tests/varscope_tests.ts`.
+- **Wiring:** runs FIRST in `WasicTranspiler.transpile()`, so it covers BOTH wasic and modc. The whole
+  codebase being `let`/`const` already (0 real `var`) made it a zero-risk landing (no-op except deliberate
+  tests). wasic still lowers all decls to function-scoped WAT locals, so for wasic the rewrite is
+  behaviorally transparent and the gate's value there is enforcing the uniform ES6 contract; for the dynrt
+  interpreter the `let`/`var` distinction is real (2e.7a).
+- **Not yet wired:** scanning RESOLVED IMPORTS (tsbundler) — the gate currently runs on the entry module's
+  source; extending it to each inlined import is a small follow-up (npm dist is the case that needs it).
 
 **Where it's confirmed / enforced (module ingestion):** the gate lives at the **wasic/tsbundler static
 front-end**, scanning the user's source AND each resolved import. **JSR deps** ship authored **source**

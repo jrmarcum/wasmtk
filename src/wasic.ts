@@ -122,6 +122,7 @@ import { basename, dirname } from "@std/path";
 import { rt } from "./rt.ts";
 import { bundleImportsEx } from "./tsbundler.ts";
 import { type ExternalFuncDef, mergeWasmWat, type WasmWatType } from "./wasmmerge.ts";
+import { gateVarToLet } from "./varscope.ts";
 import { MATHLIB_BYTES } from "./wasm/mathlib_bytes.ts";
 import {
   type ClosureVarLookup,
@@ -17998,6 +17999,12 @@ class WasicTranspiler {
   }
 
   transpile(_moduleName: string): string {
+    // #14 2e.7b — ES6 var→let consumption gate (runs FIRST, before any other pass). ES6 `let`/`const`
+    // is the required form: a provably-safe `var` is auto-repaired to `let`; an UNSAFE `var` (block
+    // escape / use-before-decl / redeclaration / loop-closure capture) is a hard error — never silently
+    // rewritten. CODE-ONLY: a `var` inside a string literal (e.g. a dynrt driver's eval source) is left
+    // intact. No-op on var-free source. See src/varscope.ts + cmem "Language consumption profile".
+    this.src = gateVarToLet(this.src);
     // Phase 49: optional chaining — strip ?. to . (safe for non-nullable types). CODE ONLY: a `?.`
     // inside a string literal (e.g. a dynrt driver's eval source `"o?.x"`) must be left intact.
     this.src = rewriteOutsideStringsAndComments(this.src, (code) => code.replace(/[?][.]/g, "."));
