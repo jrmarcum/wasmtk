@@ -946,10 +946,24 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
    binds `e` in a `childEnv`. Block/loop/catch envs are `gcPushRoot`-ed for their duration (survive a
    collection across nested calls). **Purely interpreter-side — no wasic compiler change. Known v1 gaps
    (remediation DECIDED 2026-06-26, see "Language consumption profile" below):** (1) no per-iteration fresh
-   `let` binding for closures capturing a loop var → **2e.7a**; (2) `var` is treated block-scoped like `let`
-   (not function-hoisted) → handled by **2e.7b** (auto-repair provably-safe `var`→`let`, HARD-ERROR unsafe
-   ones — must land AFTER 2e.7a, since `let`≠`var` only becomes observable once `let` is per-iteration).
-   **2e.8 classes** (needs 2f.1) next.
+   `let` binding for closures capturing a loop var → **2e.7a (SHIPPED 2026-06-26, test `18zj`)**; (2) `var`
+   is treated block-scoped like `let` (not function-hoisted) → handled by **2e.7b** (auto-repair
+   provably-safe `var`→`let`, HARD-ERROR unsafe ones — now unblocked, since 2e.7a made `let`≠`var`
+   observable). **2e.8 classes** (needs 2f.1) next.
+7a. **2e.7a per-iteration `let`** — **SHIPPED 2026-06-26** (test `18zj`): `for (let i…)` / `for (const x
+   of…)` / `for (const k in…)` give each iteration a FRESH binding of the loop variable, so a closure made
+   in the body captures THAT iteration's value (`0,1,2`), not the shared/final value (`3,3,3`). New
+   `cloneEnvFlat(src,parent)` shallow-copies an env's own bindings into a fresh child scope. `runFor`
+   computes `perIter` (1 for `let`/`const`, **0 for `var`** — `var` deliberately keeps the single shared
+   binding, the distinction 2e.7b will police). for-of/for-in: each iteration binds the loop var in a fresh
+   `childEnv` instead of the shared loop env. Classic-for: cond+body run against `curEnv` (a clone of the
+   loop vars), then the update runs against a fresh clone `nextEnv` — so the body's captured env retains its
+   value while the next iteration's `i++` mutates a separate copy (mirrors the JS spec's
+   CreatePerIterationEnvironment). Captured per-iteration envs survive via the closures that reference them
+   (reachable from a rooted scope); uncaptured ones are GC'd — no extra rooting needed (the `evalEnv`
+   invariant + no-GC-mid-clone cover it). Cost: one env clone per iteration for let/const loops (var/no-decl
+   loops unaffected, `perIter=0`); GC keeps it bounded (suite 344/344, no regression incl. `18x`). **Purely
+   interpreter-side.**
    - **Process bug found + fixed here (latent, shipped in v1.10.6 source — binary was fine):** the dynrt
      lib's end-of-increment `deno fmt` had WRAPPED three deeply-indented ternaries (16-space indent, >100
      cols) into multi-line form, which **modc's body-line joiner cannot parse** — so the committed lib
@@ -981,10 +995,10 @@ eliminating). "Preferred ES6, auto-upgrade the safe older stuff, reject the rest
 - **Unsafe** (relies on any `var`-specific behavior) → compile error naming the construct + location.
 - **Soundness is mandatory:** "safe" must mean PROVABLY safe (full reference + block-containment analysis,
   not a regex heuristic) or it reintroduces silent-wrong. Needs a small dedicated scope-analysis pass.
-- **Sequencing:** meaningful only AFTER **2e.7a** (per-iteration `let`), because today both backends collapse
-  `var`≡`let` (dynrt block-scopes both; wasic lowers all decls to function-scoped WAT locals — confirm exact
-  wasic handling when wiring the gate), so the safe/unsafe distinction has no observable effect until `let`
-  becomes per-iteration.
+- **Sequencing:** **2e.7a (per-iteration `let`) SHIPPED 2026-06-26**, so `let`≠`var` is now observable in
+  dynrt (`let` loop vars are per-iteration; `var` stays a single shared binding) and the gate is UNBLOCKED.
+  (wasic still lowers all decls to function-scoped WAT locals — confirm exact wasic handling when wiring the
+  gate into that front-end.)
 
 **Where it's confirmed / enforced (module ingestion):** the gate lives at the **wasic/tsbundler static
 front-end**, scanning the user's source AND each resolved import. **JSR deps** ship authored **source**

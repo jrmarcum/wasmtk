@@ -1451,6 +1451,38 @@ function envAssign(env: i32, name: string, val: i32): void {
   if (top !== -1 && top !== 0) dynSet(top, name, val);
 }
 
+// #14 2e.7a — shallow-copy every own binding of `src` into a fresh child scope of `parent`. Used to
+// give `for (let …)` a FRESH per-iteration binding of the loop variable(s): each iteration runs against
+// a copy, so a closure created in the body captures THAT iteration's value (JS `let` loop semantics),
+// not the single shared/final value. Key bytes are copied (not aliased) so the clone owns them; values
+// are shared handles (same boxed value). No interpreter statement runs here, so no GC mid-copy.
+function cloneEnvFlat(src: i32, parent: i32): i32 {
+  const dst: i32 = childEnv(parent);
+  const sn: Int32Array = src as unknown as Int32Array;
+  const dn: Int32Array = dst as unknown as Int32Array;
+  const cnt: i32 = listLen(sn[1]);
+  let i: i32 = 0;
+  while (i < cnt) {
+    const kptr: i32 = listGet(sn[3], i * 2);
+    const klen: i32 = listGet(sn[3], i * 2 + 1);
+    const val: i32 = listGet(sn[1], i);
+    const src8: Uint8Array = kptr as unknown as Uint8Array;
+    const kbuf: Uint8Array = dynAlloc(8 + klen) as unknown as Uint8Array;
+    let m: i32 = 0;
+    while (m < klen) {
+      kbuf[m] = src8[m];
+      m = m + 1;
+    }
+    let klp: i32 = dn[3];
+    klp = listPush(klp, kbuf as unknown as i32);
+    klp = listPush(klp, klen);
+    dn[3] = klp;
+    dn[1] = listPush(dn[1], val);
+    i = i + 1;
+  }
+  return dst;
+}
+
 /** Call a function value with an args array (a value-model array of arg handles). */
 /** @export */
 export function dynApply(callee: i32, argsArr: i32): i32 {
@@ -2452,10 +2484,12 @@ function runFor(s: string): void {
   evalSkipWs(s);
   let kind: i32 = 0; // 0 = C-style, 1 = for-of, 2 = for-in
   let loopVar: string = "";
+  let perIter: i32 = 0; // #14 2e.7a — 1 when the loop var is let/const → a fresh binding per iteration
   if (isIdentChar(evalPeek(s), 0) === 1) {
     const w1: string = readIdent(s);
     let nameWord: string = w1;
     if (strEq(w1, "const") === 1 || strEq(w1, "let") === 1 || strEq(w1, "var") === 1) {
+      if (strEq(w1, "var") !== 1) perIter = 1; // let/const are per-iteration; `var` stays shared
       evalSkipWs(s);
       nameWord = readIdent(s);
     }
@@ -2472,19 +2506,20 @@ function runFor(s: string): void {
     }
   }
   if (kind === 1) {
-    runForOf(s, loopVar, outer);
+    runForOf(s, loopVar, outer, perIter);
   } else if (kind === 2) {
-    runForIn(s, loopVar, outer);
+    runForIn(s, loopVar, outer, perIter);
   } else {
     evalPos = save;
-    runForClassic(s, outer);
+    runForClassic(s, outer, perIter);
   }
   gcPopRoot();
   evalEnv = parentEnv; // #14 2e.7 — drop the loop scope (loop var no longer visible)
 }
 
 // `for (const k in obj) body` — iterate an object's keys (tag 6), binding `k` to each key string.
-function runForIn(s: string, loopVar: string, outer: i32): void {
+function runForIn(s: string, loopVar: string, outer: i32, perIter: i32): void {
+  const loopEnv2: i32 = evalEnv; // #14 2e.7a — parent for per-iteration binding envs
   const obj: i32 = parseExpr(s); // the object (cursor was just past `in`)
   evalSkipWs(s);
   if (evalPeek(s) === 41) evalPos = evalPos + 1; // ')'
@@ -2502,11 +2537,15 @@ function runForIn(s: string, loopVar: string, outer: i32): void {
   }
   let i: i32 = 0;
   while (looping === 1) {
-    dynSet(evalEnv, loopVar, dynObjKeyVal(obj, i)); // bind the key string
+    let bindEnv: i32 = loopEnv2; // shared (perIter=0) → bind in the loop env, as before
+    if (perIter === 1) bindEnv = childEnv(loopEnv2); // fresh binding this iteration
+    dynSet(bindEnv, loopVar, dynObjKeyVal(obj, i)); // bind the key string
+    evalEnv = bindEnv;
     evalPos = bodyStart;
     evalLive = 1;
     runStatement(s);
     evalLive = outer;
+    evalEnv = loopEnv2;
     if (evalReturned === 1 || evalThrew === 1) {
       looping = 0;
     } else if (evalBroke === 1) {
@@ -2520,9 +2559,10 @@ function runForIn(s: string, loopVar: string, outer: i32): void {
   }
 }
 
-// `for (const x of arr) body` — iterate an array value (tag 5). The loop var is bound in the current
-// env each iteration (var-like; a per-iteration fresh binding is a later refinement).
-function runForOf(s: string, loopVar: string, outer: i32): void {
+// `for (const x of arr) body` — iterate an array value (tag 5). With a let/const loop var (perIter=1)
+// each iteration gets a FRESH binding (so a closure in the body captures that element); `var` shares.
+function runForOf(s: string, loopVar: string, outer: i32, perIter: i32): void {
+  const loopEnv2: i32 = evalEnv; // #14 2e.7a — parent for per-iteration binding envs
   const arr: i32 = parseExpr(s); // the iterable (cursor was just past `of`)
   evalSkipWs(s);
   if (evalPeek(s) === 41) evalPos = evalPos + 1; // ')'
@@ -2540,11 +2580,15 @@ function runForOf(s: string, loopVar: string, outer: i32): void {
   }
   let i: i32 = 0;
   while (looping === 1) {
-    dynSet(evalEnv, loopVar, dynArrGet(arr, i));
+    let bindEnv: i32 = loopEnv2; // shared (perIter=0) → bind in the loop env, as before
+    if (perIter === 1) bindEnv = childEnv(loopEnv2); // fresh binding this iteration
+    dynSet(bindEnv, loopVar, dynArrGet(arr, i));
+    evalEnv = bindEnv;
     evalPos = bodyStart;
     evalLive = 1;
     runStatement(s);
     evalLive = outer;
+    evalEnv = loopEnv2;
     if (evalReturned === 1 || evalThrew === 1) {
       looping = 0;
     } else if (evalBroke === 1) {
@@ -2561,13 +2605,22 @@ function runForOf(s: string, loopVar: string, outer: i32): void {
 // C-style `for (init; cond; update) body`. The cursor is at the init clause. Re-parses cond/update/
 // body each iteration (cursor-reset). init + update reuse runStatement (which handles assignment /
 // `++` / `+=` / bare expr); cond is a bare expression; any clause may be empty.
-function runForClassic(s: string, outer: i32): void {
+function runForClassic(s: string, outer: i32, perIter: i32): void {
+  const loopEnv2: i32 = evalEnv; // init declares the loop var(s) here
+  const len2: Int32Array = loopEnv2 as unknown as Int32Array;
+  const parent2: i32 = len2[2]; // the loop's enclosing scope (per-iteration clones chain to it)
   evalLive = outer;
   runStatement(s); // init (consumes its own ';')
   const condStart: i32 = evalPos;
+  // #14 2e.7a — with let/const (perIter), cond+body run against a fresh copy of the loop vars each
+  // iteration, and the update runs against the NEXT copy — so a closure made in the body keeps the
+  // value it saw (JS `let` loop semantics) instead of the shared/final value.
+  let curEnv: i32 = loopEnv2;
+  if (perIter === 1) curEnv = cloneEnvFlat(loopEnv2, parent2);
   let looping: i32 = 1;
   let iters: i32 = 0;
   while (looping === 1) {
+    evalEnv = curEnv;
     evalPos = condStart;
     evalSkipWs(s);
     let condTrue: i32 = 1; // empty cond → true
@@ -2583,9 +2636,10 @@ function runForClassic(s: string, outer: i32): void {
     const bodyStart: i32 = evalPos;
     const run: i32 = (outer === 1 && condTrue === 1) ? 1 : 0;
     if (run === 1) {
+      evalEnv = curEnv;
       evalPos = bodyStart;
       evalLive = 1;
-      runStatement(s); // body, live
+      runStatement(s); // body, live (captures curEnv)
       evalLive = outer;
       if (evalReturned === 1 || evalThrew === 1) {
         looping = 0;
@@ -2594,14 +2648,19 @@ function runForClassic(s: string, outer: i32): void {
         looping = 0;
       } else {
         if (evalContinued === 1) evalContinued = 0;
-        evalPos = updateStart; // run the update, live
+        let nextEnv: i32 = curEnv;
+        if (perIter === 1) nextEnv = cloneEnvFlat(curEnv, parent2); // fresh env for the next iteration
+        evalEnv = nextEnv;
+        evalPos = updateStart; // run the update, live (mutates the NEXT env)
         evalLive = outer;
         if (evalPeek(s) !== 41) runStatement(s);
         evalLive = outer;
+        curEnv = nextEnv;
       }
       iters = iters + 1;
       if (iters > 100000000) looping = 0;
     } else {
+      evalEnv = curEnv;
       evalPos = bodyStart;
       evalLive = 0;
       runStatement(s); // dead body — advance past it
@@ -2609,6 +2668,7 @@ function runForClassic(s: string, outer: i32): void {
       looping = 0;
     }
   }
+  evalEnv = loopEnv2; // restore (runFor resets to the enclosing scope after)
 }
 
 // #14 2e.1 — `switch (disc) { case v: … default: … }`. Two passes over the body: (1) DEAD scan the
