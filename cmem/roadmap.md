@@ -17,6 +17,13 @@ shipped bidirectional functions-as-`any` (host→core callbacks via `env.__host_
 `tests/wasm_wasi` suite **343/343**, bindgen 131/131, jstyper 73/73. JSR score 100% (provenance `true`,
 docs clean — keep `deno doc --lint` clean to hold it).
 
+**Unreleased on `main` (pending the next release, suite 347/347):** **2e.7a** per-iteration `let` binding
+(loop-closure capture; `var` stays a single shared binding — test `18zj`) and **2e.7b** the `var`→`let`
+consumption gate (`src/varscope.ts` — the FIRST wasic-compiler change in the 2e.x series: auto-repair
+provably-safe `var`→`let`, hard-error unsafe ones; tests `18zk`/`18zl`/`18zm` + `tests/varscope_tests.ts`).
+Together these establish **ES6 as the base preferred consumption format** (see dynrt-design.md "Language
+consumption profile"). bindgen 131/131, jstyper 73/73 unchanged.
+
 **Version 1.9.0** (2026-06-24) shipped the **COMPLETE #14 own dynamic runtime** — value model → JS
 interpreter (`eval`/`new Function`) → wasic `any` integration → host↔core marshalling (numbers/strings/
 bools/objects/arrays **and functions**) → bounded-memory **mark-sweep GC** → **hybrid recycling
