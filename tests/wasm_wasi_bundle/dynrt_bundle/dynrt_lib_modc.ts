@@ -1483,9 +1483,16 @@ function cloneEnvFlat(src: i32, parent: i32): i32 {
   return dst;
 }
 
-/** Call a function value with an args array (a value-model array of arg handles). */
+/** Call a function value with an args array (a value-model array of arg handles). `this` is undefined. */
 /** @export */
 export function dynApply(callee: i32, argsArr: i32): i32 {
+  return dynApplyThis(callee, argsArr, -1);
+}
+
+// #14 2f.1 — like dynApply but with an explicit `this` (thisVal === -1 ⇒ undefined `this`). A method
+// call `obj.m(args)` passes the receiver as thisVal; it is bound as `this` in the call scope so the body
+// resolves `this` / `this.field` via the normal scope-chain lookup. (Builtins/host ignore `this`.)
+function dynApplyThis(callee: i32, argsArr: i32, thisVal: i32): i32 {
   const cn: Int32Array = callee as unknown as Int32Array;
   if (cn[0] !== 7) return dynUndefined(); // not callable → undefined (guarded)
   const id: i32 = cn[1];
@@ -1500,6 +1507,7 @@ export function dynApply(callee: i32, argsArr: i32): i32 {
     const scope: i32 = dynObject();
     const sn: Int32Array = scope as unknown as Int32Array;
     sn[2] = defEnv; // parent link → outer names resolve (recursion + closures)
+    if (thisVal !== -1) dynSet(scope, "this", thisVal); // #14 2f.1 — bind `this` for a method call
     const pc: i32 = dynArrLen(paramsArr);
     let i: i32 = 0;
     while (i < pc) {
@@ -1674,9 +1682,16 @@ function strEq(a: string, b: string): i32 {
 export function dynMember(obj: i32, name: string): i32 {
   const n: Int32Array = obj as unknown as Int32Array;
   const t: i32 = n[0];
-  if (t === 6) { // object
-    const r: i32 = dynGet(obj, name);
-    return r === -1 ? dynUndefined() : r;
+  if (t === 6) { // object — own props, then the prototype chain (#14 2f.1: slot 2 = __proto__)
+    let o: i32 = obj;
+    while (o !== 0) {
+      const on: Int32Array = o as unknown as Int32Array;
+      if (on[0] !== 6) break; // a non-object proto link terminates the chain
+      const r: i32 = dynGet(o, name);
+      if (r !== -1) return r;
+      o = on[2]; // walk to __proto__
+    }
+    return dynUndefined();
   }
   if (t === 5) { // array
     if (strEq(name, "length") === 1) {
@@ -1898,6 +1913,10 @@ function parsePrimary(s: string): i32 {
       if (evalPeek(s) === 58) { // ':'
         evalPos = evalPos + 1;
         val = parseExpr(s);
+      } else if (evalPeek(s) === 40) { // '(' → shorthand method `{ m(params) { body } }` (#14 2f.1)
+        const mp: i32 = parseParams(s);
+        evalSkipWs(s);
+        val = makeUserFunc(mp, parseBlockBody(s), evalEnv);
       } else { // shorthand { x } → resolve x from the env
         val = evalEnv === -1 ? dynUndefined() : envLookup(evalEnv, key);
         if (val === -1) val = dynUndefined();
@@ -1959,6 +1978,27 @@ function parsePrimary(s: string): i32 {
     if (strEq(name, "false") === 1) return dynBool(0);
     if (strEq(name, "null") === 1) return dynNull();
     if (strEq(name, "undefined") === 1) return dynUndefined();
+    if (strEq(name, "Object") === 1) { // #14 2f.1 — Object.create(proto): new object with __proto__=proto
+      const save: i32 = evalPos;
+      evalSkipWs(s);
+      if (evalPeek(s) === 46) { // '.'
+        evalPos = evalPos + 1;
+        const meth: string = readIdent(s);
+        evalSkipWs(s);
+        if (strEq(meth, "create") === 1 && evalPeek(s) === 40) {
+          evalPos = evalPos + 1; // '('
+          const proto: i32 = parseExpr(s);
+          evalSkipWs(s);
+          if (evalPeek(s) === 41) evalPos = evalPos + 1; // ')'
+          const o: i32 = dynObject();
+          const on: Int32Array = o as unknown as Int32Array;
+          const pn: Int32Array = proto as unknown as Int32Array;
+          if (pn[0] === 6) on[2] = proto; // link the prototype (only when proto is an object)
+          return o;
+        }
+      }
+      evalPos = save; // not Object.create(…) — fall through to normal resolution
+    }
     // #14 2e.3 — single-param arrow `name => body`
     evalSkipWs(s);
     if (evalPeek(s) === 61 && evalPeek2(s) === 62) {
@@ -1979,6 +2019,7 @@ function parsePrimary(s: string): i32 {
 function parsePostfix(s: string): i32 {
   let v: i32 = parsePrimary(s);
   let go: i32 = 1;
+  let recv: i32 = -1; // #14 2f.1: the receiver of the most recent member access → `this` for a method call
   let optDead: i32 = 0; // #14 2e.5: set once an optional `?.` hits a null/undefined receiver — the rest
   while (go === 1) { //                of the chain then short-circuits to undefined (still parsed).
     evalSkipWs(s);
@@ -1998,6 +2039,7 @@ function parsePostfix(s: string): i32 {
         const oidx: i32 = parseExpr(s);
         evalSkipWs(s);
         if (evalPeek(s) === 93) evalPos = evalPos + 1; // ']'
+        recv = v;
         v = optDead === 1 ? dynUndefined() : dynIndexValue(v, oidx);
       } else { // `?.name` optional member
         const start: i32 = evalPos;
@@ -2007,6 +2049,7 @@ function parsePostfix(s: string): i32 {
           ch = evalPeek(s);
         }
         const name: string = s.slice(start, evalPos);
+        recv = v;
         v = optDead === 1 ? dynUndefined() : dynMember(v, name);
       }
       handled = 1; // optional access done — keep looping for any further chain
@@ -2023,12 +2066,14 @@ function parsePostfix(s: string): i32 {
         ch = evalPeek(s);
       }
       const name: string = s.slice(start, evalPos);
+      recv = v; // #14 2f.1 — receiver for a following `obj.name(args)` method call
       v = optDead === 1 ? dynUndefined() : dynMember(v, name);
     } else if (c === 91) { // [expr]
       evalPos = evalPos + 1;
       const idx: i32 = parseExpr(s);
       evalSkipWs(s);
       if (evalPeek(s) === 93) evalPos = evalPos + 1; // ']'
+      recv = v;
       v = optDead === 1 ? dynUndefined() : dynIndexValue(v, idx);
     } else if (c === 40) { // (args)  — call
       evalPos = evalPos + 1;
@@ -2036,6 +2081,8 @@ function parsePostfix(s: string): i32 {
       // the parsing of further args AND the call — both can run user functions that trigger a
       // collection — so keep them rooted until the call returns.
       gcPushRoot(v);
+      const hasRecv: i32 = recv !== -1 ? 1 : 0; // #14 2f.1 — method call → bind the receiver as `this`
+      if (hasRecv === 1) gcPushRoot(recv);
       const argsArr: i32 = dynArray();
       gcPushRoot(argsArr);
       evalSkipWs(s);
@@ -2058,10 +2105,16 @@ function parsePostfix(s: string): i32 {
       }
       // The CALL is the only side-effecting op: skip the dispatch in a dead (short-circuited)
       // branch or a killed optional chain, but still parse the args above so the cursor advances.
-      if (evalLive === 1 && optDead === 0) v = dynApply(v, argsArr);
-      else v = dynUndefined();
+      if (evalLive === 1 && optDead === 0) {
+        if (hasRecv === 1) v = dynApplyThis(v, argsArr, recv);
+        else v = dynApply(v, argsArr);
+      } else {
+        v = dynUndefined();
+      }
       gcPopRoot(); // argsArr
+      if (hasRecv === 1) gcPopRoot(); // recv
       gcPopRoot(); // v
+      recv = -1; // a call result is not itself a receiver until a further member access
     } else {
       go = 0;
     }

@@ -988,7 +988,19 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
    each unsafe pattern errors, maskCode hides in-string var). **Closes Gap 1.** Known heuristic limits
    (documented in the module): the function-body detector is heuristic; genuinely ambiguous constructs err
    toward a (sound) hard error.
-5. **2f.1 prototype + `this`** (object-model upgrade) → unlocks **2e.8 classes**.
+5. **2f.1 prototype + `this`** — **SHIPPED 2026-06-26** (test `18zn`): the object-model foundation for
+   **2e.8 classes**. (a) `this` binding: new internal `dynApplyThis(callee,args,thisVal)` (the exported
+   2-arg `dynApply` now delegates with thisVal=-1=undefined-this); `parsePostfix` tracks `recv` (the most
+   recent member-access object) and a method call `obj.m(args)` passes it → `dynApplyThis` binds `this` as a
+   variable in the call scope, so `this` / `this.field` resolve + assign via the normal scope-chain paths;
+   a plain call has `this === undefined`. (b) object-literal method shorthand `{ m(params){…} }` →
+   `makeUserFunc` closing over the env (the `m: function(){}` / `m: () => …` forms already worked via
+   parseExpr). (c) prototype: a data object's slot-2 doubles as `__proto__` (mutually exclusive with the
+   env-parent use — env objects are never `.`-accessed); `dynMember`'s object branch walks the chain (own
+   props shadow inherited); `Object.create(proto)` builds an object with that proto. **Purely
+   interpreter-side.** Suite 348/348 (+`18zn`), bindgen 131/131 (the proto-walk is a no-op for the
+   slot-2=0 plain objects the `any`-marshalling path uses). One modc-subset gotcha hit + fixed: a
+   brace-less `} else v = …;` is unsupported — brace the else.
 6. **2f.2–2f.9 stdlib** — do the BRIDGES first (2f.5 JSON, 2f.6 Map/Set, 2f.7 RegExp reuse the existing
    capability libs → cheap), then Array/String/Object/Math methods.
 7. **2e.9 generators**, then **2e.10 async/await** (hardest — needs a microtask loop; ties to #13).

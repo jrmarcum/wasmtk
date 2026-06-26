@@ -4,7 +4,7 @@
   ;; imports from dynrt_lib_modc
   (import "env" "__host_call" (func $dynrt_lib_modc___host_call (param i32 i32) (result i32)))
   (memory (export "memory") 2)
-  (global $__heap_ptr (mut i32) (i32.const 725))
+  (global $__heap_ptr (mut i32) (i32.const 1510))
   (global $__free_list (mut i32) (i32.const 0))
   (global $guard (mut i32) (i32.const 0))
   ;; Free-list + bump allocator (auto-grows). GC Part 1+2.
@@ -539,85 +539,35 @@
     )
   )
 
-  (func $bulk (param $n i32) 
-    (local $i i32)
-    (local $v i32)
-    (local.set $i (i32.const 0))
-    (block $break_0
-      (loop $loop_0
-        (br_if $break_0 (i32.eqz (i32.lt_s (local.get $i) (local.get $n))))
-        (block $cont_0
-          (local.set $v (call $dynrt_lib_modc_dynNumber (f64.convert_i32_s (local.get $i))))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-        )
-        (br $loop_0)
-      )
-    )
+  (func $checkRun (param $src_ptr i32) (param $src_len i32) (param $expected f64) 
+    (local $e i32)
+    (local $r i32)
+    (local.set $e (call $dynrt_lib_modc_dynObject ))
+    (local.set $r (call $dynrt_lib_modc_dynRun (local.get $src_ptr) (local.get $src_len) (local.get $e)))
+    (call $check (if (result i32) (i32.eq (call $dynrt_lib_modc_dynTypeof (local.get $r)) (i32.const 3)) (then (i32.const 1)) (else (i32.const 0))))
+    (call $check (if (result i32) (f64.eq (call $dynrt_lib_modc_dynNumberValue (local.get $r)) (local.get $expected)) (then (i32.const 1)) (else (i32.const 0))))
+  )
+
+  (func $f  
+    (return)
   )
   (func $_start (export "_start")
-    (local $before i32)
-    (local $a i32)
-    (local $b i32)
-    (local $s i32)
-    (local $arr i32)
-    (local $c0 i32)
     (local $__iface_tmp i32)
     (global.set $guard (call $__malloc (i32.const 40)))
       (i32.store (global.get $guard) (i32.const 1))
       (i32.store offset=4 (global.get $guard) (i32.const 8))
       (i32.store offset=8 (global.get $guard) (i32.const 0))
-    (local.set $before (call $dynrt_lib_modc_dynGcCellCount ))
-    (local.set $a (call $dynrt_lib_modc_dynNumber (f64.const 1)))
-    (local.set $b (call $dynrt_lib_modc_dynNumber (f64.const 2)))
-    (local.set $s (call $dynrt_lib_modc_dynString (i32.const 260) (i32.const 2)))
-    (local.set $arr (call $dynrt_lib_modc_dynArray ))
-    (call $check (if (result i32) (i32.eq (i32.sub (call $dynrt_lib_modc_dynGcCellCount ) (local.get $before)) (i32.const 4)) (then (i32.const 1)) (else (i32.const 0))))
-    (local.set $c0 (call $dynrt_lib_modc_dynGcCellCount ))
-    (call $bulk (i32.const 20000))
-    (call $check (if (result i32) (i32.eq (i32.sub (call $dynrt_lib_modc_dynGcCellCount ) (local.get $c0)) (i32.const 20000)) (then (i32.const 1)) (else (i32.const 0))))
-        (i32.store (i32.const 0) (i32.const 132))
-          (i32.store (i32.const 4) (i32.const 0))
-          (i32.store8 (i32.const 132) (i32.const 71))
-          (i32.store8 (i32.const 133) (i32.const 67))
-          (i32.store8 (i32.const 134) (i32.const 32))
-          (i32.store8 (i32.const 135) (i32.const 80))
-          (i32.store8 (i32.const 136) (i32.const 97))
-          (i32.store8 (i32.const 137) (i32.const 114))
-          (i32.store8 (i32.const 138) (i32.const 116))
-          (i32.store8 (i32.const 139) (i32.const 51))
-          (i32.store8 (i32.const 140) (i32.const 32))
-          (i32.store8 (i32.const 141) (i32.const 99))
-          (i32.store8 (i32.const 142) (i32.const 101))
-          (i32.store8 (i32.const 143) (i32.const 108))
-          (i32.store8 (i32.const 144) (i32.const 108))
-          (i32.store8 (i32.const 145) (i32.const 32))
-          (i32.store8 (i32.const 146) (i32.const 114))
-          (i32.store8 (i32.const 147) (i32.const 101))
-          (i32.store8 (i32.const 148) (i32.const 103))
-          (i32.store8 (i32.const 149) (i32.const 105))
-          (i32.store8 (i32.const 150) (i32.const 115))
-          (i32.store8 (i32.const 151) (i32.const 116))
-          (i32.store8 (i32.const 152) (i32.const 114))
-          (i32.store8 (i32.const 153) (i32.const 121))
-          (i32.store8 (i32.const 154) (i32.const 58))
-          (i32.store8 (i32.const 155) (i32.const 32))
-          (i32.store8 (i32.const 156) (i32.const 116))
-          (i32.store8 (i32.const 157) (i32.const 114))
-          (i32.store8 (i32.const 158) (i32.const 97))
-          (i32.store8 (i32.const 159) (i32.const 99))
-          (i32.store8 (i32.const 160) (i32.const 107))
-          (i32.store8 (i32.const 161) (i32.const 101))
-          (i32.store8 (i32.const 162) (i32.const 100))
-          (i32.store8 (i32.const 163) (i32.const 32))
-          (i32.store (i32.const 4) (i32.add (i32.const 32) (call $__i32_to_str (call $dynrt_lib_modc_dynGcCellCount) (i32.const 164))))
-          (i32.store8 (i32.add (i32.const 132) (i32.add (i32.load (i32.const 4)) (i32.const 0))) (i32.const 32))
-          (i32.store8 (i32.add (i32.const 132) (i32.add (i32.load (i32.const 4)) (i32.const 1))) (i32.const 99))
-          (i32.store8 (i32.add (i32.const 132) (i32.add (i32.load (i32.const 4)) (i32.const 2))) (i32.const 101))
-          (i32.store8 (i32.add (i32.const 132) (i32.add (i32.load (i32.const 4)) (i32.const 3))) (i32.const 108))
-          (i32.store8 (i32.add (i32.const 132) (i32.add (i32.load (i32.const 4)) (i32.const 4))) (i32.const 108))
-          (i32.store8 (i32.add (i32.const 132) (i32.add (i32.load (i32.const 4)) (i32.const 5))) (i32.const 115))
-          (i32.store8 (i32.add (i32.const 132) (i32.add (i32.load (i32.const 4)) (i32.const 6))) (i32.const 10))
-          (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 7)))
+    (call $checkRun (i32.const 260) (i32.const 61) (f64.const 5))
+    (call $checkRun (i32.const 321) (i32.const 74) (f64.const 15))
+    (call $checkRun (i32.const 395) (i32.const 72) (f64.const 14))
+    (call $checkRun (i32.const 467) (i32.const 90) (f64.const 3))
+    (call $checkRun (i32.const 557) (i32.const 101) (f64.const 12))
+    (call $checkRun (i32.const 658) (i32.const 67) (f64.const 100))
+    (call $checkRun (i32.const 725) (i32.const 120) (f64.const 20))
+    (call $checkRun (i32.const 845) (i32.const 72) (f64.const 99))
+    (call $checkRun (i32.const 917) (i32.const 83) (f64.const 7))
+        (i32.store (i32.const 0) (i32.const 1000))
+          (i32.store (i32.const 4) (i32.const 47))
           (drop (call $fd_write
             (i32.const 1)
             (i32.const 0)
@@ -625,7 +575,16 @@
             (i32.const 128)))
     (call $proc_exit (i32.const 0))
   )
-  (data (i32.const 260) "\68\69")
+  (data (i32.const 260) "\63\6f\6e\73\74\20\6f\20\3d\20\7b\20\76\3a\20\35\2c\20\67\65\74\28\29\20\7b\20\72\65\74\75\72\6e\20\74\68\69\73\2e\76\3b\20\7d\20\7d\3b\20\72\65\74\75\72\6e\20\6f\2e\67\65\74\28\29\3b")
+  (data (i32.const 321) "\63\6f\6e\73\74\20\6f\20\3d\20\7b\20\62\61\73\65\3a\20\31\30\2c\20\61\64\64\28\78\29\20\7b\20\72\65\74\75\72\6e\20\74\68\69\73\2e\62\61\73\65\20\2b\20\78\3b\20\7d\20\7d\3b\20\72\65\74\75\72\6e\20\6f\2e\61\64\64\28\35\29\3b")
+  (data (i32.const 395) "\63\6f\6e\73\74\20\6f\20\3d\20\7b\20\76\3a\20\37\2c\20\66\3a\20\66\75\6e\63\74\69\6f\6e\20\28\29\20\7b\20\72\65\74\75\72\6e\20\74\68\69\73\2e\76\20\2a\20\32\3b\20\7d\20\7d\3b\20\72\65\74\75\72\6e\20\6f\2e\66\28\29\3b")
+  (data (i32.const 467) "\63\6f\6e\73\74\20\6f\20\3d\20\7b\20\63\3a\20\30\2c\20\69\6e\63\28\29\20\7b\20\74\68\69\73\2e\63\20\3d\20\74\68\69\73\2e\63\20\2b\20\31\3b\20\7d\20\7d\3b\20\6f\2e\69\6e\63\28\29\3b\20\6f\2e\69\6e\63\28\29\3b\20\6f\2e\69\6e\63\28\29\3b\20\72\65\74\75\72\6e\20\6f\2e\63\3b")
+  (data (i32.const 557) "\63\6f\6e\73\74\20\6f\20\3d\20\7b\20\78\3a\20\33\2c\20\64\62\6c\28\29\20\7b\20\72\65\74\75\72\6e\20\74\68\69\73\2e\78\20\2a\20\32\3b\20\7d\2c\20\71\75\61\64\28\29\20\7b\20\72\65\74\75\72\6e\20\74\68\69\73\2e\64\62\6c\28\29\20\2a\20\32\3b\20\7d\20\7d\3b\20\72\65\74\75\72\6e\20\6f\2e\71\75\61\64\28\29\3b")
+  (data (i32.const 658) "\66\75\6e\63\74\69\6f\6e\20\66\28\29\20\7b\20\72\65\74\75\72\6e\20\74\68\69\73\20\3d\3d\3d\20\75\6e\64\65\66\69\6e\65\64\20\3f\20\31\30\30\20\3a\20\32\30\30\3b\20\7d\20\72\65\74\75\72\6e\20\66\28\29\3b")
+  (data (i32.const 725) "\63\6f\6e\73\74\20\70\72\6f\74\6f\20\3d\20\7b\20\61\72\65\61\28\29\20\7b\20\72\65\74\75\72\6e\20\74\68\69\73\2e\77\20\2a\20\74\68\69\73\2e\68\3b\20\7d\20\7d\3b\20\63\6f\6e\73\74\20\72\20\3d\20\4f\62\6a\65\63\74\2e\63\72\65\61\74\65\28\70\72\6f\74\6f\29\3b\20\72\2e\77\20\3d\20\34\3b\20\72\2e\68\20\3d\20\35\3b\20\72\65\74\75\72\6e\20\72\2e\61\72\65\61\28\29\3b")
+  (data (i32.const 845) "\63\6f\6e\73\74\20\70\72\6f\74\6f\20\3d\20\7b\20\74\61\67\3a\20\39\39\20\7d\3b\20\63\6f\6e\73\74\20\6f\20\3d\20\4f\62\6a\65\63\74\2e\63\72\65\61\74\65\28\70\72\6f\74\6f\29\3b\20\72\65\74\75\72\6e\20\6f\2e\74\61\67\3b")
+  (data (i32.const 917) "\63\6f\6e\73\74\20\70\72\6f\74\6f\20\3d\20\7b\20\74\61\67\3a\20\39\39\20\7d\3b\20\63\6f\6e\73\74\20\6f\20\3d\20\4f\62\6a\65\63\74\2e\63\72\65\61\74\65\28\70\72\6f\74\6f\29\3b\20\6f\2e\74\61\67\20\3d\20\37\3b\20\72\65\74\75\72\6e\20\6f\2e\74\61\67\3b")
+  (data (i32.const 1000) "\64\79\6e\72\74\20\32\66\2e\31\20\74\68\69\73\20\2b\20\70\72\6f\74\6f\74\79\70\65\3a\20\61\6c\6c\20\63\68\65\63\6b\73\20\70\61\73\73\65\64\0a")
 
   ;; globals from dynrt_lib_modc
   (global $dynrt_lib_modc_global1 (mut i32) (i32.const 0))
@@ -4151,7 +4110,7 @@
     local.get 1
     local.tee 11
     local.set 1
-    i32.const 522
+    i32.const 1307
     local.set 3
     i32.const 0
     local.tee 12
@@ -4289,14 +4248,14 @@
         i32.eqz
         if  ;; label = @3
           block  ;; label = @4
-            i32.const 522
+            i32.const 1307
             local.set 1
             i32.const 5
             local.set 2
           end
         else
           block  ;; label = @4
-            i32.const 527
+            i32.const 1312
             local.set 1
             i32.const 4
             local.set 2
@@ -4314,7 +4273,7 @@
     i32.eq
     if  ;; label = @1
       block  ;; label = @2
-        i32.const 531
+        i32.const 1316
         local.set 1
         i32.const 4
         local.set 2
@@ -4329,7 +4288,7 @@
     i32.eqz
     if  ;; label = @1
       block  ;; label = @2
-        i32.const 535
+        i32.const 1320
         local.set 1
         i32.const 9
         local.set 2
@@ -4340,7 +4299,7 @@
         return
       end
     end
-    i32.const 522
+    i32.const 1307
     local.set 1
     i32.const 0
     local.set 2
@@ -5985,7 +5944,7 @@
         i32.ne
         if  ;; label = @3
           local.get 7
-          i32.const 544
+          i32.const 1329
           i32.const 4
           local.get 2
           call $dynrt_lib_modc_dynSet
@@ -6310,55 +6269,55 @@
     call $dynrt_lib_modc_dynObject
     local.set 0
     local.get 0
-    i32.const 548
+    i32.const 1333
     i32.const 3
     i32.const 0
     call $dynrt_lib_modc_dynBuiltin
     call $dynrt_lib_modc_dynSet
     local.get 0
-    i32.const 551
+    i32.const 1336
     i32.const 4
     i32.const 1
     call $dynrt_lib_modc_dynBuiltin
     call $dynrt_lib_modc_dynSet
     local.get 0
-    i32.const 555
+    i32.const 1340
     i32.const 5
     i32.const 2
     call $dynrt_lib_modc_dynBuiltin
     call $dynrt_lib_modc_dynSet
     local.get 0
-    i32.const 560
+    i32.const 1345
     i32.const 4
     i32.const 3
     call $dynrt_lib_modc_dynBuiltin
     call $dynrt_lib_modc_dynSet
     local.get 0
-    i32.const 564
+    i32.const 1349
     i32.const 5
     i32.const 4
     call $dynrt_lib_modc_dynBuiltin
     call $dynrt_lib_modc_dynSet
     local.get 0
-    i32.const 569
+    i32.const 1354
     i32.const 3
     i32.const 5
     call $dynrt_lib_modc_dynBuiltin
     call $dynrt_lib_modc_dynSet
     local.get 0
-    i32.const 572
+    i32.const 1357
     i32.const 3
     i32.const 6
     call $dynrt_lib_modc_dynBuiltin
     call $dynrt_lib_modc_dynSet
     local.get 0
-    i32.const 575
+    i32.const 1360
     i32.const 3
     i32.const 7
     call $dynrt_lib_modc_dynBuiltin
     call $dynrt_lib_modc_dynSet
     local.get 0
-    i32.const 578
+    i32.const 1363
     i32.const 3
     i32.const 8
     call $dynrt_lib_modc_dynBuiltin
@@ -6488,7 +6447,7 @@
       block  ;; label = @2
         local.get 1
         local.get 2
-        i32.const 581
+        i32.const 1366
         i32.const 6
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -6515,7 +6474,7 @@
       block  ;; label = @2
         local.get 1
         local.get 2
-        i32.const 581
+        i32.const 1366
         i32.const 6
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -6975,7 +6934,7 @@
     local.tee 16
     i32.add
     global.set $dynrt_lib_modc_global19
-    i32.const 522
+    i32.const 1307
     local.set 3
     i32.const 0
     local.set 4
@@ -7626,7 +7585,7 @@
         local.tee 14
         i32.add
         global.set $dynrt_lib_modc_global19
-        i32.const 522
+        i32.const 1307
         i32.const 0
         call $dynrt_lib_modc_dynString
         local.set 2
@@ -7823,7 +7782,7 @@
         local.set 3
         local.get 3
         local.get 4
-        i32.const 587
+        i32.const 1372
         i32.const 8
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -7836,7 +7795,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 527
+        i32.const 1312
         i32.const 4
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -7848,7 +7807,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 522
+        i32.const 1307
         i32.const 5
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -7860,7 +7819,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 531
+        i32.const 1316
         i32.const 4
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -7871,7 +7830,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 535
+        i32.const 1320
         i32.const 9
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -7882,7 +7841,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 595
+        i32.const 1380
         i32.const 6
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -7917,7 +7876,7 @@
                 call $dynrt_lib_modc__fn115
                 local.get 5
                 local.get 6
-                i32.const 601
+                i32.const 1386
                 i32.const 6
                 call $dynrt_lib_modc__fn111
                 i32.const 1
@@ -8518,7 +8477,7 @@
     local.get 1
     i32.eqz
     if  ;; label = @1
-      i32.const 535
+      i32.const 1320
       i32.const 9
       call $dynrt_lib_modc_dynString
       return
@@ -8527,7 +8486,7 @@
     i32.const 2
     i32.eq
     if  ;; label = @1
-      i32.const 607
+      i32.const 1392
       i32.const 7
       call $dynrt_lib_modc_dynString
       return
@@ -8536,7 +8495,7 @@
     i32.const 3
     i32.eq
     if  ;; label = @1
-      i32.const 614
+      i32.const 1399
       i32.const 6
       call $dynrt_lib_modc_dynString
       return
@@ -8545,7 +8504,7 @@
     i32.const 4
     i32.eq
     if  ;; label = @1
-      i32.const 620
+      i32.const 1405
       i32.const 6
       call $dynrt_lib_modc_dynString
       return
@@ -8554,12 +8513,12 @@
     i32.const 7
     i32.eq
     if  ;; label = @1
-      i32.const 587
+      i32.const 1372
       i32.const 8
       call $dynrt_lib_modc_dynString
       return
     end
-    i32.const 626
+    i32.const 1411
     i32.const 6
     call $dynrt_lib_modc_dynString
     return)
@@ -8639,7 +8598,7 @@
         local.set 4
         local.get 3
         local.get 4
-        i32.const 632
+        i32.const 1417
         i32.const 6
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -9664,7 +9623,7 @@
         local.set 6
         local.get 5
         local.get 6
-        i32.const 638
+        i32.const 1423
         i32.const 4
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -10051,7 +10010,7 @@
     i32.const 0
     local.tee 14
     local.set 5
-    i32.const 522
+    i32.const 1307
     local.set 6
     local.get 14
     local.set 7
@@ -10079,7 +10038,7 @@
         local.set 12
         local.get 9
         local.get 10
-        i32.const 642
+        i32.const 1427
         i32.const 5
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -10089,7 +10048,7 @@
         else
           local.get 9
           local.get 10
-          i32.const 647
+          i32.const 1432
           i32.const 3
           call $dynrt_lib_modc__fn111
           i32.const 1
@@ -10100,7 +10059,7 @@
         else
           local.get 9
           local.get 10
-          i32.const 650
+          i32.const 1435
           i32.const 3
           call $dynrt_lib_modc__fn111
           i32.const 1
@@ -10110,7 +10069,7 @@
           block  ;; label = @4
             local.get 9
             local.get 10
-            i32.const 650
+            i32.const 1435
             i32.const 3
             call $dynrt_lib_modc__fn111
             i32.const 1
@@ -10152,7 +10111,7 @@
             local.set 10
             local.get 9
             local.get 10
-            i32.const 653
+            i32.const 1438
             i32.const 2
             call $dynrt_lib_modc__fn111
             i32.const 1
@@ -10169,7 +10128,7 @@
             else
               local.get 9
               local.get 10
-              i32.const 655
+              i32.const 1440
               i32.const 2
               call $dynrt_lib_modc__fn111
               i32.const 1
@@ -10948,7 +10907,7 @@
                   local.set 9
                   local.get 8
                   local.get 9
-                  i32.const 657
+                  i32.const 1442
                   i32.const 4
                   call $dynrt_lib_modc__fn111
                   i32.const 1
@@ -11023,7 +10982,7 @@
                   else
                     local.get 8
                     local.get 9
-                    i32.const 661
+                    i32.const 1446
                     i32.const 7
                     call $dynrt_lib_modc__fn111
                     i32.const 1
@@ -11180,7 +11139,7 @@
                   local.set 5
                   local.get 4
                   local.get 5
-                  i32.const 657
+                  i32.const 1442
                   i32.const 4
                   call $dynrt_lib_modc__fn111
                   i32.const 1
@@ -11190,7 +11149,7 @@
                   else
                     local.get 4
                     local.get 5
-                    i32.const 661
+                    i32.const 1446
                     i32.const 7
                     call $dynrt_lib_modc__fn111
                     i32.const 1
@@ -11292,7 +11251,7 @@
                   local.set 5
                   local.get 4
                   local.get 5
-                  i32.const 657
+                  i32.const 1442
                   i32.const 4
                   call $dynrt_lib_modc__fn111
                   i32.const 1
@@ -11327,7 +11286,7 @@
                   else
                     local.get 4
                     local.get 5
-                    i32.const 661
+                    i32.const 1446
                     i32.const 7
                     call $dynrt_lib_modc__fn111
                     i32.const 1
@@ -11442,7 +11401,7 @@
         local.set 6
         local.get 5
         local.get 6
-        i32.const 668
+        i32.const 1453
         i32.const 5
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -11461,7 +11420,7 @@
     i32.eq
     if  ;; label = @1
       block  ;; label = @2
-        i32.const 522
+        i32.const 1307
         local.set 3
         i32.const 0
         local.set 4
@@ -11596,7 +11555,7 @@
         local.set 6
         local.get 5
         local.get 6
-        i32.const 673
+        i32.const 1458
         i32.const 7
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12024,7 +11983,7 @@
     local.get 0
     local.get 1
     call $dynrt_lib_modc__fn115
-    i32.const 522
+    i32.const 1307
     i32.const 0
     call $dynrt_lib_modc_dynString
     local.set 3
@@ -12238,7 +12197,7 @@
     local.get 0
     local.get 1
     call $dynrt_lib_modc__fn115
-    i32.const 522
+    i32.const 1307
     i32.const 0
     call $dynrt_lib_modc_dynString
     local.set 5
@@ -12350,7 +12309,7 @@
         local.set 4
         local.get 3
         local.get 4
-        i32.const 647
+        i32.const 1432
         i32.const 3
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12360,7 +12319,7 @@
         else
           local.get 3
           local.get 4
-          i32.const 642
+          i32.const 1427
           i32.const 5
           call $dynrt_lib_modc__fn111
           i32.const 1
@@ -12371,7 +12330,7 @@
         else
           local.get 3
           local.get 4
-          i32.const 650
+          i32.const 1435
           i32.const 3
           call $dynrt_lib_modc__fn111
           i32.const 1
@@ -12387,7 +12346,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 680
+        i32.const 1465
         i32.const 2
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12402,7 +12361,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 682
+        i32.const 1467
         i32.const 5
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12417,7 +12376,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 687
+        i32.const 1472
         i32.const 2
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12432,7 +12391,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 689
+        i32.const 1474
         i32.const 3
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12447,7 +12406,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 692
+        i32.const 1477
         i32.const 6
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12462,7 +12421,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 698
+        i32.const 1483
         i32.const 3
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12477,7 +12436,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 701
+        i32.const 1486
         i32.const 5
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12518,7 +12477,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 706
+        i32.const 1491
         i32.const 6
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12533,7 +12492,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 587
+        i32.const 1372
         i32.const 8
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12548,7 +12507,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 712
+        i32.const 1497
         i32.const 5
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12581,7 +12540,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 717
+        i32.const 1502
         i32.const 8
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12957,7 +12916,7 @@
                     i32.const 0
                     local.tee 19
                     local.set 7
-                    i32.const 522
+                    i32.const 1307
                     local.set 8
                     local.get 19
                     local.set 9
@@ -13456,48 +13415,48 @@
     local.get 3
     return)
   ;; data from dynrt_lib_modc
-  (data (;0;) (i32.const 522) "")
-  (data (;1;) (i32.const 522) "false")
-  (data (;2;) (i32.const 527) "true")
-  (data (;3;) (i32.const 531) "null")
-  (data (;4;) (i32.const 535) "undefined")
-  (data (;5;) (i32.const 544) "this")
-  (data (;6;) (i32.const 548) "abs")
-  (data (;7;) (i32.const 551) "sqrt")
-  (data (;8;) (i32.const 555) "floor")
-  (data (;9;) (i32.const 560) "ceil")
-  (data (;10;) (i32.const 564) "round")
-  (data (;11;) (i32.const 569) "min")
-  (data (;12;) (i32.const 572) "max")
-  (data (;13;) (i32.const 575) "len")
-  (data (;14;) (i32.const 578) "inc")
-  (data (;15;) (i32.const 581) "length")
-  (data (;16;) (i32.const 587) "function")
-  (data (;17;) (i32.const 595) "Object")
-  (data (;18;) (i32.const 601) "create")
-  (data (;19;) (i32.const 607) "boolean")
-  (data (;20;) (i32.const 614) "number")
-  (data (;21;) (i32.const 620) "string")
-  (data (;22;) (i32.const 626) "object")
-  (data (;23;) (i32.const 632) "typeof")
-  (data (;24;) (i32.const 638) "else")
-  (data (;25;) (i32.const 642) "const")
-  (data (;26;) (i32.const 647) "let")
-  (data (;27;) (i32.const 650) "var")
-  (data (;28;) (i32.const 653) "of")
-  (data (;29;) (i32.const 655) "in")
-  (data (;30;) (i32.const 657) "case")
-  (data (;31;) (i32.const 661) "default")
-  (data (;32;) (i32.const 668) "catch")
-  (data (;33;) (i32.const 673) "finally")
-  (data (;34;) (i32.const 680) "if")
-  (data (;35;) (i32.const 682) "while")
-  (data (;36;) (i32.const 687) "do")
-  (data (;37;) (i32.const 689) "for")
-  (data (;38;) (i32.const 692) "switch")
-  (data (;39;) (i32.const 698) "try")
-  (data (;40;) (i32.const 701) "throw")
-  (data (;41;) (i32.const 706) "return")
-  (data (;42;) (i32.const 712) "break")
-  (data (;43;) (i32.const 717) "continue")
+  (data (;0;) (i32.const 1307) "")
+  (data (;1;) (i32.const 1307) "false")
+  (data (;2;) (i32.const 1312) "true")
+  (data (;3;) (i32.const 1316) "null")
+  (data (;4;) (i32.const 1320) "undefined")
+  (data (;5;) (i32.const 1329) "this")
+  (data (;6;) (i32.const 1333) "abs")
+  (data (;7;) (i32.const 1336) "sqrt")
+  (data (;8;) (i32.const 1340) "floor")
+  (data (;9;) (i32.const 1345) "ceil")
+  (data (;10;) (i32.const 1349) "round")
+  (data (;11;) (i32.const 1354) "min")
+  (data (;12;) (i32.const 1357) "max")
+  (data (;13;) (i32.const 1360) "len")
+  (data (;14;) (i32.const 1363) "inc")
+  (data (;15;) (i32.const 1366) "length")
+  (data (;16;) (i32.const 1372) "function")
+  (data (;17;) (i32.const 1380) "Object")
+  (data (;18;) (i32.const 1386) "create")
+  (data (;19;) (i32.const 1392) "boolean")
+  (data (;20;) (i32.const 1399) "number")
+  (data (;21;) (i32.const 1405) "string")
+  (data (;22;) (i32.const 1411) "object")
+  (data (;23;) (i32.const 1417) "typeof")
+  (data (;24;) (i32.const 1423) "else")
+  (data (;25;) (i32.const 1427) "const")
+  (data (;26;) (i32.const 1432) "let")
+  (data (;27;) (i32.const 1435) "var")
+  (data (;28;) (i32.const 1438) "of")
+  (data (;29;) (i32.const 1440) "in")
+  (data (;30;) (i32.const 1442) "case")
+  (data (;31;) (i32.const 1446) "default")
+  (data (;32;) (i32.const 1453) "catch")
+  (data (;33;) (i32.const 1458) "finally")
+  (data (;34;) (i32.const 1465) "if")
+  (data (;35;) (i32.const 1467) "while")
+  (data (;36;) (i32.const 1472) "do")
+  (data (;37;) (i32.const 1474) "for")
+  (data (;38;) (i32.const 1477) "switch")
+  (data (;39;) (i32.const 1483) "try")
+  (data (;40;) (i32.const 1486) "throw")
+  (data (;41;) (i32.const 1491) "return")
+  (data (;42;) (i32.const 1497) "break")
+  (data (;43;) (i32.const 1502) "continue")
 )
