@@ -4,7 +4,7 @@
   ;; imports from dynrt_lib_modc
   (import "env" "__host_call" (func $dynrt_lib_modc___host_call (param i32 i32) (result i32)))
   (memory (export "memory") 2)
-  (global $__heap_ptr (mut i32) (i32.const 1549))
+  (global $__heap_ptr (mut i32) (i32.const 1612))
   (global $__free_list (mut i32) (i32.const 0))
   (global $guard (mut i32) (i32.const 0))
   ;; Free-list + bump allocator (auto-grows). GC Part 1+2.
@@ -591,7 +591,7 @@
   (global $dynrt_lib_modc_global2 (mut i32) (i32.const 0))
   (global $dynrt_lib_modc_global3 i32 (i32.const 4))
   (global $dynrt_lib_modc_global4 i32 (i32.const 16))
-  (global $dynrt_lib_modc_global5 i32 (i32.const 512))
+  (global $dynrt_lib_modc_global5 i32 (i32.const 1559))
   (global $dynrt_lib_modc_global6 (mut i32) (i32.const 0))
   (global $dynrt_lib_modc_global7 (mut i32) (i32.const 0))
   (global $dynrt_lib_modc_global8 (mut i32) (i32.const 0))
@@ -599,7 +599,7 @@
   (global $dynrt_lib_modc_global10 (mut i32) (i32.const 0))
   (global $dynrt_lib_modc_global11 (mut i32) (i32.const 0))
   (global $dynrt_lib_modc_global12 (mut i32) (i32.const 0))
-  (global $dynrt_lib_modc_global13 (mut i32) (i32.const 512))
+  (global $dynrt_lib_modc_global13 (mut i32) (i32.const 1559))
   (global $dynrt_lib_modc_global14 (mut i32) (i32.const 8192))
   (global $dynrt_lib_modc_global15 (mut i32) (i32.const 0))
   (global $dynrt_lib_modc_global16 i32 (i32.const 256))
@@ -6376,7 +6376,7 @@
     i32.const 1
     return)
   (func $dynrt_lib_modc_dynMember (param i32 i32 i32) (result i32)
-    (local i32) (local i32) (local i32)
+    (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.set 3
     local.get 3
@@ -6390,6 +6390,7 @@
     if  ;; label = @1
       block  ;; label = @2
         local.get 0
+        local.tee 10
         local.set 3
         block  ;; label = @3
           loop  ;; label = @4
@@ -6401,7 +6402,7 @@
               br_if 2 (;@3;)
               block  ;; label = @6
                 local.get 3
-                local.tee 5
+                local.tee 8
                 local.set 4
                 local.get 4
                 i32.const 8
@@ -6436,6 +6437,85 @@
             end
           end
         end
+        i32.const 1366
+        local.set 3
+        i32.const 6
+        local.set 4
+        local.get 3
+        local.get 4
+        local.get 1
+        local.get 2
+        call $dynrt_lib_modc__fn3
+        local.set 4
+        nop
+        local.set 3
+        local.get 0
+        local.tee 11
+        local.set 5
+        block  ;; label = @3
+          loop  ;; label = @4
+            block  ;; label = @5
+              local.get 5
+              i32.const 0
+              i32.ne
+              i32.eqz
+              br_if 2 (;@3;)
+              block  ;; label = @6
+                local.get 5
+                local.tee 9
+                local.set 6
+                local.get 6
+                i32.const 8
+                i32.add
+                i32.load
+                i32.const 6
+                i32.ne
+                if  ;; label = @7
+                  br 4 (;@3;)
+                end
+                local.get 5
+                local.get 3
+                local.get 4
+                call $dynrt_lib_modc_dynGet
+                local.set 5
+                local.get 5
+                i32.const -1
+                i32.ne
+                if  ;; label = @7
+                  block  ;; label = @8
+                    local.get 5
+                    local.set 7
+                    local.get 7
+                    i32.const 8
+                    i32.add
+                    i32.load
+                    i32.const 7
+                    i32.eq
+                    if  ;; label = @9
+                      block  ;; label = @10
+                        call $dynrt_lib_modc_dynArray
+                        local.set 3
+                        local.get 5
+                        local.get 3
+                        local.get 0
+                        call $dynrt_lib_modc__fn103
+                        return
+                      end
+                    end
+                  end
+                end
+                local.get 6
+                i32.const 8
+                i32.add
+                i32.const 8
+                i32.add
+                i32.load
+                local.set 5
+              end
+              br 1 (;@4;)
+            end
+          end
+        end
         call $dynrt_lib_modc_dynUndefined
         return
       end
@@ -6447,7 +6527,7 @@
       block  ;; label = @2
         local.get 1
         local.get 2
-        i32.const 1366
+        i32.const 1372
         i32.const 6
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -6474,7 +6554,7 @@
       block  ;; label = @2
         local.get 1
         local.get 2
-        i32.const 1366
+        i32.const 1372
         i32.const 6
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -6500,6 +6580,108 @@
     end
     call $dynrt_lib_modc_dynUndefined
     return)
+  (func $dynrt_lib_modc__fn113 (param i32 i32 i32 i32)
+    (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
+    local.get 0
+    local.tee 10
+    local.set 4
+    local.get 4
+    i32.const 8
+    i32.add
+    i32.load
+    i32.const 6
+    i32.eq
+    if  ;; label = @1
+      block  ;; label = @2
+        i32.const 1378
+        local.set 4
+        i32.const 6
+        local.set 5
+        local.get 4
+        local.get 5
+        local.get 1
+        local.get 2
+        call $dynrt_lib_modc__fn3
+        local.set 5
+        nop
+        local.set 4
+        local.get 0
+        local.set 6
+        block  ;; label = @3
+          loop  ;; label = @4
+            block  ;; label = @5
+              local.get 6
+              i32.const 0
+              i32.ne
+              i32.eqz
+              br_if 2 (;@3;)
+              block  ;; label = @6
+                local.get 6
+                local.tee 9
+                local.set 7
+                local.get 7
+                i32.const 8
+                i32.add
+                i32.load
+                i32.const 6
+                i32.ne
+                if  ;; label = @7
+                  br 4 (;@3;)
+                end
+                local.get 6
+                local.get 4
+                local.get 5
+                call $dynrt_lib_modc_dynGet
+                local.set 6
+                local.get 6
+                i32.const -1
+                i32.ne
+                if  ;; label = @7
+                  block  ;; label = @8
+                    local.get 6
+                    local.set 8
+                    local.get 8
+                    i32.const 8
+                    i32.add
+                    i32.load
+                    i32.const 7
+                    i32.eq
+                    if  ;; label = @9
+                      block  ;; label = @10
+                        call $dynrt_lib_modc_dynArray
+                        local.set 4
+                        local.get 4
+                        local.get 3
+                        call $dynrt_lib_modc_dynPush
+                        local.get 6
+                        local.get 4
+                        local.get 0
+                        call $dynrt_lib_modc__fn103
+                        drop
+                        return
+                      end
+                    end
+                  end
+                end
+                local.get 7
+                i32.const 8
+                i32.add
+                i32.const 8
+                i32.add
+                i32.load
+                local.set 6
+              end
+              br 1 (;@4;)
+            end
+          end
+        end
+      end
+    end
+    local.get 0
+    local.get 1
+    local.get 2
+    local.get 3
+    call $dynrt_lib_modc_dynSet)
   (func $dynrt_lib_modc_dynIndexValue (param i32 i32) (result i32)
     (local i32) (local i32) (local f64)
     local.get 0
@@ -6593,7 +6775,7 @@
     end
     call $dynrt_lib_modc_dynUndefined
     return)
-  (func $dynrt_lib_modc__fn114 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn115 (param i32 i32) (result i32)
     local.get 0
     i32.const 65
     i32.ge_s
@@ -6659,7 +6841,7 @@
     end
     i32.const 0
     return)
-  (func $dynrt_lib_modc__fn115 (param i32 i32)
+  (func $dynrt_lib_modc__fn116 (param i32 i32)
     (local i32) (local i32)
     i32.const 1
     local.set 2
@@ -6723,23 +6905,23 @@
         end
       end
     end)
-  (func $dynrt_lib_modc__fn116 (param i32 i32) (result i32)
-    (local i32)
-    global.get $dynrt_lib_modc_global19
-    local.get 1
-    i32.ge_s
-    if  ;; label = @1
-      i32.const -1
-      return
-    end
-    local.get 0
-    local.get 1
-    global.get $dynrt_lib_modc_global19
-    call $dynrt_lib_modc__fn5
-    return)
   (func $dynrt_lib_modc__fn117 (param i32 i32) (result i32)
     (local i32)
     global.get $dynrt_lib_modc_global19
+    local.get 1
+    i32.ge_s
+    if  ;; label = @1
+      i32.const -1
+      return
+    end
+    local.get 0
+    local.get 1
+    global.get $dynrt_lib_modc_global19
+    call $dynrt_lib_modc__fn5
+    return)
+  (func $dynrt_lib_modc__fn118 (param i32 i32) (result i32)
+    (local i32)
+    global.get $dynrt_lib_modc_global19
     i32.const 1
     i32.add
     local.get 1
@@ -6755,14 +6937,14 @@
     i32.add
     call $dynrt_lib_modc__fn5
     return)
-  (func $dynrt_lib_modc__fn118 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn119 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32)
     global.get $dynrt_lib_modc_global19
     local.tee 4
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     local.set 3
     block  ;; label = @1
       loop  ;; label = @2
@@ -6786,7 +6968,7 @@
             global.set $dynrt_lib_modc_global19
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             local.set 3
           end
           br 1 (;@2;)
@@ -6804,7 +6986,7 @@
         global.set $dynrt_lib_modc_global19
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn116
+        call $dynrt_lib_modc__fn117
         local.set 3
         block  ;; label = @3
           loop  ;; label = @4
@@ -6828,7 +7010,7 @@
                 global.set $dynrt_lib_modc_global19
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn116
+                call $dynrt_lib_modc__fn117
                 local.set 3
               end
               br 1 (;@4;)
@@ -6855,7 +7037,7 @@
         global.set $dynrt_lib_modc_global19
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn116
+        call $dynrt_lib_modc__fn117
         local.set 3
         local.get 3
         i32.const 43
@@ -6875,7 +7057,7 @@
             global.set $dynrt_lib_modc_global19
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             local.set 3
           end
         end
@@ -6901,7 +7083,7 @@
                 global.set $dynrt_lib_modc_global19
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn116
+                call $dynrt_lib_modc__fn117
                 local.set 3
               end
               br 1 (;@4;)
@@ -6923,11 +7105,11 @@
     call $dynrt_lib_modc__fn9
     call $dynrt_lib_modc_dynNumber
     return)
-  (func $dynrt_lib_modc__fn119 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn120 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     local.set 2
     global.get $dynrt_lib_modc_global19
     i32.const 1
@@ -7081,14 +7263,14 @@
     local.get 4
     call $dynrt_lib_modc_dynString
     return)
-  (func $dynrt_lib_modc__fn120 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn121 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     local.set 2
     local.get 2
     i32.const 40
@@ -7097,27 +7279,27 @@
       block  ;; label = @2
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn151
+        call $dynrt_lib_modc__fn152
         i32.const 1
         i32.eq
         if  ;; label = @3
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn147
+            call $dynrt_lib_modc__fn148
             local.set 2
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 61
             i32.eq
             if (result i32)  ;; label = @5
               local.get 0
               local.get 1
-              call $dynrt_lib_modc__fn117
+              call $dynrt_lib_modc__fn118
               i32.const 62
               i32.eq
             else
@@ -7132,7 +7314,7 @@
             local.get 2
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn149
+            call $dynrt_lib_modc__fn150
             global.get $dynrt_lib_modc_global20
             call $dynrt_lib_modc__fn94
             return
@@ -7144,14 +7326,14 @@
         global.set $dynrt_lib_modc_global19
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn130
+        call $dynrt_lib_modc__fn131
         local.set 2
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn115
+        call $dynrt_lib_modc__fn116
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn116
+        call $dynrt_lib_modc__fn117
         i32.const 41
         i32.eq
         if  ;; label = @3
@@ -7177,7 +7359,7 @@
     if  ;; label = @1
       local.get 0
       local.get 1
-      call $dynrt_lib_modc__fn119
+      call $dynrt_lib_modc__fn120
       return
     end
     local.get 2
@@ -7193,10 +7375,10 @@
         local.set 2
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn115
+        call $dynrt_lib_modc__fn116
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn116
+        call $dynrt_lib_modc__fn117
         i32.const 93
         i32.eq
         if (result i32)  ;; label = @3
@@ -7216,18 +7398,18 @@
               block  ;; label = @6
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn115
+                call $dynrt_lib_modc__fn116
                 i32.const 0
                 local.set 4
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn116
+                call $dynrt_lib_modc__fn117
                 i32.const 46
                 i32.eq
                 if (result i32)  ;; label = @7
                   local.get 0
                   local.get 1
-                  call $dynrt_lib_modc__fn117
+                  call $dynrt_lib_modc__fn118
                   i32.const 46
                   i32.eq
                 else
@@ -7265,7 +7447,7 @@
                     global.set $dynrt_lib_modc_global19
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn130
+                    call $dynrt_lib_modc__fn131
                     local.set 4
                     local.get 4
                     local.set 5
@@ -7313,15 +7495,15 @@
                   local.get 2
                   local.get 0
                   local.get 1
-                  call $dynrt_lib_modc__fn130
+                  call $dynrt_lib_modc__fn131
                   call $dynrt_lib_modc_dynPush
                 end
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn115
+                call $dynrt_lib_modc__fn116
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn116
+                call $dynrt_lib_modc__fn117
                 i32.const 44
                 i32.eq
                 if  ;; label = @7
@@ -7332,10 +7514,10 @@
                     global.set $dynrt_lib_modc_global19
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn115
+                    call $dynrt_lib_modc__fn116
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn116
+                    call $dynrt_lib_modc__fn117
                     i32.const 93
                     i32.eq
                     if  ;; label = @9
@@ -7354,10 +7536,10 @@
         end
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn115
+        call $dynrt_lib_modc__fn116
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn116
+        call $dynrt_lib_modc__fn117
         i32.const 93
         i32.eq
         if  ;; label = @3
@@ -7383,10 +7565,10 @@
         local.set 2
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn115
+        call $dynrt_lib_modc__fn116
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn116
+        call $dynrt_lib_modc__fn117
         i32.const 125
         i32.eq
         if (result i32)  ;; label = @3
@@ -7406,13 +7588,13 @@
               block  ;; label = @6
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn115
+                call $dynrt_lib_modc__fn116
                 i32.const 0
                 local.tee 8
                 drop
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn116
+                call $dynrt_lib_modc__fn117
                 local.set 4
                 local.get 4
                 i32.const 39
@@ -7428,7 +7610,7 @@
                   block  ;; label = @8
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn119
+                    call $dynrt_lib_modc__fn120
                     call $dynrt_lib_modc__fn65
                     global.get $dynrt_lib_modc_global1
                     local.set 4
@@ -7439,7 +7621,7 @@
                   block  ;; label = @8
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn133
+                    call $dynrt_lib_modc__fn134
                     global.get $dynrt_lib_modc_global1
                     local.set 4
                     global.get $dynrt_lib_modc_global2
@@ -7448,13 +7630,13 @@
                 end
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn115
+                call $dynrt_lib_modc__fn116
                 i32.const 0
                 local.tee 9
                 drop
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn116
+                call $dynrt_lib_modc__fn117
                 i32.const 58
                 i32.eq
                 if  ;; label = @7
@@ -7465,28 +7647,28 @@
                     global.set $dynrt_lib_modc_global19
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn130
+                    call $dynrt_lib_modc__fn131
                     local.set 6
                   end
                 else
                   local.get 0
                   local.get 1
-                  call $dynrt_lib_modc__fn116
+                  call $dynrt_lib_modc__fn117
                   i32.const 40
                   i32.eq
                   if  ;; label = @8
                     block  ;; label = @9
                       local.get 0
                       local.get 1
-                      call $dynrt_lib_modc__fn147
+                      call $dynrt_lib_modc__fn148
                       local.set 6
                       local.get 0
                       local.get 1
-                      call $dynrt_lib_modc__fn115
+                      call $dynrt_lib_modc__fn116
                       local.get 6
                       local.get 0
                       local.get 1
-                      call $dynrt_lib_modc__fn148
+                      call $dynrt_lib_modc__fn149
                       global.get $dynrt_lib_modc_global20
                       call $dynrt_lib_modc__fn94
                       local.set 6
@@ -7522,10 +7704,10 @@
                 call $dynrt_lib_modc_dynSet
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn115
+                call $dynrt_lib_modc__fn116
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn116
+                call $dynrt_lib_modc__fn117
                 i32.const 44
                 i32.eq
                 if  ;; label = @7
@@ -7536,10 +7718,10 @@
                     global.set $dynrt_lib_modc_global19
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn115
+                    call $dynrt_lib_modc__fn116
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn116
+                    call $dynrt_lib_modc__fn117
                     i32.const 125
                     i32.eq
                     if  ;; label = @9
@@ -7558,10 +7740,10 @@
         end
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn115
+        call $dynrt_lib_modc__fn116
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn116
+        call $dynrt_lib_modc__fn117
         i32.const 125
         i32.eq
         if  ;; label = @3
@@ -7606,7 +7788,7 @@
               block  ;; label = @6
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn116
+                call $dynrt_lib_modc__fn117
                 local.set 5
                 local.get 5
                 i32.const -1
@@ -7645,7 +7827,7 @@
                     if (result i32)  ;; label = @9
                       local.get 0
                       local.get 1
-                      call $dynrt_lib_modc__fn117
+                      call $dynrt_lib_modc__fn118
                       i32.const 123
                       i32.eq
                     else
@@ -7670,7 +7852,7 @@
                         global.set $dynrt_lib_modc_global19
                         local.get 0
                         local.get 1
-                        call $dynrt_lib_modc__fn130
+                        call $dynrt_lib_modc__fn131
                         local.set 3
                         local.get 2
                         local.get 3
@@ -7678,10 +7860,10 @@
                         local.set 2
                         local.get 0
                         local.get 1
-                        call $dynrt_lib_modc__fn115
+                        call $dynrt_lib_modc__fn116
                         local.get 0
                         local.get 1
-                        call $dynrt_lib_modc__fn116
+                        call $dynrt_lib_modc__fn117
                         i32.const 125
                         i32.eq
                         if  ;; label = @11
@@ -7724,7 +7906,7 @@
     if  ;; label = @1
       local.get 0
       local.get 1
-      call $dynrt_lib_modc__fn118
+      call $dynrt_lib_modc__fn119
       return
     end
     local.get 2
@@ -7733,12 +7915,12 @@
     if  ;; label = @1
       local.get 0
       local.get 1
-      call $dynrt_lib_modc__fn118
+      call $dynrt_lib_modc__fn119
       return
     end
     local.get 2
     i32.const 0
-    call $dynrt_lib_modc__fn114
+    call $dynrt_lib_modc__fn115
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -7753,7 +7935,7 @@
             block  ;; label = @5
               local.get 2
               i32.const 1
-              call $dynrt_lib_modc__fn114
+              call $dynrt_lib_modc__fn115
               i32.const 1
               i32.eq
               i32.eqz
@@ -7765,7 +7947,7 @@
                 global.set $dynrt_lib_modc_global19
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn116
+                call $dynrt_lib_modc__fn117
                 local.set 2
               end
               br 1 (;@4;)
@@ -7782,7 +7964,7 @@
         local.set 3
         local.get 3
         local.get 4
-        i32.const 1372
+        i32.const 1384
         i32.const 8
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -7790,7 +7972,7 @@
         if  ;; label = @3
           local.get 0
           local.get 1
-          call $dynrt_lib_modc__fn150
+          call $dynrt_lib_modc__fn151
           return
         end
         local.get 3
@@ -7841,7 +8023,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 1380
+        i32.const 1392
         i32.const 6
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -7852,10 +8034,10 @@
             local.set 2
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 46
             i32.eq
             if  ;; label = @5
@@ -7866,17 +8048,17 @@
                 global.set $dynrt_lib_modc_global19
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn133
+                call $dynrt_lib_modc__fn134
                 global.get $dynrt_lib_modc_global1
                 local.set 5
                 global.get $dynrt_lib_modc_global2
                 local.set 6
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn115
+                call $dynrt_lib_modc__fn116
                 local.get 5
                 local.get 6
-                i32.const 1386
+                i32.const 1398
                 i32.const 6
                 call $dynrt_lib_modc__fn111
                 i32.const 1
@@ -7884,7 +8066,7 @@
                 if (result i32)  ;; label = @7
                   local.get 0
                   local.get 1
-                  call $dynrt_lib_modc__fn116
+                  call $dynrt_lib_modc__fn117
                   i32.const 40
                   i32.eq
                 else
@@ -7898,14 +8080,14 @@
                     global.set $dynrt_lib_modc_global19
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn130
+                    call $dynrt_lib_modc__fn131
                     local.set 2
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn115
+                    call $dynrt_lib_modc__fn116
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn116
+                    call $dynrt_lib_modc__fn117
                     i32.const 41
                     i32.eq
                     if  ;; label = @9
@@ -7949,7 +8131,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 1392
+        i32.const 1404
         i32.const 3
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -7958,20 +8140,20 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             global.get $dynrt_lib_modc_global19
             local.tee 19
             local.set 2
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             local.set 3
             block  ;; label = @5
               loop  ;; label = @6
                 block  ;; label = @7
                   local.get 3
                   i32.const 1
-                  call $dynrt_lib_modc__fn114
+                  call $dynrt_lib_modc__fn115
                   i32.const 1
                   i32.eq
                   i32.eqz
@@ -7983,7 +8165,7 @@
                     global.set $dynrt_lib_modc_global19
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn116
+                    call $dynrt_lib_modc__fn117
                     local.set 3
                   end
                   br 1 (;@6;)
@@ -8025,10 +8207,10 @@
             call $dynrt_lib_modc__fn41
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 40
             i32.eq
             if  ;; label = @5
@@ -8039,10 +8221,10 @@
                 global.set $dynrt_lib_modc_global19
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn115
+                call $dynrt_lib_modc__fn116
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn116
+                call $dynrt_lib_modc__fn117
                 i32.const 41
                 i32.eq
                 if  ;; label = @7
@@ -8065,17 +8247,17 @@
                           block  ;; label = @12
                             local.get 0
                             local.get 1
-                            call $dynrt_lib_modc__fn130
+                            call $dynrt_lib_modc__fn131
                             local.set 5
                             local.get 3
                             local.get 5
                             call $dynrt_lib_modc_dynPush
                             local.get 0
                             local.get 1
-                            call $dynrt_lib_modc__fn115
+                            call $dynrt_lib_modc__fn116
                             local.get 0
                             local.get 1
-                            call $dynrt_lib_modc__fn116
+                            call $dynrt_lib_modc__fn117
                             local.set 5
                             local.get 5
                             i32.const 44
@@ -8117,7 +8299,7 @@
             if  ;; label = @5
               local.get 2
               local.get 3
-              call $dynrt_lib_modc__fn154
+              call $dynrt_lib_modc__fn155
               local.set 4
             end
             call $dynrt_lib_modc__fn42
@@ -8125,18 +8307,355 @@
             return
           end
         end
-        local.get 0
-        local.get 1
-        call $dynrt_lib_modc__fn115
+        local.get 3
+        local.get 4
+        i32.const 1407
+        i32.const 5
+        call $dynrt_lib_modc__fn111
+        i32.const 1
+        i32.eq
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 0
+            local.get 1
+            call $dynrt_lib_modc__fn116
+            global.get $dynrt_lib_modc_global20
+            i32.const -1
+            i32.eq
+            if (result i32)  ;; label = @5
+              i32.const -1
+            else
+              global.get $dynrt_lib_modc_global20
+              i32.const 1329
+              i32.const 4
+              call $dynrt_lib_modc__fn98
+            end
+            local.set 2
+            local.get 0
+            local.get 1
+            call $dynrt_lib_modc__fn117
+            local.set 3
+            local.get 3
+            i32.const 40
+            i32.eq
+            if  ;; label = @5
+              block  ;; label = @6
+                global.get $dynrt_lib_modc_global19
+                i32.const 1
+                i32.add
+                global.set $dynrt_lib_modc_global19
+                call $dynrt_lib_modc_dynArray
+                local.set 3
+                local.get 3
+                call $dynrt_lib_modc__fn41
+                local.get 0
+                local.get 1
+                call $dynrt_lib_modc__fn116
+                local.get 0
+                local.get 1
+                call $dynrt_lib_modc__fn117
+                i32.const 41
+                i32.eq
+                if  ;; label = @7
+                  global.get $dynrt_lib_modc_global19
+                  i32.const 1
+                  i32.add
+                  global.set $dynrt_lib_modc_global19
+                else
+                  block  ;; label = @8
+                    i32.const 1
+                    local.set 4
+                    block  ;; label = @9
+                      loop  ;; label = @10
+                        block  ;; label = @11
+                          local.get 4
+                          i32.const 1
+                          i32.eq
+                          i32.eqz
+                          br_if 2 (;@9;)
+                          block  ;; label = @12
+                            local.get 3
+                            local.get 0
+                            local.get 1
+                            call $dynrt_lib_modc__fn131
+                            call $dynrt_lib_modc_dynPush
+                            local.get 0
+                            local.get 1
+                            call $dynrt_lib_modc__fn116
+                            local.get 0
+                            local.get 1
+                            call $dynrt_lib_modc__fn117
+                            local.set 5
+                            local.get 5
+                            i32.const 44
+                            i32.eq
+                            if  ;; label = @13
+                              global.get $dynrt_lib_modc_global19
+                              i32.const 1
+                              i32.add
+                              global.set $dynrt_lib_modc_global19
+                            else
+                              block  ;; label = @14
+                                local.get 5
+                                i32.const 41
+                                i32.eq
+                                if  ;; label = @15
+                                  global.get $dynrt_lib_modc_global19
+                                  i32.const 1
+                                  i32.add
+                                  global.set $dynrt_lib_modc_global19
+                                end
+                                i32.const 0
+                                local.set 4
+                              end
+                            end
+                          end
+                          br 1 (;@10;)
+                        end
+                      end
+                    end
+                  end
+                end
+                global.get $dynrt_lib_modc_global21
+                i32.const 1
+                i32.eq
+                if (result i32)  ;; label = @7
+                  local.get 2
+                  i32.const -1
+                  i32.ne
+                else
+                  i32.const 0
+                end
+                if  ;; label = @7
+                  block  ;; label = @8
+                    global.get $dynrt_lib_modc_global20
+                    i32.const 1412
+                    i32.const 12
+                    call $dynrt_lib_modc__fn98
+                    local.set 4
+                    local.get 4
+                    i32.const -1
+                    i32.ne
+                    if  ;; label = @9
+                      block  ;; label = @10
+                        local.get 4
+                        i32.const 1424
+                        i32.const 6
+                        call $dynrt_lib_modc_dynGet
+                        local.set 4
+                        local.get 4
+                        i32.const -1
+                        i32.ne
+                        if  ;; label = @11
+                          block  ;; label = @12
+                            local.get 4
+                            local.set 5
+                            local.get 5
+                            i32.const 8
+                            i32.add
+                            i32.load
+                            i32.const 7
+                            i32.eq
+                            if  ;; label = @13
+                              local.get 4
+                              local.get 3
+                              local.get 2
+                              call $dynrt_lib_modc__fn103
+                              drop
+                            end
+                          end
+                        end
+                      end
+                    end
+                  end
+                end
+                call $dynrt_lib_modc__fn42
+                call $dynrt_lib_modc_dynUndefined
+                return
+              end
+            end
+            local.get 3
+            i32.const 46
+            i32.eq
+            if  ;; label = @5
+              block  ;; label = @6
+                global.get $dynrt_lib_modc_global19
+                i32.const 1
+                i32.add
+                global.set $dynrt_lib_modc_global19
+                local.get 0
+                local.get 1
+                call $dynrt_lib_modc__fn134
+                global.get $dynrt_lib_modc_global1
+                local.set 3
+                global.get $dynrt_lib_modc_global2
+                local.set 4
+                global.get $dynrt_lib_modc_global20
+                i32.const -1
+                i32.eq
+                if (result i32)  ;; label = @7
+                  i32.const -1
+                else
+                  global.get $dynrt_lib_modc_global20
+                  i32.const 1430
+                  i32.const 12
+                  call $dynrt_lib_modc__fn98
+                end
+                local.set 5
+                call $dynrt_lib_modc_dynUndefined
+                local.set 6
+                local.get 5
+                i32.const -1
+                i32.ne
+                if  ;; label = @7
+                  local.get 5
+                  local.get 3
+                  local.get 4
+                  call $dynrt_lib_modc_dynMember
+                  local.set 6
+                end
+                local.get 0
+                local.get 1
+                call $dynrt_lib_modc__fn116
+                local.get 0
+                local.get 1
+                call $dynrt_lib_modc__fn117
+                i32.const 40
+                i32.eq
+                if  ;; label = @7
+                  block  ;; label = @8
+                    global.get $dynrt_lib_modc_global19
+                    i32.const 1
+                    i32.add
+                    global.set $dynrt_lib_modc_global19
+                    call $dynrt_lib_modc_dynArray
+                    local.set 3
+                    local.get 3
+                    call $dynrt_lib_modc__fn41
+                    local.get 0
+                    local.get 1
+                    call $dynrt_lib_modc__fn116
+                    local.get 0
+                    local.get 1
+                    call $dynrt_lib_modc__fn117
+                    i32.const 41
+                    i32.eq
+                    if  ;; label = @9
+                      global.get $dynrt_lib_modc_global19
+                      i32.const 1
+                      i32.add
+                      global.set $dynrt_lib_modc_global19
+                    else
+                      block  ;; label = @10
+                        i32.const 1
+                        local.set 4
+                        block  ;; label = @11
+                          loop  ;; label = @12
+                            block  ;; label = @13
+                              local.get 4
+                              i32.const 1
+                              i32.eq
+                              i32.eqz
+                              br_if 2 (;@11;)
+                              block  ;; label = @14
+                                local.get 3
+                                local.get 0
+                                local.get 1
+                                call $dynrt_lib_modc__fn131
+                                call $dynrt_lib_modc_dynPush
+                                local.get 0
+                                local.get 1
+                                call $dynrt_lib_modc__fn116
+                                local.get 0
+                                local.get 1
+                                call $dynrt_lib_modc__fn117
+                                local.set 5
+                                local.get 5
+                                i32.const 44
+                                i32.eq
+                                if  ;; label = @15
+                                  global.get $dynrt_lib_modc_global19
+                                  i32.const 1
+                                  i32.add
+                                  global.set $dynrt_lib_modc_global19
+                                else
+                                  block  ;; label = @16
+                                    local.get 5
+                                    i32.const 41
+                                    i32.eq
+                                    if  ;; label = @17
+                                      global.get $dynrt_lib_modc_global19
+                                      i32.const 1
+                                      i32.add
+                                      global.set $dynrt_lib_modc_global19
+                                    end
+                                    i32.const 0
+                                    local.set 4
+                                  end
+                                end
+                              end
+                              br 1 (;@12;)
+                            end
+                          end
+                        end
+                      end
+                    end
+                    call $dynrt_lib_modc_dynUndefined
+                    local.set 4
+                    global.get $dynrt_lib_modc_global21
+                    i32.const 1
+                    i32.eq
+                    if (result i32)  ;; label = @9
+                      local.get 2
+                      i32.const -1
+                      i32.ne
+                    else
+                      i32.const 0
+                    end
+                    if  ;; label = @9
+                      block  ;; label = @10
+                        local.get 6
+                        local.set 5
+                        local.get 5
+                        i32.const 8
+                        i32.add
+                        i32.load
+                        i32.const 7
+                        i32.eq
+                        if  ;; label = @11
+                          local.get 6
+                          local.get 3
+                          local.get 2
+                          call $dynrt_lib_modc__fn103
+                          local.set 4
+                        end
+                      end
+                    end
+                    call $dynrt_lib_modc__fn42
+                    local.get 4
+                    return
+                  end
+                end
+                local.get 6
+                return
+              end
+            end
+            call $dynrt_lib_modc_dynUndefined
+            return
+          end
+        end
         local.get 0
         local.get 1
         call $dynrt_lib_modc__fn116
+        local.get 0
+        local.get 1
+        call $dynrt_lib_modc__fn117
         i32.const 61
         i32.eq
         if (result i32)  ;; label = @3
           local.get 0
           local.get 1
-          call $dynrt_lib_modc__fn117
+          call $dynrt_lib_modc__fn118
           i32.const 62
           i32.eq
         else
@@ -8158,7 +8677,7 @@
             local.get 2
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn149
+            call $dynrt_lib_modc__fn150
             global.get $dynrt_lib_modc_global20
             call $dynrt_lib_modc__fn94
             return
@@ -8189,11 +8708,11 @@
     end
     call $dynrt_lib_modc_dynUndefined
     return)
-  (func $dynrt_lib_modc__fn121 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn122 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn120
+    call $dynrt_lib_modc__fn121
     local.set 2
     i32.const 1
     local.set 3
@@ -8212,10 +8731,10 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             local.set 6
             i32.const 0
             local.set 7
@@ -8225,7 +8744,7 @@
             if (result i32)  ;; label = @5
               local.get 0
               local.get 1
-              call $dynrt_lib_modc__fn117
+              call $dynrt_lib_modc__fn118
               i32.const 46
               i32.eq
             else
@@ -8265,10 +8784,10 @@
                 end
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn115
+                call $dynrt_lib_modc__fn116
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn116
+                call $dynrt_lib_modc__fn117
                 local.set 4
                 local.get 4
                 i32.const 91
@@ -8281,14 +8800,14 @@
                     global.set $dynrt_lib_modc_global19
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn130
+                    call $dynrt_lib_modc__fn131
                     local.set 7
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn115
+                    call $dynrt_lib_modc__fn116
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn116
+                    call $dynrt_lib_modc__fn117
                     i32.const 93
                     i32.eq
                     if  ;; label = @9
@@ -8318,14 +8837,14 @@
                     local.set 4
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn116
+                    call $dynrt_lib_modc__fn117
                     local.set 7
                     block  ;; label = @9
                       loop  ;; label = @10
                         block  ;; label = @11
                           local.get 7
                           i32.const 1
-                          call $dynrt_lib_modc__fn114
+                          call $dynrt_lib_modc__fn115
                           i32.const 1
                           i32.eq
                           i32.eqz
@@ -8337,7 +8856,7 @@
                             global.set $dynrt_lib_modc_global19
                             local.get 0
                             local.get 1
-                            call $dynrt_lib_modc__fn116
+                            call $dynrt_lib_modc__fn117
                             local.set 7
                           end
                           br 1 (;@10;)
@@ -8390,20 +8909,20 @@
                   global.set $dynrt_lib_modc_global19
                   local.get 0
                   local.get 1
-                  call $dynrt_lib_modc__fn115
+                  call $dynrt_lib_modc__fn116
                   global.get $dynrt_lib_modc_global19
                   local.tee 12
                   local.set 4
                   local.get 0
                   local.get 1
-                  call $dynrt_lib_modc__fn116
+                  call $dynrt_lib_modc__fn117
                   local.set 7
                   block  ;; label = @8
                     loop  ;; label = @9
                       block  ;; label = @10
                         local.get 7
                         i32.const 1
-                        call $dynrt_lib_modc__fn114
+                        call $dynrt_lib_modc__fn115
                         i32.const 1
                         i32.eq
                         i32.eqz
@@ -8415,7 +8934,7 @@
                           global.set $dynrt_lib_modc_global19
                           local.get 0
                           local.get 1
-                          call $dynrt_lib_modc__fn116
+                          call $dynrt_lib_modc__fn117
                           local.set 7
                         end
                         br 1 (;@9;)
@@ -8457,14 +8976,14 @@
                     global.set $dynrt_lib_modc_global19
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn130
+                    call $dynrt_lib_modc__fn131
                     local.set 6
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn115
+                    call $dynrt_lib_modc__fn116
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn116
+                    call $dynrt_lib_modc__fn117
                     i32.const 93
                     i32.eq
                     if  ;; label = @9
@@ -8521,10 +9040,10 @@
                       call $dynrt_lib_modc__fn41
                       local.get 0
                       local.get 1
-                      call $dynrt_lib_modc__fn115
+                      call $dynrt_lib_modc__fn116
                       local.get 0
                       local.get 1
-                      call $dynrt_lib_modc__fn116
+                      call $dynrt_lib_modc__fn117
                       i32.const 41
                       i32.eq
                       if  ;; label = @10
@@ -8547,17 +9066,17 @@
                                 block  ;; label = @15
                                   local.get 0
                                   local.get 1
-                                  call $dynrt_lib_modc__fn130
+                                  call $dynrt_lib_modc__fn131
                                   local.set 9
                                   local.get 7
                                   local.get 9
                                   call $dynrt_lib_modc_dynPush
                                   local.get 0
                                   local.get 1
-                                  call $dynrt_lib_modc__fn115
+                                  call $dynrt_lib_modc__fn116
                                   local.get 0
                                   local.get 1
-                                  call $dynrt_lib_modc__fn116
+                                  call $dynrt_lib_modc__fn117
                                   local.set 9
                                   local.get 9
                                   i32.const 44
@@ -8643,7 +9162,7 @@
     end
     local.get 2
     return)
-  (func $dynrt_lib_modc__fn122 (param i32) (result i32)
+  (func $dynrt_lib_modc__fn123 (param i32) (result i32)
     (local i32)
     local.get 0
     local.set 1
@@ -8664,7 +9183,7 @@
     i32.const 2
     i32.eq
     if  ;; label = @1
-      i32.const 1395
+      i32.const 1442
       i32.const 7
       call $dynrt_lib_modc_dynString
       return
@@ -8673,7 +9192,7 @@
     i32.const 3
     i32.eq
     if  ;; label = @1
-      i32.const 1402
+      i32.const 1449
       i32.const 6
       call $dynrt_lib_modc_dynString
       return
@@ -8682,7 +9201,7 @@
     i32.const 4
     i32.eq
     if  ;; label = @1
-      i32.const 1408
+      i32.const 1455
       i32.const 6
       call $dynrt_lib_modc_dynString
       return
@@ -8691,23 +9210,23 @@
     i32.const 7
     i32.eq
     if  ;; label = @1
-      i32.const 1372
+      i32.const 1384
       i32.const 8
       call $dynrt_lib_modc_dynString
       return
     end
-    i32.const 1414
+    i32.const 1461
     i32.const 6
     call $dynrt_lib_modc_dynString
     return)
-  (func $dynrt_lib_modc__fn123 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn124 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     local.set 2
     local.get 2
     i32.const 45
@@ -8720,7 +9239,7 @@
         global.set $dynrt_lib_modc_global19
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn123
+        call $dynrt_lib_modc__fn124
         call $dynrt_lib_modc_dynNeg
         return
       end
@@ -8736,7 +9255,7 @@
         global.set $dynrt_lib_modc_global19
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn123
+        call $dynrt_lib_modc__fn124
         call $dynrt_lib_modc_dynNot
         return
       end
@@ -8752,7 +9271,7 @@
         global.set $dynrt_lib_modc_global19
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn123
+        call $dynrt_lib_modc__fn124
         local.set 2
         local.get 2
         call $dynrt_lib_modc_dynToNumber
@@ -8769,14 +9288,14 @@
         local.set 2
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn133
+        call $dynrt_lib_modc__fn134
         global.get $dynrt_lib_modc_global1
         local.set 3
         global.get $dynrt_lib_modc_global2
         local.set 4
         local.get 3
         local.get 4
-        i32.const 1420
+        i32.const 1467
         i32.const 6
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -8784,8 +9303,8 @@
         if  ;; label = @3
           local.get 0
           local.get 1
+          call $dynrt_lib_modc__fn124
           call $dynrt_lib_modc__fn123
-          call $dynrt_lib_modc__fn122
           return
         end
         local.get 2
@@ -8794,13 +9313,13 @@
     end
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn121
+    call $dynrt_lib_modc__fn122
     return)
-  (func $dynrt_lib_modc__fn124 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn125 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn123
+    call $dynrt_lib_modc__fn124
     local.set 2
     i32.const 1
     local.set 3
@@ -8815,10 +9334,10 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             local.set 4
             local.get 4
             i32.const 42
@@ -8847,7 +9366,7 @@
                 call $dynrt_lib_modc__fn41
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn123
+                call $dynrt_lib_modc__fn124
                 local.set 5
                 call $dynrt_lib_modc__fn42
                 local.get 4
@@ -8886,11 +9405,11 @@
     end
     local.get 2
     return)
-  (func $dynrt_lib_modc__fn125 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn126 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn124
+    call $dynrt_lib_modc__fn125
     local.set 2
     i32.const 1
     local.set 3
@@ -8905,10 +9424,10 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             local.set 4
             local.get 4
             i32.const 43
@@ -8930,7 +9449,7 @@
                 call $dynrt_lib_modc__fn41
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn124
+                call $dynrt_lib_modc__fn125
                 local.set 5
                 call $dynrt_lib_modc__fn42
                 local.get 4
@@ -8959,11 +9478,11 @@
     end
     local.get 2
     return)
-  (func $dynrt_lib_modc__fn126 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn127 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn125
+    call $dynrt_lib_modc__fn126
     local.set 2
     i32.const 1
     local.set 3
@@ -8978,14 +9497,14 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
-            local.get 0
-            local.get 1
             call $dynrt_lib_modc__fn116
-            local.set 4
             local.get 0
             local.get 1
             call $dynrt_lib_modc__fn117
+            local.set 4
+            local.get 0
+            local.get 1
+            call $dynrt_lib_modc__fn118
             local.set 5
             local.get 4
             i32.const 60
@@ -9034,7 +9553,7 @@
                 call $dynrt_lib_modc__fn41
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn125
+                call $dynrt_lib_modc__fn126
                 local.set 6
                 call $dynrt_lib_modc__fn42
                 local.get 4
@@ -9081,11 +9600,11 @@
     end
     local.get 2
     return)
-  (func $dynrt_lib_modc__fn127 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn128 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn126
+    call $dynrt_lib_modc__fn127
     local.set 2
     i32.const 1
     local.set 3
@@ -9100,14 +9619,14 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
-            local.get 0
-            local.get 1
             call $dynrt_lib_modc__fn116
-            local.set 4
             local.get 0
             local.get 1
             call $dynrt_lib_modc__fn117
+            local.set 4
+            local.get 0
+            local.get 1
+            call $dynrt_lib_modc__fn118
             local.set 5
             local.get 4
             i32.const 61
@@ -9127,7 +9646,7 @@
                 global.set $dynrt_lib_modc_global19
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn116
+                call $dynrt_lib_modc__fn117
                 i32.const 61
                 i32.eq
                 if  ;; label = @7
@@ -9140,7 +9659,7 @@
                 call $dynrt_lib_modc__fn41
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn126
+                call $dynrt_lib_modc__fn127
                 local.set 4
                 call $dynrt_lib_modc__fn42
                 local.get 2
@@ -9168,7 +9687,7 @@
                   global.set $dynrt_lib_modc_global19
                   local.get 0
                   local.get 1
-                  call $dynrt_lib_modc__fn116
+                  call $dynrt_lib_modc__fn117
                   i32.const 61
                   i32.eq
                   if  ;; label = @8
@@ -9181,7 +9700,7 @@
                   call $dynrt_lib_modc__fn41
                   local.get 0
                   local.get 1
-                  call $dynrt_lib_modc__fn126
+                  call $dynrt_lib_modc__fn127
                   local.set 4
                   call $dynrt_lib_modc__fn42
                   local.get 2
@@ -9208,11 +9727,11 @@
     end
     local.get 2
     return)
-  (func $dynrt_lib_modc__fn128 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn129 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn127
+    call $dynrt_lib_modc__fn128
     local.set 2
     i32.const 1
     local.set 3
@@ -9227,16 +9746,16 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 38
             i32.eq
             if (result i32)  ;; label = @5
               local.get 0
               local.get 1
-              call $dynrt_lib_modc__fn117
+              call $dynrt_lib_modc__fn118
               i32.const 38
               i32.eq
             else
@@ -9263,7 +9782,7 @@
                 call $dynrt_lib_modc__fn41
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn127
+                call $dynrt_lib_modc__fn128
                 local.set 6
                 call $dynrt_lib_modc__fn42
                 local.get 5
@@ -9287,11 +9806,11 @@
     end
     local.get 2
     return)
-  (func $dynrt_lib_modc__fn129 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn130 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn128
+    call $dynrt_lib_modc__fn129
     local.set 2
     i32.const 1
     local.set 3
@@ -9306,16 +9825,16 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 124
             i32.eq
             if (result i32)  ;; label = @5
               local.get 0
               local.get 1
-              call $dynrt_lib_modc__fn117
+              call $dynrt_lib_modc__fn118
               i32.const 124
               i32.eq
             else
@@ -9343,7 +9862,7 @@
                 call $dynrt_lib_modc__fn41
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn128
+                call $dynrt_lib_modc__fn129
                 local.set 6
                 call $dynrt_lib_modc__fn42
                 local.get 5
@@ -9358,13 +9877,13 @@
             else
               local.get 0
               local.get 1
-              call $dynrt_lib_modc__fn116
+              call $dynrt_lib_modc__fn117
               i32.const 63
               i32.eq
               if (result i32)  ;; label = @6
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn117
+                call $dynrt_lib_modc__fn118
                 i32.const 63
                 i32.eq
               else
@@ -9411,7 +9930,7 @@
                   call $dynrt_lib_modc__fn41
                   local.get 0
                   local.get 1
-                  call $dynrt_lib_modc__fn128
+                  call $dynrt_lib_modc__fn129
                   local.set 6
                   call $dynrt_lib_modc__fn42
                   local.get 5
@@ -9436,18 +9955,18 @@
     end
     local.get 2
     return)
-  (func $dynrt_lib_modc__fn130 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn131 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn129
+    call $dynrt_lib_modc__fn130
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 63
     i32.eq
     if  ;; label = @1
@@ -9469,17 +9988,17 @@
         end
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn130
+        call $dynrt_lib_modc__fn131
         local.set 4
         local.get 3
         local.tee 6
         global.set $dynrt_lib_modc_global21
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn115
+        call $dynrt_lib_modc__fn116
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn116
+        call $dynrt_lib_modc__fn117
         i32.const 58
         i32.eq
         if  ;; label = @3
@@ -9499,7 +10018,7 @@
         call $dynrt_lib_modc__fn41
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn130
+        call $dynrt_lib_modc__fn131
         local.set 5
         call $dynrt_lib_modc__fn42
         local.get 3
@@ -9527,7 +10046,7 @@
     global.set $dynrt_lib_modc_global21
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn130
+    call $dynrt_lib_modc__fn131
     return)
   (func $dynrt_lib_modc_dynEvalEnv (param i32 i32 i32) (result i32)
     i32.const 0
@@ -9538,23 +10057,23 @@
     global.set $dynrt_lib_modc_global21
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn130
+    call $dynrt_lib_modc__fn131
     return)
-  (func $dynrt_lib_modc__fn133 (param i32 i32)
+  (func $dynrt_lib_modc__fn134 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_lib_modc_global19
     local.tee 4
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     local.set 3
     block  ;; label = @1
       loop  ;; label = @2
         block  ;; label = @3
           local.get 3
           i32.const 1
-          call $dynrt_lib_modc__fn114
+          call $dynrt_lib_modc__fn115
           i32.const 1
           i32.eq
           i32.eqz
@@ -9566,7 +10085,7 @@
             global.set $dynrt_lib_modc_global19
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             local.set 3
           end
           br 1 (;@2;)
@@ -9587,26 +10106,26 @@
     local.get 3
     global.set $dynrt_lib_modc_global2
     return)
-  (func $dynrt_lib_modc__fn134 (param i32 i32)
+  (func $dynrt_lib_modc__fn135 (param i32 i32)
     (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn133
+    call $dynrt_lib_modc__fn134
     global.get $dynrt_lib_modc_global1
     local.set 2
     global.get $dynrt_lib_modc_global2
     local.set 3
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     call $dynrt_lib_modc_dynUndefined
     local.set 4
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 61
     i32.eq
     if  ;; label = @1
@@ -9617,7 +10136,7 @@
         global.set $dynrt_lib_modc_global19
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn130
+        call $dynrt_lib_modc__fn131
         local.set 4
       end
     end
@@ -9633,10 +10152,10 @@
     end
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 59
     i32.eq
     if  ;; label = @1
@@ -9645,14 +10164,14 @@
       i32.add
       global.set $dynrt_lib_modc_global19
     end)
-  (func $dynrt_lib_modc__fn135 (param i32 i32)
+  (func $dynrt_lib_modc__fn136 (param i32 i32)
     (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     local.set 2
     call $dynrt_lib_modc_dynUndefined
     local.set 3
@@ -9676,7 +10195,7 @@
     if  ;; label = @1
       local.get 0
       local.get 1
-      call $dynrt_lib_modc__fn130
+      call $dynrt_lib_modc__fn131
       local.set 3
     end
     global.get $dynrt_lib_modc_global21
@@ -9692,10 +10211,10 @@
     end
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 59
     i32.eq
     if  ;; label = @1
@@ -9704,16 +10223,16 @@
       i32.add
       global.set $dynrt_lib_modc_global19
     end)
-  (func $dynrt_lib_modc__fn136 (param i32 i32)
+  (func $dynrt_lib_modc__fn137 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_lib_modc_global21
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 40
     i32.eq
     if  ;; label = @1
@@ -9724,14 +10243,14 @@
     end
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn130
+    call $dynrt_lib_modc__fn131
     local.set 3
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 41
     i32.eq
     if  ;; label = @1
@@ -9775,17 +10294,17 @@
     global.set $dynrt_lib_modc_global21
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn155
+    call $dynrt_lib_modc__fn156
     local.get 2
     global.set $dynrt_lib_modc_global21
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 0
-    call $dynrt_lib_modc__fn114
+    call $dynrt_lib_modc__fn115
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -9794,14 +10313,14 @@
         local.set 4
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn133
+        call $dynrt_lib_modc__fn134
         global.get $dynrt_lib_modc_global1
         local.set 5
         global.get $dynrt_lib_modc_global2
         local.set 6
         local.get 5
         local.get 6
-        i32.const 1426
+        i32.const 1473
         i32.const 4
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -9825,7 +10344,7 @@
             global.set $dynrt_lib_modc_global21
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn155
+            call $dynrt_lib_modc__fn156
             local.get 2
             global.set $dynrt_lib_modc_global21
           end
@@ -9835,16 +10354,16 @@
         end
       end
     end)
-  (func $dynrt_lib_modc__fn137 (param i32 i32)
+  (func $dynrt_lib_modc__fn138 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_lib_modc_global21
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 40
     i32.eq
     if  ;; label = @1
@@ -9872,14 +10391,14 @@
             global.set $dynrt_lib_modc_global19
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn130
+            call $dynrt_lib_modc__fn131
             local.set 6
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 41
             i32.eq
             if  ;; label = @5
@@ -9915,7 +10434,7 @@
                 global.set $dynrt_lib_modc_global21
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn155
+                call $dynrt_lib_modc__fn156
                 local.get 2
                 global.set $dynrt_lib_modc_global21
                 global.get $dynrt_lib_modc_global23
@@ -9974,7 +10493,7 @@
                 global.set $dynrt_lib_modc_global21
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn155
+                call $dynrt_lib_modc__fn156
                 local.get 2
                 global.set $dynrt_lib_modc_global21
                 i32.const 0
@@ -9987,13 +10506,13 @@
         end
       end
     end)
-  (func $dynrt_lib_modc__fn138 (param i32 i32)
+  (func $dynrt_lib_modc__fn139 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_lib_modc_global21
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     global.get $dynrt_lib_modc_global19
     local.set 3
     i32.const 1
@@ -10016,31 +10535,31 @@
             global.set $dynrt_lib_modc_global21
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn155
+            call $dynrt_lib_modc__fn156
             local.get 2
             local.tee 9
             global.set $dynrt_lib_modc_global21
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 0
-            call $dynrt_lib_modc__fn114
+            call $dynrt_lib_modc__fn115
             i32.const 1
             i32.eq
             if  ;; label = @5
               local.get 0
               local.get 1
-              call $dynrt_lib_modc__fn133
+              call $dynrt_lib_modc__fn134
             end
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 40
             i32.eq
             if  ;; label = @5
@@ -10051,14 +10570,14 @@
             end
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn130
+            call $dynrt_lib_modc__fn131
             local.set 4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 41
             i32.eq
             if  ;; label = @5
@@ -10069,10 +10588,10 @@
             end
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -10152,7 +10671,7 @@
         end
       end
     end)
-  (func $dynrt_lib_modc__fn139 (param i32 i32)
+  (func $dynrt_lib_modc__fn140 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_lib_modc_global21
     local.set 2
@@ -10168,10 +10687,10 @@
     call $dynrt_lib_modc__fn41
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 40
     i32.eq
     if  ;; label = @1
@@ -10184,7 +10703,7 @@
     local.set 4
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     i32.const 0
     local.tee 14
     local.set 5
@@ -10196,16 +10715,16 @@
     local.set 8
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 0
-    call $dynrt_lib_modc__fn114
+    call $dynrt_lib_modc__fn115
     i32.const 1
     i32.eq
     if  ;; label = @1
       block  ;; label = @2
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn133
+        call $dynrt_lib_modc__fn134
         global.get $dynrt_lib_modc_global1
         local.set 9
         global.get $dynrt_lib_modc_global2
@@ -10216,7 +10735,7 @@
         local.set 12
         local.get 9
         local.get 10
-        i32.const 1430
+        i32.const 1477
         i32.const 5
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -10226,7 +10745,7 @@
         else
           local.get 9
           local.get 10
-          i32.const 1435
+          i32.const 1482
           i32.const 3
           call $dynrt_lib_modc__fn111
           i32.const 1
@@ -10237,7 +10756,7 @@
         else
           local.get 9
           local.get 10
-          i32.const 1438
+          i32.const 1485
           i32.const 3
           call $dynrt_lib_modc__fn111
           i32.const 1
@@ -10247,7 +10766,7 @@
           block  ;; label = @4
             local.get 9
             local.get 10
-            i32.const 1438
+            i32.const 1485
             i32.const 3
             call $dynrt_lib_modc__fn111
             i32.const 1
@@ -10258,10 +10777,10 @@
             end
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn133
+            call $dynrt_lib_modc__fn134
             global.get $dynrt_lib_modc_global1
             local.set 11
             global.get $dynrt_lib_modc_global2
@@ -10270,26 +10789,26 @@
         end
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn115
+        call $dynrt_lib_modc__fn116
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn116
+        call $dynrt_lib_modc__fn117
         i32.const 0
-        call $dynrt_lib_modc__fn114
+        call $dynrt_lib_modc__fn115
         i32.const 1
         i32.eq
         if  ;; label = @3
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn133
+            call $dynrt_lib_modc__fn134
             global.get $dynrt_lib_modc_global1
             local.set 9
             global.get $dynrt_lib_modc_global2
             local.set 10
             local.get 9
             local.get 10
-            i32.const 1441
+            i32.const 1488
             i32.const 2
             call $dynrt_lib_modc__fn111
             i32.const 1
@@ -10306,7 +10825,7 @@
             else
               local.get 9
               local.get 10
-              i32.const 1443
+              i32.const 1490
               i32.const 2
               call $dynrt_lib_modc__fn111
               i32.const 1
@@ -10336,7 +10855,7 @@
       local.get 7
       local.get 2
       local.get 8
-      call $dynrt_lib_modc__fn141
+      call $dynrt_lib_modc__fn142
     else
       local.get 5
       i32.const 2
@@ -10348,7 +10867,7 @@
         local.get 7
         local.get 2
         local.get 8
-        call $dynrt_lib_modc__fn140
+        call $dynrt_lib_modc__fn141
       else
         block  ;; label = @3
           local.get 4
@@ -10357,7 +10876,7 @@
           local.get 1
           local.get 2
           local.get 8
-          call $dynrt_lib_modc__fn142
+          call $dynrt_lib_modc__fn143
         end
       end
     end
@@ -10365,20 +10884,20 @@
     local.get 3
     local.tee 15
     global.set $dynrt_lib_modc_global20)
-  (func $dynrt_lib_modc__fn140 (param i32 i32 i32 i32 i32 i32)
+  (func $dynrt_lib_modc__fn141 (param i32 i32 i32 i32 i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_lib_modc_global20
     local.set 6
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn130
+    call $dynrt_lib_modc__fn131
     local.set 7
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 41
     i32.eq
     if  ;; label = @1
@@ -10438,7 +10957,7 @@
         global.set $dynrt_lib_modc_global19
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn155
+        call $dynrt_lib_modc__fn156
         local.get 4
         global.set $dynrt_lib_modc_global21
         return
@@ -10483,7 +11002,7 @@
             global.set $dynrt_lib_modc_global21
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn155
+            call $dynrt_lib_modc__fn156
             local.get 4
             global.set $dynrt_lib_modc_global21
             local.get 6
@@ -10543,20 +11062,20 @@
         end
       end
     end)
-  (func $dynrt_lib_modc__fn141 (param i32 i32 i32 i32 i32 i32)
+  (func $dynrt_lib_modc__fn142 (param i32 i32 i32 i32 i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_lib_modc_global20
     local.set 6
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn130
+    call $dynrt_lib_modc__fn131
     local.set 7
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 41
     i32.eq
     if  ;; label = @1
@@ -10616,7 +11135,7 @@
         global.set $dynrt_lib_modc_global19
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn155
+        call $dynrt_lib_modc__fn156
         local.get 4
         global.set $dynrt_lib_modc_global21
         return
@@ -10661,7 +11180,7 @@
             global.set $dynrt_lib_modc_global21
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn155
+            call $dynrt_lib_modc__fn156
             local.get 4
             global.set $dynrt_lib_modc_global21
             local.get 6
@@ -10721,7 +11240,7 @@
         end
       end
     end)
-  (func $dynrt_lib_modc__fn142 (param i32 i32 i32 i32)
+  (func $dynrt_lib_modc__fn143 (param i32 i32 i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_lib_modc_global20
     local.set 4
@@ -10739,7 +11258,7 @@
     global.set $dynrt_lib_modc_global21
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn155
+    call $dynrt_lib_modc__fn156
     global.get $dynrt_lib_modc_global19
     local.set 6
     local.get 4
@@ -10773,27 +11292,27 @@
             global.set $dynrt_lib_modc_global19
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             i32.const 1
             local.set 10
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 59
             i32.ne
             if  ;; label = @5
               local.get 0
               local.get 1
-              call $dynrt_lib_modc__fn130
+              call $dynrt_lib_modc__fn131
               call $dynrt_lib_modc_dynToBool
               local.set 10
             end
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -10809,20 +11328,20 @@
             global.set $dynrt_lib_modc_global21
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 41
             i32.ne
             if  ;; label = @5
               local.get 0
               local.get 1
-              call $dynrt_lib_modc__fn155
+              call $dynrt_lib_modc__fn156
             end
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 41
             i32.eq
             if  ;; label = @5
@@ -10864,7 +11383,7 @@
                 global.set $dynrt_lib_modc_global21
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn155
+                call $dynrt_lib_modc__fn156
                 local.get 2
                 global.set $dynrt_lib_modc_global21
                 global.get $dynrt_lib_modc_global23
@@ -10923,13 +11442,13 @@
                       global.set $dynrt_lib_modc_global21
                       local.get 0
                       local.get 1
-                      call $dynrt_lib_modc__fn116
+                      call $dynrt_lib_modc__fn117
                       i32.const 41
                       i32.ne
                       if  ;; label = @10
                         local.get 0
                         local.get 1
-                        call $dynrt_lib_modc__fn155
+                        call $dynrt_lib_modc__fn156
                       end
                       local.get 2
                       local.tee 17
@@ -10964,7 +11483,7 @@
                 global.set $dynrt_lib_modc_global21
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn155
+                call $dynrt_lib_modc__fn156
                 local.get 2
                 global.set $dynrt_lib_modc_global21
                 i32.const 0
@@ -10980,16 +11499,16 @@
     local.get 4
     local.tee 27
     global.set $dynrt_lib_modc_global20)
-  (func $dynrt_lib_modc__fn143 (param i32 i32)
+  (func $dynrt_lib_modc__fn144 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_lib_modc_global21
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 40
     i32.eq
     if  ;; label = @1
@@ -11000,14 +11519,14 @@
     end
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn130
+    call $dynrt_lib_modc__fn131
     local.set 3
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 41
     i32.eq
     if  ;; label = @1
@@ -11018,10 +11537,10 @@
     end
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 123
     i32.eq
     if  ;; label = @1
@@ -11048,10 +11567,10 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             local.set 7
             local.get 7
             i32.const 125
@@ -11069,7 +11588,7 @@
             else
               local.get 7
               i32.const 0
-              call $dynrt_lib_modc__fn114
+              call $dynrt_lib_modc__fn115
               i32.const 1
               i32.eq
               if  ;; label = @6
@@ -11078,14 +11597,14 @@
                   local.set 7
                   local.get 0
                   local.get 1
-                  call $dynrt_lib_modc__fn133
+                  call $dynrt_lib_modc__fn134
                   global.get $dynrt_lib_modc_global1
                   local.set 8
                   global.get $dynrt_lib_modc_global2
                   local.set 9
                   local.get 8
                   local.get 9
-                  i32.const 1445
+                  i32.const 1492
                   i32.const 4
                   call $dynrt_lib_modc__fn111
                   i32.const 1
@@ -11099,14 +11618,14 @@
                         block  ;; label = @11
                           local.get 0
                           local.get 1
-                          call $dynrt_lib_modc__fn130
+                          call $dynrt_lib_modc__fn131
                           local.set 7
                           local.get 0
                           local.get 1
-                          call $dynrt_lib_modc__fn115
+                          call $dynrt_lib_modc__fn116
                           local.get 0
                           local.get 1
-                          call $dynrt_lib_modc__fn116
+                          call $dynrt_lib_modc__fn117
                           i32.const 58
                           i32.eq
                           if  ;; label = @12
@@ -11133,16 +11652,16 @@
                           global.set $dynrt_lib_modc_global21
                           local.get 0
                           local.get 1
-                          call $dynrt_lib_modc__fn130
+                          call $dynrt_lib_modc__fn131
                           drop
                           local.get 7
                           global.set $dynrt_lib_modc_global21
                           local.get 0
                           local.get 1
-                          call $dynrt_lib_modc__fn115
+                          call $dynrt_lib_modc__fn116
                           local.get 0
                           local.get 1
-                          call $dynrt_lib_modc__fn116
+                          call $dynrt_lib_modc__fn117
                           i32.const 58
                           i32.eq
                           if  ;; label = @12
@@ -11155,12 +11674,12 @@
                       end
                       local.get 0
                       local.get 1
-                      call $dynrt_lib_modc__fn144
+                      call $dynrt_lib_modc__fn145
                     end
                   else
                     local.get 8
                     local.get 9
-                    i32.const 1449
+                    i32.const 1496
                     i32.const 7
                     call $dynrt_lib_modc__fn111
                     i32.const 1
@@ -11169,10 +11688,10 @@
                       block  ;; label = @10
                         local.get 0
                         local.get 1
-                        call $dynrt_lib_modc__fn115
+                        call $dynrt_lib_modc__fn116
                         local.get 0
                         local.get 1
-                        call $dynrt_lib_modc__fn116
+                        call $dynrt_lib_modc__fn117
                         i32.const 58
                         i32.eq
                         if  ;; label = @11
@@ -11185,7 +11704,7 @@
                         local.set 5
                         local.get 0
                         local.get 1
-                        call $dynrt_lib_modc__fn144
+                        call $dynrt_lib_modc__fn145
                       end
                     else
                       block  ;; label = @10
@@ -11193,7 +11712,7 @@
                         global.set $dynrt_lib_modc_global19
                         local.get 0
                         local.get 1
-                        call $dynrt_lib_modc__fn144
+                        call $dynrt_lib_modc__fn145
                       end
                     end
                   end
@@ -11237,7 +11756,7 @@
         global.set $dynrt_lib_modc_global21
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn145
+        call $dynrt_lib_modc__fn146
         local.get 2
         global.set $dynrt_lib_modc_global21
       end
@@ -11246,10 +11765,10 @@
     global.set $dynrt_lib_modc_global19
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 125
     i32.eq
     if  ;; label = @1
@@ -11265,7 +11784,7 @@
       i32.const 0
       global.set $dynrt_lib_modc_global26
     end)
-  (func $dynrt_lib_modc__fn144 (param i32 i32)
+  (func $dynrt_lib_modc__fn145 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     i32.const 1
     local.set 2
@@ -11280,10 +11799,10 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             local.set 3
             local.get 3
             i32.const 125
@@ -11301,7 +11820,7 @@
             else
               local.get 3
               i32.const 0
-              call $dynrt_lib_modc__fn114
+              call $dynrt_lib_modc__fn115
               i32.const 1
               i32.eq
               if  ;; label = @6
@@ -11310,14 +11829,14 @@
                   local.set 3
                   local.get 0
                   local.get 1
-                  call $dynrt_lib_modc__fn133
+                  call $dynrt_lib_modc__fn134
                   global.get $dynrt_lib_modc_global1
                   local.set 4
                   global.get $dynrt_lib_modc_global2
                   local.set 5
                   local.get 4
                   local.get 5
-                  i32.const 1445
+                  i32.const 1492
                   i32.const 4
                   call $dynrt_lib_modc__fn111
                   i32.const 1
@@ -11327,7 +11846,7 @@
                   else
                     local.get 4
                     local.get 5
-                    i32.const 1449
+                    i32.const 1496
                     i32.const 7
                     call $dynrt_lib_modc__fn111
                     i32.const 1
@@ -11351,7 +11870,7 @@
                       global.set $dynrt_lib_modc_global21
                       local.get 0
                       local.get 1
-                      call $dynrt_lib_modc__fn155
+                      call $dynrt_lib_modc__fn156
                       local.get 3
                       local.tee 7
                       global.set $dynrt_lib_modc_global21
@@ -11366,7 +11885,7 @@
                   global.set $dynrt_lib_modc_global21
                   local.get 0
                   local.get 1
-                  call $dynrt_lib_modc__fn155
+                  call $dynrt_lib_modc__fn156
                   local.get 3
                   global.set $dynrt_lib_modc_global21
                 end
@@ -11377,7 +11896,7 @@
         end
       end
     end)
-  (func $dynrt_lib_modc__fn145 (param i32 i32)
+  (func $dynrt_lib_modc__fn146 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32)
     i32.const 1
     local.set 2
@@ -11392,10 +11911,10 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             local.set 3
             local.get 3
             i32.const 125
@@ -11413,7 +11932,7 @@
             else
               local.get 3
               i32.const 0
-              call $dynrt_lib_modc__fn114
+              call $dynrt_lib_modc__fn115
               i32.const 1
               i32.eq
               if  ;; label = @6
@@ -11422,14 +11941,14 @@
                   local.set 3
                   local.get 0
                   local.get 1
-                  call $dynrt_lib_modc__fn133
+                  call $dynrt_lib_modc__fn134
                   global.get $dynrt_lib_modc_global1
                   local.set 4
                   global.get $dynrt_lib_modc_global2
                   local.set 5
                   local.get 4
                   local.get 5
-                  i32.const 1445
+                  i32.const 1492
                   i32.const 4
                   call $dynrt_lib_modc__fn111
                   i32.const 1
@@ -11442,16 +11961,16 @@
                       global.set $dynrt_lib_modc_global21
                       local.get 0
                       local.get 1
-                      call $dynrt_lib_modc__fn130
+                      call $dynrt_lib_modc__fn131
                       drop
                       local.get 3
                       global.set $dynrt_lib_modc_global21
                       local.get 0
                       local.get 1
-                      call $dynrt_lib_modc__fn115
+                      call $dynrt_lib_modc__fn116
                       local.get 0
                       local.get 1
-                      call $dynrt_lib_modc__fn116
+                      call $dynrt_lib_modc__fn117
                       i32.const 58
                       i32.eq
                       if  ;; label = @10
@@ -11464,7 +11983,7 @@
                   else
                     local.get 4
                     local.get 5
-                    i32.const 1449
+                    i32.const 1496
                     i32.const 7
                     call $dynrt_lib_modc__fn111
                     i32.const 1
@@ -11473,10 +11992,10 @@
                       block  ;; label = @10
                         local.get 0
                         local.get 1
-                        call $dynrt_lib_modc__fn115
+                        call $dynrt_lib_modc__fn116
                         local.get 0
                         local.get 1
-                        call $dynrt_lib_modc__fn116
+                        call $dynrt_lib_modc__fn117
                         i32.const 58
                         i32.eq
                         if  ;; label = @11
@@ -11492,7 +12011,7 @@
                         global.set $dynrt_lib_modc_global19
                         local.get 0
                         local.get 1
-                        call $dynrt_lib_modc__fn155
+                        call $dynrt_lib_modc__fn156
                       end
                     end
                   end
@@ -11500,7 +12019,7 @@
               else
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn155
+                call $dynrt_lib_modc__fn156
               end
             end
             global.get $dynrt_lib_modc_global26
@@ -11536,25 +12055,25 @@
         end
       end
     end)
-  (func $dynrt_lib_modc__fn146 (param i32 i32)
+  (func $dynrt_lib_modc__fn147 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_lib_modc_global21
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 2
     local.tee 17
     global.set $dynrt_lib_modc_global21
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn155
+    call $dynrt_lib_modc__fn156
     local.get 2
     local.tee 18
     global.set $dynrt_lib_modc_global21
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     i32.const 0
     local.tee 19
     local.set 3
@@ -11563,23 +12082,23 @@
     local.set 4
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 0
-    call $dynrt_lib_modc__fn114
+    call $dynrt_lib_modc__fn115
     i32.const 1
     i32.eq
     if  ;; label = @1
       block  ;; label = @2
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn133
+        call $dynrt_lib_modc__fn134
         global.get $dynrt_lib_modc_global1
         local.set 5
         global.get $dynrt_lib_modc_global2
         local.set 6
         local.get 5
         local.get 6
-        i32.const 1456
+        i32.const 1503
         i32.const 5
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -11604,10 +12123,10 @@
         local.set 4
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn115
+        call $dynrt_lib_modc__fn116
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn116
+        call $dynrt_lib_modc__fn117
         i32.const 40
         i32.eq
         if  ;; label = @3
@@ -11618,20 +12137,20 @@
             global.set $dynrt_lib_modc_global19
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn133
+            call $dynrt_lib_modc__fn134
             global.get $dynrt_lib_modc_global1
             local.set 3
             global.get $dynrt_lib_modc_global2
             local.set 4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 41
             i32.eq
             if  ;; label = @5
@@ -11644,7 +12163,7 @@
         end
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn115
+        call $dynrt_lib_modc__fn116
         global.get $dynrt_lib_modc_global28
         i32.const 1
         i32.eq
@@ -11685,7 +12204,7 @@
             global.set $dynrt_lib_modc_global21
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn155
+            call $dynrt_lib_modc__fn156
             call $dynrt_lib_modc__fn42
             local.get 6
             local.tee 10
@@ -11699,7 +12218,7 @@
             global.set $dynrt_lib_modc_global21
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn155
+            call $dynrt_lib_modc__fn156
             local.get 2
             global.set $dynrt_lib_modc_global21
           end
@@ -11708,7 +12227,7 @@
     end
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     i32.const 0
     local.tee 21
     local.set 3
@@ -11717,23 +12236,23 @@
     local.set 4
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 0
-    call $dynrt_lib_modc__fn114
+    call $dynrt_lib_modc__fn115
     i32.const 1
     i32.eq
     if  ;; label = @1
       block  ;; label = @2
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn133
+        call $dynrt_lib_modc__fn134
         global.get $dynrt_lib_modc_global1
         local.set 5
         global.get $dynrt_lib_modc_global2
         local.set 6
         local.get 5
         local.get 6
-        i32.const 1461
+        i32.const 1508
         i32.const 7
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -11778,13 +12297,13 @@
         global.set $dynrt_lib_modc_global27
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn115
+        call $dynrt_lib_modc__fn116
         local.get 2
         local.tee 15
         global.set $dynrt_lib_modc_global21
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn155
+        call $dynrt_lib_modc__fn156
         local.get 2
         local.tee 16
         global.set $dynrt_lib_modc_global21
@@ -11826,13 +12345,13 @@
         end
       end
     end)
-  (func $dynrt_lib_modc__fn147 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn148 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32)
     call $dynrt_lib_modc_dynArray
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 40
     i32.eq
     if  ;; label = @1
@@ -11843,10 +12362,10 @@
         global.set $dynrt_lib_modc_global19
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn115
+        call $dynrt_lib_modc__fn116
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn116
+        call $dynrt_lib_modc__fn117
         i32.const 41
         i32.eq
         if  ;; label = @3
@@ -11869,10 +12388,10 @@
                   block  ;; label = @8
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn115
+                    call $dynrt_lib_modc__fn116
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn133
+                    call $dynrt_lib_modc__fn134
                     global.get $dynrt_lib_modc_global1
                     local.set 4
                     global.get $dynrt_lib_modc_global2
@@ -11884,10 +12403,10 @@
                     call $dynrt_lib_modc_dynPush
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn115
+                    call $dynrt_lib_modc__fn116
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn116
+                    call $dynrt_lib_modc__fn117
                     local.set 4
                     local.get 4
                     i32.const 44
@@ -11923,7 +12442,7 @@
     end
     local.get 2
     return)
-  (func $dynrt_lib_modc__fn148 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn149 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_lib_modc_global19
     local.tee 12
@@ -12084,7 +12603,7 @@
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 125
     i32.eq
     if  ;; label = @1
@@ -12097,20 +12616,20 @@
     local.get 3
     call $dynrt_lib_modc_dynString
     return)
-  (func $dynrt_lib_modc__fn149 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn150 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 123
     i32.eq
     if  ;; label = @1
       local.get 0
       local.get 1
-      call $dynrt_lib_modc__fn148
+      call $dynrt_lib_modc__fn149
       return
     end
     global.get $dynrt_lib_modc_global19
@@ -12122,7 +12641,7 @@
     global.set $dynrt_lib_modc_global21
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn130
+    call $dynrt_lib_modc__fn131
     drop
     local.get 3
     global.set $dynrt_lib_modc_global21
@@ -12134,46 +12653,46 @@
     call $dynrt_lib_modc__fn4
     call $dynrt_lib_modc_dynString
     return)
-  (func $dynrt_lib_modc__fn150 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn151 (param i32 i32) (result i32)
     (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 0
-    call $dynrt_lib_modc__fn114
+    call $dynrt_lib_modc__fn115
     i32.const 1
     i32.eq
     if  ;; label = @1
       local.get 0
       local.get 1
-      call $dynrt_lib_modc__fn133
+      call $dynrt_lib_modc__fn134
     end
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn147
+    call $dynrt_lib_modc__fn148
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     i32.const 1307
     i32.const 0
     call $dynrt_lib_modc_dynString
     local.set 3
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 123
     i32.eq
     if  ;; label = @1
       local.get 0
       local.get 1
-      call $dynrt_lib_modc__fn148
+      call $dynrt_lib_modc__fn149
       local.set 3
     end
     local.get 2
@@ -12181,7 +12700,7 @@
     global.get $dynrt_lib_modc_global20
     call $dynrt_lib_modc__fn94
     return)
-  (func $dynrt_lib_modc__fn151 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn152 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_lib_modc_global19
     local.set 2
@@ -12327,19 +12846,19 @@
     end
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     i32.const 0
     local.tee 15
     local.set 3
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 61
     i32.eq
     if (result i32)  ;; label = @1
       local.get 0
       local.get 1
-      call $dynrt_lib_modc__fn117
+      call $dynrt_lib_modc__fn118
       i32.const 62
       i32.eq
     else
@@ -12353,41 +12872,41 @@
     global.set $dynrt_lib_modc_global19
     local.get 3
     return)
-  (func $dynrt_lib_modc__fn152 (param i32 i32)
+  (func $dynrt_lib_modc__fn153 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn133
+    call $dynrt_lib_modc__fn134
     global.get $dynrt_lib_modc_global1
     local.set 2
     global.get $dynrt_lib_modc_global2
     local.set 3
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn147
+    call $dynrt_lib_modc__fn148
     local.set 4
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     i32.const 1307
     i32.const 0
     call $dynrt_lib_modc_dynString
     local.set 5
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 123
     i32.eq
     if  ;; label = @1
       local.get 0
       local.get 1
-      call $dynrt_lib_modc__fn148
+      call $dynrt_lib_modc__fn149
       local.set 5
     end
     local.get 4
@@ -12405,40 +12924,45 @@
       local.get 4
       call $dynrt_lib_modc_dynSet
     end)
-  (func $dynrt_lib_modc__fn153 (param i32 i32)
-    (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
+  (func $dynrt_lib_modc__fn154 (param i32 i32)
+    (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn133
+    call $dynrt_lib_modc__fn134
     global.get $dynrt_lib_modc_global1
     local.set 2
     global.get $dynrt_lib_modc_global2
     local.set 3
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
+    i32.const -1
+    local.tee 29
+    local.set 4
+    local.get 29
+    local.set 5
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 0
-    call $dynrt_lib_modc__fn114
+    call $dynrt_lib_modc__fn115
     i32.const 1
     i32.eq
     if  ;; label = @1
       block  ;; label = @2
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn133
+        call $dynrt_lib_modc__fn134
         global.get $dynrt_lib_modc_global1
-        local.set 4
+        local.set 6
         global.get $dynrt_lib_modc_global2
-        local.set 5
-        local.get 4
-        local.get 5
-        i32.const 1468
+        local.set 7
+        local.get 6
+        local.get 7
+        i32.const 1515
         i32.const 7
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12447,24 +12971,114 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn133
+            call $dynrt_lib_modc__fn134
+            global.get $dynrt_lib_modc_global1
+            local.set 6
+            global.get $dynrt_lib_modc_global2
+            local.set 7
+            global.get $dynrt_lib_modc_global20
+            i32.const -1
+            i32.eq
+            if (result i32)  ;; label = @5
+              i32.const -1
+            else
+              global.get $dynrt_lib_modc_global20
+              local.get 6
+              local.get 7
+              call $dynrt_lib_modc__fn98
+            end
+            local.set 6
+            local.get 6
+            i32.const -1
+            i32.ne
+            if  ;; label = @5
+              block  ;; label = @6
+                local.get 6
+                local.tee 20
+                local.set 4
+                local.get 6
+                i32.const 1522
+                i32.const 7
+                call $dynrt_lib_modc_dynGet
+                local.set 6
+                local.get 6
+                i32.const -1
+                i32.ne
+                if  ;; label = @7
+                  local.get 6
+                  local.set 5
+                end
+              end
+            end
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
           end
         end
       end
     end
     call $dynrt_lib_modc_dynObject
-    local.set 4
+    local.set 6
+    local.get 5
     i32.const -1
+    i32.ne
+    if  ;; label = @1
+      block  ;; label = @2
+        local.get 6
+        local.set 7
+        local.get 7
+        i32.const 8
+        i32.add
+        i32.const 8
+        i32.add
+        local.get 5
+        i32.store
+      end
+    end
+    call $dynrt_lib_modc_dynObject
+    local.set 7
+    global.get $dynrt_lib_modc_global20
+    call $dynrt_lib_modc__fn99
+    local.set 8
+    local.get 5
+    i32.const -1
+    i32.ne
+    if  ;; label = @1
+      local.get 8
+      i32.const 1430
+      i32.const 12
+      local.get 5
+      call $dynrt_lib_modc_dynSet
+    end
+    local.get 4
+    i32.const -1
+    i32.ne
+    if  ;; label = @1
+      local.get 8
+      i32.const 1412
+      i32.const 12
+      local.get 4
+      call $dynrt_lib_modc_dynSet
+    end
+    i32.const 1307
+    local.tee 30
     local.set 5
+    i32.const 0
+    local.tee 31
+    local.set 9
+    i32.const -1
+    local.tee 32
+    local.set 10
+    local.get 30
+    local.set 11
+    local.get 31
+    local.set 12
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 123
     i32.eq
     if  ;; label = @1
@@ -12475,19 +13089,19 @@
     end
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     block  ;; label = @1
       loop  ;; label = @2
         block  ;; label = @3
           local.get 0
           local.get 1
-          call $dynrt_lib_modc__fn116
+          call $dynrt_lib_modc__fn117
           i32.const 125
           i32.ne
           if (result i32)  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const -1
             i32.ne
           else
@@ -12497,7 +13111,7 @@
           br_if 2 (;@1;)
           local.get 0
           local.get 1
-          call $dynrt_lib_modc__fn116
+          call $dynrt_lib_modc__fn117
           i32.const 59
           i32.eq
           if  ;; label = @4
@@ -12508,56 +13122,379 @@
               global.set $dynrt_lib_modc_global19
               local.get 0
               local.get 1
-              call $dynrt_lib_modc__fn115
+              call $dynrt_lib_modc__fn116
             end
           else
             block  ;; label = @5
+              i32.const 0
+              local.tee 25
+              local.set 13
+              local.get 25
+              local.set 14
               local.get 0
               local.get 1
-              call $dynrt_lib_modc__fn133
+              call $dynrt_lib_modc__fn134
               global.get $dynrt_lib_modc_global1
-              local.set 6
+              local.set 15
               global.get $dynrt_lib_modc_global2
-              local.set 7
+              local.set 16
               local.get 0
               local.get 1
-              call $dynrt_lib_modc__fn115
-              local.get 0
-              local.get 1
-              call $dynrt_lib_modc__fn147
-              local.set 8
-              local.get 0
-              local.get 1
-              call $dynrt_lib_modc__fn115
-              local.get 0
-              local.get 1
-              call $dynrt_lib_modc__fn148
-              local.set 9
-              local.get 8
-              local.get 9
-              global.get $dynrt_lib_modc_global20
-              call $dynrt_lib_modc__fn94
-              local.set 8
-              local.get 6
-              local.get 7
-              i32.const 1475
-              i32.const 11
+              call $dynrt_lib_modc__fn116
+              local.get 15
+              local.get 16
+              i32.const 1529
+              i32.const 6
               call $dynrt_lib_modc__fn111
               i32.const 1
               i32.eq
-              if  ;; label = @6
-                local.get 8
-                local.set 5
+              if (result i32)  ;; label = @6
+                local.get 0
+                local.get 1
+                call $dynrt_lib_modc__fn117
+                i32.const 0
+                call $dynrt_lib_modc__fn115
+                i32.const 1
+                i32.eq
               else
-                local.get 4
-                local.get 6
-                local.get 7
-                local.get 8
-                call $dynrt_lib_modc_dynSet
+                i32.const 0
+              end
+              if  ;; label = @6
+                block  ;; label = @7
+                  i32.const 1
+                  local.set 13
+                  local.get 0
+                  local.get 1
+                  call $dynrt_lib_modc__fn134
+                  global.get $dynrt_lib_modc_global1
+                  local.set 15
+                  global.get $dynrt_lib_modc_global2
+                  local.set 16
+                  local.get 0
+                  local.get 1
+                  call $dynrt_lib_modc__fn116
+                end
+              end
+              local.get 15
+              local.get 16
+              i32.const 1535
+              i32.const 3
+              call $dynrt_lib_modc__fn111
+              i32.const 1
+              i32.eq
+              if (result i32)  ;; label = @6
+                local.get 0
+                local.get 1
+                call $dynrt_lib_modc__fn117
+                i32.const 0
+                call $dynrt_lib_modc__fn115
+                i32.const 1
+                i32.eq
+              else
+                i32.const 0
+              end
+              if  ;; label = @6
+                block  ;; label = @7
+                  i32.const 1
+                  local.set 14
+                  local.get 0
+                  local.get 1
+                  call $dynrt_lib_modc__fn134
+                  global.get $dynrt_lib_modc_global1
+                  local.set 15
+                  global.get $dynrt_lib_modc_global2
+                  local.set 16
+                  local.get 0
+                  local.get 1
+                  call $dynrt_lib_modc__fn116
+                end
+              else
+                local.get 15
+                local.get 16
+                i32.const 1538
+                i32.const 3
+                call $dynrt_lib_modc__fn111
+                i32.const 1
+                i32.eq
+                if (result i32)  ;; label = @7
+                  local.get 0
+                  local.get 1
+                  call $dynrt_lib_modc__fn117
+                  i32.const 0
+                  call $dynrt_lib_modc__fn115
+                  i32.const 1
+                  i32.eq
+                else
+                  i32.const 0
+                end
+                if  ;; label = @7
+                  block  ;; label = @8
+                    i32.const 2
+                    local.set 14
+                    local.get 0
+                    local.get 1
+                    call $dynrt_lib_modc__fn134
+                    global.get $dynrt_lib_modc_global1
+                    local.set 15
+                    global.get $dynrt_lib_modc_global2
+                    local.set 16
+                    local.get 0
+                    local.get 1
+                    call $dynrt_lib_modc__fn116
+                  end
+                end
               end
               local.get 0
               local.get 1
-              call $dynrt_lib_modc__fn115
+              call $dynrt_lib_modc__fn117
+              local.set 17
+              local.get 17
+              i32.const 40
+              i32.eq
+              if  ;; label = @6
+                block  ;; label = @7
+                  local.get 0
+                  local.get 1
+                  call $dynrt_lib_modc__fn148
+                  local.set 17
+                  local.get 0
+                  local.get 1
+                  call $dynrt_lib_modc__fn116
+                  local.get 0
+                  local.get 1
+                  call $dynrt_lib_modc__fn149
+                  local.set 18
+                  local.get 15
+                  local.get 16
+                  i32.const 1541
+                  i32.const 11
+                  call $dynrt_lib_modc__fn111
+                  i32.const 1
+                  i32.eq
+                  if  ;; label = @8
+                    block  ;; label = @9
+                      local.get 17
+                      local.set 10
+                      local.get 18
+                      call $dynrt_lib_modc__fn65
+                      global.get $dynrt_lib_modc_global1
+                      local.set 5
+                      global.get $dynrt_lib_modc_global2
+                      local.set 9
+                    end
+                  else
+                    block  ;; label = @9
+                      local.get 17
+                      local.get 18
+                      local.get 8
+                      call $dynrt_lib_modc__fn94
+                      local.set 17
+                      local.get 15
+                      local.set 18
+                      local.get 16
+                      local.set 19
+                      local.get 14
+                      i32.const 1
+                      i32.eq
+                      if  ;; label = @10
+                        block  ;; label = @11
+                          i32.const 1366
+                          local.set 18
+                          i32.const 6
+                          local.set 19
+                          local.get 18
+                          local.get 19
+                          local.get 15
+                          local.get 16
+                          call $dynrt_lib_modc__fn3
+                          local.set 19
+                          nop
+                          local.set 18
+                        end
+                      else
+                        local.get 14
+                        i32.const 2
+                        i32.eq
+                        if  ;; label = @11
+                          block  ;; label = @12
+                            i32.const 1378
+                            local.set 18
+                            i32.const 6
+                            local.set 19
+                            local.get 18
+                            local.get 19
+                            local.get 15
+                            local.get 16
+                            call $dynrt_lib_modc__fn3
+                            local.set 19
+                            nop
+                            local.set 18
+                          end
+                        end
+                      end
+                      local.get 13
+                      i32.const 1
+                      i32.eq
+                      if  ;; label = @10
+                        local.get 7
+                        local.get 18
+                        local.get 19
+                        local.get 17
+                        call $dynrt_lib_modc_dynSet
+                      else
+                        local.get 6
+                        local.get 18
+                        local.get 19
+                        local.get 17
+                        call $dynrt_lib_modc_dynSet
+                      end
+                    end
+                  end
+                end
+              else
+                block  ;; label = @7
+                  local.get 13
+                  i32.const 1
+                  i32.eq
+                  if  ;; label = @8
+                    block  ;; label = @9
+                      call $dynrt_lib_modc_dynUndefined
+                      local.set 13
+                      local.get 17
+                      i32.const 61
+                      i32.eq
+                      if  ;; label = @10
+                        block  ;; label = @11
+                          global.get $dynrt_lib_modc_global19
+                          i32.const 1
+                          i32.add
+                          global.set $dynrt_lib_modc_global19
+                          local.get 0
+                          local.get 1
+                          call $dynrt_lib_modc__fn131
+                          local.set 13
+                        end
+                      end
+                      global.get $dynrt_lib_modc_global21
+                      i32.const 1
+                      i32.eq
+                      if  ;; label = @10
+                        local.get 7
+                        local.get 15
+                        local.get 16
+                        local.get 13
+                        call $dynrt_lib_modc_dynSet
+                      end
+                    end
+                  else
+                    block  ;; label = @9
+                      i32.const 1320
+                      local.set 13
+                      i32.const 9
+                      local.set 14
+                      local.get 17
+                      i32.const 61
+                      i32.eq
+                      if  ;; label = @10
+                        block  ;; label = @11
+                          global.get $dynrt_lib_modc_global19
+                          local.tee 21
+                          i32.const 1
+                          i32.add
+                          global.set $dynrt_lib_modc_global19
+                          local.get 0
+                          local.get 1
+                          call $dynrt_lib_modc__fn116
+                          global.get $dynrt_lib_modc_global19
+                          local.tee 22
+                          local.set 13
+                          global.get $dynrt_lib_modc_global21
+                          local.set 14
+                          i32.const 0
+                          global.set $dynrt_lib_modc_global21
+                          local.get 0
+                          local.get 1
+                          call $dynrt_lib_modc__fn131
+                          drop
+                          local.get 14
+                          global.set $dynrt_lib_modc_global21
+                          local.get 0
+                          local.get 1
+                          local.get 13
+                          global.get $dynrt_lib_modc_global19
+                          call $dynrt_lib_modc__fn4
+                          local.set 14
+                          nop
+                          local.set 13
+                        end
+                      end
+                      local.get 11
+                      local.tee 23
+                      local.set 11
+                      local.get 12
+                      local.tee 24
+                      local.set 12
+                      local.get 11
+                      local.get 12
+                      i32.const 1552
+                      i32.const 5
+                      call $dynrt_lib_modc__fn3
+                      local.set 12
+                      nop
+                      local.set 11
+                      local.get 11
+                      local.get 12
+                      local.get 15
+                      local.get 16
+                      call $dynrt_lib_modc__fn3
+                      local.set 12
+                      nop
+                      local.set 11
+                      local.get 11
+                      local.get 12
+                      i32.const 1557
+                      i32.const 3
+                      call $dynrt_lib_modc__fn3
+                      local.set 12
+                      nop
+                      local.set 11
+                      local.get 11
+                      local.get 12
+                      local.get 13
+                      local.get 14
+                      call $dynrt_lib_modc__fn3
+                      local.set 12
+                      nop
+                      local.set 11
+                      local.get 11
+                      local.get 12
+                      i32.const 1560
+                      i32.const 2
+                      call $dynrt_lib_modc__fn3
+                      local.set 12
+                      nop
+                      local.set 11
+                    end
+                  end
+                  local.get 0
+                  local.get 1
+                  call $dynrt_lib_modc__fn116
+                  local.get 0
+                  local.get 1
+                  call $dynrt_lib_modc__fn117
+                  i32.const 59
+                  i32.eq
+                  if  ;; label = @8
+                    global.get $dynrt_lib_modc_global19
+                    i32.const 1
+                    i32.add
+                    global.set $dynrt_lib_modc_global19
+                  end
+                end
+              end
+              local.get 0
+              local.get 1
+              call $dynrt_lib_modc__fn116
             end
           end
           br 1 (;@2;)
@@ -12566,7 +13503,7 @@
     end
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 125
     i32.eq
     if  ;; label = @1
@@ -12575,21 +13512,76 @@
       i32.add
       global.set $dynrt_lib_modc_global19
     end
-    call $dynrt_lib_modc_dynObject
-    local.set 6
-    local.get 6
-    i32.const 1486
+    local.get 12
+    i32.const 0
+    i32.gt_s
+    if (result i32)  ;; label = @1
+      i32.const 1
+    else
+      local.get 9
+      i32.const 0
+      i32.gt_s
+    end
+    if (result i32)  ;; label = @1
+      i32.const 1
+    else
+      local.get 10
+      i32.const -1
+      i32.ne
+    end
+    if  ;; label = @1
+      block  ;; label = @2
+        local.get 10
+        local.tee 26
+        local.set 10
+        local.get 10
+        i32.const -1
+        i32.eq
+        if  ;; label = @3
+          call $dynrt_lib_modc_dynArray
+          local.set 10
+        end
+        local.get 11
+        local.tee 27
+        local.set 11
+        local.get 12
+        local.tee 28
+        local.set 12
+        local.get 11
+        local.get 12
+        local.get 5
+        local.get 9
+        call $dynrt_lib_modc__fn3
+        local.set 12
+        nop
+        local.set 11
+        local.get 10
+        local.get 11
+        local.get 12
+        call $dynrt_lib_modc_dynString
+        local.get 8
+        call $dynrt_lib_modc__fn94
+        local.set 5
+        local.get 7
+        i32.const 1424
+        i32.const 6
+        local.get 5
+        call $dynrt_lib_modc_dynSet
+      end
+    end
+    local.get 7
+    i32.const 1522
     i32.const 7
-    local.get 4
+    local.get 6
     call $dynrt_lib_modc_dynSet
-    local.get 5
+    local.get 4
     i32.const -1
     i32.ne
     if  ;; label = @1
-      local.get 6
-      i32.const 1493
-      i32.const 6
-      local.get 5
+      local.get 7
+      i32.const 1412
+      i32.const 12
+      local.get 4
       call $dynrt_lib_modc_dynSet
     end
     global.get $dynrt_lib_modc_global21
@@ -12599,10 +13591,10 @@
       global.get $dynrt_lib_modc_global20
       local.get 2
       local.get 3
-      local.get 6
+      local.get 7
       call $dynrt_lib_modc_dynSet
     end)
-  (func $dynrt_lib_modc__fn154 (param i32 i32) (result i32)
+  (func $dynrt_lib_modc__fn155 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.tee 5
@@ -12620,7 +13612,7 @@
     call $dynrt_lib_modc_dynObject
     local.set 2
     local.get 0
-    i32.const 1486
+    i32.const 1522
     i32.const 7
     call $dynrt_lib_modc_dynGet
     local.set 3
@@ -12641,7 +13633,7 @@
       end
     end
     local.get 0
-    i32.const 1493
+    i32.const 1424
     i32.const 6
     call $dynrt_lib_modc_dynGet
     local.set 3
@@ -12669,14 +13661,14 @@
     end
     local.get 2
     return)
-  (func $dynrt_lib_modc__fn155 (param i32 i32)
+  (func $dynrt_lib_modc__fn156 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     local.set 2
     local.get 2
     i32.const 123
@@ -12699,17 +13691,17 @@
         call $dynrt_lib_modc__fn41
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn156
+        call $dynrt_lib_modc__fn157
         call $dynrt_lib_modc__fn42
         local.get 2
         local.tee 15
         global.set $dynrt_lib_modc_global20
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn115
+        call $dynrt_lib_modc__fn116
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn116
+        call $dynrt_lib_modc__fn117
         i32.const 125
         i32.eq
         if  ;; label = @3
@@ -12735,7 +13727,7 @@
     end
     local.get 2
     i32.const 0
-    call $dynrt_lib_modc__fn114
+    call $dynrt_lib_modc__fn115
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -12744,14 +13736,14 @@
         local.set 2
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn133
+        call $dynrt_lib_modc__fn134
         global.get $dynrt_lib_modc_global1
         local.set 3
         global.get $dynrt_lib_modc_global2
         local.set 4
         local.get 3
         local.get 4
-        i32.const 1435
+        i32.const 1482
         i32.const 3
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12761,7 +13753,7 @@
         else
           local.get 3
           local.get 4
-          i32.const 1430
+          i32.const 1477
           i32.const 5
           call $dynrt_lib_modc__fn111
           i32.const 1
@@ -12772,7 +13764,7 @@
         else
           local.get 3
           local.get 4
-          i32.const 1438
+          i32.const 1485
           i32.const 3
           call $dynrt_lib_modc__fn111
           i32.const 1
@@ -12782,29 +13774,14 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn134
+            call $dynrt_lib_modc__fn135
             return
           end
         end
         local.get 3
         local.get 4
-        i32.const 1499
+        i32.const 1562
         i32.const 2
-        call $dynrt_lib_modc__fn111
-        i32.const 1
-        i32.eq
-        if  ;; label = @3
-          block  ;; label = @4
-            local.get 0
-            local.get 1
-            call $dynrt_lib_modc__fn136
-            return
-          end
-        end
-        local.get 3
-        local.get 4
-        i32.const 1501
-        i32.const 5
         call $dynrt_lib_modc__fn111
         i32.const 1
         i32.eq
@@ -12818,8 +13795,8 @@
         end
         local.get 3
         local.get 4
-        i32.const 1506
-        i32.const 2
+        i32.const 1564
+        i32.const 5
         call $dynrt_lib_modc__fn111
         i32.const 1
         i32.eq
@@ -12833,8 +13810,8 @@
         end
         local.get 3
         local.get 4
-        i32.const 1508
-        i32.const 3
+        i32.const 1569
+        i32.const 2
         call $dynrt_lib_modc__fn111
         i32.const 1
         i32.eq
@@ -12848,22 +13825,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 1511
-        i32.const 6
-        call $dynrt_lib_modc__fn111
-        i32.const 1
-        i32.eq
-        if  ;; label = @3
-          block  ;; label = @4
-            local.get 0
-            local.get 1
-            call $dynrt_lib_modc__fn143
-            return
-          end
-        end
-        local.get 3
-        local.get 4
-        i32.const 1517
+        i32.const 1571
         i32.const 3
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12872,13 +13834,43 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn146
+            call $dynrt_lib_modc__fn140
             return
           end
         end
         local.get 3
         local.get 4
-        i32.const 1520
+        i32.const 1574
+        i32.const 6
+        call $dynrt_lib_modc__fn111
+        i32.const 1
+        i32.eq
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 0
+            local.get 1
+            call $dynrt_lib_modc__fn144
+            return
+          end
+        end
+        local.get 3
+        local.get 4
+        i32.const 1580
+        i32.const 3
+        call $dynrt_lib_modc__fn111
+        i32.const 1
+        i32.eq
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 0
+            local.get 1
+            call $dynrt_lib_modc__fn147
+            return
+          end
+        end
+        local.get 3
+        local.get 4
+        i32.const 1583
         i32.const 5
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12887,7 +13879,7 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn130
+            call $dynrt_lib_modc__fn131
             local.set 2
             global.get $dynrt_lib_modc_global21
             i32.const 1
@@ -12902,10 +13894,10 @@
             end
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -12919,7 +13911,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 1525
+        i32.const 1588
         i32.const 6
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12928,29 +13920,14 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn135
+            call $dynrt_lib_modc__fn136
             return
           end
         end
         local.get 3
         local.get 4
-        i32.const 1372
+        i32.const 1384
         i32.const 8
-        call $dynrt_lib_modc__fn111
-        i32.const 1
-        i32.eq
-        if  ;; label = @3
-          block  ;; label = @4
-            local.get 0
-            local.get 1
-            call $dynrt_lib_modc__fn152
-            return
-          end
-        end
-        local.get 3
-        local.get 4
-        i32.const 1531
-        i32.const 5
         call $dynrt_lib_modc__fn111
         i32.const 1
         i32.eq
@@ -12964,7 +13941,22 @@
         end
         local.get 3
         local.get 4
-        i32.const 1536
+        i32.const 1594
+        i32.const 5
+        call $dynrt_lib_modc__fn111
+        i32.const 1
+        i32.eq
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 0
+            local.get 1
+            call $dynrt_lib_modc__fn154
+            return
+          end
+        end
+        local.get 3
+        local.get 4
+        i32.const 1599
         i32.const 5
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -12980,10 +13972,10 @@
             end
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -12997,7 +13989,7 @@
         end
         local.get 3
         local.get 4
-        i32.const 1541
+        i32.const 1604
         i32.const 8
         call $dynrt_lib_modc__fn111
         i32.const 1
@@ -13013,10 +14005,10 @@
             end
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -13030,10 +14022,10 @@
         end
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn115
+        call $dynrt_lib_modc__fn116
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn116
+        call $dynrt_lib_modc__fn117
         local.set 5
         local.get 5
         i32.const 61
@@ -13041,7 +14033,7 @@
         if (result i32)  ;; label = @3
           local.get 0
           local.get 1
-          call $dynrt_lib_modc__fn117
+          call $dynrt_lib_modc__fn118
           i32.const 61
           i32.ne
         else
@@ -13050,7 +14042,7 @@
         if (result i32)  ;; label = @3
           local.get 0
           local.get 1
-          call $dynrt_lib_modc__fn117
+          call $dynrt_lib_modc__fn118
           i32.const 62
           i32.ne
         else
@@ -13064,7 +14056,7 @@
             global.set $dynrt_lib_modc_global19
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn130
+            call $dynrt_lib_modc__fn131
             local.set 2
             global.get $dynrt_lib_modc_global21
             i32.const 1
@@ -13078,10 +14070,10 @@
             end
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -13099,7 +14091,7 @@
         if (result i32)  ;; label = @3
           local.get 0
           local.get 1
-          call $dynrt_lib_modc__fn117
+          call $dynrt_lib_modc__fn118
           i32.const 43
           i32.eq
         else
@@ -13133,10 +14125,10 @@
             end
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -13154,7 +14146,7 @@
         if (result i32)  ;; label = @3
           local.get 0
           local.get 1
-          call $dynrt_lib_modc__fn117
+          call $dynrt_lib_modc__fn118
           i32.const 45
           i32.eq
         else
@@ -13188,10 +14180,10 @@
             end
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -13230,7 +14222,7 @@
         if (result i32)  ;; label = @3
           local.get 0
           local.get 1
-          call $dynrt_lib_modc__fn117
+          call $dynrt_lib_modc__fn118
           i32.const 61
           i32.eq
         else
@@ -13246,7 +14238,7 @@
             global.set $dynrt_lib_modc_global19
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn130
+            call $dynrt_lib_modc__fn131
             local.set 6
             global.get $dynrt_lib_modc_global21
             i32.const 1
@@ -13304,10 +14296,10 @@
             end
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -13365,10 +14357,10 @@
                   block  ;; label = @8
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn115
+                    call $dynrt_lib_modc__fn116
                     local.get 0
                     local.get 1
-                    call $dynrt_lib_modc__fn116
+                    call $dynrt_lib_modc__fn117
                     local.set 6
                     i32.const 0
                     local.tee 19
@@ -13391,7 +14383,7 @@
                         global.set $dynrt_lib_modc_global19
                         local.get 0
                         local.get 1
-                        call $dynrt_lib_modc__fn133
+                        call $dynrt_lib_modc__fn134
                         global.get $dynrt_lib_modc_global1
                         local.set 8
                         global.get $dynrt_lib_modc_global2
@@ -13412,14 +14404,14 @@
                           global.set $dynrt_lib_modc_global19
                           local.get 0
                           local.get 1
-                          call $dynrt_lib_modc__fn130
+                          call $dynrt_lib_modc__fn131
                           local.set 10
                           local.get 0
                           local.get 1
-                          call $dynrt_lib_modc__fn115
+                          call $dynrt_lib_modc__fn116
                           local.get 0
                           local.get 1
-                          call $dynrt_lib_modc__fn116
+                          call $dynrt_lib_modc__fn117
                           i32.const 93
                           i32.eq
                           if  ;; label = @12
@@ -13441,14 +14433,14 @@
                       block  ;; label = @10
                         local.get 0
                         local.get 1
-                        call $dynrt_lib_modc__fn115
-                        local.get 0
-                        local.get 1
                         call $dynrt_lib_modc__fn116
-                        local.set 11
                         local.get 0
                         local.get 1
                         call $dynrt_lib_modc__fn117
+                        local.set 11
+                        local.get 0
+                        local.get 1
+                        call $dynrt_lib_modc__fn118
                         local.set 6
                         local.get 11
                         i32.const 61
@@ -13538,7 +14530,7 @@
                             end
                             local.get 0
                             local.get 1
-                            call $dynrt_lib_modc__fn130
+                            call $dynrt_lib_modc__fn131
                             local.set 6
                             global.get $dynrt_lib_modc_global21
                             i32.const 1
@@ -13611,7 +14603,7 @@
                                   local.get 8
                                   local.get 9
                                   local.get 5
-                                  call $dynrt_lib_modc_dynSet
+                                  call $dynrt_lib_modc__fn113
                                 else
                                   local.get 3
                                   local.get 10
@@ -13656,10 +14648,10 @@
               block  ;; label = @6
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn115
+                call $dynrt_lib_modc__fn116
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn116
+                call $dynrt_lib_modc__fn117
                 i32.const 59
                 i32.eq
                 if  ;; label = @7
@@ -13675,7 +14667,7 @@
             global.set $dynrt_lib_modc_global19
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn130
+            call $dynrt_lib_modc__fn131
             local.set 2
             global.get $dynrt_lib_modc_global21
             i32.const 1
@@ -13686,10 +14678,10 @@
             end
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -13705,7 +14697,7 @@
         global.set $dynrt_lib_modc_global19
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn130
+        call $dynrt_lib_modc__fn131
         local.set 2
         global.get $dynrt_lib_modc_global21
         i32.const 1
@@ -13716,10 +14708,10 @@
         end
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn115
+        call $dynrt_lib_modc__fn116
         local.get 0
         local.get 1
-        call $dynrt_lib_modc__fn116
+        call $dynrt_lib_modc__fn117
         i32.const 59
         i32.eq
         if  ;; label = @3
@@ -13733,7 +14725,7 @@
     end
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn130
+    call $dynrt_lib_modc__fn131
     local.set 2
     global.get $dynrt_lib_modc_global21
     i32.const 1
@@ -13744,10 +14736,10 @@
     end
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn115
+    call $dynrt_lib_modc__fn116
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn116
+    call $dynrt_lib_modc__fn117
     i32.const 59
     i32.eq
     if  ;; label = @1
@@ -13756,7 +14748,7 @@
       i32.add
       global.set $dynrt_lib_modc_global19
     end)
-  (func $dynrt_lib_modc__fn156 (param i32 i32)
+  (func $dynrt_lib_modc__fn157 (param i32 i32)
     (local i32) (local i32)
     i32.const 1
     local.set 2
@@ -13771,10 +14763,10 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn115
+            call $dynrt_lib_modc__fn116
             local.get 0
             local.get 1
-            call $dynrt_lib_modc__fn116
+            call $dynrt_lib_modc__fn117
             local.set 3
             local.get 3
             i32.const -1
@@ -13824,7 +14816,7 @@
                 end
                 local.get 0
                 local.get 1
-                call $dynrt_lib_modc__fn155
+                call $dynrt_lib_modc__fn156
                 local.get 3
                 global.set $dynrt_lib_modc_global21
               end
@@ -13858,7 +14850,7 @@
     global.set $dynrt_lib_modc_global25
     local.get 0
     local.get 1
-    call $dynrt_lib_modc__fn156
+    call $dynrt_lib_modc__fn157
     global.get $dynrt_lib_modc_global23
     i32.const 1
     i32.eq
@@ -13887,39 +14879,50 @@
   (data (;12;) (i32.const 1357) "max")
   (data (;13;) (i32.const 1360) "len")
   (data (;14;) (i32.const 1363) "inc")
-  (data (;15;) (i32.const 1366) "length")
-  (data (;16;) (i32.const 1372) "function")
-  (data (;17;) (i32.const 1380) "Object")
-  (data (;18;) (i32.const 1386) "create")
-  (data (;19;) (i32.const 1392) "new")
-  (data (;20;) (i32.const 1395) "boolean")
-  (data (;21;) (i32.const 1402) "number")
-  (data (;22;) (i32.const 1408) "string")
-  (data (;23;) (i32.const 1414) "object")
-  (data (;24;) (i32.const 1420) "typeof")
-  (data (;25;) (i32.const 1426) "else")
-  (data (;26;) (i32.const 1430) "const")
-  (data (;27;) (i32.const 1435) "let")
-  (data (;28;) (i32.const 1438) "var")
-  (data (;29;) (i32.const 1441) "of")
-  (data (;30;) (i32.const 1443) "in")
-  (data (;31;) (i32.const 1445) "case")
-  (data (;32;) (i32.const 1449) "default")
-  (data (;33;) (i32.const 1456) "catch")
-  (data (;34;) (i32.const 1461) "finally")
-  (data (;35;) (i32.const 1468) "extends")
-  (data (;36;) (i32.const 1475) "constructor")
-  (data (;37;) (i32.const 1486) "__proto")
-  (data (;38;) (i32.const 1493) "__ctor")
-  (data (;39;) (i32.const 1499) "if")
-  (data (;40;) (i32.const 1501) "while")
-  (data (;41;) (i32.const 1506) "do")
-  (data (;42;) (i32.const 1508) "for")
-  (data (;43;) (i32.const 1511) "switch")
-  (data (;44;) (i32.const 1517) "try")
-  (data (;45;) (i32.const 1520) "throw")
-  (data (;46;) (i32.const 1525) "return")
-  (data (;47;) (i32.const 1531) "class")
-  (data (;48;) (i32.const 1536) "break")
-  (data (;49;) (i32.const 1541) "continue")
+  (data (;15;) (i32.const 1366) "__get_")
+  (data (;16;) (i32.const 1372) "length")
+  (data (;17;) (i32.const 1378) "__set_")
+  (data (;18;) (i32.const 1384) "function")
+  (data (;19;) (i32.const 1392) "Object")
+  (data (;20;) (i32.const 1398) "create")
+  (data (;21;) (i32.const 1404) "new")
+  (data (;22;) (i32.const 1407) "super")
+  (data (;23;) (i32.const 1412) "__superclass")
+  (data (;24;) (i32.const 1424) "__ctor")
+  (data (;25;) (i32.const 1430) "__superproto")
+  (data (;26;) (i32.const 1442) "boolean")
+  (data (;27;) (i32.const 1449) "number")
+  (data (;28;) (i32.const 1455) "string")
+  (data (;29;) (i32.const 1461) "object")
+  (data (;30;) (i32.const 1467) "typeof")
+  (data (;31;) (i32.const 1473) "else")
+  (data (;32;) (i32.const 1477) "const")
+  (data (;33;) (i32.const 1482) "let")
+  (data (;34;) (i32.const 1485) "var")
+  (data (;35;) (i32.const 1488) "of")
+  (data (;36;) (i32.const 1490) "in")
+  (data (;37;) (i32.const 1492) "case")
+  (data (;38;) (i32.const 1496) "default")
+  (data (;39;) (i32.const 1503) "catch")
+  (data (;40;) (i32.const 1508) "finally")
+  (data (;41;) (i32.const 1515) "extends")
+  (data (;42;) (i32.const 1522) "__proto")
+  (data (;43;) (i32.const 1529) "static")
+  (data (;44;) (i32.const 1535) "get")
+  (data (;45;) (i32.const 1538) "set")
+  (data (;46;) (i32.const 1541) "constructor")
+  (data (;47;) (i32.const 1552) "this.")
+  (data (;48;) (i32.const 1557) " = ")
+  (data (;49;) (i32.const 1560) "; ")
+  (data (;50;) (i32.const 1562) "if")
+  (data (;51;) (i32.const 1564) "while")
+  (data (;52;) (i32.const 1569) "do")
+  (data (;53;) (i32.const 1571) "for")
+  (data (;54;) (i32.const 1574) "switch")
+  (data (;55;) (i32.const 1580) "try")
+  (data (;56;) (i32.const 1583) "throw")
+  (data (;57;) (i32.const 1588) "return")
+  (data (;58;) (i32.const 1594) "class")
+  (data (;59;) (i32.const 1599) "break")
+  (data (;60;) (i32.const 1604) "continue")
 )

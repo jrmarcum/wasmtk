@@ -1014,9 +1014,25 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
    eval-source STRINGS was parsed as a real wasic class (11 bogus "Unsupported statement: this.x = x"
    errors). Fixed by detecting over a `maskCode` code-only mask (slicing bodies from the real source) —
    same string-blind class as the `=>`/`?.` fixes; `maskCode` (from `src/varscope.ts`) is now the shared
-   code-only primitive. Suite 349/349 (real Phase 9/16/17/47 class tests unaffected). **v1 gaps (→ 2e.8a):**
-   `extends`/`super`, `static` members, getters/setters, and class FIELDS (`x = 5;` in the body) — use the
-   constructor (`this.x = …`) for now; class EXPRESSIONS (`const C = class {…}`) are statement-only in v1.
+   code-only primitive. Suite 349/349 (real Phase 9/16/17/47 class tests unaffected).
+5f. **2e.8a class COMPLETION** — **SHIPPED 2026-06-26** (test `18zp`): `extends` + `super` + `static` +
+   instance fields + getters/setters — the class feature is now complete (only class EXPRESSIONS
+   `const C = class {…}` remain statement-only). `runClassDecl` rewritten: (a) `extends Base` links
+   `Derived.__proto.slot2 = Base.__proto` (inherited methods resolve via the existing `dynMember` walk) and
+   records the base on a per-class `classEnv` (`childEnv` binding `__superclass` + `__superproto`) that is
+   the defEnv of every method/constructor → so `super` resolves lexically to the home class's base; (b) a
+   `super` operator in `parsePrimary`: `super(args)` calls `__superclass.__ctor` with this=current instance,
+   `super.method(args)` looks the method up on `__superproto` and calls it with this=instance; (c) `static`
+   members go on the class OBJECT itself (`ClassName.m()` → `dynMember(classObj,…)`, static field evaluated
+   at decl time); (d) instance fields `x = expr;` are lowered to a CONSTRUCTOR PREAMBLE (`this.x = expr; `
+   prepended to the ctor body source — runs with this=instance in `dynNew`); (e) getters/setters stored as
+   `__get_<name>` / `__set_<name>` markers on the prototype — `dynMember` falls back to a `__get_` accessor
+   when the direct lookup misses, and a new `dynSetMember` (used only by the interpreter's member-assign
+   path) invokes a `__set_` accessor before a plain set. Verified: inherited method, super-ctor (incl.
+   3-level chain), super.method override, static method+field, instance fields (+ field then ctor reassign),
+   getter, setter round-trip. **Purely interpreter-side.** Suite 350/350 (+`18zp`), bindgen 131/131 (the
+   `dynMember` getter fallback is a no-op for the no-`__get_` objects the `any` path uses). modc-subset
+   gotcha: `dynString(strVarA + strVarB)` unsupported — bind the concat to a local first.
 6. **2f.2–2f.9 stdlib** — do the BRIDGES first (2f.5 JSON, 2f.6 Map/Set, 2f.7 RegExp reuse the existing
    capability libs → cheap), then Array/String/Object/Math methods.
 7. **2e.9 generators**, then **2e.10 async/await** (hardest — needs a microtask loop; ties to #13).

@@ -1691,6 +1691,22 @@ export function dynMember(obj: i32, name: string): i32 {
       if (r !== -1) return r;
       o = on[2]; // walk to __proto__
     }
+    // #14 2e.8a — getter fallback: a `__get_<name>` accessor anywhere on the chain → call it (this=obj)
+    const gkey: string = "__get_" + name;
+    let g: i32 = obj;
+    while (g !== 0) {
+      const gn: Int32Array = g as unknown as Int32Array;
+      if (gn[0] !== 6) break;
+      const gf: i32 = dynGet(g, gkey);
+      if (gf !== -1) {
+        const gfn: Int32Array = gf as unknown as Int32Array;
+        if (gfn[0] === 7) {
+          const ea: i32 = dynArray();
+          return dynApplyThis(gf, ea, obj);
+        }
+      }
+      g = gn[2];
+    }
     return dynUndefined();
   }
   if (t === 5) { // array
@@ -1708,6 +1724,33 @@ export function dynMember(obj: i32, name: string): i32 {
     return dynUndefined();
   }
   return dynUndefined();
+}
+
+// #14 2e.8a — assign to a member honoring a `__set_<key>` accessor (setter) anywhere on the prototype
+// chain; otherwise a plain own-property set. Only the interpreter's member-assign path uses this (the
+// wasic `any` path sets via dynSet/dynIndexSet directly).
+function dynSetMember(obj: i32, key: string, val: i32): void {
+  const on: Int32Array = obj as unknown as Int32Array;
+  if (on[0] === 6) {
+    const skey: string = "__set_" + key;
+    let o: i32 = obj;
+    while (o !== 0) {
+      const o2: Int32Array = o as unknown as Int32Array;
+      if (o2[0] !== 6) break;
+      const sf: i32 = dynGet(o, skey);
+      if (sf !== -1) {
+        const sfn: Int32Array = sf as unknown as Int32Array;
+        if (sfn[0] === 7) {
+          const a: i32 = dynArray();
+          dynPush(a, val);
+          dynApplyThis(sf, a, obj);
+          return;
+        }
+      }
+      o = o2[2];
+    }
+  }
+  dynSet(obj, key, val);
 }
 
 // `container[idx]` — array element by numeric index, or object property by string key. Guarded.
@@ -2038,6 +2081,84 @@ function parsePrimary(s: string): i32 {
       if (evalLive === 1) inst = dynNew(classVal, argsArr);
       gcPopRoot();
       return inst;
+    }
+    if (strEq(name, "super") === 1) { // #14 2e.8a — super(args) / super.method(args)
+      evalSkipWs(s);
+      const thisVal: i32 = evalEnv === -1 ? -1 : envLookup(evalEnv, "this");
+      const sc: i32 = evalPeek(s);
+      if (sc === 40) { // super(args) → base constructor with this=current instance
+        evalPos = evalPos + 1;
+        const argsArr: i32 = dynArray();
+        gcPushRoot(argsArr);
+        evalSkipWs(s);
+        if (evalPeek(s) === 41) {
+          evalPos = evalPos + 1;
+        } else {
+          let more: i32 = 1;
+          while (more === 1) {
+            dynPush(argsArr, parseExpr(s));
+            evalSkipWs(s);
+            const cc: i32 = evalPeek(s);
+            if (cc === 44) {
+              evalPos = evalPos + 1;
+            } else {
+              if (cc === 41) evalPos = evalPos + 1;
+              more = 0;
+            }
+          }
+        }
+        if (evalLive === 1 && thisVal !== -1) {
+          const superclass: i32 = envLookup(evalEnv, "__superclass");
+          if (superclass !== -1) {
+            const ctor: i32 = dynGet(superclass, "__ctor");
+            if (ctor !== -1) {
+              const cn2: Int32Array = ctor as unknown as Int32Array;
+              if (cn2[0] === 7) dynApplyThis(ctor, argsArr, thisVal);
+            }
+          }
+        }
+        gcPopRoot();
+        return dynUndefined();
+      }
+      if (sc === 46) { // super.method(args) → base method with this=current instance
+        evalPos = evalPos + 1; // '.'
+        const mnm: string = readIdent(s);
+        const superproto: i32 = evalEnv === -1 ? -1 : envLookup(evalEnv, "__superproto");
+        let method: i32 = dynUndefined();
+        if (superproto !== -1) method = dynMember(superproto, mnm);
+        evalSkipWs(s);
+        if (evalPeek(s) === 40) {
+          evalPos = evalPos + 1;
+          const argsArr: i32 = dynArray();
+          gcPushRoot(argsArr);
+          evalSkipWs(s);
+          if (evalPeek(s) === 41) {
+            evalPos = evalPos + 1;
+          } else {
+            let more: i32 = 1;
+            while (more === 1) {
+              dynPush(argsArr, parseExpr(s));
+              evalSkipWs(s);
+              const cc: i32 = evalPeek(s);
+              if (cc === 44) {
+                evalPos = evalPos + 1;
+              } else {
+                if (cc === 41) evalPos = evalPos + 1;
+                more = 0;
+              }
+            }
+          }
+          let rv: i32 = dynUndefined();
+          if (evalLive === 1 && thisVal !== -1) {
+            const mn2: Int32Array = method as unknown as Int32Array;
+            if (mn2[0] === 7) rv = dynApplyThis(method, argsArr, thisVal);
+          }
+          gcPopRoot();
+          return rv;
+        }
+        return method; // `super.method` without an immediate call
+      }
+      return dynUndefined();
     }
     // #14 2e.3 — single-param arrow `name => body`
     evalSkipWs(s);
@@ -3149,17 +3270,38 @@ function runClassDecl(s: string): void {
   evalSkipWs(s);
   const cname: string = readIdent(s);
   evalSkipWs(s);
-  // optional `extends Base` — not supported in v1; consume the clause so the body still parses
+  // #14 2e.8a — optional `extends Base`: link prototypes (inherited methods) + remember the base for super
+  let baseClass: i32 = -1;
+  let baseProto: i32 = -1;
   if (isIdentChar(evalPeek(s), 0) === 1) {
     const w: string = readIdent(s);
     if (strEq(w, "extends") === 1) {
       evalSkipWs(s);
-      readIdent(s); // base name — ignored in v1
+      const baseName: string = readIdent(s);
+      const bc: i32 = evalEnv === -1 ? -1 : envLookup(evalEnv, baseName);
+      if (bc !== -1) {
+        baseClass = bc;
+        const bp: i32 = dynGet(bc, "__proto");
+        if (bp !== -1) baseProto = bp;
+      }
       evalSkipWs(s);
     }
   }
   const proto: i32 = dynObject();
-  let ctor: i32 = -1;
+  if (baseProto !== -1) {
+    const pn: Int32Array = proto as unknown as Int32Array;
+    pn[2] = baseProto; // prototype chain → inherited methods resolve via dynMember's walk
+  }
+  const classObj: i32 = dynObject();
+  // a class env that binds `super` for the method/constructor closures (their defEnv)
+  const classEnv: i32 = childEnv(evalEnv);
+  if (baseProto !== -1) dynSet(classEnv, "__superproto", baseProto);
+  if (baseClass !== -1) dynSet(classEnv, "__superclass", baseClass);
+
+  let ctorBodySrc: string = ""; // explicit constructor body (no braces)
+  let ctorParams: i32 = -1; // explicit constructor params, or -1 → none
+  let fieldPreamble: string = ""; // `this.x = expr; …` prepended to the constructor body (instance fields)
+
   if (evalPeek(s) === 123) evalPos = evalPos + 1; // '{'
   evalSkipWs(s);
   while (evalPeek(s) !== 125 && evalPeek(s) !== -1) {
@@ -3167,24 +3309,80 @@ function runClassDecl(s: string): void {
       evalPos = evalPos + 1;
       evalSkipWs(s);
     } else {
-      const mname: string = readIdent(s);
+      let isStatic: i32 = 0;
+      let kind: i32 = 0; // 0 = method/field, 1 = getter, 2 = setter
+      let mname: string = readIdent(s);
       evalSkipWs(s);
-      const mp: i32 = parseParams(s);
-      evalSkipWs(s);
-      const mb: i32 = parseBlockBody(s);
-      const fn: i32 = makeUserFunc(mp, mb, evalEnv);
-      if (strEq(mname, "constructor") === 1) {
-        ctor = fn;
-      } else {
-        dynSet(proto, mname, fn);
+      if (strEq(mname, "static") === 1 && isIdentChar(evalPeek(s), 0) === 1) {
+        isStatic = 1;
+        mname = readIdent(s);
+        evalSkipWs(s);
+      }
+      if (strEq(mname, "get") === 1 && isIdentChar(evalPeek(s), 0) === 1) {
+        kind = 1;
+        mname = readIdent(s);
+        evalSkipWs(s);
+      } else if (strEq(mname, "set") === 1 && isIdentChar(evalPeek(s), 0) === 1) {
+        kind = 2;
+        mname = readIdent(s);
+        evalSkipWs(s);
+      }
+      const pk: i32 = evalPeek(s);
+      if (pk === 40) { // '(' → method / accessor / constructor
+        const mp: i32 = parseParams(s);
+        evalSkipWs(s);
+        const mbBox: i32 = parseBlockBody(s);
+        if (strEq(mname, "constructor") === 1) {
+          ctorParams = mp;
+          ctorBodySrc = boxToStr(mbBox);
+        } else {
+          const fn: i32 = makeUserFunc(mp, mbBox, classEnv);
+          let mkey: string = mname;
+          if (kind === 1) mkey = "__get_" + mname;
+          else if (kind === 2) mkey = "__set_" + mname;
+          if (isStatic === 1) dynSet(classObj, mkey, fn);
+          else dynSet(proto, mkey, fn);
+        }
+      } else { // field: `name = expr;` or `name;`
+        if (isStatic === 1) {
+          let val: i32 = dynUndefined();
+          if (pk === 61) {
+            evalPos = evalPos + 1;
+            val = parseExpr(s); // static field → evaluate now, store on the class object
+          }
+          if (evalLive === 1) dynSet(classObj, mname, val);
+        } else {
+          let initSrc: string = "undefined";
+          if (pk === 61) {
+            evalPos = evalPos + 1;
+            evalSkipWs(s);
+            const exprStart: i32 = evalPos;
+            const sl: i32 = evalLive;
+            evalLive = 0;
+            parseExpr(s); // dead-parse to find the init expression's extent
+            evalLive = sl;
+            initSrc = s.slice(exprStart, evalPos);
+          }
+          fieldPreamble = fieldPreamble + "this." + mname + " = " + initSrc + "; ";
+        }
+        evalSkipWs(s);
+        if (evalPeek(s) === 59) evalPos = evalPos + 1; // optional ';'
       }
       evalSkipWs(s);
     }
   }
   if (evalPeek(s) === 125) evalPos = evalPos + 1; // '}'
-  const classObj: i32 = dynObject();
+
+  // instance fields are lowered into a constructor preamble (run with this=instance in dynNew)
+  if (fieldPreamble.length > 0 || ctorBodySrc.length > 0 || ctorParams !== -1) {
+    let cp: i32 = ctorParams;
+    if (cp === -1) cp = dynArray();
+    const cbody: string = fieldPreamble + ctorBodySrc;
+    const ctorFn: i32 = makeUserFunc(cp, dynString(cbody), classEnv);
+    dynSet(classObj, "__ctor", ctorFn);
+  }
   dynSet(classObj, "__proto", proto);
-  if (ctor !== -1) dynSet(classObj, "__ctor", ctor);
+  if (baseClass !== -1) dynSet(classObj, "__superclass", baseClass);
   if (evalLive === 1) dynSet(evalEnv, cname, classObj);
 }
 
@@ -3392,7 +3590,7 @@ function runStatement(s: string): void {
                 else if (op0 === 42) nv = dynMul(cur, rhs);
                 else nv = dynDiv(cur, rhs);
               }
-              if (isDot === 1) dynSet(container, segKey, nv);
+              if (isDot === 1) dynSetMember(container, segKey, nv);
               else dynIndexSet(container, segIdx, nv);
             }
             isAssign = 1;
