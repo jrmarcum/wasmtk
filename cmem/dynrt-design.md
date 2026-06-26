@@ -944,9 +944,12 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
    shadow; undeclared → topmost/global). Declarations still `dynSet(evalEnv,…)` (bind in the current scope).
    Loop vars are scoped by wrapping `runFor` in a loop env; the fresh `catch` scope (deferred from 2e.6) now
    binds `e` in a `childEnv`. Block/loop/catch envs are `gcPushRoot`-ed for their duration (survive a
-   collection across nested calls). **Purely interpreter-side — no wasic compiler change. Known v1 gaps:**
-   `var` is treated block-scoped like `let` (not function-hoisted); no per-iteration fresh `let` binding for
-   closures capturing a loop var. **2e.8 classes** (needs 2f.1) next.
+   collection across nested calls). **Purely interpreter-side — no wasic compiler change. Known v1 gaps
+   (remediation DECIDED 2026-06-26, see "Language consumption profile" below):** (1) no per-iteration fresh
+   `let` binding for closures capturing a loop var → **2e.7a**; (2) `var` is treated block-scoped like `let`
+   (not function-hoisted) → handled by **2e.7b** (auto-repair provably-safe `var`→`let`, HARD-ERROR unsafe
+   ones — must land AFTER 2e.7a, since `let`≠`var` only becomes observable once `let` is per-iteration).
+   **2e.8 classes** (needs 2f.1) next.
    - **Process bug found + fixed here (latent, shipped in v1.10.6 source — binary was fine):** the dynrt
      lib's end-of-increment `deno fmt` had WRAPPED three deeply-indented ternaries (16-space indent, >100
      cols) into multi-line form, which **modc's body-line joiner cannot parse** — so the committed lib
@@ -961,6 +964,36 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
 7. **2e.9 generators**, then **2e.10 async/await** (hardest — needs a microtask loop; ties to #13).
 8. **2h removal** — the full-dynamic-compile entry + the Javy-parity conformance gate + delete
    `src/javyc.ts` & wiring.
+
+### Language consumption profile — ES6 base; older ES auto-repaired ONLY when provably safe (DECIDED 2026-06-26)
+
+**Owner decision:** **ES6 (ES2015) is the BASE PREFERRED state of consumed source** — `let`/`const` block
+scoping, per-iteration `let`, the ES2015+ form. Older ES versions (ES5 and earlier) are **not rejected
+outright**: where a construct can be transformed to its ES6 equivalent **provably safely**, the compiler
+**auto-repairs** it; where it **cannot** be proven safe, the compiler **HARD-ERRORS with a precise
+diagnostic** (it never silently "repairs" an unsafe case — silent-wrong is the exact failure mode we are
+eliminating). "Preferred ES6, auto-upgrade the safe older stuff, reject the rest with a clear message."
+
+**First instance — `var` → `let` (this is 2e.7b):**
+- **Provably safe** (no leak past its block, no redeclaration, no use-before-declaration, no loop-closure
+  capture — i.e. it passes a `block-scoped-var`/`no-redeclare`-equivalent check) → rewrite to `let`
+  (code-only, via `rewriteOutsideStringsAndComments`).
+- **Unsafe** (relies on any `var`-specific behavior) → compile error naming the construct + location.
+- **Soundness is mandatory:** "safe" must mean PROVABLY safe (full reference + block-containment analysis,
+  not a regex heuristic) or it reintroduces silent-wrong. Needs a small dedicated scope-analysis pass.
+- **Sequencing:** meaningful only AFTER **2e.7a** (per-iteration `let`), because today both backends collapse
+  `var`≡`let` (dynrt block-scopes both; wasic lowers all decls to function-scoped WAT locals — confirm exact
+  wasic handling when wiring the gate), so the safe/unsafe distinction has no observable effect until `let`
+  becomes per-iteration.
+
+**Where it's confirmed / enforced (module ingestion):** the gate lives at the **wasic/tsbundler static
+front-end**, scanning the user's source AND each resolved import. **JSR deps** ship authored **source**
+(TS/ESM) → very likely ES6-clean, but JSR does NOT enforce scoping style, so still scan. **npm deps** often
+ship transpiled-to-ES5 / minified **dist** (var-heavy even when the author's source was clean) → must scan,
+and prefer the least-transpiled entry (ESM `exports`/`src`) over `dist`. Metadata (`"type":"module"`,
+tsconfig `target`) is a hint, never proof — verify by scanning. A blind (non-scope-aware) `var`→`let`
+rewrite is rejected: it's unsound (breaks redeclare/leak/hoist/loop-closure cases) AND a behavioral no-op
+for both current backends.
 
 The **2g GC** prerequisite is **already DONE**. Route A then = **2e (language) + 2f (stdlib) + 2h
 (removal)**:
