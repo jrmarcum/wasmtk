@@ -1,6 +1,6 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 339/339** (`bindgen` 131/131, `jstyper` 73/73) as of **2026-06-24** (functions-as-`any` producer + post-publish audit) (+`18j`–`18t` dynrt: value-model / virtual
+Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 343/343** (`bindgen` 131/131, `jstyper` 73/73) as of **2026-06-26** (#14 Route A 2e.6 try/catch `18zh` + 2e.7 block scoping `18zi`) (+`18j`–`18t` dynrt: value-model / virtual
 import / eval / eval-env / calls / statements / functions+`new Function` / `18q` wasic `any`
 type+auto-merge / `18r` GC Part 1 auto-grow heap / `18s`-`18z` GC Parts 2-5b + polish COMPLETE (… / splitting / hybrid segregated+coalescing allocator). 4 known wasic gaps are OPEN but worked around in the dynrt library — see next
 section; 2d.1/2d.2/3.1 added none. 3.1 has its own documented FOLLOW-UPS — see dynrt-design.md
@@ -9,6 +9,22 @@ gaps are OPEN but worked around in the dynrt library (so the suite stays green) 
 section; each is a candidate for a real `src/wasic.ts` fix (then the lib workaround can be removed,
 the RegExp `&&` precedent). (Pre-18j: 317 = 307 at v1.7.0 + 2 Phase-53 tests + 8 async tests 54–61;
 `bindgen` 103→104 from the ABI return-side forward-alignment's `cabi_post` assertion.)
+
+## FIXED — `deno fmt` wrapped a deeply-indented ternary that modc can't parse (process bug, 2026-06-26)
+
+Found building #14 2e.7: the dynrt lib (`tests/wasm_wasi_bundle/dynrt_bundle/dynrt_lib_modc.ts`) is
+compiled by **`modc`**, whose body-line joiner does NOT handle a multi-line (wrapped) ternary. Three
+deeply-indented ternaries in the 2e.4 member/index-assign path (16-space indent, >100 cols) — e.g.
+`const cur: i32 = isDot === 1 ? dynMember(container, segKey) : dynIndexValue(container, segIdx);` — were
+WRAPPED by `deno fmt` into `const cur =\n  ? …\n  : …` form, which modc reports as `Unsupported statement:
+? dynMember(...)` / `: dynIndexValue(...)` and aborts. **This had silently shipped in v1.10.6's committed
+SOURCE** (the lib no longer round-tripped through modc) — but the shipped RUNTIME was unaffected because
+`caps_bytes.ts` is generated from the PRE-`fmt` compiled `.wasm`, and the suite passed because the
+`@test-pipeline` `modc` step ran on the on-disk lib BEFORE the end-of-increment `deno fmt`. **Fix:**
+converted the three fragile ternaries to single-line `if/else` (fmt-stable AND modc-parseable). **Lesson
+(now in dynrt-design.md build-order):** after `deno fmt`-ing the dynrt lib, ALWAYS re-run `modc` on the
+POST-fmt source before committing — `deno fmt` line-wrapping and the modc subset are not fully compatible.
+Cheap guard: keep dynrt conditionals as `if/else` rather than long ternaries at deep indentation.
 
 ## FIXED — wasic arrow detection mis-fired on `=>` inside STRING LITERALS (#14 2e.3, 2026-06-24)
 

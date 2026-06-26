@@ -936,6 +936,25 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
    `f` throws) still evaluates `g()` — propagation is enforced at statement/loop/call boundaries, not
    inside one expression; and the catch binding lives in the current env (no fresh catch scope — lands with
    2e.7). **2e.7 scoping** next.
+7. **2e.7 block scoping** — **SHIPPED 2026-06-26** (test `18zi`): lexical scopes. The scope chain already
+   existed (an env is an object whose slot-2 is the parent link — `envLookup`/`dynApply` use it); 2e.7 makes
+   each `{ }` block, `for` loop, and `catch` run in a fresh `childEnv(parent)` so `let`/`const` inside don't
+   leak, and routes bare assignment / `++` / `--` / `+=` through new `envAssign(env,name,val)` which walks
+   the chain and updates the DECLARING scope in place (inner-block `x = v` mutates the outer `x`, not a
+   shadow; undeclared → topmost/global). Declarations still `dynSet(evalEnv,…)` (bind in the current scope).
+   Loop vars are scoped by wrapping `runFor` in a loop env; the fresh `catch` scope (deferred from 2e.6) now
+   binds `e` in a `childEnv`. Block/loop/catch envs are `gcPushRoot`-ed for their duration (survive a
+   collection across nested calls). **Purely interpreter-side — no wasic compiler change. Known v1 gaps:**
+   `var` is treated block-scoped like `let` (not function-hoisted); no per-iteration fresh `let` binding for
+   closures capturing a loop var. **2e.8 classes** (needs 2f.1) next.
+   - **Process bug found + fixed here (latent, shipped in v1.10.6 source — binary was fine):** the dynrt
+     lib's end-of-increment `deno fmt` had WRAPPED three deeply-indented ternaries (16-space indent, >100
+     cols) into multi-line form, which **modc's body-line joiner cannot parse** — so the committed lib
+     SOURCE no longer round-tripped through `modc` (`caps_bytes` shipped fine because it was compiled from
+     the PRE-fmt source; the suite passed because it ran BEFORE the fmt). Fixed by converting those ternaries
+     to single-line `if/else` (fmt-stable, modc-parseable). **Lesson:** after `deno fmt`-ing the dynrt lib,
+     ALWAYS re-run `modc` on the post-fmt source before committing — `deno fmt` and the modc subset are not
+     fully compatible for deeply-indented ternaries. See `cmem/compiler-bugs.md`.
 5. **2f.1 prototype + `this`** (object-model upgrade) → unlocks **2e.8 classes**.
 6. **2f.2–2f.9 stdlib** — do the BRIDGES first (2f.5 JSON, 2f.6 Map/Set, 2f.7 RegExp reuse the existing
    capability libs → cheap), then Array/String/Object/Math methods.

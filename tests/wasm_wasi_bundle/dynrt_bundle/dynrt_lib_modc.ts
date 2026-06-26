@@ -1422,6 +1422,35 @@ function envLookup(env: i32, name: string): i32 {
   return -1;
 }
 
+// #14 2e.7 — block scoping. A lexical scope is just an object whose slot-2 is the parent link (the
+// same representation envLookup/dynApply already use). Each `{ }` block / loop / catch gets a fresh
+// child scope so `let`/`const` declared inside it do not leak to the enclosing scope.
+function childEnv(parent: i32): i32 {
+  const e: i32 = dynObject();
+  const en: Int32Array = e as unknown as Int32Array;
+  en[2] = parent;
+  return e;
+}
+
+// #14 2e.7 — assign to an EXISTING binding: walk the scope chain and update the scope that declares
+// `name` in place, so an inner block assigning an outer variable mutates the outer one (not a shadow).
+// If `name` is undeclared anywhere, define it in the topmost (global) scope — loose-JS semantics.
+// (Declarations use `dynSet(evalEnv, …)` directly to bind in the CURRENT scope; this is for `x = v`.)
+function envAssign(env: i32, name: string, val: i32): void {
+  let e: i32 = env;
+  let top: i32 = env;
+  while (e !== -1 && e !== 0) {
+    if (dynGet(e, name) !== -1) {
+      dynSet(e, name, val);
+      return;
+    }
+    top = e;
+    const en: Int32Array = e as unknown as Int32Array;
+    e = en[2];
+  }
+  if (top !== -1 && top !== 0) dynSet(top, name, val);
+}
+
 /** Call a function value with an args array (a value-model array of arg handles). */
 /** @export */
 export function dynApply(callee: i32, argsArr: i32): i32 {
@@ -2259,9 +2288,9 @@ export function dynEvalEnv(s: string, env: i32): i32 {
 // re-parse trick: `while` re-sets `evalPos` to the condition start each iteration and re-parses the
 // condition + body (so it costs O(body × iterations) to parse, but needs no AST); dead branches of
 // `if`/`while` are parsed with `evalLive = 0` (execute nothing, just advance the cursor — reusing
-// the 2c short-circuit machinery). `return` sets `evalReturned`, which stops sequencing. NO block
-// scoping (all `let`/`const`/`var` land in the one env), NO `for`, NO member-assignment (`obj.x =`),
-// NO user functions (`new Function` is 2d.2 — it adds parser-reentrancy save/restore on top of this).
+// the 2c short-circuit machinery). `return` sets `evalReturned`, which stops sequencing.
+// (2d.1 had NO block scoping — all decls landed in one env; #14 2e.7 added lexical scoping: each
+// `{ }` block / loop / catch runs in a fresh child scope, and `x = v` walks the chain via `envAssign`.)
 // ──────────────────────────────────────────────────────────────────────────────────────────────
 
 // Read an identifier run at the cursor, advancing past it; returns the name.
@@ -2412,6 +2441,11 @@ function runDoWhile(s: string): void {
 // update)` by reading the header; dispatches to the matching runner.
 function runFor(s: string): void {
   const outer: i32 = evalLive;
+  // #14 2e.7 — the loop variable (and any C-style init decl) is scoped to the loop, not leaked.
+  const parentEnv: i32 = evalEnv;
+  const loopEnv: i32 = childEnv(parentEnv);
+  evalEnv = loopEnv;
+  gcPushRoot(loopEnv);
   evalSkipWs(s);
   if (evalPeek(s) === 40) evalPos = evalPos + 1; // '('
   const save: i32 = evalPos;
@@ -2445,6 +2479,8 @@ function runFor(s: string): void {
     evalPos = save;
     runForClassic(s, outer);
   }
+  gcPopRoot();
+  evalEnv = parentEnv; // #14 2e.7 — drop the loop scope (loop var no longer visible)
 }
 
 // `for (const k in obj) body` — iterate an object's keys (tag 6), binding `k` to each key string.
@@ -2741,9 +2777,16 @@ function runTry(s: string): void {
     if (evalThrew === 1 && outer === 1) {
       const tv: i32 = evalThrowVal;
       evalThrew = 0; // caught
-      if (catchVar.length > 0) dynSet(evalEnv, catchVar, tv);
+      // #14 2e.7 — bind `e` in a FRESH catch scope so it does not leak past the catch block.
+      const catchParent: i32 = evalEnv;
+      const catchEnv: i32 = childEnv(catchParent);
+      if (catchVar.length > 0) dynSet(catchEnv, catchVar, tv);
+      evalEnv = catchEnv;
+      gcPushRoot(catchEnv);
       evalLive = 1;
       runStatement(s); // catch block
+      gcPopRoot();
+      evalEnv = catchParent;
       evalLive = outer;
     } else {
       evalLive = 0;
@@ -2949,9 +2992,15 @@ function runFuncDecl(s: string): void {
 function runStatement(s: string): void {
   evalSkipWs(s);
   const c: i32 = evalPeek(s);
-  if (c === 123) { // '{' block
+  if (c === 123) { // '{' block — #14 2e.7: a fresh lexical scope so let/const don't leak
     evalPos = evalPos + 1;
+    const parentEnv: i32 = evalEnv;
+    const blockEnv: i32 = childEnv(parentEnv);
+    evalEnv = blockEnv;
+    gcPushRoot(blockEnv); // survive a collection during the block (incl. across nested calls)
     runStatements(s);
+    gcPopRoot();
+    evalEnv = parentEnv;
     evalSkipWs(s);
     if (evalPeek(s) === 125) evalPos = evalPos + 1; // '}'
     return;
@@ -3027,7 +3076,7 @@ function runStatement(s: string): void {
     if (nc === 61 && evalPeek2(s) !== 61 && evalPeek2(s) !== 62) { // '=' but not '==' or '=>'
       evalPos = evalPos + 1; // consume '='
       const val: i32 = parseExpr(s);
-      if (evalLive === 1) dynSet(evalEnv, word, val);
+      if (evalLive === 1) envAssign(evalEnv, word, val); // #14 2e.7 — update declaring scope
       evalSkipWs(s);
       if (evalPeek(s) === 59) evalPos = evalPos + 1;
       return;
@@ -3036,7 +3085,7 @@ function runStatement(s: string): void {
       evalPos = evalPos + 2;
       if (evalLive === 1) {
         const cur: i32 = envLookup(evalEnv, word);
-        dynSet(evalEnv, word, dynAdd(cur, dynNumber(1)));
+        envAssign(evalEnv, word, dynAdd(cur, dynNumber(1)));
       }
       evalSkipWs(s);
       if (evalPeek(s) === 59) evalPos = evalPos + 1;
@@ -3046,7 +3095,7 @@ function runStatement(s: string): void {
       evalPos = evalPos + 2;
       if (evalLive === 1) {
         const cur: i32 = envLookup(evalEnv, word);
-        dynSet(evalEnv, word, dynSub(cur, dynNumber(1)));
+        envAssign(evalEnv, word, dynSub(cur, dynNumber(1)));
       }
       evalSkipWs(s);
       if (evalPeek(s) === 59) evalPos = evalPos + 1;
@@ -3064,7 +3113,7 @@ function runStatement(s: string): void {
         else if (op === 45) nv = dynSub(cur, rhs);
         else if (op === 42) nv = dynMul(cur, rhs);
         else nv = dynDiv(cur, rhs);
-        dynSet(evalEnv, word, nv);
+        envAssign(evalEnv, word, nv);
       }
       evalSkipWs(s);
       if (evalPeek(s) === 59) evalPos = evalPos + 1;
@@ -3101,8 +3150,10 @@ function runStatement(s: string): void {
           const op0: i32 = evalPeek(s);
           const op1: i32 = evalPeek2(s);
           const plain: i32 = (op0 === 61 && op1 !== 61 && op1 !== 62) ? 1 : 0;
-          const compound: i32 =
-            ((op0 === 43 || op0 === 45 || op0 === 42 || op0 === 47) && op1 === 61) ? 1 : 0;
+          // NOTE: kept as a single-line `if` (not a ternary) so `deno fmt` cannot wrap it past what
+          // modc's body-line joiner parses — a wrapped multi-line ternary breaks the modc compile.
+          let compound: i32 = 0;
+          if ((op0 === 43 || op0 === 45 || op0 === 42 || op0 === 47) && op1 === 61) compound = 1;
           if (plain === 1 || compound === 1) {
             if (plain === 1) evalPos = evalPos + 1; // '='
             else evalPos = evalPos + 2; // 'op='
@@ -3110,9 +3161,9 @@ function runStatement(s: string): void {
             if (evalLive === 1) {
               let nv: i32 = rhs;
               if (compound === 1) {
-                const cur: i32 = isDot === 1
-                  ? dynMember(container, segKey)
-                  : dynIndexValue(container, segIdx);
+                let cur: i32 = 0; // if/else (not a wrappable ternary) — see NOTE above
+                if (isDot === 1) cur = dynMember(container, segKey);
+                else cur = dynIndexValue(container, segIdx);
                 if (op0 === 43) nv = dynAdd(cur, rhs);
                 else if (op0 === 45) nv = dynSub(cur, rhs);
                 else if (op0 === 42) nv = dynMul(cur, rhs);
@@ -3124,9 +3175,8 @@ function runStatement(s: string): void {
             isAssign = 1;
             scanning = 0;
           } else {
-            container = isDot === 1
-              ? dynMember(container, segKey)
-              : dynIndexValue(container, segIdx);
+            if (isDot === 1) container = dynMember(container, segKey);
+            else container = dynIndexValue(container, segIdx);
           }
         }
       }
