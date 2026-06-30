@@ -1253,6 +1253,72 @@ function dynArrayMethod(arr: i32, name: string, args: i32): i32 {
     }
     return out;
   }
+  // #14 2f.2 (completion) — mutating + indexed methods. The values list is `[len,cap,e0,…]` (slot 1),
+  // so truncation/shift is just listGet/listSet + writing the len word.
+  if (strEq(name, "pop") === 1) {
+    if (len === 0) return dynUndefined();
+    const alist: Int32Array = arr as unknown as Int32Array;
+    const lp: i32 = alist[1];
+    const val: i32 = listGet(lp, len - 1);
+    const ln: Int32Array = lp as unknown as Int32Array;
+    ln[0] = len - 1;
+    return val;
+  }
+  if (strEq(name, "shift") === 1) {
+    if (len === 0) return dynUndefined();
+    const alist: Int32Array = arr as unknown as Int32Array;
+    const lp: i32 = alist[1];
+    const val: i32 = listGet(lp, 0);
+    let i: i32 = 1;
+    while (i < len) {
+      listSet(lp, i - 1, listGet(lp, i));
+      i = i + 1;
+    }
+    const ln: Int32Array = lp as unknown as Int32Array;
+    ln[0] = len - 1;
+    return val;
+  }
+  if (strEq(name, "unshift") === 1) {
+    let k: i32 = 0; // grow by argc (append dummies → also reallocates capacity)…
+    while (k < argc) {
+      dynPush(arr, dynUndefined());
+      k = k + 1;
+    }
+    const alist: Int32Array = arr as unknown as Int32Array;
+    const lp: i32 = alist[1]; // …read the (possibly new) list AFTER growing
+    let i: i32 = len - 1;
+    while (i >= 0) { // rotate the originals up by argc
+      listSet(lp, i + argc, listGet(lp, i));
+      i = i - 1;
+    }
+    let a2: i32 = 0;
+    while (a2 < argc) { // place the new items at the front, in order
+      listSet(lp, a2, dynArrGet(args, a2));
+      a2 = a2 + 1;
+    }
+    const newlen: i32 = len + argc;
+    return dynNumber(newlen);
+  }
+  if (strEq(name, "at") === 1) {
+    let idx: i32 = 0;
+    if (argc > 0) {
+      const a0: f64 = dynToNumber(dynArrGet(args, 0));
+      idx = a0 as unknown as i32;
+    }
+    if (idx < 0) idx = len + idx;
+    if (idx < 0 || idx >= len) return dynUndefined();
+    return dynArrGet(arr, idx);
+  }
+  if (strEq(name, "lastIndexOf") === 1) {
+    let target: i32 = dynUndefined();
+    if (argc > 0) target = dynArrGet(args, 0);
+    let i: i32 = len - 1;
+    while (i >= 0) {
+      if (dynStrictEq(dynArrGet(arr, i), target) === 1) return dynNumber(i);
+      i = i - 1;
+    }
+    return dynNumber(0 - 1);
+  }
   // callback methods: the callback is args[0]; called with (element, index)
   let cb: i32 = dynUndefined();
   if (argc > 0) cb = dynArrGet(args, 0);
@@ -1313,6 +1379,87 @@ function dynArrayMethod(arr: i32, name: string, args: i32): i32 {
       i = i + 1;
     }
     return acc;
+  }
+  if (strEq(name, "find") === 1) {
+    let i: i32 = 0;
+    while (i < len) {
+      const elem: i32 = dynArrGet(arr, i);
+      const ca: i32 = dynArray();
+      dynPush(ca, elem);
+      dynPush(ca, dynNumber(i));
+      if (dynToBool(dynApply(cb, ca)) === 1) return elem;
+      i = i + 1;
+    }
+    return dynUndefined();
+  }
+  if (strEq(name, "findIndex") === 1) {
+    let i: i32 = 0;
+    while (i < len) {
+      const ca: i32 = dynArray();
+      dynPush(ca, dynArrGet(arr, i));
+      dynPush(ca, dynNumber(i));
+      if (dynToBool(dynApply(cb, ca)) === 1) return dynNumber(i);
+      i = i + 1;
+    }
+    return dynNumber(0 - 1);
+  }
+  if (strEq(name, "some") === 1) {
+    let i: i32 = 0;
+    while (i < len) {
+      const ca: i32 = dynArray();
+      dynPush(ca, dynArrGet(arr, i));
+      dynPush(ca, dynNumber(i));
+      if (dynToBool(dynApply(cb, ca)) === 1) return dynBool(1);
+      i = i + 1;
+    }
+    return dynBool(0);
+  }
+  if (strEq(name, "every") === 1) {
+    let i: i32 = 0;
+    while (i < len) {
+      const ca: i32 = dynArray();
+      dynPush(ca, dynArrGet(arr, i));
+      dynPush(ca, dynNumber(i));
+      if (dynToBool(dynApply(cb, ca)) === 0) return dynBool(0);
+      i = i + 1;
+    }
+    return dynBool(1);
+  }
+  if (strEq(name, "sort") === 1) {
+    // in-place insertion sort. Optional comparator (args[0]); default = ascending NUMERIC (a documented
+    // deviation — JS's default sort is string-lexicographic).
+    const alist: Int32Array = arr as unknown as Int32Array;
+    const lp: i32 = alist[1];
+    let i: i32 = 1;
+    while (i < len) {
+      const cur: i32 = listGet(lp, i);
+      let j: i32 = i - 1;
+      let go: i32 = 1;
+      while (j >= 0 && go === 1) {
+        const prev: i32 = listGet(lp, j);
+        let after: i32 = 0; // 1 ⇒ prev sorts AFTER cur → shift prev up
+        if (argc > 0) {
+          const ca: i32 = dynArray();
+          dynPush(ca, prev);
+          dynPush(ca, cur);
+          const rv: f64 = dynToNumber(dynApply(cb, ca));
+          if (rv > 0) after = 1;
+        } else {
+          const pn: f64 = dynToNumber(prev);
+          const cnv: f64 = dynToNumber(cur);
+          if (pn > cnv) after = 1;
+        }
+        if (after === 1) {
+          listSet(lp, j + 1, prev);
+          j = j - 1;
+        } else {
+          go = 0;
+        }
+      }
+      listSet(lp, j + 1, cur);
+      i = i + 1;
+    }
+    return arr;
   }
   return dynUndefined();
 }

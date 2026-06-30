@@ -59,4 +59,22 @@ checkRun("const a = [5, 10, 15]; return a.reduce((acc, x) => acc + x);", 30);
 // ── chained methods ──────────────────────────────────────────────────────────────────────────────
 checkRun("const a = [1, 2, 3, 4, 5]; const b = a.filter((x) => x > 2).map((x) => x * 2); return b[0] + b[1] + b[2];", 24);
 
+// ── 2f.2 completion: pop / shift / unshift / at / lastIndexOf ─────────────────────────────────────
+checkRun("const a = [1, 2, 3]; const x = a.pop(); return x * 10 + a.length;", 32);
+checkRun("const a = [5, 6, 7]; const x = a.shift(); return x * 100 + a.length * 10 + a[0];", 526);
+checkRun("const a = [3, 4]; const n = a.unshift(1, 2); return n * 100 + a[0] * 10 + a[3];", 414);
+checkRun("const a = [10, 20, 30]; return a.at(1) * 10 + a.at(-1);", 230);
+checkRun("const a = [1, 2, 3, 2, 1]; return a.lastIndexOf(2);", 3);
+
+// ── 2f.2 completion: find / findIndex / some / every ─────────────────────────────────────────────
+checkRun("const a = [1, 2, 3, 4]; return a.find((x) => x > 2);", 3);
+checkRun("const a = [5, 10, 15]; return a.findIndex((x) => x === 10);", 1);
+checkRun("const a = [1, 2, 3]; return a.some((x) => x > 2) ? 100 : 200;", 100);
+checkRun("const a = [2, 4, 6]; return a.every((x) => x > 1) ? 100 : 200;", 100);
+checkRun("const a = [2, 4, 6]; return a.every((x) => x > 3) ? 100 : 200;", 200);
+
+// ── 2f.2 completion: sort (numeric default + comparator) ─────────────────────────────────────────
+checkRun("const a = [3, 1, 2]; a.sort(); return a[0] * 100 + a[1] * 10 + a[2];", 123);
+checkRun("const a = [1, 3, 2]; a.sort((x, y) => y - x); return a[0] * 100 + a[1] * 10 + a[2];", 321);
+
 console.log("dynrt 2f.2 array methods: all checks passed");
