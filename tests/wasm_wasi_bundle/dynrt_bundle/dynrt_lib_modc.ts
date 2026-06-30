@@ -1464,6 +1464,139 @@ function dynArrayMethod(arr: i32, name: string, args: i32): i32 {
   return dynUndefined();
 }
 
+// #14 2f.3 — built-in String methods. Dispatched from parsePostfix when the receiver is a tag-4 string.
+// The dynrt string is unboxed to a wasic `string` (boxToStr) and the wasic compiler's own string ops
+// (Phase 11/27) do the work; results are re-boxed. Number/string method results are bound to locals
+// first (the subset can't pass a string-method-CALL result straight into another call). Index/count
+// args truncate toward zero. Unrecognized names → undefined.
+function dynStringMethod(str: i32, name: string, args: i32): i32 {
+  const s: string = boxToStr(str);
+  const slen: i32 = s.length;
+  const argc: i32 = dynArrLen(args);
+  if (strEq(name, "charAt") === 1) {
+    let idx: i32 = 0;
+    if (argc > 0) {
+      const a0: f64 = dynToNumber(dynArrGet(args, 0));
+      idx = a0 as unknown as i32;
+    }
+    const c: string = s.charAt(idx);
+    return dynString(c);
+  }
+  if (strEq(name, "charCodeAt") === 1) {
+    let idx: i32 = 0;
+    if (argc > 0) {
+      const a0: f64 = dynToNumber(dynArrGet(args, 0));
+      idx = a0 as unknown as i32;
+    }
+    const cc: i32 = s.charCodeAt(idx);
+    return dynNumber(cc);
+  }
+  if (strEq(name, "toUpperCase") === 1) {
+    const u: string = s.toUpperCase();
+    return dynString(u);
+  }
+  if (strEq(name, "toLowerCase") === 1) {
+    const lo: string = s.toLowerCase();
+    return dynString(lo);
+  }
+  if (strEq(name, "trim") === 1) {
+    const t: string = s.trim();
+    return dynString(t);
+  }
+  if (strEq(name, "slice") === 1) {
+    let start: i32 = 0;
+    let end: i32 = slen;
+    if (argc > 0) {
+      const a0: f64 = dynToNumber(dynArrGet(args, 0));
+      start = a0 as unknown as i32;
+    }
+    if (argc > 1) {
+      const a1: f64 = dynToNumber(dynArrGet(args, 1));
+      end = a1 as unknown as i32;
+    }
+    if (start < 0) start = slen + start;
+    if (end < 0) end = slen + end;
+    if (start < 0) start = 0;
+    if (end > slen) end = slen;
+    if (start >= end) return dynString("");
+    const sub: string = s.slice(start, end);
+    return dynString(sub);
+  }
+  if (strEq(name, "indexOf") === 1) {
+    let needle: string = "";
+    if (argc > 0) needle = boxToStr(dynArrGet(args, 0));
+    const idx: i32 = s.indexOf(needle);
+    return dynNumber(idx);
+  }
+  if (strEq(name, "includes") === 1) {
+    let needle: string = "";
+    if (argc > 0) needle = boxToStr(dynArrGet(args, 0));
+    return dynBool(s.includes(needle) === true ? 1 : 0);
+  }
+  if (strEq(name, "startsWith") === 1) {
+    let needle: string = "";
+    if (argc > 0) needle = boxToStr(dynArrGet(args, 0));
+    return dynBool(s.startsWith(needle) === true ? 1 : 0);
+  }
+  if (strEq(name, "endsWith") === 1) {
+    let needle: string = "";
+    if (argc > 0) needle = boxToStr(dynArrGet(args, 0));
+    return dynBool(s.endsWith(needle) === true ? 1 : 0);
+  }
+  if (strEq(name, "repeat") === 1) {
+    let n: i32 = 0;
+    if (argc > 0) {
+      const a0: f64 = dynToNumber(dynArrGet(args, 0));
+      n = a0 as unknown as i32;
+    }
+    const r: string = s.repeat(n);
+    return dynString(r);
+  }
+  if (strEq(name, "padStart") === 1) {
+    let n: i32 = 0;
+    if (argc > 0) {
+      const a0: f64 = dynToNumber(dynArrGet(args, 0));
+      n = a0 as unknown as i32;
+    }
+    let pad: string = " ";
+    if (argc > 1) pad = boxToStr(dynArrGet(args, 1));
+    const r: string = s.padStart(n, pad);
+    return dynString(r);
+  }
+  if (strEq(name, "padEnd") === 1) {
+    let n: i32 = 0;
+    if (argc > 0) {
+      const a0: f64 = dynToNumber(dynArrGet(args, 0));
+      n = a0 as unknown as i32;
+    }
+    let pad: string = " ";
+    if (argc > 1) pad = boxToStr(dynArrGet(args, 1));
+    const r: string = s.padEnd(n, pad);
+    return dynString(r);
+  }
+  if (strEq(name, "concat") === 1) {
+    let other: string = "";
+    if (argc > 0) other = boxToStr(dynArrGet(args, 0));
+    const r: string = s + other;
+    return dynString(r);
+  }
+  if (strEq(name, "split") === 1) {
+    let sep: string = "";
+    if (argc > 0) sep = boxToStr(dynArrGet(args, 0));
+    const parts: string[] = s.split(sep);
+    const out: i32 = dynArray();
+    const pc: i32 = parts.length;
+    let i: i32 = 0;
+    while (i < pc) {
+      const p: string = parts[i];
+      dynPush(out, dynString(p));
+      i = i + 1;
+    }
+    return out;
+  }
+  return dynUndefined();
+}
+
 // #14 2e.4 — `container[idx] = val` for arrays (number index) and objects (string key); mirrors
 // dynIndexValue's dispatch. Non-matching container/index kinds are no-ops in v1.
 function dynIndexSet(container: i32, idxBox: i32, val: i32): void {
@@ -2594,6 +2727,7 @@ function parsePostfix(s: string): i32 {
           const rvn: Int32Array = recv as unknown as Int32Array;
           const vvn: Int32Array = v as unknown as Int32Array;
           if (rvn[0] === 5 && vvn[0] !== 7) v = dynArrayMethod(recv, recvMethod, argsArr);
+          else if (rvn[0] === 4 && vvn[0] !== 7) v = dynStringMethod(recv, recvMethod, argsArr);
           else v = dynApplyThis(v, argsArr, recv);
         } else {
           v = dynApply(v, argsArr);

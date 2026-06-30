@@ -2,7 +2,7 @@
   ;; imports from dynrt
   (import "env" "__host_call" (func $dynrt___host_call (param i32 i32) (result i32)))
   (memory (export "memory") 2)
-  (global $__heap_ptr (mut i32) (i32.const 943))
+  (global $__heap_ptr (mut i32) (i32.const 1029))
   ;; Bump allocator — advances __heap_ptr and returns the old value.
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
@@ -203,7 +203,33 @@
     local.get 0
     i32.eqz
     select)
-  (func $dynrt__fn3 (param i32 i32 i32 i32) (result i32 i32)
+  (func $dynrt__fn3 (param i32 i32 i32)
+    (local i32) (local i32)
+    block  ;; label = @1
+      loop  ;; label = @2
+        block  ;; label = @3
+          local.get 3
+          local.get 1
+          i32.ge_u
+          br_if 2 (;@1;)
+          local.get 2
+          local.get 3
+          i32.add
+          local.get 0
+          local.get 3
+          i32.add
+          i32.load8_u
+          i32.store8
+          local.get 3
+          local.tee 4
+          i32.const 1
+          i32.add
+          local.set 3
+          br 1 (;@2;)
+        end
+      end
+    end)
+  (func $dynrt__fn4 (param i32 i32 i32 i32) (result i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 1
     local.get 3
@@ -271,7 +297,7 @@
     local.get 4
     local.get 5
     local.tee 11)
-  (func $dynrt__fn4 (param i32 i32 i32 i32) (result i32 i32)
+  (func $dynrt__fn5 (param i32 i32 i32 i32) (result i32 i32)
     (local i32) (local i32) (local i32)
     i32.const 0
     local.get 2
@@ -308,7 +334,174 @@
     local.get 5
     local.get 6
     i32.sub)
-  (func $dynrt__fn5 (param i32 i32 i32) (result i32)
+  (func $dynrt__fn6 (param i32 i32 i32 i32) (result i32)
+    (local i32) (local i32) (local i32) (local i32) (local i32)
+    local.get 3
+    i32.eqz
+    if  ;; label = @1
+      i32.const 0
+      return
+    end
+    local.get 1
+    local.get 3
+    i32.sub
+    local.set 6
+    local.get 6
+    i32.const 0
+    i32.lt_s
+    if  ;; label = @1
+      i32.const -1
+      return
+    end
+    block  ;; label = @1
+      loop  ;; label = @2
+        block  ;; label = @3
+          local.get 4
+          local.get 6
+          i32.gt_s
+          br_if 2 (;@1;)
+          i32.const 0
+          local.set 5
+          i32.const 1
+          local.tee 8
+          local.set 7
+          block  ;; label = @4
+            loop  ;; label = @5
+              block  ;; label = @6
+                local.get 5
+                local.get 3
+                i32.ge_u
+                br_if 2 (;@4;)
+                local.get 0
+                local.get 4
+                local.get 5
+                i32.add
+                i32.add
+                i32.load8_u
+                local.get 2
+                local.get 5
+                i32.add
+                i32.load8_u
+                i32.ne
+                if  ;; label = @7
+                  block  ;; label = @8
+                    i32.const 0
+                    local.set 7
+                    br 4 (;@4;)
+                  end
+                end
+                local.get 5
+                i32.const 1
+                i32.add
+                local.set 5
+                br 1 (;@5;)
+              end
+            end
+          end
+          local.get 7
+          if  ;; label = @4
+            local.get 4
+            return
+          end
+          local.get 4
+          local.get 8
+          i32.add
+          local.set 4
+          br 1 (;@2;)
+        end
+      end
+    end
+    i32.const -1)
+  (func $dynrt__fn7 (param i32 i32) (result i32 i32)
+    (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
+    i32.const 0
+    local.set 2
+    local.get 1
+    local.set 3
+    block  ;; label = @1
+      loop  ;; label = @2
+        block  ;; label = @3
+          local.get 2
+          local.get 3
+          i32.ge_u
+          br_if 2 (;@1;)
+          local.get 0
+          local.get 2
+          i32.add
+          i32.load8_u
+          local.set 4
+          local.get 4
+          i32.const 32
+          i32.ne
+          local.get 4
+          i32.const 9
+          i32.ne
+          i32.and
+          local.get 4
+          i32.const 10
+          i32.ne
+          local.get 4
+          i32.const 13
+          i32.ne
+          i32.and
+          i32.and
+          br_if 2 (;@1;)
+          local.get 2
+          local.tee 5
+          i32.const 1
+          i32.add
+          local.set 2
+          br 1 (;@2;)
+        end
+      end
+    end
+    block  ;; label = @1
+      loop  ;; label = @2
+        block  ;; label = @3
+          local.get 3
+          local.get 2
+          i32.le_u
+          br_if 2 (;@1;)
+          local.get 0
+          local.get 3
+          i32.const 1
+          i32.sub
+          i32.add
+          i32.load8_u
+          local.set 4
+          local.get 4
+          i32.const 32
+          i32.ne
+          local.get 4
+          i32.const 9
+          i32.ne
+          i32.and
+          local.get 4
+          i32.const 10
+          i32.ne
+          local.get 4
+          i32.const 13
+          i32.ne
+          i32.and
+          i32.and
+          br_if 2 (;@1;)
+          local.get 3
+          i32.const 1
+          i32.sub
+          local.tee 6
+          local.set 3
+          br 1 (;@2;)
+        end
+      end
+    end
+    local.get 0
+    local.get 2
+    local.tee 7
+    i32.add
+    local.get 3
+    local.get 7
+    i32.sub)
+  (func $dynrt__fn8 (param i32 i32 i32) (result i32)
     local.get 2
     i32.const 0
     i32.lt_s
@@ -327,7 +520,668 @@
     local.get 2
     i32.add
     i32.load8_u)
-  (func $dynrt__fn6 (param i32) (result f64)
+  (func $dynrt__fn9 (param i32 i32 i32) (result i32 i32)
+    local.get 2
+    i32.const 0
+    i32.lt_s
+    if  ;; label = @1
+      block  ;; label = @2
+        local.get 0
+        i32.const 0
+        return
+      end
+    end
+    local.get 2
+    local.get 1
+    i32.ge_u
+    if  ;; label = @1
+      block  ;; label = @2
+        local.get 0
+        i32.const 0
+        return
+      end
+    end
+    local.get 0
+    local.get 2
+    i32.add
+    i32.const 1)
+  (func $dynrt__fn10 (param i32 i32 i32 i32) (result i32)
+    (local i32)
+    local.get 3
+    local.get 1
+    i32.gt_u
+    if  ;; label = @1
+      i32.const 0
+      return
+    end
+    block  ;; label = @1
+      loop  ;; label = @2
+        block  ;; label = @3
+          local.get 4
+          local.get 3
+          i32.ge_u
+          br_if 2 (;@1;)
+          local.get 0
+          local.get 4
+          i32.add
+          i32.load8_u
+          local.get 2
+          local.get 4
+          i32.add
+          i32.load8_u
+          i32.ne
+          if  ;; label = @4
+            i32.const 0
+            return
+          end
+          local.get 4
+          i32.const 1
+          i32.add
+          local.set 4
+          br 1 (;@2;)
+        end
+      end
+    end
+    i32.const 1)
+  (func $dynrt__fn11 (param i32 i32 i32 i32) (result i32)
+    (local i32) (local i32)
+    local.get 3
+    local.get 1
+    i32.gt_u
+    if  ;; label = @1
+      i32.const 0
+      return
+    end
+    local.get 1
+    local.get 3
+    i32.sub
+    local.set 5
+    block  ;; label = @1
+      loop  ;; label = @2
+        block  ;; label = @3
+          local.get 4
+          local.get 3
+          i32.ge_u
+          br_if 2 (;@1;)
+          local.get 0
+          local.get 5
+          local.get 4
+          i32.add
+          i32.add
+          i32.load8_u
+          local.get 2
+          local.get 4
+          i32.add
+          i32.load8_u
+          i32.ne
+          if  ;; label = @4
+            i32.const 0
+            return
+          end
+          local.get 4
+          i32.const 1
+          i32.add
+          local.set 4
+          br 1 (;@2;)
+        end
+      end
+    end
+    i32.const 1)
+  (func $dynrt__fn12 (param i32 i32) (result i32 i32)
+    (local i32) (local i32) (local i32) (local i32) (local i32)
+    local.get 1
+    call $__malloc
+    local.set 2
+    block  ;; label = @1
+      loop  ;; label = @2
+        block  ;; label = @3
+          local.get 3
+          local.get 1
+          i32.ge_u
+          br_if 2 (;@1;)
+          local.get 0
+          local.get 3
+          i32.add
+          i32.load8_u
+          local.set 4
+          local.get 4
+          i32.const 97
+          i32.ge_u
+          local.get 4
+          i32.const 122
+          i32.le_u
+          i32.and
+          if  ;; label = @4
+            local.get 4
+            i32.const 32
+            i32.sub
+            local.set 4
+          end
+          local.get 2
+          local.get 3
+          i32.add
+          local.get 4
+          i32.store8
+          local.get 3
+          local.tee 5
+          i32.const 1
+          i32.add
+          local.set 3
+          br 1 (;@2;)
+        end
+      end
+    end
+    local.get 2
+    local.get 1
+    local.tee 6)
+  (func $dynrt__fn13 (param i32 i32) (result i32 i32)
+    (local i32) (local i32) (local i32) (local i32) (local i32)
+    local.get 1
+    call $__malloc
+    local.set 2
+    block  ;; label = @1
+      loop  ;; label = @2
+        block  ;; label = @3
+          local.get 3
+          local.get 1
+          i32.ge_u
+          br_if 2 (;@1;)
+          local.get 0
+          local.get 3
+          i32.add
+          i32.load8_u
+          local.set 4
+          local.get 4
+          i32.const 65
+          i32.ge_u
+          local.get 4
+          i32.const 90
+          i32.le_u
+          i32.and
+          if  ;; label = @4
+            local.get 4
+            i32.const 32
+            i32.add
+            local.set 4
+          end
+          local.get 2
+          local.get 3
+          i32.add
+          local.get 4
+          i32.store8
+          local.get 3
+          local.tee 5
+          i32.const 1
+          i32.add
+          local.set 3
+          br 1 (;@2;)
+        end
+      end
+    end
+    local.get 2
+    local.get 1
+    local.tee 6)
+  (func $dynrt__fn14 (param i32 i32 i32 i32 i32) (result i32 i32)
+    (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
+    local.get 2
+    local.get 1
+    i32.le_s
+    if  ;; label = @1
+      block  ;; label = @2
+        local.get 0
+        local.get 1
+        return
+      end
+    end
+    local.get 2
+    local.tee 12
+    local.get 1
+    i32.sub
+    local.set 6
+    local.get 2
+    call $__malloc
+    local.set 5
+    local.get 4
+    i32.eqz
+    if  ;; label = @1
+      i32.const 1
+      local.set 4
+    end
+    block  ;; label = @1
+      loop  ;; label = @2
+        block  ;; label = @3
+          local.get 7
+          local.get 6
+          i32.ge_u
+          br_if 2 (;@1;)
+          local.get 7
+          local.tee 9
+          local.get 4
+          i32.rem_u
+          local.set 8
+          local.get 5
+          local.get 7
+          i32.add
+          local.get 3
+          local.get 8
+          i32.add
+          i32.load8_u
+          i32.store8
+          local.get 7
+          local.tee 10
+          i32.const 1
+          i32.add
+          local.set 7
+          br 1 (;@2;)
+        end
+      end
+    end
+    i32.const 0
+    local.set 8
+    block  ;; label = @1
+      loop  ;; label = @2
+        block  ;; label = @3
+          local.get 8
+          local.get 1
+          i32.ge_u
+          br_if 2 (;@1;)
+          local.get 5
+          local.get 6
+          local.get 8
+          i32.add
+          i32.add
+          local.get 0
+          local.get 8
+          i32.add
+          i32.load8_u
+          i32.store8
+          local.get 8
+          local.tee 11
+          i32.const 1
+          i32.add
+          local.set 8
+          br 1 (;@2;)
+        end
+      end
+    end
+    local.get 5
+    local.get 2
+    local.tee 13)
+  (func $dynrt__fn15 (param i32 i32 i32 i32 i32) (result i32 i32)
+    (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
+    local.get 2
+    local.get 1
+    i32.le_s
+    if  ;; label = @1
+      block  ;; label = @2
+        local.get 0
+        local.get 1
+        return
+      end
+    end
+    local.get 2
+    local.tee 11
+    local.get 1
+    i32.sub
+    drop
+    local.get 2
+    call $__malloc
+    local.set 5
+    block  ;; label = @1
+      loop  ;; label = @2
+        block  ;; label = @3
+          local.get 6
+          local.get 1
+          i32.ge_u
+          br_if 2 (;@1;)
+          local.get 5
+          local.get 6
+          i32.add
+          local.get 0
+          local.get 6
+          i32.add
+          i32.load8_u
+          i32.store8
+          local.get 6
+          local.tee 8
+          i32.const 1
+          i32.add
+          local.set 6
+          br 1 (;@2;)
+        end
+      end
+    end
+    local.get 4
+    i32.eqz
+    if  ;; label = @1
+      i32.const 1
+      local.set 4
+    end
+    block  ;; label = @1
+      loop  ;; label = @2
+        block  ;; label = @3
+          local.get 6
+          local.get 2
+          i32.ge_u
+          br_if 2 (;@1;)
+          local.get 6
+          local.tee 9
+          local.get 1
+          i32.sub
+          local.get 4
+          i32.rem_u
+          local.set 7
+          local.get 5
+          local.get 6
+          i32.add
+          local.get 3
+          local.get 7
+          i32.add
+          i32.load8_u
+          i32.store8
+          local.get 6
+          local.tee 10
+          i32.const 1
+          i32.add
+          local.set 6
+          br 1 (;@2;)
+        end
+      end
+    end
+    local.get 5
+    local.get 2
+    local.tee 12)
+  (func $dynrt__fn16 (param i32 i32 i32) (result i32 i32)
+    (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
+    local.get 2
+    i32.const 0
+    i32.le_s
+    if  ;; label = @1
+      block  ;; label = @2
+        local.get 0
+        i32.const 0
+        return
+      end
+    end
+    local.get 1
+    local.get 2
+    i32.mul
+    local.set 4
+    local.get 4
+    call $__malloc
+    local.set 3
+    block  ;; label = @1
+      loop  ;; label = @2
+        block  ;; label = @3
+          local.get 5
+          local.get 2
+          i32.ge_u
+          br_if 2 (;@1;)
+          i32.const 0
+          local.set 6
+          block  ;; label = @4
+            loop  ;; label = @5
+              block  ;; label = @6
+                local.get 6
+                local.get 1
+                i32.ge_u
+                br_if 2 (;@4;)
+                local.get 3
+                local.get 5
+                local.get 1
+                i32.mul
+                local.get 6
+                i32.add
+                i32.add
+                local.get 0
+                local.get 6
+                i32.add
+                i32.load8_u
+                i32.store8
+                local.get 6
+                local.tee 7
+                i32.const 1
+                i32.add
+                local.set 6
+                br 1 (;@5;)
+              end
+            end
+          end
+          local.get 5
+          i32.const 1
+          i32.add
+          local.set 5
+          br 1 (;@2;)
+        end
+      end
+    end
+    local.get 3
+    local.get 4
+    local.tee 8)
+  (func $dynrt__fn17 (param i32 i32 i32 i32) (result i32)
+    (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
+    i32.const 8
+    local.tee 28
+    local.set 5
+    i32.const 8
+    local.get 5
+    i32.const 8
+    i32.mul
+    i32.add
+    call $__malloc
+    local.set 4
+    local.get 4
+    i32.const 0
+    i32.store
+    local.get 4
+    local.get 5
+    i32.store offset=4
+    local.get 3
+    i32.eqz
+    if  ;; label = @1
+      block  ;; label = @2
+        local.get 4
+        local.get 0
+        i32.store offset=8
+        local.get 4
+        local.get 1
+        i32.store offset=12
+        local.get 4
+        i32.const 1
+        i32.store
+        local.get 4
+        local.tee 11
+        return
+      end
+    end
+    block  ;; label = @1
+      loop  ;; label = @2
+        block  ;; label = @3
+          local.get 0
+          local.get 7
+          i32.add
+          local.get 1
+          local.get 7
+          i32.sub
+          local.get 2
+          local.get 3
+          call $dynrt__fn6
+          local.set 8
+          local.get 8
+          i32.const -1
+          i32.eq
+          if  ;; label = @4
+            block  ;; label = @5
+              local.get 0
+              local.get 7
+              local.tee 12
+              i32.add
+              local.set 9
+              local.get 1
+              local.get 12
+              i32.sub
+              local.set 10
+              br 4 (;@1;)
+            end
+          end
+          local.get 8
+          local.tee 17
+          local.get 7
+          local.tee 18
+          i32.add
+          local.set 8
+          local.get 0
+          local.get 7
+          i32.add
+          local.tee 19
+          local.set 9
+          local.get 8
+          local.tee 20
+          local.get 18
+          i32.sub
+          local.set 10
+          local.get 6
+          local.get 5
+          i32.ge_u
+          if  ;; label = @4
+            block  ;; label = @5
+              local.get 5
+              local.tee 13
+              i32.const 2
+              i32.mul
+              local.set 5
+              i32.const 8
+              local.tee 14
+              local.get 5
+              local.tee 15
+              local.get 14
+              i32.mul
+              i32.add
+              local.set 7
+              local.get 7
+              call $__malloc
+              local.set 7
+              local.get 4
+              i32.const 8
+              local.get 6
+              i32.const 8
+              i32.mul
+              i32.add
+              local.get 7
+              call $dynrt__fn3
+              local.get 7
+              local.tee 16
+              local.set 4
+              local.get 4
+              local.get 5
+              i32.store offset=4
+            end
+          end
+          local.get 4
+          i32.const 8
+          local.get 6
+          i32.const 8
+          i32.mul
+          i32.add
+          i32.add
+          local.get 9
+          i32.store
+          local.get 4
+          i32.const 8
+          local.get 6
+          i32.const 8
+          i32.mul
+          i32.add
+          i32.add
+          local.get 10
+          i32.store offset=4
+          local.get 6
+          local.tee 21
+          i32.const 1
+          i32.add
+          local.set 6
+          local.get 8
+          local.tee 22
+          local.get 3
+          local.tee 23
+          i32.add
+          local.set 7
+          local.get 7
+          local.get 1
+          i32.gt_u
+          if  ;; label = @4
+            br 3 (;@1;)
+          end
+          br 1 (;@2;)
+        end
+      end
+    end
+    local.get 6
+    local.get 5
+    i32.ge_u
+    if  ;; label = @1
+      block  ;; label = @2
+        local.get 5
+        local.tee 24
+        i32.const 2
+        i32.mul
+        local.set 5
+        i32.const 8
+        local.tee 25
+        local.get 5
+        local.tee 26
+        local.get 25
+        i32.mul
+        i32.add
+        local.set 7
+        local.get 7
+        call $__malloc
+        local.set 7
+        local.get 4
+        i32.const 8
+        local.get 6
+        i32.const 8
+        i32.mul
+        i32.add
+        local.get 7
+        call $dynrt__fn3
+        local.get 7
+        local.tee 27
+        local.set 4
+        local.get 4
+        local.get 5
+        i32.store offset=4
+      end
+    end
+    local.get 4
+    i32.const 8
+    local.get 6
+    i32.const 8
+    i32.mul
+    i32.add
+    i32.add
+    local.get 9
+    i32.store
+    local.get 4
+    i32.const 8
+    local.get 6
+    i32.const 8
+    i32.mul
+    i32.add
+    i32.add
+    local.get 10
+    i32.store offset=4
+    local.get 6
+    local.tee 29
+    i32.const 1
+    i32.add
+    local.set 6
+    local.get 4
+    local.get 6
+    i32.store
+    local.get 4
+    local.tee 30)
+  (func $dynrt__fn18 (param i32) (result f64)
     local.get 0
     i32.const 0
     i32.le_s
@@ -434,7 +1288,7 @@
       return
     end
     f64.const 0x1.c6bf52634p+49 (;=1000000000000000;))
-  (func $dynrt__fn7 (param f64 i32) (result i32)
+  (func $dynrt__fn19 (param f64 i32) (result i32)
     (local i32) (local i64) (local i64) (local i32) (local i32) (local i64) (local f64) (local i32) (local i64) (local i64) (local i32) (local i64) (local i64) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local f64) (local i32) (local f64) (local i64) (local i64) (local i64) (local i32) (local i32)
     local.get 1
     local.tee 20
@@ -463,7 +1317,7 @@
     local.set 3
     local.get 3
     local.get 5
-    call $dynrt__fn8
+    call $dynrt__fn20
     i32.const 1
     i32.sub
     local.set 2
@@ -507,7 +1361,7 @@
           local.get 6
           i32.const 1
           i32.sub
-          call $dynrt__fn6
+          call $dynrt__fn18
           f64.div
           f64.add
           local.set 8
@@ -621,7 +1475,7 @@
     local.get 1
     local.tee 28
     i32.sub)
-  (func $dynrt__fn8 (param i64 i32) (result i32)
+  (func $dynrt__fn20 (param i64 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i64) (local i64) (local i64) (local i64) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 1
     local.tee 18
@@ -756,7 +1610,7 @@
     local.tee 24
     local.get 6
     i32.sub)
-  (func $dynrt__fn9 (param i32 i32) (result f64)
+  (func $dynrt__fn21 (param i32 i32) (result f64)
     (local i32) (local i32) (local i32) (local f64) (local f64) (local f64) (local i32) (local i32) (local i32) (local i32) (local i32) (local f64) (local f64) (local i32) (local i32) (local i32) (local f64) (local f64) (local f64)
     f64.const 0x1.0p+0 (;=1;)
     local.tee 20
@@ -1099,7 +1953,7 @@
     end)
   (func $dynrt_dynUndefined (result i32)
     (local i32) (local i32)
-    call $dynrt__fn33
+    call $dynrt__fn45
     local.set 0
     local.get 0
     i32.const 8
@@ -1111,7 +1965,7 @@
     return)
   (func $dynrt_dynNull (result i32)
     (local i32) (local i32)
-    call $dynrt__fn33
+    call $dynrt__fn45
     local.set 0
     local.get 0
     i32.const 8
@@ -1123,7 +1977,7 @@
     return)
   (func $dynrt_dynBool (param i32) (result i32)
     (local i32) (local i32)
-    call $dynrt__fn33
+    call $dynrt__fn45
     local.set 1
     local.get 1
     i32.const 8
@@ -1149,14 +2003,14 @@
   (func $dynrt_dynNumber (param f64) (result i32)
     (local i32) (local i32) (local i32)
     i32.const 16
-    call $dynrt__fn25
+    call $dynrt__fn37
     local.set 1
     local.get 1
     i32.const 8
     i32.add
     local.get 0
     f64.store
-    call $dynrt__fn33
+    call $dynrt__fn45
     local.set 2
     local.get 2
     i32.const 8
@@ -1180,7 +2034,7 @@
     i32.const 8
     local.get 2
     i32.add
-    call $dynrt__fn25
+    call $dynrt__fn37
     local.set 3
     i32.const 0
     local.set 4
@@ -1201,7 +2055,7 @@
             local.get 0
             local.get 1
             local.get 4
-            call $dynrt__fn5
+            call $dynrt__fn8
             i32.store8
             local.get 4
             local.tee 5
@@ -1213,7 +2067,7 @@
         end
       end
     end
-    call $dynrt__fn33
+    call $dynrt__fn45
     local.set 4
     local.get 4
     i32.const 8
@@ -1237,7 +2091,7 @@
     local.get 4
     local.tee 6
     return)
-  (func $dynrt__fn15 (result i32)
+  (func $dynrt__fn27 (result i32)
     (local i32) (local i32)
     i32.const 8
     global.get $dynrt_global3
@@ -1246,7 +2100,7 @@
     i32.const 4
     i32.mul
     i32.add
-    call $dynrt__fn25
+    call $dynrt__fn37
     local.set 0
     local.get 0
     i32.const 8
@@ -1263,7 +2117,7 @@
     local.get 0
     local.tee 1
     return)
-  (func $dynrt__fn16 (param i32) (result i32)
+  (func $dynrt__fn28 (param i32) (result i32)
     (local i32)
     local.get 0
     local.set 1
@@ -1272,7 +2126,7 @@
     i32.add
     i32.load
     return)
-  (func $dynrt__fn17 (param i32 i32) (result i32)
+  (func $dynrt__fn29 (param i32 i32) (result i32)
     (local i32)
     local.get 0
     local.set 2
@@ -1287,7 +2141,7 @@
     i32.add
     i32.load
     return)
-  (func $dynrt__fn18 (param i32 i32 i32)
+  (func $dynrt__fn30 (param i32 i32 i32)
     (local i32)
     local.get 0
     local.set 3
@@ -1302,7 +2156,7 @@
     i32.add
     local.get 2
     i32.store)
-  (func $dynrt__fn19 (param i32 i32) (result i32)
+  (func $dynrt__fn31 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.tee 10
@@ -1337,7 +2191,7 @@
         i32.const 4
         i32.mul
         i32.add
-        call $dynrt__fn25
+        call $dynrt__fn37
         local.set 5
         local.get 5
         i32.const 8
@@ -1431,7 +2285,7 @@
     local.get 0
     local.tee 11
     return)
-  (func $dynrt__fn20 (param i32 i32)
+  (func $dynrt__fn32 (param i32 i32)
     (local i32) (local i32)
     local.get 0
     local.set 2
@@ -1528,7 +2382,7 @@
     local.tee 3
     i32.add
     global.set $dynrt_global12)
-  (func $dynrt__fn21 (param i32 i32)
+  (func $dynrt__fn33 (param i32 i32)
     (local i32)
     local.get 1
     global.get $dynrt_global4
@@ -1541,14 +2395,14 @@
     local.set 2
     local.get 0
     local.get 2
-    call $dynrt__fn20
+    call $dynrt__fn32
     global.get $dynrt_global11
     global.get $dynrt_global13
     i32.gt_s
     if  ;; label = @1
-      call $dynrt__fn30
+      call $dynrt__fn42
     end)
-  (func $dynrt__fn22 (param i32 i32)
+  (func $dynrt__fn34 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.set 2
@@ -1588,7 +2442,7 @@
         end
       end
     end)
-  (func $dynrt__fn23 (param i32) (result i32)
+  (func $dynrt__fn35 (param i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32)
     i32.const 0
     local.set 1
@@ -1676,11 +2530,11 @@
     global.set $dynrt_global12
     local.get 1
     local.get 0
-    call $dynrt__fn22
+    call $dynrt__fn34
     local.get 1
     local.tee 5
     return)
-  (func $dynrt__fn24 (param i32) (result i32)
+  (func $dynrt__fn36 (param i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_global10
     local.set 1
@@ -1758,11 +2612,11 @@
                   local.get 0
                   i32.add
                   local.get 2
-                  call $dynrt__fn20
+                  call $dynrt__fn32
                 end
                 local.get 1
                 local.get 0
-                call $dynrt__fn22
+                call $dynrt__fn34
                 local.get 1
                 local.tee 9
                 return
@@ -1786,7 +2640,7 @@
     i32.const 0
     local.tee 13
     return)
-  (func $dynrt__fn25 (param i32) (result i32)
+  (func $dynrt__fn37 (param i32) (result i32)
     (local i32) (local i32)
     local.get 0
     global.get $dynrt_global4
@@ -1798,7 +2652,7 @@
     end
     local.set 1
     local.get 1
-    call $dynrt__fn23
+    call $dynrt__fn35
     local.set 2
     local.get 2
     i32.const 0
@@ -1808,7 +2662,7 @@
       return
     end
     local.get 1
-    call $dynrt__fn24
+    call $dynrt__fn36
     local.set 2
     local.get 2
     i32.const 0
@@ -1822,9 +2676,9 @@
     i32.ge_s
     if  ;; label = @1
       block  ;; label = @2
-        call $dynrt__fn30
+        call $dynrt__fn42
         local.get 1
-        call $dynrt__fn23
+        call $dynrt__fn35
         local.set 2
         local.get 2
         i32.const 0
@@ -1834,7 +2688,7 @@
           return
         end
         local.get 1
-        call $dynrt__fn24
+        call $dynrt__fn36
         local.set 2
         local.get 2
         i32.const 0
@@ -1848,7 +2702,7 @@
     local.get 1
     call $__malloc
     return)
-  (func $dynrt__fn26 (param i32) (result i32)
+  (func $dynrt__fn38 (param i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.tee 6
@@ -1933,7 +2787,7 @@
     local.get 2
     local.tee 8
     return)
-  (func $dynrt__fn27 (param i32 i32) (result i32)
+  (func $dynrt__fn39 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     i32.const 0
     local.tee 11
@@ -2048,7 +2902,7 @@
     i32.store
     local.get 2
     return)
-  (func $dynrt__fn28 (param i32) (result i32)
+  (func $dynrt__fn40 (param i32) (result i32)
     (local i32) (local i32) (local i32)
     local.get 0
     i32.eqz
@@ -2071,19 +2925,19 @@
       return
     end
     local.get 0
-    call $dynrt__fn26
+    call $dynrt__fn38
     local.set 1
     local.get 0
-    call $dynrt__fn28
+    call $dynrt__fn40
     local.set 2
     local.get 1
-    call $dynrt__fn28
+    call $dynrt__fn40
     local.set 1
     local.get 2
     local.get 1
-    call $dynrt__fn27
+    call $dynrt__fn39
     return)
-  (func $dynrt__fn29 (param i32 i32) (result i32)
+  (func $dynrt__fn41 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.set 2
@@ -2127,30 +2981,30 @@
     end
     local.get 3
     return)
-  (func $dynrt__fn30
+  (func $dynrt__fn42
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     i32.const 0
     local.tee 7
     local.set 0
     global.get $dynrt_global6
     local.get 0
-    call $dynrt__fn29
+    call $dynrt__fn41
     local.set 0
     global.get $dynrt_global7
     local.get 0
-    call $dynrt__fn29
+    call $dynrt__fn41
     local.set 0
     global.get $dynrt_global8
     local.get 0
-    call $dynrt__fn29
+    call $dynrt__fn41
     local.set 0
     global.get $dynrt_global9
     local.get 0
-    call $dynrt__fn29
+    call $dynrt__fn41
     local.set 0
     global.get $dynrt_global10
     local.get 0
-    call $dynrt__fn29
+    call $dynrt__fn41
     local.set 0
     i32.const 0
     local.tee 8
@@ -2174,7 +3028,7 @@
     local.tee 14
     global.set $dynrt_global12
     local.get 0
-    call $dynrt__fn28
+    call $dynrt__fn40
     local.set 0
     local.get 0
     local.tee 15
@@ -2310,7 +3164,7 @@
             local.set 1
             local.get 0
             local.get 1
-            call $dynrt__fn20
+            call $dynrt__fn32
             local.get 2
             local.set 0
           end
@@ -2467,26 +3321,26 @@
     end
     local.get 7
     return)
-  (func $dynrt__fn32 (param i32)
+  (func $dynrt__fn44 (param i32)
     global.get $dynrt_global15
     i32.eqz
     if  ;; label = @1
-      call $dynrt__fn15
+      call $dynrt__fn27
       global.set $dynrt_global15
     end
     global.get $dynrt_global15
     local.get 0
-    call $dynrt__fn19
+    call $dynrt__fn31
     global.set $dynrt_global15)
-  (func $dynrt__fn33 (result i32)
+  (func $dynrt__fn45 (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     i32.const 24
-    call $dynrt__fn25
+    call $dynrt__fn37
     local.set 0
     global.get $dynrt_global15
     i32.eqz
     if  ;; label = @1
-      call $dynrt__fn15
+      call $dynrt__fn27
       global.set $dynrt_global15
     end
     global.get $dynrt_global15
@@ -2526,11 +3380,11 @@
         local.set 1
         global.get $dynrt_global15
         local.get 0
-        call $dynrt__fn19
+        call $dynrt__fn31
         global.set $dynrt_global15
         local.get 2
         local.get 1
-        call $dynrt__fn21
+        call $dynrt__fn33
       end
     else
       block  ;; label = @2
@@ -2556,13 +3410,13 @@
     end
     local.get 0
     return)
-  (func $dynrt__fn34 (result i32)
+  (func $dynrt__fn46 (result i32)
     (local i32) (local i32)
     i32.const 28
-    call $dynrt__fn25
+    call $dynrt__fn37
     local.set 0
     local.get 0
-    call $dynrt__fn32
+    call $dynrt__fn44
     local.get 0
     local.tee 1
     return)
@@ -2574,9 +3428,9 @@
       return
     end
     global.get $dynrt_global15
-    call $dynrt__fn16
+    call $dynrt__fn28
     return)
-  (func $dynrt__fn36 (param i32) (result i32)
+  (func $dynrt__fn48 (param i32) (result i32)
     (local i32)
     local.get 0
     local.set 1
@@ -2593,7 +3447,7 @@
       i32.const 1
     end
     return)
-  (func $dynrt__fn37 (param i32)
+  (func $dynrt__fn49 (param i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     i32.eqz
@@ -2608,7 +3462,7 @@
       return
     end
     local.get 0
-    call $dynrt__fn36
+    call $dynrt__fn48
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -2653,7 +3507,7 @@
         i32.load
         local.set 3
         local.get 3
-        call $dynrt__fn16
+        call $dynrt__fn28
         local.set 4
         i32.const 0
         local.set 5
@@ -2668,8 +3522,8 @@
               block  ;; label = @6
                 local.get 3
                 local.get 5
-                call $dynrt__fn17
-                call $dynrt__fn37
+                call $dynrt__fn29
+                call $dynrt__fn49
                 local.get 5
                 local.tee 6
                 i32.const 1
@@ -2690,7 +3544,7 @@
           i32.const 8
           i32.add
           i32.load
-          call $dynrt__fn37
+          call $dynrt__fn49
         end
       end
     else
@@ -2714,21 +3568,21 @@
             i32.const 8
             i32.add
             i32.load
-            call $dynrt__fn37
+            call $dynrt__fn49
             local.get 1
             i32.const 8
             i32.add
             i32.const 12
             i32.add
             i32.load
-            call $dynrt__fn37
+            call $dynrt__fn49
             local.get 1
             i32.const 8
             i32.add
             i32.const 16
             i32.add
             i32.load
-            call $dynrt__fn37
+            call $dynrt__fn49
           end
         end
       end
@@ -2741,7 +3595,7 @@
       return
     end
     global.get $dynrt_global15
-    call $dynrt__fn16
+    call $dynrt__fn28
     local.set 0
     i32.const 0
     local.set 1
@@ -2756,7 +3610,7 @@
           block  ;; label = @4
             global.get $dynrt_global15
             local.get 1
-            call $dynrt__fn17
+            call $dynrt__fn29
             local.set 2
             local.get 2
             local.tee 3
@@ -2783,7 +3637,7 @@
     end)
   (func $dynrt_dynGcMark (param i32)
     local.get 0
-    call $dynrt__fn37)
+    call $dynrt__fn49)
   (func $dynrt_dynGcMarkedCount (result i32)
     (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_global15
@@ -2793,7 +3647,7 @@
       return
     end
     global.get $dynrt_global15
-    call $dynrt__fn16
+    call $dynrt__fn28
     local.set 0
     i32.const 0
     local.tee 3
@@ -2811,8 +3665,8 @@
           block  ;; label = @4
             global.get $dynrt_global15
             local.get 2
-            call $dynrt__fn17
-            call $dynrt__fn36
+            call $dynrt__fn29
+            call $dynrt__fn48
             i32.const 1
             i32.eq
             if  ;; label = @5
@@ -2832,18 +3686,18 @@
     end
     local.get 1
     return)
-  (func $dynrt__fn41 (param i32)
+  (func $dynrt__fn53 (param i32)
     global.get $dynrt_global17
     i32.eqz
     if  ;; label = @1
-      call $dynrt__fn15
+      call $dynrt__fn27
       global.set $dynrt_global17
     end
     global.get $dynrt_global17
     local.get 0
-    call $dynrt__fn19
+    call $dynrt__fn31
     global.set $dynrt_global17)
-  (func $dynrt__fn42
+  (func $dynrt__fn54
     (local i32)
     global.get $dynrt_global17
     i32.eqz
@@ -2872,9 +3726,9 @@
     end)
   (func $dynrt_dynGcPushRoot (param i32)
     local.get 0
-    call $dynrt__fn41)
+    call $dynrt__fn53)
   (func $dynrt_dynGcPopRoot
-    call $dynrt__fn42)
+    call $dynrt__fn54)
   (func $dynrt_dynGcRootCount (result i32)
     global.get $dynrt_global17
     i32.eqz
@@ -2883,24 +3737,24 @@
       return
     end
     global.get $dynrt_global17
-    call $dynrt__fn16
+    call $dynrt__fn28
     return)
   (func $dynrt_dynGcMarkRoots
     (local i32) (local i32) (local i32) (local i32)
     call $dynrt_dynGcMarkClear
     global.get $dynrt_global20
-    call $dynrt__fn37
+    call $dynrt__fn49
     global.get $dynrt_global25
-    call $dynrt__fn37
+    call $dynrt__fn49
     global.get $dynrt_global24
-    call $dynrt__fn37
+    call $dynrt__fn49
     global.get $dynrt_global17
     i32.eqz
     if  ;; label = @1
       return
     end
     global.get $dynrt_global17
-    call $dynrt__fn16
+    call $dynrt__fn28
     local.set 0
     i32.const 0
     local.set 1
@@ -2915,8 +3769,8 @@
           block  ;; label = @4
             global.get $dynrt_global17
             local.get 1
-            call $dynrt__fn17
-            call $dynrt__fn37
+            call $dynrt__fn29
+            call $dynrt__fn49
             local.get 1
             local.tee 2
             i32.const 1
@@ -2933,7 +3787,7 @@
     if  ;; label = @1
       block  ;; label = @2
         global.get $dynrt_global18
-        call $dynrt__fn16
+        call $dynrt__fn28
         local.set 0
         i32.const 0
         local.set 1
@@ -2948,8 +3802,8 @@
               block  ;; label = @6
                 global.get $dynrt_global18
                 local.get 1
-                call $dynrt__fn17
-                call $dynrt__fn37
+                call $dynrt__fn29
+                call $dynrt__fn49
                 local.get 1
                 local.tee 3
                 i32.const 1
@@ -2967,11 +3821,11 @@
     global.get $dynrt_global18
     i32.eqz
     if  ;; label = @1
-      call $dynrt__fn15
+      call $dynrt__fn27
       global.set $dynrt_global18
     end
     global.get $dynrt_global18
-    call $dynrt__fn16
+    call $dynrt__fn28
     local.set 1
     i32.const 0
     local.set 2
@@ -2986,14 +3840,14 @@
           block  ;; label = @4
             global.get $dynrt_global18
             local.get 2
-            call $dynrt__fn17
+            call $dynrt__fn29
             i32.eqz
             if  ;; label = @5
               block  ;; label = @6
                 global.get $dynrt_global18
                 local.get 2
                 local.get 0
-                call $dynrt__fn18
+                call $dynrt__fn30
                 local.get 2
                 local.tee 3
                 return
@@ -3010,7 +3864,7 @@
     end
     global.get $dynrt_global18
     local.get 0
-    call $dynrt__fn19
+    call $dynrt__fn31
     global.set $dynrt_global18
     local.get 1
     return)
@@ -3028,7 +3882,7 @@
     else
       local.get 0
       global.get $dynrt_global18
-      call $dynrt__fn16
+      call $dynrt__fn28
       i32.ge_s
     end
     if  ;; label = @1
@@ -3037,8 +3891,8 @@
     global.get $dynrt_global18
     local.get 0
     i32.const 0
-    call $dynrt__fn18)
-  (func $dynrt__fn49 (param i32)
+    call $dynrt__fn30)
+  (func $dynrt__fn61 (param i32)
     (local i32) (local i32)
     local.get 0
     local.tee 2
@@ -3056,8 +3910,8 @@
     i32.const 4
     i32.mul
     i32.add
-    call $dynrt__fn21)
-  (func $dynrt__fn50 (param i32)
+    call $dynrt__fn33)
+  (func $dynrt__fn62 (param i32)
     (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.set 1
@@ -3079,7 +3933,7 @@
       i32.add
       i32.load
       i32.const 16
-      call $dynrt__fn21
+      call $dynrt__fn33
     else
       local.get 2
       i32.const 4
@@ -3099,7 +3953,7 @@
         i32.add
         i32.load
         i32.add
-        call $dynrt__fn21
+        call $dynrt__fn33
       else
         local.get 2
         i32.const 5
@@ -3111,7 +3965,7 @@
           i32.const 4
           i32.add
           i32.load
-          call $dynrt__fn49
+          call $dynrt__fn61
         else
           local.get 2
           i32.const 6
@@ -3124,7 +3978,7 @@
               i32.const 4
               i32.add
               i32.load
-              call $dynrt__fn49
+              call $dynrt__fn61
               local.get 1
               i32.const 8
               i32.add
@@ -3133,7 +3987,7 @@
               i32.load
               local.set 1
               local.get 1
-              call $dynrt__fn16
+              call $dynrt__fn28
               local.set 2
               i32.const 0
               local.set 3
@@ -3148,15 +4002,15 @@
                     block  ;; label = @9
                       local.get 1
                       local.get 3
-                      call $dynrt__fn17
+                      call $dynrt__fn29
                       i32.const 8
                       local.get 1
                       local.get 3
                       i32.const 1
                       i32.add
-                      call $dynrt__fn17
+                      call $dynrt__fn29
                       i32.add
-                      call $dynrt__fn21
+                      call $dynrt__fn33
                       local.get 3
                       local.tee 4
                       i32.const 2
@@ -3168,7 +4022,7 @@
                 end
               end
               local.get 1
-              call $dynrt__fn49
+              call $dynrt__fn61
             end
           end
         end
@@ -3285,10 +4139,10 @@
                 end
                 local.set 6
                 local.get 5
-                call $dynrt__fn50
+                call $dynrt__fn62
                 local.get 5
                 local.get 6
-                call $dynrt__fn21
+                call $dynrt__fn33
                 local.get 4
                 i32.const 1
                 i32.add
@@ -3315,7 +4169,7 @@
   (func $dynrt_dynGcFreeCount (result i32)
     global.get $dynrt_global11
     return)
-  (func $dynrt__fn53
+  (func $dynrt__fn65
     (local i32)
     call $dynrt_dynGcCellCount
     global.get $dynrt_global14
@@ -3343,7 +4197,7 @@
     end)
   (func $dynrt_dynArray (result i32)
     (local i32) (local i32)
-    call $dynrt__fn33
+    call $dynrt__fn45
     local.set 0
     local.get 0
     i32.const 8
@@ -3355,14 +4209,14 @@
     i32.add
     i32.const 4
     i32.add
-    call $dynrt__fn15
+    call $dynrt__fn27
     i32.store
     local.get 0
     local.tee 1
     return)
   (func $dynrt_dynObject (result i32)
     (local i32) (local i32)
-    call $dynrt__fn33
+    call $dynrt__fn45
     local.set 0
     local.get 0
     i32.const 8
@@ -3374,14 +4228,14 @@
     i32.add
     i32.const 4
     i32.add
-    call $dynrt__fn15
+    call $dynrt__fn27
     i32.store
     local.get 0
     i32.const 8
     i32.add
     i32.const 12
     i32.add
-    call $dynrt__fn15
+    call $dynrt__fn27
     i32.store
     local.get 0
     local.tee 1
@@ -3668,7 +4522,7 @@
     end
     f64.const nan (;=NaN;)
     return)
-  (func $dynrt__fn65 (param i32)
+  (func $dynrt__fn77 (param i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.set 1
@@ -3726,7 +4580,7 @@
             local.get 4
             local.get 6
             i32.const 1
-            call $dynrt__fn3
+            call $dynrt__fn4
             local.set 4
             nop
             local.set 3
@@ -3751,7 +4605,7 @@
     local.get 2
     global.set $dynrt_global2
     return)
-  (func $dynrt__fn66 (param i32)
+  (func $dynrt__fn78 (param i32)
     (local i32) (local i32) (local f64) (local i32) (local i32) (local i32)
     local.get 0
     local.set 1
@@ -3766,7 +4620,7 @@
     if  ;; label = @1
       block  ;; label = @2
         local.get 0
-        call $dynrt__fn65
+        call $dynrt__fn77
         global.get $dynrt_global1
         local.set 1
         global.get $dynrt_global2
@@ -3803,7 +4657,7 @@
         local.set 1
         local.get 3
         local.get 1
-        call $dynrt__fn7
+        call $dynrt__fn19
         local.set 2
         local.get 1
         local.tee 5
@@ -3888,7 +4742,7 @@
     local.get 2
     global.set $dynrt_global2
     return)
-  (func $dynrt__fn67 (param i32 i32 i32) (result i32)
+  (func $dynrt__fn79 (param i32 i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.set 3
@@ -3907,7 +4761,7 @@
     i32.load
     local.set 3
     local.get 4
-    call $dynrt__fn16
+    call $dynrt__fn28
     local.set 4
     local.get 2
     local.set 5
@@ -3928,7 +4782,7 @@
             i32.mul
             i32.const 1
             i32.add
-            call $dynrt__fn17
+            call $dynrt__fn29
             local.set 7
             local.get 7
             local.get 5
@@ -3939,7 +4793,7 @@
                 local.get 6
                 i32.const 2
                 i32.mul
-                call $dynrt__fn17
+                call $dynrt__fn29
                 local.set 8
                 local.get 8
                 local.set 8
@@ -3964,7 +4818,7 @@
                       local.get 1
                       local.get 2
                       local.get 10
-                      call $dynrt__fn5
+                      call $dynrt__fn8
                       i32.ne
                       if  ;; label = @10
                         block  ;; label = @11
@@ -4013,7 +4867,7 @@
     local.get 0
     local.get 1
     local.get 2
-    call $dynrt__fn67
+    call $dynrt__fn79
     local.set 5
     local.get 5
     i32.const -1
@@ -4028,7 +4882,7 @@
         i32.load
         local.get 5
         local.get 3
-        call $dynrt__fn18
+        call $dynrt__fn30
         return
       end
     end
@@ -4038,7 +4892,7 @@
     i32.const 8
     local.get 5
     i32.add
-    call $dynrt__fn25
+    call $dynrt__fn37
     local.set 6
     i32.const 0
     local.set 7
@@ -4059,7 +4913,7 @@
             local.get 1
             local.get 2
             local.get 7
-            call $dynrt__fn5
+            call $dynrt__fn8
             i32.store8
             local.get 7
             local.tee 8
@@ -4083,11 +4937,11 @@
     local.set 7
     local.get 7
     local.get 6
-    call $dynrt__fn19
+    call $dynrt__fn31
     local.set 7
     local.get 7
     local.get 5
-    call $dynrt__fn19
+    call $dynrt__fn31
     local.set 7
     local.get 4
     i32.const 8
@@ -4108,7 +4962,7 @@
     i32.add
     i32.load
     local.get 3
-    call $dynrt__fn19
+    call $dynrt__fn31
     i32.store)
   (func $dynrt_dynGet (param i32 i32 i32) (result i32)
     (local i32) (local i32) (local i32)
@@ -4118,7 +4972,7 @@
     local.get 0
     local.get 1
     local.get 2
-    call $dynrt__fn67
+    call $dynrt__fn79
     local.set 4
     local.get 4
     i32.const -1
@@ -4134,13 +4988,13 @@
     i32.add
     i32.load
     local.get 4
-    call $dynrt__fn17
+    call $dynrt__fn29
     return)
   (func $dynrt_dynHas (param i32 i32 i32) (result i32)
     local.get 0
     local.get 1
     local.get 2
-    call $dynrt__fn67
+    call $dynrt__fn79
     i32.const -1
     i32.eq
     if (result i32)  ;; label = @1
@@ -4159,7 +5013,7 @@
     i32.const 4
     i32.add
     i32.load
-    call $dynrt__fn16
+    call $dynrt__fn28
     return)
   (func $dynrt_dynObjKeyPtr (param i32 i32) (result i32)
     (local i32) (local i32)
@@ -4174,7 +5028,7 @@
     local.get 1
     i32.const 2
     i32.mul
-    call $dynrt__fn17
+    call $dynrt__fn29
     local.set 2
     local.get 2
     i32.const 8
@@ -4196,7 +5050,7 @@
     i32.mul
     i32.const 1
     i32.add
-    call $dynrt__fn17
+    call $dynrt__fn29
     return)
   (func $dynrt_dynObjValAt (param i32 i32) (result i32)
     (local i32)
@@ -4209,9 +5063,9 @@
     i32.add
     i32.load
     local.get 1
-    call $dynrt__fn17
+    call $dynrt__fn29
     return)
-  (func $dynrt__fn75 (param i32 i32) (result i32)
+  (func $dynrt__fn87 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.set 2
@@ -4224,7 +5078,7 @@
     local.get 1
     i32.const 2
     i32.mul
-    call $dynrt__fn17
+    call $dynrt__fn29
     local.set 3
     local.get 2
     i32.const 8
@@ -4237,7 +5091,7 @@
     i32.mul
     i32.const 1
     i32.add
-    call $dynrt__fn17
+    call $dynrt__fn29
     local.set 2
     local.get 3
     local.tee 7
@@ -4245,7 +5099,7 @@
     i32.const 8
     local.get 2
     i32.add
-    call $dynrt__fn25
+    call $dynrt__fn37
     local.set 4
     i32.const 0
     local.set 5
@@ -4280,7 +5134,7 @@
         end
       end
     end
-    call $dynrt__fn33
+    call $dynrt__fn45
     local.set 3
     local.get 3
     i32.const 8
@@ -4320,7 +5174,7 @@
     i32.add
     i32.load
     local.get 1
-    call $dynrt__fn19
+    call $dynrt__fn31
     i32.store)
   (func $dynrt_dynArrLen (param i32) (result i32)
     (local i32)
@@ -4332,7 +5186,7 @@
     i32.const 4
     i32.add
     i32.load
-    call $dynrt__fn16
+    call $dynrt__fn28
     return)
   (func $dynrt_dynArrGet (param i32 i32) (result i32)
     (local i32)
@@ -4345,9 +5199,9 @@
     i32.add
     i32.load
     local.get 1
-    call $dynrt__fn17
+    call $dynrt__fn29
     return)
-  (func $dynrt__fn79 (param i32 i32 i32)
+  (func $dynrt__fn91 (param i32 i32 i32)
     (local i32) (local i32)
     local.get 0
     local.set 3
@@ -4357,7 +5211,7 @@
     i32.const 4
     i32.add
     i32.load
-    call $dynrt__fn16
+    call $dynrt__fn28
     local.set 4
     local.get 1
     i32.const 0
@@ -4378,7 +5232,7 @@
       i32.load
       local.get 1
       local.get 2
-      call $dynrt__fn18
+      call $dynrt__fn30
     else
       local.get 1
       local.get 4
@@ -4396,11 +5250,11 @@
         i32.add
         i32.load
         local.get 2
-        call $dynrt__fn19
+        call $dynrt__fn31
         i32.store
       end
     end)
-  (func $dynrt__fn80 (param i32 i32 i32 i32) (result i32)
+  (func $dynrt__fn92 (param i32 i32 i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local f64) (local i32) (local i32) (local i32) (local i32) (local i32) (local f64) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     call $dynrt_dynArrLen
@@ -4412,7 +5266,7 @@
     local.get 2
     i32.const 542
     i32.const 4
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -4456,7 +5310,7 @@
     local.get 2
     i32.const 546
     i32.const 7
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -4516,7 +5370,7 @@
     local.get 2
     i32.const 553
     i32.const 8
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -4574,7 +5428,7 @@
     local.get 2
     i32.const 561
     i32.const 4
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -4591,7 +5445,7 @@
             local.get 3
             i32.const 0
             call $dynrt_dynArrGet
-            call $dynrt__fn66
+            call $dynrt__fn78
             global.get $dynrt_global1
             local.set 7
             global.get $dynrt_global2
@@ -4629,7 +5483,7 @@
                     local.get 9
                     local.get 7
                     local.get 8
-                    call $dynrt__fn3
+                    call $dynrt__fn4
                     local.set 9
                     nop
                     local.set 5
@@ -4644,12 +5498,12 @@
                 local.get 0
                 local.get 6
                 call $dynrt_dynArrGet
-                call $dynrt__fn66
+                call $dynrt__fn78
                 local.get 5
                 local.get 9
                 global.get $dynrt_global1
                 global.get $dynrt_global2
-                call $dynrt__fn3
+                call $dynrt__fn4
                 local.set 9
                 nop
                 local.set 5
@@ -4673,7 +5527,7 @@
     local.get 2
     i32.const 566
     i32.const 5
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -4780,7 +5634,7 @@
     local.get 2
     i32.const 571
     i32.const 6
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -4893,7 +5747,7 @@
     local.get 2
     i32.const 577
     i32.const 7
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -4936,7 +5790,7 @@
     local.get 2
     i32.const 584
     i32.const 3
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -4960,7 +5814,7 @@
         local.get 4
         i32.const 1
         i32.sub
-        call $dynrt__fn17
+        call $dynrt__fn29
         local.set 5
         local.get 7
         local.tee 32
@@ -4980,7 +5834,7 @@
     local.get 2
     i32.const 587
     i32.const 5
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -5002,7 +5856,7 @@
         local.set 7
         local.get 7
         i32.const 0
-        call $dynrt__fn17
+        call $dynrt__fn29
         local.set 5
         i32.const 1
         local.tee 35
@@ -5022,8 +5876,8 @@
                 i32.sub
                 local.get 7
                 local.get 6
-                call $dynrt__fn17
-                call $dynrt__fn18
+                call $dynrt__fn29
+                call $dynrt__fn30
                 local.get 6
                 local.tee 33
                 i32.const 1
@@ -5053,7 +5907,7 @@
     local.get 2
     i32.const 592
     i32.const 7
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -5111,8 +5965,8 @@
                 i32.add
                 local.get 7
                 local.get 6
-                call $dynrt__fn17
-                call $dynrt__fn18
+                call $dynrt__fn29
+                call $dynrt__fn30
                 local.get 6
                 local.tee 37
                 i32.const 1
@@ -5140,7 +5994,7 @@
                 local.get 3
                 local.get 6
                 call $dynrt_dynArrGet
-                call $dynrt__fn18
+                call $dynrt__fn30
                 local.get 6
                 local.tee 38
                 i32.const 1
@@ -5166,7 +6020,7 @@
     local.get 2
     i32.const 599
     i32.const 2
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -5221,7 +6075,7 @@
     local.get 2
     i32.const 601
     i32.const 11
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -5294,7 +6148,7 @@
     local.get 2
     i32.const 612
     i32.const 3
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -5347,7 +6201,7 @@
     local.get 2
     i32.const 615
     i32.const 6
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -5408,7 +6262,7 @@
     local.get 2
     i32.const 621
     i32.const 7
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -5458,7 +6312,7 @@
     local.get 2
     i32.const 628
     i32.const 6
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -5538,7 +6392,7 @@
     local.get 2
     i32.const 634
     i32.const 4
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -5596,7 +6450,7 @@
     local.get 2
     i32.const 638
     i32.const 9
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -5657,7 +6511,7 @@
     local.get 2
     i32.const 647
     i32.const 4
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -5716,7 +6570,7 @@
     local.get 2
     i32.const 651
     i32.const 5
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -5773,7 +6627,7 @@
     local.get 2
     i32.const 656
     i32.const 4
-    call $dynrt__fn112
+    call $dynrt__fn125
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -5801,7 +6655,7 @@
               block  ;; label = @6
                 local.get 7
                 local.get 6
-                call $dynrt__fn17
+                call $dynrt__fn29
                 local.set 8
                 local.get 6
                 local.tee 54
@@ -5829,7 +6683,7 @@
                       block  ;; label = @10
                         local.get 7
                         local.get 9
-                        call $dynrt__fn17
+                        call $dynrt__fn29
                         local.set 14
                         i32.const 0
                         local.set 15
@@ -5886,7 +6740,7 @@
                             i32.const 1
                             i32.add
                             local.get 14
-                            call $dynrt__fn18
+                            call $dynrt__fn30
                             local.get 9
                             local.tee 52
                             i32.const 1
@@ -5908,7 +6762,7 @@
                 i32.const 1
                 i32.add
                 local.get 8
-                call $dynrt__fn18
+                call $dynrt__fn30
                 local.get 6
                 local.tee 56
                 i32.const 1
@@ -5927,7 +6781,730 @@
     end
     call $dynrt_dynUndefined
     return)
-  (func $dynrt__fn81 (param i32 i32 i32)
+  (func $dynrt__fn93 (param i32 i32 i32 i32) (result i32)
+    (local i32) (local i32) (local i32) (local i32) (local f64) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
+    local.get 0
+    call $dynrt__fn77
+    global.get $dynrt_global1
+    local.set 4
+    global.get $dynrt_global2
+    local.set 5
+    local.get 5
+    local.set 6
+    local.get 3
+    call $dynrt_dynArrLen
+    local.set 7
+    local.get 1
+    local.get 2
+    i32.const 660
+    i32.const 6
+    call $dynrt__fn125
+    i32.const 1
+    i32.eq
+    if  ;; label = @1
+      block  ;; label = @2
+        i32.const 0
+        local.set 6
+        local.get 7
+        i32.const 0
+        i32.gt_s
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 3
+            i32.const 0
+            call $dynrt_dynArrGet
+            call $dynrt_dynToNumber
+            local.set 8
+            local.get 8
+            i32.trunc_f64_s
+            local.set 6
+          end
+        end
+        local.get 4
+        local.get 5
+        local.get 6
+        call $dynrt__fn9
+        local.set 5
+        nop
+        local.set 4
+        local.get 4
+        local.get 5
+        call $dynrt_dynString
+        return
+      end
+    end
+    local.get 1
+    local.get 2
+    i32.const 666
+    i32.const 10
+    call $dynrt__fn125
+    i32.const 1
+    i32.eq
+    if  ;; label = @1
+      block  ;; label = @2
+        i32.const 0
+        local.set 6
+        local.get 7
+        i32.const 0
+        i32.gt_s
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 3
+            i32.const 0
+            call $dynrt_dynArrGet
+            call $dynrt_dynToNumber
+            local.set 8
+            local.get 8
+            i32.trunc_f64_s
+            local.set 6
+          end
+        end
+        local.get 4
+        local.get 5
+        local.get 6
+        call $dynrt__fn8
+        local.set 4
+        local.get 4
+        f64.convert_i32_s
+        call $dynrt_dynNumber
+        return
+      end
+    end
+    local.get 1
+    local.get 2
+    i32.const 676
+    i32.const 11
+    call $dynrt__fn125
+    i32.const 1
+    i32.eq
+    if  ;; label = @1
+      block  ;; label = @2
+        local.get 4
+        local.get 5
+        call $dynrt__fn12
+        local.set 5
+        nop
+        local.set 4
+        local.get 4
+        local.get 5
+        call $dynrt_dynString
+        return
+      end
+    end
+    local.get 1
+    local.get 2
+    i32.const 687
+    i32.const 11
+    call $dynrt__fn125
+    i32.const 1
+    i32.eq
+    if  ;; label = @1
+      block  ;; label = @2
+        local.get 4
+        local.get 5
+        call $dynrt__fn13
+        local.set 5
+        nop
+        local.set 4
+        local.get 4
+        local.get 5
+        call $dynrt_dynString
+        return
+      end
+    end
+    local.get 1
+    local.get 2
+    i32.const 698
+    i32.const 4
+    call $dynrt__fn125
+    i32.const 1
+    i32.eq
+    if  ;; label = @1
+      block  ;; label = @2
+        local.get 4
+        local.get 5
+        call $dynrt__fn7
+        local.set 5
+        nop
+        local.set 4
+        local.get 4
+        local.get 5
+        call $dynrt_dynString
+        return
+      end
+    end
+    local.get 1
+    local.get 2
+    i32.const 566
+    i32.const 5
+    call $dynrt__fn125
+    i32.const 1
+    i32.eq
+    if  ;; label = @1
+      block  ;; label = @2
+        i32.const 0
+        local.set 9
+        local.get 6
+        local.set 10
+        local.get 7
+        i32.const 0
+        i32.gt_s
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 3
+            i32.const 0
+            call $dynrt_dynArrGet
+            call $dynrt_dynToNumber
+            local.set 8
+            local.get 8
+            i32.trunc_f64_s
+            local.set 9
+          end
+        end
+        local.get 7
+        i32.const 1
+        i32.gt_s
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 3
+            i32.const 1
+            call $dynrt_dynArrGet
+            call $dynrt_dynToNumber
+            local.set 8
+            local.get 8
+            i32.trunc_f64_s
+            local.set 10
+          end
+        end
+        local.get 9
+        i32.const 0
+        i32.lt_s
+        if  ;; label = @3
+          local.get 6
+          local.get 9
+          i32.add
+          local.set 9
+        end
+        local.get 10
+        i32.const 0
+        i32.lt_s
+        if  ;; label = @3
+          local.get 6
+          local.get 10
+          i32.add
+          local.set 10
+        end
+        local.get 9
+        i32.const 0
+        i32.lt_s
+        if  ;; label = @3
+          i32.const 0
+          local.set 9
+        end
+        local.get 10
+        local.get 6
+        i32.gt_s
+        if  ;; label = @3
+          local.get 6
+          local.set 10
+        end
+        local.get 9
+        local.get 10
+        i32.ge_s
+        if  ;; label = @3
+          i32.const 520
+          i32.const 0
+          call $dynrt_dynString
+          return
+        end
+        local.get 4
+        local.get 5
+        local.get 9
+        local.get 10
+        call $dynrt__fn5
+        local.set 5
+        nop
+        local.set 4
+        local.get 4
+        local.get 5
+        call $dynrt_dynString
+        return
+      end
+    end
+    local.get 1
+    local.get 2
+    i32.const 546
+    i32.const 7
+    call $dynrt__fn125
+    i32.const 1
+    i32.eq
+    if  ;; label = @1
+      block  ;; label = @2
+        i32.const 520
+        local.set 6
+        i32.const 0
+        local.set 9
+        local.get 7
+        i32.const 0
+        i32.gt_s
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 3
+            i32.const 0
+            call $dynrt_dynArrGet
+            call $dynrt__fn77
+            global.get $dynrt_global1
+            local.set 6
+            global.get $dynrt_global2
+            local.set 9
+          end
+        end
+        local.get 4
+        local.get 5
+        local.get 6
+        local.get 9
+        call $dynrt__fn6
+        local.set 6
+        local.get 6
+        f64.convert_i32_s
+        call $dynrt_dynNumber
+        return
+      end
+    end
+    local.get 1
+    local.get 2
+    i32.const 553
+    i32.const 8
+    call $dynrt__fn125
+    i32.const 1
+    i32.eq
+    if  ;; label = @1
+      block  ;; label = @2
+        i32.const 520
+        local.set 6
+        i32.const 0
+        local.set 9
+        local.get 7
+        i32.const 0
+        i32.gt_s
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 3
+            i32.const 0
+            call $dynrt_dynArrGet
+            call $dynrt__fn77
+            global.get $dynrt_global1
+            local.set 6
+            global.get $dynrt_global2
+            local.set 9
+          end
+        end
+        local.get 4
+        local.get 5
+        local.get 6
+        local.get 9
+        call $dynrt__fn6
+        i32.const -1
+        i32.ne
+        i32.const 1
+        i32.eq
+        if (result i32)  ;; label = @3
+          i32.const 1
+        else
+          i32.const 0
+        end
+        call $dynrt_dynBool
+        return
+      end
+    end
+    local.get 1
+    local.get 2
+    i32.const 702
+    i32.const 10
+    call $dynrt__fn125
+    i32.const 1
+    i32.eq
+    if  ;; label = @1
+      block  ;; label = @2
+        i32.const 520
+        local.set 6
+        i32.const 0
+        local.set 9
+        local.get 7
+        i32.const 0
+        i32.gt_s
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 3
+            i32.const 0
+            call $dynrt_dynArrGet
+            call $dynrt__fn77
+            global.get $dynrt_global1
+            local.set 6
+            global.get $dynrt_global2
+            local.set 9
+          end
+        end
+        local.get 4
+        local.get 5
+        local.get 6
+        local.get 9
+        call $dynrt__fn10
+        i32.const 1
+        i32.eq
+        if (result i32)  ;; label = @3
+          i32.const 1
+        else
+          i32.const 0
+        end
+        call $dynrt_dynBool
+        return
+      end
+    end
+    local.get 1
+    local.get 2
+    i32.const 712
+    i32.const 8
+    call $dynrt__fn125
+    i32.const 1
+    i32.eq
+    if  ;; label = @1
+      block  ;; label = @2
+        i32.const 520
+        local.set 6
+        i32.const 0
+        local.set 9
+        local.get 7
+        i32.const 0
+        i32.gt_s
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 3
+            i32.const 0
+            call $dynrt_dynArrGet
+            call $dynrt__fn77
+            global.get $dynrt_global1
+            local.set 6
+            global.get $dynrt_global2
+            local.set 9
+          end
+        end
+        local.get 4
+        local.get 5
+        local.get 6
+        local.get 9
+        call $dynrt__fn11
+        i32.const 1
+        i32.eq
+        if (result i32)  ;; label = @3
+          i32.const 1
+        else
+          i32.const 0
+        end
+        call $dynrt_dynBool
+        return
+      end
+    end
+    local.get 1
+    local.get 2
+    i32.const 720
+    i32.const 6
+    call $dynrt__fn125
+    i32.const 1
+    i32.eq
+    if  ;; label = @1
+      block  ;; label = @2
+        i32.const 0
+        local.set 6
+        local.get 7
+        i32.const 0
+        i32.gt_s
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 3
+            i32.const 0
+            call $dynrt_dynArrGet
+            call $dynrt_dynToNumber
+            local.set 8
+            local.get 8
+            i32.trunc_f64_s
+            local.set 6
+          end
+        end
+        local.get 4
+        local.get 5
+        local.get 6
+        call $dynrt__fn16
+        local.set 5
+        nop
+        local.set 4
+        local.get 4
+        local.get 5
+        call $dynrt_dynString
+        return
+      end
+    end
+    local.get 1
+    local.get 2
+    i32.const 726
+    i32.const 8
+    call $dynrt__fn125
+    i32.const 1
+    i32.eq
+    if  ;; label = @1
+      block  ;; label = @2
+        i32.const 0
+        local.set 6
+        local.get 7
+        i32.const 0
+        i32.gt_s
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 3
+            i32.const 0
+            call $dynrt_dynArrGet
+            call $dynrt_dynToNumber
+            local.set 8
+            local.get 8
+            i32.trunc_f64_s
+            local.set 6
+          end
+        end
+        i32.const 734
+        local.set 9
+        i32.const 1
+        local.set 10
+        local.get 7
+        i32.const 1
+        i32.gt_s
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 3
+            i32.const 1
+            call $dynrt_dynArrGet
+            call $dynrt__fn77
+            global.get $dynrt_global1
+            local.set 9
+            global.get $dynrt_global2
+            local.set 10
+          end
+        end
+        local.get 4
+        local.get 5
+        local.get 6
+        local.get 9
+        local.get 10
+        call $dynrt__fn14
+        local.set 5
+        nop
+        local.set 4
+        local.get 4
+        local.get 5
+        call $dynrt_dynString
+        return
+      end
+    end
+    local.get 1
+    local.get 2
+    i32.const 735
+    i32.const 6
+    call $dynrt__fn125
+    i32.const 1
+    i32.eq
+    if  ;; label = @1
+      block  ;; label = @2
+        i32.const 0
+        local.set 6
+        local.get 7
+        i32.const 0
+        i32.gt_s
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 3
+            i32.const 0
+            call $dynrt_dynArrGet
+            call $dynrt_dynToNumber
+            local.set 8
+            local.get 8
+            i32.trunc_f64_s
+            local.set 6
+          end
+        end
+        i32.const 734
+        local.set 9
+        i32.const 1
+        local.set 10
+        local.get 7
+        i32.const 1
+        i32.gt_s
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 3
+            i32.const 1
+            call $dynrt_dynArrGet
+            call $dynrt__fn77
+            global.get $dynrt_global1
+            local.set 9
+            global.get $dynrt_global2
+            local.set 10
+          end
+        end
+        local.get 4
+        local.get 5
+        local.get 6
+        local.get 9
+        local.get 10
+        call $dynrt__fn15
+        local.set 5
+        nop
+        local.set 4
+        local.get 4
+        local.get 5
+        call $dynrt_dynString
+        return
+      end
+    end
+    local.get 1
+    local.get 2
+    i32.const 571
+    i32.const 6
+    call $dynrt__fn125
+    i32.const 1
+    i32.eq
+    if  ;; label = @1
+      block  ;; label = @2
+        i32.const 520
+        local.set 6
+        i32.const 0
+        local.set 9
+        local.get 7
+        i32.const 0
+        i32.gt_s
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 3
+            i32.const 0
+            call $dynrt_dynArrGet
+            call $dynrt__fn77
+            global.get $dynrt_global1
+            local.set 6
+            global.get $dynrt_global2
+            local.set 9
+          end
+        end
+        local.get 4
+        local.tee 11
+        local.set 4
+        local.get 5
+        local.tee 12
+        local.set 5
+        local.get 4
+        local.get 5
+        local.get 6
+        local.get 9
+        call $dynrt__fn4
+        local.set 5
+        nop
+        local.set 4
+        local.get 4
+        local.get 5
+        call $dynrt_dynString
+        return
+      end
+    end
+    local.get 1
+    local.get 2
+    i32.const 741
+    i32.const 5
+    call $dynrt__fn125
+    i32.const 1
+    i32.eq
+    if  ;; label = @1
+      block  ;; label = @2
+        i32.const 520
+        local.set 6
+        i32.const 0
+        local.tee 14
+        local.set 9
+        local.get 7
+        i32.const 0
+        i32.gt_s
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 3
+            i32.const 0
+            call $dynrt_dynArrGet
+            call $dynrt__fn77
+            global.get $dynrt_global1
+            local.set 6
+            global.get $dynrt_global2
+            local.set 9
+          end
+        end
+        local.get 4
+        local.get 5
+        local.get 6
+        local.get 9
+        call $dynrt__fn17
+        local.set 4
+        call $dynrt_dynArray
+        local.set 5
+        local.get 4
+        i32.load
+        local.set 6
+        i32.const 0
+        local.tee 15
+        local.set 7
+        block  ;; label = @3
+          loop  ;; label = @4
+            block  ;; label = @5
+              local.get 7
+              local.get 6
+              i32.lt_s
+              i32.eqz
+              br_if 2 (;@3;)
+              block  ;; label = @6
+                local.get 4
+                i32.const 8
+                i32.add
+                local.get 7
+                i32.const 3
+                i32.shl
+                i32.add
+                i32.load
+                local.set 9
+                local.get 4
+                i32.const 8
+                i32.add
+                local.get 7
+                i32.const 3
+                i32.shl
+                i32.add
+                i32.load offset=4
+                local.set 10
+                local.get 5
+                local.get 9
+                local.get 10
+                call $dynrt_dynString
+                call $dynrt_dynPush
+                local.get 7
+                local.tee 13
+                i32.const 1
+                i32.add
+                local.set 7
+              end
+              br 1 (;@4;)
+            end
+          end
+        end
+        local.get 5
+        local.tee 16
+        return
+      end
+    end
+    call $dynrt_dynUndefined
+    return)
+  (func $dynrt__fn94 (param i32 i32 i32)
     (local i32) (local i32) (local f64)
     local.get 0
     local.set 3
@@ -5957,7 +7534,7 @@
           local.get 0
           local.get 3
           local.get 2
-          call $dynrt__fn79
+          call $dynrt__fn91
         end
       end
     else
@@ -5971,7 +7548,7 @@
         if  ;; label = @3
           block  ;; label = @4
             local.get 1
-            call $dynrt__fn65
+            call $dynrt__fn77
             global.get $dynrt_global1
             local.set 3
             global.get $dynrt_global2
@@ -6212,7 +7789,7 @@
     if  ;; label = @1
       block  ;; label = @2
         local.get 0
-        call $dynrt__fn66
+        call $dynrt__fn78
         global.get $dynrt_global1
         local.tee 8
         local.set 2
@@ -6220,7 +7797,7 @@
         local.tee 9
         local.set 3
         local.get 1
-        call $dynrt__fn66
+        call $dynrt__fn78
         global.get $dynrt_global1
         local.tee 10
         local.set 4
@@ -6237,7 +7814,7 @@
         local.get 3
         local.get 4
         local.get 5
-        call $dynrt__fn3
+        call $dynrt__fn4
         local.set 3
         nop
         local.set 2
@@ -6424,7 +8001,7 @@
     return)
   (func $dynrt_dynBuiltin (param i32) (result i32)
     (local i32) (local i32)
-    call $dynrt__fn33
+    call $dynrt__fn45
     local.set 1
     local.get 1
     i32.const 8
@@ -6441,9 +8018,9 @@
     local.get 1
     local.tee 2
     return)
-  (func $dynrt__fn95 (param i32 i32 i32) (result i32)
+  (func $dynrt__fn108 (param i32 i32 i32) (result i32)
     (local i32) (local i32)
-    call $dynrt__fn34
+    call $dynrt__fn46
     local.set 3
     local.get 3
     i32.const 8
@@ -6490,11 +8067,11 @@
     local.get 0
     local.get 4
     local.get 3
-    call $dynrt__fn95
+    call $dynrt__fn108
     return)
   (func $dynrt_dynMakeHostFn (param i32) (result i32)
     (local i32) (local i32)
-    call $dynrt__fn34
+    call $dynrt__fn46
     local.set 1
     local.get 1
     i32.const 8
@@ -6561,7 +8138,7 @@
               local.get 0
               local.get 1
               local.get 7
-              call $dynrt__fn5
+              call $dynrt__fn8
               i32.const 44
               i32.eq
             end
@@ -6582,7 +8159,7 @@
                         local.get 0
                         local.get 1
                         local.get 6
-                        call $dynrt__fn5
+                        call $dynrt__fn8
                         i32.const 32
                         i32.eq
                       else
@@ -6610,7 +8187,7 @@
                         local.get 8
                         i32.const 1
                         i32.sub
-                        call $dynrt__fn5
+                        call $dynrt__fn8
                         i32.const 32
                         i32.eq
                       else
@@ -6635,7 +8212,7 @@
                     local.get 1
                     local.get 6
                     local.get 8
-                    call $dynrt__fn4
+                    call $dynrt__fn5
                     local.set 8
                     nop
                     local.set 6
@@ -6670,7 +8247,7 @@
     local.get 5
     call $dynrt_dynMakeFunc
     return)
-  (func $dynrt__fn99 (param i32 i32 i32) (result i32)
+  (func $dynrt__fn112 (param i32 i32 i32) (result i32)
     (local i32) (local i32) (local i32)
     local.get 0
     local.set 3
@@ -6719,7 +8296,7 @@
     end
     i32.const -1
     return)
-  (func $dynrt__fn100 (param i32) (result i32)
+  (func $dynrt__fn113 (param i32) (result i32)
     (local i32) (local i32) (local i32) (local i32)
     call $dynrt_dynObject
     local.set 1
@@ -6736,7 +8313,7 @@
     local.get 1
     local.tee 4
     return)
-  (func $dynrt__fn101 (param i32 i32 i32 i32)
+  (func $dynrt__fn114 (param i32 i32 i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.tee 8
@@ -6810,10 +8387,10 @@
       local.get 3
       call $dynrt_dynSet
     end)
-  (func $dynrt__fn102 (param i32 i32) (result i32)
+  (func $dynrt__fn115 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 1
-    call $dynrt__fn100
+    call $dynrt__fn113
     local.set 2
     local.get 0
     local.set 3
@@ -6826,7 +8403,7 @@
     i32.const 4
     i32.add
     i32.load
-    call $dynrt__fn16
+    call $dynrt__fn28
     local.set 5
     i32.const 0
     local.set 6
@@ -6848,7 +8425,7 @@
             local.get 6
             i32.const 2
             i32.mul
-            call $dynrt__fn17
+            call $dynrt__fn29
             local.set 7
             local.get 3
             i32.const 8
@@ -6861,7 +8438,7 @@
             i32.mul
             i32.const 1
             i32.add
-            call $dynrt__fn17
+            call $dynrt__fn29
             local.set 8
             local.get 3
             i32.const 8
@@ -6870,7 +8447,7 @@
             i32.add
             i32.load
             local.get 6
-            call $dynrt__fn17
+            call $dynrt__fn29
             local.set 9
             local.get 7
             local.tee 13
@@ -6878,7 +8455,7 @@
             i32.const 8
             local.get 8
             i32.add
-            call $dynrt__fn25
+            call $dynrt__fn37
             local.set 10
             i32.const 0
             local.set 11
@@ -6922,11 +8499,11 @@
             local.set 7
             local.get 7
             local.get 10
-            call $dynrt__fn19
+            call $dynrt__fn31
             local.set 7
             local.get 7
             local.get 8
-            call $dynrt__fn19
+            call $dynrt__fn31
             local.set 7
             local.get 4
             i32.const 8
@@ -6947,7 +8524,7 @@
             i32.add
             i32.load
             local.get 9
-            call $dynrt__fn19
+            call $dynrt__fn31
             i32.store
             local.get 6
             local.tee 14
@@ -6967,9 +8544,9 @@
     local.get 0
     local.get 1
     i32.const -1
-    call $dynrt__fn104
+    call $dynrt__fn117
     return)
-  (func $dynrt__fn104 (param i32 i32 i32) (result i32)
+  (func $dynrt__fn117 (param i32 i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local f64) (local f64) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.set 3
@@ -7050,7 +8627,7 @@
         i32.ne
         if  ;; label = @3
           local.get 7
-          i32.const 660
+          i32.const 746
           i32.const 4
           local.get 2
           call $dynrt_dynSet
@@ -7074,7 +8651,7 @@
                 call $dynrt_dynArrGet
                 local.set 9
                 local.get 9
-                call $dynrt__fn65
+                call $dynrt__fn77
                 global.get $dynrt_global1
                 local.set 9
                 global.get $dynrt_global2
@@ -7106,7 +8683,7 @@
           end
         end
         local.get 4
-        call $dynrt__fn65
+        call $dynrt__fn77
         global.get $dynrt_global1
         local.set 3
         global.get $dynrt_global2
@@ -7375,55 +8952,55 @@
     call $dynrt_dynObject
     local.set 0
     local.get 0
-    i32.const 664
+    i32.const 750
     i32.const 3
     i32.const 0
     call $dynrt_dynBuiltin
     call $dynrt_dynSet
     local.get 0
-    i32.const 667
+    i32.const 753
     i32.const 4
     i32.const 1
     call $dynrt_dynBuiltin
     call $dynrt_dynSet
     local.get 0
-    i32.const 671
+    i32.const 757
     i32.const 5
     i32.const 2
     call $dynrt_dynBuiltin
     call $dynrt_dynSet
     local.get 0
-    i32.const 676
+    i32.const 762
     i32.const 4
     i32.const 3
     call $dynrt_dynBuiltin
     call $dynrt_dynSet
     local.get 0
-    i32.const 680
+    i32.const 766
     i32.const 5
     i32.const 4
     call $dynrt_dynBuiltin
     call $dynrt_dynSet
     local.get 0
-    i32.const 685
+    i32.const 771
     i32.const 3
     i32.const 5
     call $dynrt_dynBuiltin
     call $dynrt_dynSet
     local.get 0
-    i32.const 688
+    i32.const 774
     i32.const 3
     i32.const 6
     call $dynrt_dynBuiltin
     call $dynrt_dynSet
     local.get 0
-    i32.const 691
+    i32.const 777
     i32.const 3
     i32.const 7
     call $dynrt_dynBuiltin
     call $dynrt_dynSet
     local.get 0
-    i32.const 694
+    i32.const 780
     i32.const 3
     i32.const 8
     call $dynrt_dynBuiltin
@@ -7437,7 +9014,7 @@
   (func $dynrt_dynResetSideEffects
     i32.const 0
     global.set $dynrt_global22)
-  (func $dynrt__fn112 (param i32 i32 i32 i32) (result i32)
+  (func $dynrt__fn125 (param i32 i32 i32 i32) (result i32)
     (local i32)
     local.get 1
     local.get 3
@@ -7460,11 +9037,11 @@
             local.get 0
             local.get 1
             local.get 4
-            call $dynrt__fn5
+            call $dynrt__fn8
             local.get 2
             local.get 3
             local.get 4
-            call $dynrt__fn5
+            call $dynrt__fn8
             i32.ne
             if  ;; label = @5
               i32.const 0
@@ -7543,7 +9120,7 @@
             end
           end
         end
-        i32.const 697
+        i32.const 783
         local.set 3
         i32.const 6
         local.set 4
@@ -7551,7 +9128,7 @@
         local.get 4
         local.get 1
         local.get 2
-        call $dynrt__fn3
+        call $dynrt__fn4
         local.set 4
         nop
         local.set 3
@@ -7604,7 +9181,7 @@
                         local.get 5
                         local.get 3
                         local.get 0
-                        call $dynrt__fn104
+                        call $dynrt__fn117
                         return
                       end
                     end
@@ -7633,9 +9210,9 @@
       block  ;; label = @2
         local.get 1
         local.get 2
-        i32.const 703
+        i32.const 789
         i32.const 6
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
@@ -7660,9 +9237,9 @@
       block  ;; label = @2
         local.get 1
         local.get 2
-        i32.const 703
+        i32.const 789
         i32.const 6
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
@@ -7686,7 +9263,7 @@
     end
     call $dynrt_dynUndefined
     return)
-  (func $dynrt__fn114 (param i32 i32 i32 i32)
+  (func $dynrt__fn127 (param i32 i32 i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.tee 10
@@ -7699,7 +9276,7 @@
     i32.eq
     if  ;; label = @1
       block  ;; label = @2
-        i32.const 709
+        i32.const 795
         local.set 4
         i32.const 6
         local.set 5
@@ -7707,7 +9284,7 @@
         local.get 5
         local.get 1
         local.get 2
-        call $dynrt__fn3
+        call $dynrt__fn4
         local.set 5
         nop
         local.set 4
@@ -7762,7 +9339,7 @@
                         local.get 6
                         local.get 4
                         local.get 0
-                        call $dynrt__fn104
+                        call $dynrt__fn117
                         drop
                         return
                       end
@@ -7854,7 +9431,7 @@
         if  ;; label = @3
           block  ;; label = @4
             local.get 1
-            call $dynrt__fn65
+            call $dynrt__fn77
             global.get $dynrt_global1
             local.set 2
             global.get $dynrt_global2
@@ -7881,7 +9458,7 @@
     end
     call $dynrt_dynUndefined
     return)
-  (func $dynrt__fn116 (param i32 i32) (result i32)
+  (func $dynrt__fn129 (param i32 i32) (result i32)
     local.get 0
     i32.const 65
     i32.ge_s
@@ -7947,7 +9524,7 @@
     end
     i32.const 0
     return)
-  (func $dynrt__fn117 (param i32 i32)
+  (func $dynrt__fn130 (param i32 i32)
     (local i32) (local i32)
     i32.const 1
     local.set 2
@@ -7970,7 +9547,7 @@
               local.get 0
               local.get 1
               global.get $dynrt_global19
-              call $dynrt__fn5
+              call $dynrt__fn8
               local.set 3
               local.get 3
               i32.const 32
@@ -8011,7 +9588,7 @@
         end
       end
     end)
-  (func $dynrt__fn118 (param i32 i32) (result i32)
+  (func $dynrt__fn131 (param i32 i32) (result i32)
     (local i32)
     global.get $dynrt_global19
     local.get 1
@@ -8023,9 +9600,9 @@
     local.get 0
     local.get 1
     global.get $dynrt_global19
-    call $dynrt__fn5
+    call $dynrt__fn8
     return)
-  (func $dynrt__fn119 (param i32 i32) (result i32)
+  (func $dynrt__fn132 (param i32 i32) (result i32)
     (local i32)
     global.get $dynrt_global19
     i32.const 1
@@ -8041,16 +9618,16 @@
     global.get $dynrt_global19
     i32.const 1
     i32.add
-    call $dynrt__fn5
+    call $dynrt__fn8
     return)
-  (func $dynrt__fn120 (param i32 i32) (result i32)
+  (func $dynrt__fn133 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32)
     global.get $dynrt_global19
     local.tee 4
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     local.set 3
     block  ;; label = @1
       loop  ;; label = @2
@@ -8074,7 +9651,7 @@
             global.set $dynrt_global19
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             local.set 3
           end
           br 1 (;@2;)
@@ -8092,7 +9669,7 @@
         global.set $dynrt_global19
         local.get 0
         local.get 1
-        call $dynrt__fn118
+        call $dynrt__fn131
         local.set 3
         block  ;; label = @3
           loop  ;; label = @4
@@ -8116,7 +9693,7 @@
                 global.set $dynrt_global19
                 local.get 0
                 local.get 1
-                call $dynrt__fn118
+                call $dynrt__fn131
                 local.set 3
               end
               br 1 (;@4;)
@@ -8143,7 +9720,7 @@
         global.set $dynrt_global19
         local.get 0
         local.get 1
-        call $dynrt__fn118
+        call $dynrt__fn131
         local.set 3
         local.get 3
         i32.const 43
@@ -8163,7 +9740,7 @@
             global.set $dynrt_global19
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             local.set 3
           end
         end
@@ -8189,7 +9766,7 @@
                 global.set $dynrt_global19
                 local.get 0
                 local.get 1
-                call $dynrt__fn118
+                call $dynrt__fn131
                 local.set 3
               end
               br 1 (;@4;)
@@ -8202,20 +9779,20 @@
     local.get 1
     local.get 2
     global.get $dynrt_global19
-    call $dynrt__fn4
+    call $dynrt__fn5
     local.set 3
     nop
     local.set 2
     local.get 2
     local.get 3
-    call $dynrt__fn9
+    call $dynrt__fn21
     call $dynrt_dynNumber
     return)
-  (func $dynrt__fn121 (param i32 i32) (result i32)
+  (func $dynrt__fn134 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     local.set 2
     global.get $dynrt_global19
     i32.const 1
@@ -8248,7 +9825,7 @@
               local.get 0
               local.get 1
               global.get $dynrt_global19
-              call $dynrt__fn5
+              call $dynrt__fn8
               local.set 6
               local.get 6
               local.get 2
@@ -8276,7 +9853,7 @@
                     local.get 0
                     local.get 1
                     global.get $dynrt_global19
-                    call $dynrt__fn5
+                    call $dynrt__fn8
                     local.set 6
                     local.get 6
                     local.set 7
@@ -8319,7 +9896,7 @@
                     local.get 4
                     local.get 8
                     i32.const 1
-                    call $dynrt__fn3
+                    call $dynrt__fn4
                     local.set 4
                     nop
                     local.set 3
@@ -8347,7 +9924,7 @@
                     local.get 4
                     local.get 8
                     i32.const 1
-                    call $dynrt__fn3
+                    call $dynrt__fn4
                     local.set 4
                     nop
                     local.set 3
@@ -8369,14 +9946,14 @@
     local.get 4
     call $dynrt_dynString
     return)
-  (func $dynrt__fn122 (param i32 i32) (result i32)
+  (func $dynrt__fn135 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     local.set 2
     local.get 2
     i32.const 40
@@ -8385,27 +9962,27 @@
       block  ;; label = @2
         local.get 0
         local.get 1
-        call $dynrt__fn153
+        call $dynrt__fn166
         i32.const 1
         i32.eq
         if  ;; label = @3
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn149
+            call $dynrt__fn162
             local.set 2
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 61
             i32.eq
             if (result i32)  ;; label = @5
               local.get 0
               local.get 1
-              call $dynrt__fn119
+              call $dynrt__fn132
               i32.const 62
               i32.eq
             else
@@ -8420,9 +9997,9 @@
             local.get 2
             local.get 0
             local.get 1
-            call $dynrt__fn151
+            call $dynrt__fn164
             global.get $dynrt_global20
-            call $dynrt__fn95
+            call $dynrt__fn108
             return
           end
         end
@@ -8432,14 +10009,14 @@
         global.set $dynrt_global19
         local.get 0
         local.get 1
-        call $dynrt__fn132
+        call $dynrt__fn145
         local.set 2
         local.get 0
         local.get 1
-        call $dynrt__fn117
+        call $dynrt__fn130
         local.get 0
         local.get 1
-        call $dynrt__fn118
+        call $dynrt__fn131
         i32.const 41
         i32.eq
         if  ;; label = @3
@@ -8465,7 +10042,7 @@
     if  ;; label = @1
       local.get 0
       local.get 1
-      call $dynrt__fn121
+      call $dynrt__fn134
       return
     end
     local.get 2
@@ -8481,10 +10058,10 @@
         local.set 2
         local.get 0
         local.get 1
-        call $dynrt__fn117
+        call $dynrt__fn130
         local.get 0
         local.get 1
-        call $dynrt__fn118
+        call $dynrt__fn131
         i32.const 93
         i32.eq
         if (result i32)  ;; label = @3
@@ -8504,18 +10081,18 @@
               block  ;; label = @6
                 local.get 0
                 local.get 1
-                call $dynrt__fn117
+                call $dynrt__fn130
                 i32.const 0
                 local.set 4
                 local.get 0
                 local.get 1
-                call $dynrt__fn118
+                call $dynrt__fn131
                 i32.const 46
                 i32.eq
                 if (result i32)  ;; label = @7
                   local.get 0
                   local.get 1
-                  call $dynrt__fn119
+                  call $dynrt__fn132
                   i32.const 46
                   i32.eq
                 else
@@ -8533,7 +10110,7 @@
                     global.get $dynrt_global19
                     i32.const 2
                     i32.add
-                    call $dynrt__fn5
+                    call $dynrt__fn8
                     i32.const 46
                     i32.eq
                     if  ;; label = @9
@@ -8553,7 +10130,7 @@
                     global.set $dynrt_global19
                     local.get 0
                     local.get 1
-                    call $dynrt__fn132
+                    call $dynrt__fn145
                     local.set 4
                     local.get 4
                     local.set 5
@@ -8601,15 +10178,15 @@
                   local.get 2
                   local.get 0
                   local.get 1
-                  call $dynrt__fn132
+                  call $dynrt__fn145
                   call $dynrt_dynPush
                 end
                 local.get 0
                 local.get 1
-                call $dynrt__fn117
+                call $dynrt__fn130
                 local.get 0
                 local.get 1
-                call $dynrt__fn118
+                call $dynrt__fn131
                 i32.const 44
                 i32.eq
                 if  ;; label = @7
@@ -8620,10 +10197,10 @@
                     global.set $dynrt_global19
                     local.get 0
                     local.get 1
-                    call $dynrt__fn117
+                    call $dynrt__fn130
                     local.get 0
                     local.get 1
-                    call $dynrt__fn118
+                    call $dynrt__fn131
                     i32.const 93
                     i32.eq
                     if  ;; label = @9
@@ -8642,10 +10219,10 @@
         end
         local.get 0
         local.get 1
-        call $dynrt__fn117
+        call $dynrt__fn130
         local.get 0
         local.get 1
-        call $dynrt__fn118
+        call $dynrt__fn131
         i32.const 93
         i32.eq
         if  ;; label = @3
@@ -8671,10 +10248,10 @@
         local.set 2
         local.get 0
         local.get 1
-        call $dynrt__fn117
+        call $dynrt__fn130
         local.get 0
         local.get 1
-        call $dynrt__fn118
+        call $dynrt__fn131
         i32.const 125
         i32.eq
         if (result i32)  ;; label = @3
@@ -8694,13 +10271,13 @@
               block  ;; label = @6
                 local.get 0
                 local.get 1
-                call $dynrt__fn117
+                call $dynrt__fn130
                 i32.const 0
                 local.tee 8
                 drop
                 local.get 0
                 local.get 1
-                call $dynrt__fn118
+                call $dynrt__fn131
                 local.set 4
                 local.get 4
                 i32.const 39
@@ -8716,8 +10293,8 @@
                   block  ;; label = @8
                     local.get 0
                     local.get 1
-                    call $dynrt__fn121
-                    call $dynrt__fn65
+                    call $dynrt__fn134
+                    call $dynrt__fn77
                     global.get $dynrt_global1
                     local.set 4
                     global.get $dynrt_global2
@@ -8727,7 +10304,7 @@
                   block  ;; label = @8
                     local.get 0
                     local.get 1
-                    call $dynrt__fn135
+                    call $dynrt__fn148
                     global.get $dynrt_global1
                     local.set 4
                     global.get $dynrt_global2
@@ -8736,13 +10313,13 @@
                 end
                 local.get 0
                 local.get 1
-                call $dynrt__fn117
+                call $dynrt__fn130
                 i32.const 0
                 local.tee 9
                 drop
                 local.get 0
                 local.get 1
-                call $dynrt__fn118
+                call $dynrt__fn131
                 i32.const 58
                 i32.eq
                 if  ;; label = @7
@@ -8753,30 +10330,30 @@
                     global.set $dynrt_global19
                     local.get 0
                     local.get 1
-                    call $dynrt__fn132
+                    call $dynrt__fn145
                     local.set 6
                   end
                 else
                   local.get 0
                   local.get 1
-                  call $dynrt__fn118
+                  call $dynrt__fn131
                   i32.const 40
                   i32.eq
                   if  ;; label = @8
                     block  ;; label = @9
                       local.get 0
                       local.get 1
-                      call $dynrt__fn149
+                      call $dynrt__fn162
                       local.set 6
                       local.get 0
                       local.get 1
-                      call $dynrt__fn117
+                      call $dynrt__fn130
                       local.get 6
                       local.get 0
                       local.get 1
-                      call $dynrt__fn150
+                      call $dynrt__fn163
                       global.get $dynrt_global20
-                      call $dynrt__fn95
+                      call $dynrt__fn108
                       local.set 6
                     end
                   else
@@ -8790,7 +10367,7 @@
                         global.get $dynrt_global20
                         local.get 4
                         local.get 5
-                        call $dynrt__fn99
+                        call $dynrt__fn112
                       end
                       local.set 6
                       local.get 6
@@ -8810,10 +10387,10 @@
                 call $dynrt_dynSet
                 local.get 0
                 local.get 1
-                call $dynrt__fn117
+                call $dynrt__fn130
                 local.get 0
                 local.get 1
-                call $dynrt__fn118
+                call $dynrt__fn131
                 i32.const 44
                 i32.eq
                 if  ;; label = @7
@@ -8824,10 +10401,10 @@
                     global.set $dynrt_global19
                     local.get 0
                     local.get 1
-                    call $dynrt__fn117
+                    call $dynrt__fn130
                     local.get 0
                     local.get 1
-                    call $dynrt__fn118
+                    call $dynrt__fn131
                     i32.const 125
                     i32.eq
                     if  ;; label = @9
@@ -8846,10 +10423,10 @@
         end
         local.get 0
         local.get 1
-        call $dynrt__fn117
+        call $dynrt__fn130
         local.get 0
         local.get 1
-        call $dynrt__fn118
+        call $dynrt__fn131
         i32.const 125
         i32.eq
         if  ;; label = @3
@@ -8894,7 +10471,7 @@
               block  ;; label = @6
                 local.get 0
                 local.get 1
-                call $dynrt__fn118
+                call $dynrt__fn131
                 local.set 5
                 local.get 5
                 i32.const -1
@@ -8914,7 +10491,7 @@
                       local.get 1
                       local.get 3
                       global.get $dynrt_global19
-                      call $dynrt__fn4
+                      call $dynrt__fn5
                       call $dynrt_dynString
                       call $dynrt_dynAdd
                       local.set 2
@@ -8933,7 +10510,7 @@
                     if (result i32)  ;; label = @9
                       local.get 0
                       local.get 1
-                      call $dynrt__fn119
+                      call $dynrt__fn132
                       i32.const 123
                       i32.eq
                     else
@@ -8947,7 +10524,7 @@
                         local.get 1
                         local.get 3
                         global.get $dynrt_global19
-                        call $dynrt__fn4
+                        call $dynrt__fn5
                         call $dynrt_dynString
                         call $dynrt_dynAdd
                         local.set 2
@@ -8958,7 +10535,7 @@
                         global.set $dynrt_global19
                         local.get 0
                         local.get 1
-                        call $dynrt__fn132
+                        call $dynrt__fn145
                         local.set 3
                         local.get 2
                         local.get 3
@@ -8966,10 +10543,10 @@
                         local.set 2
                         local.get 0
                         local.get 1
-                        call $dynrt__fn117
+                        call $dynrt__fn130
                         local.get 0
                         local.get 1
-                        call $dynrt__fn118
+                        call $dynrt__fn131
                         i32.const 125
                         i32.eq
                         if  ;; label = @11
@@ -9012,7 +10589,7 @@
     if  ;; label = @1
       local.get 0
       local.get 1
-      call $dynrt__fn120
+      call $dynrt__fn133
       return
     end
     local.get 2
@@ -9021,12 +10598,12 @@
     if  ;; label = @1
       local.get 0
       local.get 1
-      call $dynrt__fn120
+      call $dynrt__fn133
       return
     end
     local.get 2
     i32.const 0
-    call $dynrt__fn116
+    call $dynrt__fn129
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -9041,7 +10618,7 @@
             block  ;; label = @5
               local.get 2
               i32.const 1
-              call $dynrt__fn116
+              call $dynrt__fn129
               i32.const 1
               i32.eq
               i32.eqz
@@ -9053,7 +10630,7 @@
                 global.set $dynrt_global19
                 local.get 0
                 local.get 1
-                call $dynrt__fn118
+                call $dynrt__fn131
                 local.set 2
               end
               br 1 (;@4;)
@@ -9064,28 +10641,28 @@
         local.get 1
         local.get 3
         global.get $dynrt_global19
-        call $dynrt__fn4
+        call $dynrt__fn5
         local.set 4
         nop
         local.set 3
         local.get 3
         local.get 4
-        i32.const 715
+        i32.const 801
         i32.const 8
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
           local.get 0
           local.get 1
-          call $dynrt__fn152
+          call $dynrt__fn165
           return
         end
         local.get 3
         local.get 4
         i32.const 525
         i32.const 4
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
@@ -9097,7 +10674,7 @@
         local.get 4
         i32.const 520
         i32.const 5
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
@@ -9109,7 +10686,7 @@
         local.get 4
         i32.const 529
         i32.const 4
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
@@ -9120,7 +10697,7 @@
         local.get 4
         i32.const 533
         i32.const 9
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
@@ -9129,9 +10706,9 @@
         end
         local.get 3
         local.get 4
-        i32.const 723
+        i32.const 809
         i32.const 6
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
@@ -9140,10 +10717,10 @@
             local.set 2
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 46
             i32.eq
             if  ;; label = @5
@@ -9154,25 +10731,25 @@
                 global.set $dynrt_global19
                 local.get 0
                 local.get 1
-                call $dynrt__fn135
+                call $dynrt__fn148
                 global.get $dynrt_global1
                 local.set 5
                 global.get $dynrt_global2
                 local.set 6
                 local.get 0
                 local.get 1
-                call $dynrt__fn117
+                call $dynrt__fn130
                 local.get 5
                 local.get 6
-                i32.const 729
+                i32.const 815
                 i32.const 6
-                call $dynrt__fn112
+                call $dynrt__fn125
                 i32.const 1
                 i32.eq
                 if (result i32)  ;; label = @7
                   local.get 0
                   local.get 1
-                  call $dynrt__fn118
+                  call $dynrt__fn131
                   i32.const 40
                   i32.eq
                 else
@@ -9186,14 +10763,14 @@
                     global.set $dynrt_global19
                     local.get 0
                     local.get 1
-                    call $dynrt__fn132
+                    call $dynrt__fn145
                     local.set 2
                     local.get 0
                     local.get 1
-                    call $dynrt__fn117
+                    call $dynrt__fn130
                     local.get 0
                     local.get 1
-                    call $dynrt__fn118
+                    call $dynrt__fn131
                     i32.const 41
                     i32.eq
                     if  ;; label = @9
@@ -9237,29 +10814,29 @@
         end
         local.get 3
         local.get 4
-        i32.const 735
+        i32.const 821
         i32.const 3
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             global.get $dynrt_global19
             local.tee 19
             local.set 2
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             local.set 3
             block  ;; label = @5
               loop  ;; label = @6
                 block  ;; label = @7
                   local.get 3
                   i32.const 1
-                  call $dynrt__fn116
+                  call $dynrt__fn129
                   i32.const 1
                   i32.eq
                   i32.eqz
@@ -9271,7 +10848,7 @@
                     global.set $dynrt_global19
                     local.get 0
                     local.get 1
-                    call $dynrt__fn118
+                    call $dynrt__fn131
                     local.set 3
                   end
                   br 1 (;@6;)
@@ -9282,7 +10859,7 @@
             local.get 1
             local.get 2
             global.get $dynrt_global19
-            call $dynrt__fn4
+            call $dynrt__fn5
             local.set 3
             nop
             local.set 2
@@ -9295,7 +10872,7 @@
               global.get $dynrt_global20
               local.get 2
               local.get 3
-              call $dynrt__fn99
+              call $dynrt__fn112
             end
             local.set 2
             local.get 2
@@ -9310,13 +10887,13 @@
             call $dynrt_dynArray
             local.set 3
             local.get 3
-            call $dynrt__fn41
+            call $dynrt__fn53
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 40
             i32.eq
             if  ;; label = @5
@@ -9327,10 +10904,10 @@
                 global.set $dynrt_global19
                 local.get 0
                 local.get 1
-                call $dynrt__fn117
+                call $dynrt__fn130
                 local.get 0
                 local.get 1
-                call $dynrt__fn118
+                call $dynrt__fn131
                 i32.const 41
                 i32.eq
                 if  ;; label = @7
@@ -9353,17 +10930,17 @@
                           block  ;; label = @12
                             local.get 0
                             local.get 1
-                            call $dynrt__fn132
+                            call $dynrt__fn145
                             local.set 5
                             local.get 3
                             local.get 5
                             call $dynrt_dynPush
                             local.get 0
                             local.get 1
-                            call $dynrt__fn117
+                            call $dynrt__fn130
                             local.get 0
                             local.get 1
-                            call $dynrt__fn118
+                            call $dynrt__fn131
                             local.set 5
                             local.get 5
                             i32.const 44
@@ -9405,26 +10982,26 @@
             if  ;; label = @5
               local.get 2
               local.get 3
-              call $dynrt__fn156
+              call $dynrt__fn169
               local.set 4
             end
-            call $dynrt__fn42
+            call $dynrt__fn54
             local.get 4
             return
           end
         end
         local.get 3
         local.get 4
-        i32.const 738
+        i32.const 824
         i32.const 5
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             global.get $dynrt_global20
             i32.const -1
             i32.eq
@@ -9432,14 +11009,14 @@
               i32.const -1
             else
               global.get $dynrt_global20
-              i32.const 660
+              i32.const 746
               i32.const 4
-              call $dynrt__fn99
+              call $dynrt__fn112
             end
             local.set 2
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             local.set 3
             local.get 3
             i32.const 40
@@ -9453,13 +11030,13 @@
                 call $dynrt_dynArray
                 local.set 3
                 local.get 3
-                call $dynrt__fn41
+                call $dynrt__fn53
                 local.get 0
                 local.get 1
-                call $dynrt__fn117
+                call $dynrt__fn130
                 local.get 0
                 local.get 1
-                call $dynrt__fn118
+                call $dynrt__fn131
                 i32.const 41
                 i32.eq
                 if  ;; label = @7
@@ -9483,14 +11060,14 @@
                             local.get 3
                             local.get 0
                             local.get 1
-                            call $dynrt__fn132
+                            call $dynrt__fn145
                             call $dynrt_dynPush
                             local.get 0
                             local.get 1
-                            call $dynrt__fn117
+                            call $dynrt__fn130
                             local.get 0
                             local.get 1
-                            call $dynrt__fn118
+                            call $dynrt__fn131
                             local.set 5
                             local.get 5
                             i32.const 44
@@ -9535,9 +11112,9 @@
                 if  ;; label = @7
                   block  ;; label = @8
                     global.get $dynrt_global20
-                    i32.const 743
+                    i32.const 829
                     i32.const 12
-                    call $dynrt__fn99
+                    call $dynrt__fn112
                     local.set 4
                     local.get 4
                     i32.const -1
@@ -9545,7 +11122,7 @@
                     if  ;; label = @9
                       block  ;; label = @10
                         local.get 4
-                        i32.const 755
+                        i32.const 841
                         i32.const 6
                         call $dynrt_dynGet
                         local.set 4
@@ -9566,7 +11143,7 @@
                               local.get 4
                               local.get 3
                               local.get 2
-                              call $dynrt__fn104
+                              call $dynrt__fn117
                               drop
                             end
                           end
@@ -9575,7 +11152,7 @@
                     end
                   end
                 end
-                call $dynrt__fn42
+                call $dynrt__fn54
                 call $dynrt_dynUndefined
                 return
               end
@@ -9591,7 +11168,7 @@
                 global.set $dynrt_global19
                 local.get 0
                 local.get 1
-                call $dynrt__fn135
+                call $dynrt__fn148
                 global.get $dynrt_global1
                 local.set 3
                 global.get $dynrt_global2
@@ -9603,9 +11180,9 @@
                   i32.const -1
                 else
                   global.get $dynrt_global20
-                  i32.const 761
+                  i32.const 847
                   i32.const 12
-                  call $dynrt__fn99
+                  call $dynrt__fn112
                 end
                 local.set 5
                 call $dynrt_dynUndefined
@@ -9622,10 +11199,10 @@
                 end
                 local.get 0
                 local.get 1
-                call $dynrt__fn117
+                call $dynrt__fn130
                 local.get 0
                 local.get 1
-                call $dynrt__fn118
+                call $dynrt__fn131
                 i32.const 40
                 i32.eq
                 if  ;; label = @7
@@ -9637,13 +11214,13 @@
                     call $dynrt_dynArray
                     local.set 3
                     local.get 3
-                    call $dynrt__fn41
+                    call $dynrt__fn53
                     local.get 0
                     local.get 1
-                    call $dynrt__fn117
+                    call $dynrt__fn130
                     local.get 0
                     local.get 1
-                    call $dynrt__fn118
+                    call $dynrt__fn131
                     i32.const 41
                     i32.eq
                     if  ;; label = @9
@@ -9667,14 +11244,14 @@
                                 local.get 3
                                 local.get 0
                                 local.get 1
-                                call $dynrt__fn132
+                                call $dynrt__fn145
                                 call $dynrt_dynPush
                                 local.get 0
                                 local.get 1
-                                call $dynrt__fn117
+                                call $dynrt__fn130
                                 local.get 0
                                 local.get 1
-                                call $dynrt__fn118
+                                call $dynrt__fn131
                                 local.set 5
                                 local.get 5
                                 i32.const 44
@@ -9732,12 +11309,12 @@
                           local.get 6
                           local.get 3
                           local.get 2
-                          call $dynrt__fn104
+                          call $dynrt__fn117
                           local.set 4
                         end
                       end
                     end
-                    call $dynrt__fn42
+                    call $dynrt__fn54
                     local.get 4
                     return
                   end
@@ -9752,16 +11329,16 @@
         end
         local.get 0
         local.get 1
-        call $dynrt__fn117
+        call $dynrt__fn130
         local.get 0
         local.get 1
-        call $dynrt__fn118
+        call $dynrt__fn131
         i32.const 61
         i32.eq
         if (result i32)  ;; label = @3
           local.get 0
           local.get 1
-          call $dynrt__fn119
+          call $dynrt__fn132
           i32.const 62
           i32.eq
         else
@@ -9783,9 +11360,9 @@
             local.get 2
             local.get 0
             local.get 1
-            call $dynrt__fn151
+            call $dynrt__fn164
             global.get $dynrt_global20
-            call $dynrt__fn95
+            call $dynrt__fn108
             return
           end
         end
@@ -9799,7 +11376,7 @@
         global.get $dynrt_global20
         local.get 3
         local.get 4
-        call $dynrt__fn99
+        call $dynrt__fn112
         local.set 2
         local.get 2
         i32.const -1
@@ -9814,11 +11391,11 @@
     end
     call $dynrt_dynUndefined
     return)
-  (func $dynrt__fn123 (param i32 i32) (result i32)
+  (func $dynrt__fn136 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt__fn122
+    call $dynrt__fn135
     local.set 2
     i32.const 1
     local.set 3
@@ -9842,10 +11419,10 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             local.set 8
             i32.const 0
             local.set 9
@@ -9855,7 +11432,7 @@
             if (result i32)  ;; label = @5
               local.get 0
               local.get 1
-              call $dynrt__fn119
+              call $dynrt__fn132
               i32.const 46
               i32.eq
             else
@@ -9895,10 +11472,10 @@
                 end
                 local.get 0
                 local.get 1
-                call $dynrt__fn117
+                call $dynrt__fn130
                 local.get 0
                 local.get 1
-                call $dynrt__fn118
+                call $dynrt__fn131
                 local.set 4
                 local.get 4
                 i32.const 91
@@ -9911,14 +11488,14 @@
                     global.set $dynrt_global19
                     local.get 0
                     local.get 1
-                    call $dynrt__fn132
+                    call $dynrt__fn145
                     local.set 9
                     local.get 0
                     local.get 1
-                    call $dynrt__fn117
+                    call $dynrt__fn130
                     local.get 0
                     local.get 1
-                    call $dynrt__fn118
+                    call $dynrt__fn131
                     i32.const 93
                     i32.eq
                     if  ;; label = @9
@@ -9948,14 +11525,14 @@
                     local.set 4
                     local.get 0
                     local.get 1
-                    call $dynrt__fn118
+                    call $dynrt__fn131
                     local.set 5
                     block  ;; label = @9
                       loop  ;; label = @10
                         block  ;; label = @11
                           local.get 5
                           i32.const 1
-                          call $dynrt__fn116
+                          call $dynrt__fn129
                           i32.const 1
                           i32.eq
                           i32.eqz
@@ -9967,7 +11544,7 @@
                             global.set $dynrt_global19
                             local.get 0
                             local.get 1
-                            call $dynrt__fn118
+                            call $dynrt__fn131
                             local.set 5
                           end
                           br 1 (;@10;)
@@ -9978,7 +11555,7 @@
                     local.get 1
                     local.get 4
                     global.get $dynrt_global19
-                    call $dynrt__fn4
+                    call $dynrt__fn5
                     local.set 10
                     nop
                     local.set 9
@@ -10024,20 +11601,20 @@
                   global.set $dynrt_global19
                   local.get 0
                   local.get 1
-                  call $dynrt__fn117
+                  call $dynrt__fn130
                   global.get $dynrt_global19
                   local.tee 14
                   local.set 4
                   local.get 0
                   local.get 1
-                  call $dynrt__fn118
+                  call $dynrt__fn131
                   local.set 5
                   block  ;; label = @8
                     loop  ;; label = @9
                       block  ;; label = @10
                         local.get 5
                         i32.const 1
-                        call $dynrt__fn116
+                        call $dynrt__fn129
                         i32.const 1
                         i32.eq
                         i32.eqz
@@ -10049,7 +11626,7 @@
                           global.set $dynrt_global19
                           local.get 0
                           local.get 1
-                          call $dynrt__fn118
+                          call $dynrt__fn131
                           local.set 5
                         end
                         br 1 (;@9;)
@@ -10060,7 +11637,7 @@
                   local.get 1
                   local.get 4
                   global.get $dynrt_global19
-                  call $dynrt__fn4
+                  call $dynrt__fn5
                   local.set 10
                   nop
                   local.set 9
@@ -10095,14 +11672,14 @@
                     global.set $dynrt_global19
                     local.get 0
                     local.get 1
-                    call $dynrt__fn132
+                    call $dynrt__fn145
                     local.set 8
                     local.get 0
                     local.get 1
-                    call $dynrt__fn117
+                    call $dynrt__fn130
                     local.get 0
                     local.get 1
-                    call $dynrt__fn118
+                    call $dynrt__fn131
                     i32.const 93
                     i32.eq
                     if  ;; label = @9
@@ -10140,7 +11717,7 @@
                       i32.add
                       global.set $dynrt_global19
                       local.get 2
-                      call $dynrt__fn41
+                      call $dynrt__fn53
                       local.get 4
                       i32.const -1
                       i32.ne
@@ -10155,18 +11732,18 @@
                       i32.eq
                       if  ;; label = @10
                         local.get 4
-                        call $dynrt__fn41
+                        call $dynrt__fn53
                       end
                       call $dynrt_dynArray
                       local.set 9
                       local.get 9
-                      call $dynrt__fn41
+                      call $dynrt__fn53
                       local.get 0
                       local.get 1
-                      call $dynrt__fn117
+                      call $dynrt__fn130
                       local.get 0
                       local.get 1
-                      call $dynrt__fn118
+                      call $dynrt__fn131
                       i32.const 41
                       i32.eq
                       if  ;; label = @10
@@ -10189,17 +11766,17 @@
                                 block  ;; label = @15
                                   local.get 0
                                   local.get 1
-                                  call $dynrt__fn132
+                                  call $dynrt__fn145
                                   local.set 11
                                   local.get 9
                                   local.get 11
                                   call $dynrt_dynPush
                                   local.get 0
                                   local.get 1
-                                  call $dynrt__fn117
+                                  call $dynrt__fn130
                                   local.get 0
                                   local.get 1
-                                  call $dynrt__fn118
+                                  call $dynrt__fn131
                                   local.set 11
                                   local.get 11
                                   i32.const 44
@@ -10271,14 +11848,39 @@
                               local.get 5
                               local.get 6
                               local.get 9
-                              call $dynrt__fn80
+                              call $dynrt__fn92
                               local.set 2
                             else
-                              local.get 2
-                              local.get 9
-                              local.get 4
-                              call $dynrt__fn104
-                              local.set 2
+                              local.get 10
+                              i32.const 8
+                              i32.add
+                              i32.load
+                              i32.const 4
+                              i32.eq
+                              if (result i32)  ;; label = @14
+                                local.get 11
+                                i32.const 8
+                                i32.add
+                                i32.load
+                                i32.const 7
+                                i32.ne
+                              else
+                                i32.const 0
+                              end
+                              if  ;; label = @14
+                                local.get 4
+                                local.get 5
+                                local.get 6
+                                local.get 9
+                                call $dynrt__fn93
+                                local.set 2
+                              else
+                                local.get 2
+                                local.get 9
+                                local.get 4
+                                call $dynrt__fn117
+                                local.set 2
+                              end
                             end
                           end
                         else
@@ -10291,14 +11893,14 @@
                         call $dynrt_dynUndefined
                         local.set 2
                       end
-                      call $dynrt__fn42
+                      call $dynrt__fn54
                       local.get 8
                       i32.const 1
                       i32.eq
                       if  ;; label = @10
-                        call $dynrt__fn42
+                        call $dynrt__fn54
                       end
-                      call $dynrt__fn42
+                      call $dynrt__fn54
                       i32.const -1
                       local.set 4
                     end
@@ -10316,7 +11918,7 @@
     end
     local.get 2
     return)
-  (func $dynrt__fn124 (param i32) (result i32)
+  (func $dynrt__fn137 (param i32) (result i32)
     (local i32)
     local.get 0
     local.set 1
@@ -10337,7 +11939,7 @@
     i32.const 2
     i32.eq
     if  ;; label = @1
-      i32.const 773
+      i32.const 859
       i32.const 7
       call $dynrt_dynString
       return
@@ -10346,7 +11948,7 @@
     i32.const 3
     i32.eq
     if  ;; label = @1
-      i32.const 780
+      i32.const 866
       i32.const 6
       call $dynrt_dynString
       return
@@ -10355,7 +11957,7 @@
     i32.const 4
     i32.eq
     if  ;; label = @1
-      i32.const 786
+      i32.const 872
       i32.const 6
       call $dynrt_dynString
       return
@@ -10364,23 +11966,23 @@
     i32.const 7
     i32.eq
     if  ;; label = @1
-      i32.const 715
+      i32.const 801
       i32.const 8
       call $dynrt_dynString
       return
     end
-    i32.const 792
+    i32.const 878
     i32.const 6
     call $dynrt_dynString
     return)
-  (func $dynrt__fn125 (param i32 i32) (result i32)
+  (func $dynrt__fn138 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     local.set 2
     local.get 2
     i32.const 45
@@ -10393,7 +11995,7 @@
         global.set $dynrt_global19
         local.get 0
         local.get 1
-        call $dynrt__fn125
+        call $dynrt__fn138
         call $dynrt_dynNeg
         return
       end
@@ -10409,7 +12011,7 @@
         global.set $dynrt_global19
         local.get 0
         local.get 1
-        call $dynrt__fn125
+        call $dynrt__fn138
         call $dynrt_dynNot
         return
       end
@@ -10425,7 +12027,7 @@
         global.set $dynrt_global19
         local.get 0
         local.get 1
-        call $dynrt__fn125
+        call $dynrt__fn138
         local.set 2
         local.get 2
         call $dynrt_dynToNumber
@@ -10442,23 +12044,23 @@
         local.set 2
         local.get 0
         local.get 1
-        call $dynrt__fn135
+        call $dynrt__fn148
         global.get $dynrt_global1
         local.set 3
         global.get $dynrt_global2
         local.set 4
         local.get 3
         local.get 4
-        i32.const 798
+        i32.const 884
         i32.const 6
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
           local.get 0
           local.get 1
-          call $dynrt__fn125
-          call $dynrt__fn124
+          call $dynrt__fn138
+          call $dynrt__fn137
           return
         end
         local.get 2
@@ -10467,13 +12069,13 @@
     end
     local.get 0
     local.get 1
-    call $dynrt__fn123
+    call $dynrt__fn136
     return)
-  (func $dynrt__fn126 (param i32 i32) (result i32)
+  (func $dynrt__fn139 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt__fn125
+    call $dynrt__fn138
     local.set 2
     i32.const 1
     local.set 3
@@ -10488,10 +12090,10 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             local.set 4
             local.get 4
             i32.const 42
@@ -10517,12 +12119,12 @@
                 i32.add
                 global.set $dynrt_global19
                 local.get 2
-                call $dynrt__fn41
+                call $dynrt__fn53
                 local.get 0
                 local.get 1
-                call $dynrt__fn125
+                call $dynrt__fn138
                 local.set 5
-                call $dynrt__fn42
+                call $dynrt__fn54
                 local.get 4
                 i32.const 42
                 i32.eq
@@ -10559,11 +12161,11 @@
     end
     local.get 2
     return)
-  (func $dynrt__fn127 (param i32 i32) (result i32)
+  (func $dynrt__fn140 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt__fn126
+    call $dynrt__fn139
     local.set 2
     i32.const 1
     local.set 3
@@ -10578,10 +12180,10 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             local.set 4
             local.get 4
             i32.const 43
@@ -10600,12 +12202,12 @@
                 i32.add
                 global.set $dynrt_global19
                 local.get 2
-                call $dynrt__fn41
+                call $dynrt__fn53
                 local.get 0
                 local.get 1
-                call $dynrt__fn126
+                call $dynrt__fn139
                 local.set 5
-                call $dynrt__fn42
+                call $dynrt__fn54
                 local.get 4
                 i32.const 43
                 i32.eq
@@ -10632,11 +12234,11 @@
     end
     local.get 2
     return)
-  (func $dynrt__fn128 (param i32 i32) (result i32)
+  (func $dynrt__fn141 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt__fn127
+    call $dynrt__fn140
     local.set 2
     i32.const 1
     local.set 3
@@ -10651,14 +12253,14 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             local.set 4
             local.get 0
             local.get 1
-            call $dynrt__fn119
+            call $dynrt__fn132
             local.set 5
             local.get 4
             i32.const 60
@@ -10704,12 +12306,12 @@
                 end
                 global.set $dynrt_global19
                 local.get 2
-                call $dynrt__fn41
+                call $dynrt__fn53
                 local.get 0
                 local.get 1
-                call $dynrt__fn127
+                call $dynrt__fn140
                 local.set 6
-                call $dynrt__fn42
+                call $dynrt__fn54
                 local.get 4
                 i32.const 1
                 i32.eq
@@ -10754,11 +12356,11 @@
     end
     local.get 2
     return)
-  (func $dynrt__fn129 (param i32 i32) (result i32)
+  (func $dynrt__fn142 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt__fn128
+    call $dynrt__fn141
     local.set 2
     i32.const 1
     local.set 3
@@ -10773,14 +12375,14 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             local.set 4
             local.get 0
             local.get 1
-            call $dynrt__fn119
+            call $dynrt__fn132
             local.set 5
             local.get 4
             i32.const 61
@@ -10800,7 +12402,7 @@
                 global.set $dynrt_global19
                 local.get 0
                 local.get 1
-                call $dynrt__fn118
+                call $dynrt__fn131
                 i32.const 61
                 i32.eq
                 if  ;; label = @7
@@ -10810,12 +12412,12 @@
                   global.set $dynrt_global19
                 end
                 local.get 2
-                call $dynrt__fn41
+                call $dynrt__fn53
                 local.get 0
                 local.get 1
-                call $dynrt__fn128
+                call $dynrt__fn141
                 local.set 4
-                call $dynrt__fn42
+                call $dynrt__fn54
                 local.get 2
                 local.get 4
                 call $dynrt_dynStrictEq
@@ -10841,7 +12443,7 @@
                   global.set $dynrt_global19
                   local.get 0
                   local.get 1
-                  call $dynrt__fn118
+                  call $dynrt__fn131
                   i32.const 61
                   i32.eq
                   if  ;; label = @8
@@ -10851,12 +12453,12 @@
                     global.set $dynrt_global19
                   end
                   local.get 2
-                  call $dynrt__fn41
+                  call $dynrt__fn53
                   local.get 0
                   local.get 1
-                  call $dynrt__fn128
+                  call $dynrt__fn141
                   local.set 4
-                  call $dynrt__fn42
+                  call $dynrt__fn54
                   local.get 2
                   local.get 4
                   call $dynrt_dynStrictEq
@@ -10881,11 +12483,11 @@
     end
     local.get 2
     return)
-  (func $dynrt__fn130 (param i32 i32) (result i32)
+  (func $dynrt__fn143 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt__fn129
+    call $dynrt__fn142
     local.set 2
     i32.const 1
     local.set 3
@@ -10900,16 +12502,16 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 38
             i32.eq
             if (result i32)  ;; label = @5
               local.get 0
               local.get 1
-              call $dynrt__fn119
+              call $dynrt__fn132
               i32.const 38
               i32.eq
             else
@@ -10933,12 +12535,12 @@
                   global.set $dynrt_global21
                 end
                 local.get 2
-                call $dynrt__fn41
+                call $dynrt__fn53
                 local.get 0
                 local.get 1
-                call $dynrt__fn129
+                call $dynrt__fn142
                 local.set 6
-                call $dynrt__fn42
+                call $dynrt__fn54
                 local.get 5
                 global.set $dynrt_global21
                 local.get 4
@@ -10960,11 +12562,11 @@
     end
     local.get 2
     return)
-  (func $dynrt__fn131 (param i32 i32) (result i32)
+  (func $dynrt__fn144 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt__fn130
+    call $dynrt__fn143
     local.set 2
     i32.const 1
     local.set 3
@@ -10979,16 +12581,16 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 124
             i32.eq
             if (result i32)  ;; label = @5
               local.get 0
               local.get 1
-              call $dynrt__fn119
+              call $dynrt__fn132
               i32.const 124
               i32.eq
             else
@@ -11013,12 +12615,12 @@
                   global.set $dynrt_global21
                 end
                 local.get 2
-                call $dynrt__fn41
+                call $dynrt__fn53
                 local.get 0
                 local.get 1
-                call $dynrt__fn130
+                call $dynrt__fn143
                 local.set 6
-                call $dynrt__fn42
+                call $dynrt__fn54
                 local.get 5
                 global.set $dynrt_global21
                 local.get 4
@@ -11031,13 +12633,13 @@
             else
               local.get 0
               local.get 1
-              call $dynrt__fn118
+              call $dynrt__fn131
               i32.const 63
               i32.eq
               if (result i32)  ;; label = @6
                 local.get 0
                 local.get 1
-                call $dynrt__fn119
+                call $dynrt__fn132
                 i32.const 63
                 i32.eq
               else
@@ -11081,12 +12683,12 @@
                     global.set $dynrt_global21
                   end
                   local.get 2
-                  call $dynrt__fn41
+                  call $dynrt__fn53
                   local.get 0
                   local.get 1
-                  call $dynrt__fn130
+                  call $dynrt__fn143
                   local.set 6
-                  call $dynrt__fn42
+                  call $dynrt__fn54
                   local.get 5
                   global.set $dynrt_global21
                   local.get 4
@@ -11109,18 +12711,18 @@
     end
     local.get 2
     return)
-  (func $dynrt__fn132 (param i32 i32) (result i32)
+  (func $dynrt__fn145 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt__fn131
+    call $dynrt__fn144
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 63
     i32.eq
     if  ;; label = @1
@@ -11142,17 +12744,17 @@
         end
         local.get 0
         local.get 1
-        call $dynrt__fn132
+        call $dynrt__fn145
         local.set 4
         local.get 3
         local.tee 6
         global.set $dynrt_global21
         local.get 0
         local.get 1
-        call $dynrt__fn117
+        call $dynrt__fn130
         local.get 0
         local.get 1
-        call $dynrt__fn118
+        call $dynrt__fn131
         i32.const 58
         i32.eq
         if  ;; label = @3
@@ -11169,12 +12771,12 @@
           global.set $dynrt_global21
         end
         local.get 4
-        call $dynrt__fn41
+        call $dynrt__fn53
         local.get 0
         local.get 1
-        call $dynrt__fn132
+        call $dynrt__fn145
         local.set 5
-        call $dynrt__fn42
+        call $dynrt__fn54
         local.get 3
         local.tee 7
         global.set $dynrt_global21
@@ -11200,7 +12802,7 @@
     global.set $dynrt_global21
     local.get 0
     local.get 1
-    call $dynrt__fn132
+    call $dynrt__fn145
     return)
   (func $dynrt_dynEvalEnv (param i32 i32 i32) (result i32)
     i32.const 0
@@ -11211,23 +12813,23 @@
     global.set $dynrt_global21
     local.get 0
     local.get 1
-    call $dynrt__fn132
+    call $dynrt__fn145
     return)
-  (func $dynrt__fn135 (param i32 i32)
+  (func $dynrt__fn148 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_global19
     local.tee 4
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     local.set 3
     block  ;; label = @1
       loop  ;; label = @2
         block  ;; label = @3
           local.get 3
           i32.const 1
-          call $dynrt__fn116
+          call $dynrt__fn129
           i32.const 1
           i32.eq
           i32.eqz
@@ -11239,7 +12841,7 @@
             global.set $dynrt_global19
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             local.set 3
           end
           br 1 (;@2;)
@@ -11250,7 +12852,7 @@
     local.get 1
     local.get 2
     global.get $dynrt_global19
-    call $dynrt__fn4
+    call $dynrt__fn5
     local.set 3
     nop
     local.set 2
@@ -11260,26 +12862,26 @@
     local.get 3
     global.set $dynrt_global2
     return)
-  (func $dynrt__fn136 (param i32 i32)
+  (func $dynrt__fn149 (param i32 i32)
     (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn135
+    call $dynrt__fn148
     global.get $dynrt_global1
     local.set 2
     global.get $dynrt_global2
     local.set 3
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     call $dynrt_dynUndefined
     local.set 4
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 61
     i32.eq
     if  ;; label = @1
@@ -11290,7 +12892,7 @@
         global.set $dynrt_global19
         local.get 0
         local.get 1
-        call $dynrt__fn132
+        call $dynrt__fn145
         local.set 4
       end
     end
@@ -11306,10 +12908,10 @@
     end
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 59
     i32.eq
     if  ;; label = @1
@@ -11318,14 +12920,14 @@
       i32.add
       global.set $dynrt_global19
     end)
-  (func $dynrt__fn137 (param i32 i32)
+  (func $dynrt__fn150 (param i32 i32)
     (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     local.set 2
     call $dynrt_dynUndefined
     local.set 3
@@ -11349,7 +12951,7 @@
     if  ;; label = @1
       local.get 0
       local.get 1
-      call $dynrt__fn132
+      call $dynrt__fn145
       local.set 3
     end
     global.get $dynrt_global21
@@ -11365,10 +12967,10 @@
     end
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 59
     i32.eq
     if  ;; label = @1
@@ -11377,16 +12979,16 @@
       i32.add
       global.set $dynrt_global19
     end)
-  (func $dynrt__fn138 (param i32 i32)
+  (func $dynrt__fn151 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_global21
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 40
     i32.eq
     if  ;; label = @1
@@ -11397,14 +12999,14 @@
     end
     local.get 0
     local.get 1
-    call $dynrt__fn132
+    call $dynrt__fn145
     local.set 3
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 41
     i32.eq
     if  ;; label = @1
@@ -11448,17 +13050,17 @@
     global.set $dynrt_global21
     local.get 0
     local.get 1
-    call $dynrt__fn157
+    call $dynrt__fn170
     local.get 2
     global.set $dynrt_global21
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 0
-    call $dynrt__fn116
+    call $dynrt__fn129
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -11467,16 +13069,16 @@
         local.set 4
         local.get 0
         local.get 1
-        call $dynrt__fn135
+        call $dynrt__fn148
         global.get $dynrt_global1
         local.set 5
         global.get $dynrt_global2
         local.set 6
         local.get 5
         local.get 6
-        i32.const 804
+        i32.const 890
         i32.const 4
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
@@ -11498,7 +13100,7 @@
             global.set $dynrt_global21
             local.get 0
             local.get 1
-            call $dynrt__fn157
+            call $dynrt__fn170
             local.get 2
             global.set $dynrt_global21
           end
@@ -11508,16 +13110,16 @@
         end
       end
     end)
-  (func $dynrt__fn139 (param i32 i32)
+  (func $dynrt__fn152 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_global21
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 40
     i32.eq
     if  ;; label = @1
@@ -11545,14 +13147,14 @@
             global.set $dynrt_global19
             local.get 0
             local.get 1
-            call $dynrt__fn132
+            call $dynrt__fn145
             local.set 6
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 41
             i32.eq
             if  ;; label = @5
@@ -11588,7 +13190,7 @@
                 global.set $dynrt_global21
                 local.get 0
                 local.get 1
-                call $dynrt__fn157
+                call $dynrt__fn170
                 local.get 2
                 global.set $dynrt_global21
                 global.get $dynrt_global23
@@ -11647,7 +13249,7 @@
                 global.set $dynrt_global21
                 local.get 0
                 local.get 1
-                call $dynrt__fn157
+                call $dynrt__fn170
                 local.get 2
                 global.set $dynrt_global21
                 i32.const 0
@@ -11660,13 +13262,13 @@
         end
       end
     end)
-  (func $dynrt__fn140 (param i32 i32)
+  (func $dynrt__fn153 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_global21
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     global.get $dynrt_global19
     local.set 3
     i32.const 1
@@ -11689,31 +13291,31 @@
             global.set $dynrt_global21
             local.get 0
             local.get 1
-            call $dynrt__fn157
+            call $dynrt__fn170
             local.get 2
             local.tee 9
             global.set $dynrt_global21
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 0
-            call $dynrt__fn116
+            call $dynrt__fn129
             i32.const 1
             i32.eq
             if  ;; label = @5
               local.get 0
               local.get 1
-              call $dynrt__fn135
+              call $dynrt__fn148
             end
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 40
             i32.eq
             if  ;; label = @5
@@ -11724,14 +13326,14 @@
             end
             local.get 0
             local.get 1
-            call $dynrt__fn132
+            call $dynrt__fn145
             local.set 4
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 41
             i32.eq
             if  ;; label = @5
@@ -11742,10 +13344,10 @@
             end
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -11825,26 +13427,26 @@
         end
       end
     end)
-  (func $dynrt__fn141 (param i32 i32)
+  (func $dynrt__fn154 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_global21
     local.set 2
     global.get $dynrt_global20
     local.set 3
     local.get 3
-    call $dynrt__fn100
+    call $dynrt__fn113
     local.set 4
     local.get 4
     local.tee 13
     global.set $dynrt_global20
     local.get 4
-    call $dynrt__fn41
+    call $dynrt__fn53
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 40
     i32.eq
     if  ;; label = @1
@@ -11857,7 +13459,7 @@
     local.set 4
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     i32.const 0
     local.tee 14
     local.set 5
@@ -11869,16 +13471,16 @@
     local.set 8
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 0
-    call $dynrt__fn116
+    call $dynrt__fn129
     i32.const 1
     i32.eq
     if  ;; label = @1
       block  ;; label = @2
         local.get 0
         local.get 1
-        call $dynrt__fn135
+        call $dynrt__fn148
         global.get $dynrt_global1
         local.set 9
         global.get $dynrt_global2
@@ -11889,9 +13491,9 @@
         local.set 12
         local.get 9
         local.get 10
-        i32.const 808
+        i32.const 894
         i32.const 5
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if (result i32)  ;; label = @3
@@ -11899,9 +13501,9 @@
         else
           local.get 9
           local.get 10
-          i32.const 813
+          i32.const 899
           i32.const 3
-          call $dynrt__fn112
+          call $dynrt__fn125
           i32.const 1
           i32.eq
         end
@@ -11910,9 +13512,9 @@
         else
           local.get 9
           local.get 10
-          i32.const 816
+          i32.const 902
           i32.const 3
-          call $dynrt__fn112
+          call $dynrt__fn125
           i32.const 1
           i32.eq
         end
@@ -11920,9 +13522,9 @@
           block  ;; label = @4
             local.get 9
             local.get 10
-            i32.const 816
+            i32.const 902
             i32.const 3
-            call $dynrt__fn112
+            call $dynrt__fn125
             i32.const 1
             i32.ne
             if  ;; label = @5
@@ -11931,10 +13533,10 @@
             end
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn135
+            call $dynrt__fn148
             global.get $dynrt_global1
             local.set 11
             global.get $dynrt_global2
@@ -11943,28 +13545,28 @@
         end
         local.get 0
         local.get 1
-        call $dynrt__fn117
+        call $dynrt__fn130
         local.get 0
         local.get 1
-        call $dynrt__fn118
+        call $dynrt__fn131
         i32.const 0
-        call $dynrt__fn116
+        call $dynrt__fn129
         i32.const 1
         i32.eq
         if  ;; label = @3
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn135
+            call $dynrt__fn148
             global.get $dynrt_global1
             local.set 9
             global.get $dynrt_global2
             local.set 10
             local.get 9
             local.get 10
-            i32.const 819
+            i32.const 905
             i32.const 2
-            call $dynrt__fn112
+            call $dynrt__fn125
             i32.const 1
             i32.eq
             if  ;; label = @5
@@ -11979,9 +13581,9 @@
             else
               local.get 9
               local.get 10
-              i32.const 821
+              i32.const 907
               i32.const 2
-              call $dynrt__fn112
+              call $dynrt__fn125
               i32.const 1
               i32.eq
               if  ;; label = @6
@@ -12009,7 +13611,7 @@
       local.get 7
       local.get 2
       local.get 8
-      call $dynrt__fn143
+      call $dynrt__fn156
     else
       local.get 5
       i32.const 2
@@ -12021,7 +13623,7 @@
         local.get 7
         local.get 2
         local.get 8
-        call $dynrt__fn142
+        call $dynrt__fn155
       else
         block  ;; label = @3
           local.get 4
@@ -12030,28 +13632,28 @@
           local.get 1
           local.get 2
           local.get 8
-          call $dynrt__fn144
+          call $dynrt__fn157
         end
       end
     end
-    call $dynrt__fn42
+    call $dynrt__fn54
     local.get 3
     local.tee 15
     global.set $dynrt_global20)
-  (func $dynrt__fn142 (param i32 i32 i32 i32 i32 i32)
+  (func $dynrt__fn155 (param i32 i32 i32 i32 i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_global20
     local.set 6
     local.get 0
     local.get 1
-    call $dynrt__fn132
+    call $dynrt__fn145
     local.set 7
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 41
     i32.eq
     if  ;; label = @1
@@ -12111,7 +13713,7 @@
         global.set $dynrt_global19
         local.get 0
         local.get 1
-        call $dynrt__fn157
+        call $dynrt__fn170
         local.get 4
         global.set $dynrt_global21
         return
@@ -12137,7 +13739,7 @@
             i32.eq
             if  ;; label = @5
               local.get 6
-              call $dynrt__fn100
+              call $dynrt__fn113
               local.set 12
             end
             local.get 12
@@ -12145,7 +13747,7 @@
             local.get 3
             local.get 7
             local.get 11
-            call $dynrt__fn75
+            call $dynrt__fn87
             call $dynrt_dynSet
             local.get 12
             local.tee 16
@@ -12156,7 +13758,7 @@
             global.set $dynrt_global21
             local.get 0
             local.get 1
-            call $dynrt__fn157
+            call $dynrt__fn170
             local.get 4
             global.set $dynrt_global21
             local.get 6
@@ -12216,20 +13818,20 @@
         end
       end
     end)
-  (func $dynrt__fn143 (param i32 i32 i32 i32 i32 i32)
+  (func $dynrt__fn156 (param i32 i32 i32 i32 i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_global20
     local.set 6
     local.get 0
     local.get 1
-    call $dynrt__fn132
+    call $dynrt__fn145
     local.set 7
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 41
     i32.eq
     if  ;; label = @1
@@ -12289,7 +13891,7 @@
         global.set $dynrt_global19
         local.get 0
         local.get 1
-        call $dynrt__fn157
+        call $dynrt__fn170
         local.get 4
         global.set $dynrt_global21
         return
@@ -12315,7 +13917,7 @@
             i32.eq
             if  ;; label = @5
               local.get 6
-              call $dynrt__fn100
+              call $dynrt__fn113
               local.set 12
             end
             local.get 12
@@ -12334,7 +13936,7 @@
             global.set $dynrt_global21
             local.get 0
             local.get 1
-            call $dynrt__fn157
+            call $dynrt__fn170
             local.get 4
             global.set $dynrt_global21
             local.get 6
@@ -12394,7 +13996,7 @@
         end
       end
     end)
-  (func $dynrt__fn144 (param i32 i32 i32 i32)
+  (func $dynrt__fn157 (param i32 i32 i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_global20
     local.set 4
@@ -12412,7 +14014,7 @@
     global.set $dynrt_global21
     local.get 0
     local.get 1
-    call $dynrt__fn157
+    call $dynrt__fn170
     global.get $dynrt_global19
     local.set 6
     local.get 4
@@ -12424,7 +14026,7 @@
     if  ;; label = @1
       local.get 4
       local.get 5
-      call $dynrt__fn102
+      call $dynrt__fn115
       local.set 7
     end
     i32.const 1
@@ -12446,27 +14048,27 @@
             global.set $dynrt_global19
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             i32.const 1
             local.set 10
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 59
             i32.ne
             if  ;; label = @5
               local.get 0
               local.get 1
-              call $dynrt__fn132
+              call $dynrt__fn145
               call $dynrt_dynToBool
               local.set 10
             end
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -12482,20 +14084,20 @@
             global.set $dynrt_global21
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 41
             i32.ne
             if  ;; label = @5
               local.get 0
               local.get 1
-              call $dynrt__fn157
+              call $dynrt__fn170
             end
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 41
             i32.eq
             if  ;; label = @5
@@ -12537,7 +14139,7 @@
                 global.set $dynrt_global21
                 local.get 0
                 local.get 1
-                call $dynrt__fn157
+                call $dynrt__fn170
                 local.get 2
                 global.set $dynrt_global21
                 global.get $dynrt_global23
@@ -12583,7 +14185,7 @@
                       if  ;; label = @10
                         local.get 7
                         local.get 5
-                        call $dynrt__fn102
+                        call $dynrt__fn115
                         local.set 10
                       end
                       local.get 10
@@ -12596,13 +14198,13 @@
                       global.set $dynrt_global21
                       local.get 0
                       local.get 1
-                      call $dynrt__fn118
+                      call $dynrt__fn131
                       i32.const 41
                       i32.ne
                       if  ;; label = @10
                         local.get 0
                         local.get 1
-                        call $dynrt__fn157
+                        call $dynrt__fn170
                       end
                       local.get 2
                       local.tee 17
@@ -12637,7 +14239,7 @@
                 global.set $dynrt_global21
                 local.get 0
                 local.get 1
-                call $dynrt__fn157
+                call $dynrt__fn170
                 local.get 2
                 global.set $dynrt_global21
                 i32.const 0
@@ -12653,16 +14255,16 @@
     local.get 4
     local.tee 27
     global.set $dynrt_global20)
-  (func $dynrt__fn145 (param i32 i32)
+  (func $dynrt__fn158 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_global21
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 40
     i32.eq
     if  ;; label = @1
@@ -12673,14 +14275,14 @@
     end
     local.get 0
     local.get 1
-    call $dynrt__fn132
+    call $dynrt__fn145
     local.set 3
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 41
     i32.eq
     if  ;; label = @1
@@ -12691,10 +14293,10 @@
     end
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 123
     i32.eq
     if  ;; label = @1
@@ -12721,10 +14323,10 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             local.set 7
             local.get 7
             i32.const 125
@@ -12742,7 +14344,7 @@
             else
               local.get 7
               i32.const 0
-              call $dynrt__fn116
+              call $dynrt__fn129
               i32.const 1
               i32.eq
               if  ;; label = @6
@@ -12751,16 +14353,16 @@
                   local.set 7
                   local.get 0
                   local.get 1
-                  call $dynrt__fn135
+                  call $dynrt__fn148
                   global.get $dynrt_global1
                   local.set 8
                   global.get $dynrt_global2
                   local.set 9
                   local.get 8
                   local.get 9
-                  i32.const 823
+                  i32.const 909
                   i32.const 4
-                  call $dynrt__fn112
+                  call $dynrt__fn125
                   i32.const 1
                   i32.eq
                   if  ;; label = @8
@@ -12772,14 +14374,14 @@
                         block  ;; label = @11
                           local.get 0
                           local.get 1
-                          call $dynrt__fn132
+                          call $dynrt__fn145
                           local.set 7
                           local.get 0
                           local.get 1
-                          call $dynrt__fn117
+                          call $dynrt__fn130
                           local.get 0
                           local.get 1
-                          call $dynrt__fn118
+                          call $dynrt__fn131
                           i32.const 58
                           i32.eq
                           if  ;; label = @12
@@ -12806,16 +14408,16 @@
                           global.set $dynrt_global21
                           local.get 0
                           local.get 1
-                          call $dynrt__fn132
+                          call $dynrt__fn145
                           drop
                           local.get 7
                           global.set $dynrt_global21
                           local.get 0
                           local.get 1
-                          call $dynrt__fn117
+                          call $dynrt__fn130
                           local.get 0
                           local.get 1
-                          call $dynrt__fn118
+                          call $dynrt__fn131
                           i32.const 58
                           i32.eq
                           if  ;; label = @12
@@ -12828,24 +14430,24 @@
                       end
                       local.get 0
                       local.get 1
-                      call $dynrt__fn146
+                      call $dynrt__fn159
                     end
                   else
                     local.get 8
                     local.get 9
-                    i32.const 827
+                    i32.const 913
                     i32.const 7
-                    call $dynrt__fn112
+                    call $dynrt__fn125
                     i32.const 1
                     i32.eq
                     if  ;; label = @9
                       block  ;; label = @10
                         local.get 0
                         local.get 1
-                        call $dynrt__fn117
+                        call $dynrt__fn130
                         local.get 0
                         local.get 1
-                        call $dynrt__fn118
+                        call $dynrt__fn131
                         i32.const 58
                         i32.eq
                         if  ;; label = @11
@@ -12858,7 +14460,7 @@
                         local.set 5
                         local.get 0
                         local.get 1
-                        call $dynrt__fn146
+                        call $dynrt__fn159
                       end
                     else
                       block  ;; label = @10
@@ -12866,7 +14468,7 @@
                         global.set $dynrt_global19
                         local.get 0
                         local.get 1
-                        call $dynrt__fn146
+                        call $dynrt__fn159
                       end
                     end
                   end
@@ -12910,7 +14512,7 @@
         global.set $dynrt_global21
         local.get 0
         local.get 1
-        call $dynrt__fn147
+        call $dynrt__fn160
         local.get 2
         global.set $dynrt_global21
       end
@@ -12919,10 +14521,10 @@
     global.set $dynrt_global19
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 125
     i32.eq
     if  ;; label = @1
@@ -12938,7 +14540,7 @@
       i32.const 0
       global.set $dynrt_global26
     end)
-  (func $dynrt__fn146 (param i32 i32)
+  (func $dynrt__fn159 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     i32.const 1
     local.set 2
@@ -12953,10 +14555,10 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             local.set 3
             local.get 3
             i32.const 125
@@ -12974,7 +14576,7 @@
             else
               local.get 3
               i32.const 0
-              call $dynrt__fn116
+              call $dynrt__fn129
               i32.const 1
               i32.eq
               if  ;; label = @6
@@ -12983,16 +14585,16 @@
                   local.set 3
                   local.get 0
                   local.get 1
-                  call $dynrt__fn135
+                  call $dynrt__fn148
                   global.get $dynrt_global1
                   local.set 4
                   global.get $dynrt_global2
                   local.set 5
                   local.get 4
                   local.get 5
-                  i32.const 823
+                  i32.const 909
                   i32.const 4
-                  call $dynrt__fn112
+                  call $dynrt__fn125
                   i32.const 1
                   i32.eq
                   if (result i32)  ;; label = @8
@@ -13000,9 +14602,9 @@
                   else
                     local.get 4
                     local.get 5
-                    i32.const 827
+                    i32.const 913
                     i32.const 7
-                    call $dynrt__fn112
+                    call $dynrt__fn125
                     i32.const 1
                     i32.eq
                   end
@@ -13024,7 +14626,7 @@
                       global.set $dynrt_global21
                       local.get 0
                       local.get 1
-                      call $dynrt__fn157
+                      call $dynrt__fn170
                       local.get 3
                       local.tee 7
                       global.set $dynrt_global21
@@ -13039,7 +14641,7 @@
                   global.set $dynrt_global21
                   local.get 0
                   local.get 1
-                  call $dynrt__fn157
+                  call $dynrt__fn170
                   local.get 3
                   global.set $dynrt_global21
                 end
@@ -13050,7 +14652,7 @@
         end
       end
     end)
-  (func $dynrt__fn147 (param i32 i32)
+  (func $dynrt__fn160 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32)
     i32.const 1
     local.set 2
@@ -13065,10 +14667,10 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             local.set 3
             local.get 3
             i32.const 125
@@ -13086,7 +14688,7 @@
             else
               local.get 3
               i32.const 0
-              call $dynrt__fn116
+              call $dynrt__fn129
               i32.const 1
               i32.eq
               if  ;; label = @6
@@ -13095,16 +14697,16 @@
                   local.set 3
                   local.get 0
                   local.get 1
-                  call $dynrt__fn135
+                  call $dynrt__fn148
                   global.get $dynrt_global1
                   local.set 4
                   global.get $dynrt_global2
                   local.set 5
                   local.get 4
                   local.get 5
-                  i32.const 823
+                  i32.const 909
                   i32.const 4
-                  call $dynrt__fn112
+                  call $dynrt__fn125
                   i32.const 1
                   i32.eq
                   if  ;; label = @8
@@ -13115,16 +14717,16 @@
                       global.set $dynrt_global21
                       local.get 0
                       local.get 1
-                      call $dynrt__fn132
+                      call $dynrt__fn145
                       drop
                       local.get 3
                       global.set $dynrt_global21
                       local.get 0
                       local.get 1
-                      call $dynrt__fn117
+                      call $dynrt__fn130
                       local.get 0
                       local.get 1
-                      call $dynrt__fn118
+                      call $dynrt__fn131
                       i32.const 58
                       i32.eq
                       if  ;; label = @10
@@ -13137,19 +14739,19 @@
                   else
                     local.get 4
                     local.get 5
-                    i32.const 827
+                    i32.const 913
                     i32.const 7
-                    call $dynrt__fn112
+                    call $dynrt__fn125
                     i32.const 1
                     i32.eq
                     if  ;; label = @9
                       block  ;; label = @10
                         local.get 0
                         local.get 1
-                        call $dynrt__fn117
+                        call $dynrt__fn130
                         local.get 0
                         local.get 1
-                        call $dynrt__fn118
+                        call $dynrt__fn131
                         i32.const 58
                         i32.eq
                         if  ;; label = @11
@@ -13165,7 +14767,7 @@
                         global.set $dynrt_global19
                         local.get 0
                         local.get 1
-                        call $dynrt__fn157
+                        call $dynrt__fn170
                       end
                     end
                   end
@@ -13173,7 +14775,7 @@
               else
                 local.get 0
                 local.get 1
-                call $dynrt__fn157
+                call $dynrt__fn170
               end
             end
             global.get $dynrt_global26
@@ -13209,25 +14811,25 @@
         end
       end
     end)
-  (func $dynrt__fn148 (param i32 i32)
+  (func $dynrt__fn161 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_global21
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 2
     local.tee 17
     global.set $dynrt_global21
     local.get 0
     local.get 1
-    call $dynrt__fn157
+    call $dynrt__fn170
     local.get 2
     local.tee 18
     global.set $dynrt_global21
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     i32.const 0
     local.tee 19
     local.set 3
@@ -13236,25 +14838,25 @@
     local.set 4
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 0
-    call $dynrt__fn116
+    call $dynrt__fn129
     i32.const 1
     i32.eq
     if  ;; label = @1
       block  ;; label = @2
         local.get 0
         local.get 1
-        call $dynrt__fn135
+        call $dynrt__fn148
         global.get $dynrt_global1
         local.set 5
         global.get $dynrt_global2
         local.set 6
         local.get 5
         local.get 6
-        i32.const 834
+        i32.const 920
         i32.const 5
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
@@ -13277,10 +14879,10 @@
         local.set 4
         local.get 0
         local.get 1
-        call $dynrt__fn117
+        call $dynrt__fn130
         local.get 0
         local.get 1
-        call $dynrt__fn118
+        call $dynrt__fn131
         i32.const 40
         i32.eq
         if  ;; label = @3
@@ -13291,20 +14893,20 @@
             global.set $dynrt_global19
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn135
+            call $dynrt__fn148
             global.get $dynrt_global1
             local.set 3
             global.get $dynrt_global2
             local.set 4
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 41
             i32.eq
             if  ;; label = @5
@@ -13317,7 +14919,7 @@
         end
         local.get 0
         local.get 1
-        call $dynrt__fn117
+        call $dynrt__fn130
         global.get $dynrt_global28
         i32.const 1
         i32.eq
@@ -13337,7 +14939,7 @@
             global.get $dynrt_global20
             local.set 6
             local.get 6
-            call $dynrt__fn100
+            call $dynrt__fn113
             local.set 7
             local.get 4
             i32.const 0
@@ -13353,13 +14955,13 @@
             local.tee 9
             global.set $dynrt_global20
             local.get 7
-            call $dynrt__fn41
+            call $dynrt__fn53
             i32.const 1
             global.set $dynrt_global21
             local.get 0
             local.get 1
-            call $dynrt__fn157
-            call $dynrt__fn42
+            call $dynrt__fn170
+            call $dynrt__fn54
             local.get 6
             local.tee 10
             global.set $dynrt_global20
@@ -13372,7 +14974,7 @@
             global.set $dynrt_global21
             local.get 0
             local.get 1
-            call $dynrt__fn157
+            call $dynrt__fn170
             local.get 2
             global.set $dynrt_global21
           end
@@ -13381,7 +14983,7 @@
     end
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     i32.const 0
     local.tee 21
     local.set 3
@@ -13390,25 +14992,25 @@
     local.set 4
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 0
-    call $dynrt__fn116
+    call $dynrt__fn129
     i32.const 1
     i32.eq
     if  ;; label = @1
       block  ;; label = @2
         local.get 0
         local.get 1
-        call $dynrt__fn135
+        call $dynrt__fn148
         global.get $dynrt_global1
         local.set 5
         global.get $dynrt_global2
         local.set 6
         local.get 5
         local.get 6
-        i32.const 839
+        i32.const 925
         i32.const 7
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
@@ -13451,13 +15053,13 @@
         global.set $dynrt_global27
         local.get 0
         local.get 1
-        call $dynrt__fn117
+        call $dynrt__fn130
         local.get 2
         local.tee 15
         global.set $dynrt_global21
         local.get 0
         local.get 1
-        call $dynrt__fn157
+        call $dynrt__fn170
         local.get 2
         local.tee 16
         global.set $dynrt_global21
@@ -13499,13 +15101,13 @@
         end
       end
     end)
-  (func $dynrt__fn149 (param i32 i32) (result i32)
+  (func $dynrt__fn162 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32)
     call $dynrt_dynArray
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 40
     i32.eq
     if  ;; label = @1
@@ -13516,10 +15118,10 @@
         global.set $dynrt_global19
         local.get 0
         local.get 1
-        call $dynrt__fn117
+        call $dynrt__fn130
         local.get 0
         local.get 1
-        call $dynrt__fn118
+        call $dynrt__fn131
         i32.const 41
         i32.eq
         if  ;; label = @3
@@ -13542,10 +15144,10 @@
                   block  ;; label = @8
                     local.get 0
                     local.get 1
-                    call $dynrt__fn117
+                    call $dynrt__fn130
                     local.get 0
                     local.get 1
-                    call $dynrt__fn135
+                    call $dynrt__fn148
                     global.get $dynrt_global1
                     local.set 4
                     global.get $dynrt_global2
@@ -13557,10 +15159,10 @@
                     call $dynrt_dynPush
                     local.get 0
                     local.get 1
-                    call $dynrt__fn117
+                    call $dynrt__fn130
                     local.get 0
                     local.get 1
-                    call $dynrt__fn118
+                    call $dynrt__fn131
                     local.set 4
                     local.get 4
                     i32.const 44
@@ -13596,7 +15198,7 @@
     end
     local.get 2
     return)
-  (func $dynrt__fn150 (param i32 i32) (result i32)
+  (func $dynrt__fn163 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_global19
     local.tee 12
@@ -13636,7 +15238,7 @@
             local.get 0
             local.get 1
             global.get $dynrt_global19
-            call $dynrt__fn5
+            call $dynrt__fn8
             local.set 7
             local.get 4
             i32.const 1
@@ -13751,13 +15353,13 @@
     local.get 1
     local.get 2
     global.get $dynrt_global19
-    call $dynrt__fn4
+    call $dynrt__fn5
     local.set 3
     nop
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 125
     i32.eq
     if  ;; label = @1
@@ -13770,20 +15372,20 @@
     local.get 3
     call $dynrt_dynString
     return)
-  (func $dynrt__fn151 (param i32 i32) (result i32)
+  (func $dynrt__fn164 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 123
     i32.eq
     if  ;; label = @1
       local.get 0
       local.get 1
-      call $dynrt__fn150
+      call $dynrt__fn163
       return
     end
     global.get $dynrt_global19
@@ -13795,7 +15397,7 @@
     global.set $dynrt_global21
     local.get 0
     local.get 1
-    call $dynrt__fn132
+    call $dynrt__fn145
     drop
     local.get 3
     global.set $dynrt_global21
@@ -13804,57 +15406,57 @@
     local.get 1
     local.get 2
     global.get $dynrt_global19
-    call $dynrt__fn4
+    call $dynrt__fn5
     call $dynrt_dynString
     return)
-  (func $dynrt__fn152 (param i32 i32) (result i32)
+  (func $dynrt__fn165 (param i32 i32) (result i32)
     (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 0
-    call $dynrt__fn116
+    call $dynrt__fn129
     i32.const 1
     i32.eq
     if  ;; label = @1
       local.get 0
       local.get 1
-      call $dynrt__fn135
+      call $dynrt__fn148
     end
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn149
+    call $dynrt__fn162
     local.set 2
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     i32.const 520
     i32.const 0
     call $dynrt_dynString
     local.set 3
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 123
     i32.eq
     if  ;; label = @1
       local.get 0
       local.get 1
-      call $dynrt__fn150
+      call $dynrt__fn163
       local.set 3
     end
     local.get 2
     local.get 3
     global.get $dynrt_global20
-    call $dynrt__fn95
+    call $dynrt__fn108
     return)
-  (func $dynrt__fn153 (param i32 i32) (result i32)
+  (func $dynrt__fn166 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     global.get $dynrt_global19
     local.set 2
@@ -13886,7 +15488,7 @@
             local.get 0
             local.get 1
             global.get $dynrt_global19
-            call $dynrt__fn5
+            call $dynrt__fn8
             local.set 7
             local.get 4
             i32.const 1
@@ -14000,19 +15602,19 @@
     end
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     i32.const 0
     local.tee 15
     local.set 3
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 61
     i32.eq
     if (result i32)  ;; label = @1
       local.get 0
       local.get 1
-      call $dynrt__fn119
+      call $dynrt__fn132
       i32.const 62
       i32.eq
     else
@@ -14026,47 +15628,47 @@
     global.set $dynrt_global19
     local.get 3
     return)
-  (func $dynrt__fn154 (param i32 i32)
+  (func $dynrt__fn167 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn135
+    call $dynrt__fn148
     global.get $dynrt_global1
     local.set 2
     global.get $dynrt_global2
     local.set 3
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn149
+    call $dynrt__fn162
     local.set 4
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     i32.const 520
     i32.const 0
     call $dynrt_dynString
     local.set 5
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 123
     i32.eq
     if  ;; label = @1
       local.get 0
       local.get 1
-      call $dynrt__fn150
+      call $dynrt__fn163
       local.set 5
     end
     local.get 4
     local.get 5
     global.get $dynrt_global20
-    call $dynrt__fn95
+    call $dynrt__fn108
     local.set 4
     global.get $dynrt_global21
     i32.const 1
@@ -14078,21 +15680,21 @@
       local.get 4
       call $dynrt_dynSet
     end)
-  (func $dynrt__fn155 (param i32 i32)
+  (func $dynrt__fn168 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn135
+    call $dynrt__fn148
     global.get $dynrt_global1
     local.set 2
     global.get $dynrt_global2
     local.set 3
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     i32.const -1
     local.tee 29
     local.set 4
@@ -14100,35 +15702,35 @@
     local.set 5
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 0
-    call $dynrt__fn116
+    call $dynrt__fn129
     i32.const 1
     i32.eq
     if  ;; label = @1
       block  ;; label = @2
         local.get 0
         local.get 1
-        call $dynrt__fn135
+        call $dynrt__fn148
         global.get $dynrt_global1
         local.set 6
         global.get $dynrt_global2
         local.set 7
         local.get 6
         local.get 7
-        i32.const 846
+        i32.const 932
         i32.const 7
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn135
+            call $dynrt__fn148
             global.get $dynrt_global1
             local.set 6
             global.get $dynrt_global2
@@ -14142,7 +15744,7 @@
               global.get $dynrt_global20
               local.get 6
               local.get 7
-              call $dynrt__fn99
+              call $dynrt__fn112
             end
             local.set 6
             local.get 6
@@ -14154,7 +15756,7 @@
                 local.tee 20
                 local.set 4
                 local.get 6
-                i32.const 853
+                i32.const 939
                 i32.const 7
                 call $dynrt_dynGet
                 local.set 6
@@ -14169,7 +15771,7 @@
             end
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
           end
         end
       end
@@ -14195,14 +15797,14 @@
     call $dynrt_dynObject
     local.set 7
     global.get $dynrt_global20
-    call $dynrt__fn100
+    call $dynrt__fn113
     local.set 8
     local.get 5
     i32.const -1
     i32.ne
     if  ;; label = @1
       local.get 8
-      i32.const 761
+      i32.const 847
       i32.const 12
       local.get 5
       call $dynrt_dynSet
@@ -14212,7 +15814,7 @@
     i32.ne
     if  ;; label = @1
       local.get 8
-      i32.const 743
+      i32.const 829
       i32.const 12
       local.get 4
       call $dynrt_dynSet
@@ -14232,7 +15834,7 @@
     local.set 12
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 123
     i32.eq
     if  ;; label = @1
@@ -14243,19 +15845,19 @@
     end
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     block  ;; label = @1
       loop  ;; label = @2
         block  ;; label = @3
           local.get 0
           local.get 1
-          call $dynrt__fn118
+          call $dynrt__fn131
           i32.const 125
           i32.ne
           if (result i32)  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const -1
             i32.ne
           else
@@ -14265,7 +15867,7 @@
           br_if 2 (;@1;)
           local.get 0
           local.get 1
-          call $dynrt__fn118
+          call $dynrt__fn131
           i32.const 59
           i32.eq
           if  ;; label = @4
@@ -14276,7 +15878,7 @@
               global.set $dynrt_global19
               local.get 0
               local.get 1
-              call $dynrt__fn117
+              call $dynrt__fn130
             end
           else
             block  ;; label = @5
@@ -14287,27 +15889,27 @@
               local.set 14
               local.get 0
               local.get 1
-              call $dynrt__fn135
+              call $dynrt__fn148
               global.get $dynrt_global1
               local.set 15
               global.get $dynrt_global2
               local.set 16
               local.get 0
               local.get 1
-              call $dynrt__fn117
+              call $dynrt__fn130
               local.get 15
               local.get 16
-              i32.const 860
+              i32.const 946
               i32.const 6
-              call $dynrt__fn112
+              call $dynrt__fn125
               i32.const 1
               i32.eq
               if (result i32)  ;; label = @6
                 local.get 0
                 local.get 1
-                call $dynrt__fn118
+                call $dynrt__fn131
                 i32.const 0
-                call $dynrt__fn116
+                call $dynrt__fn129
                 i32.const 1
                 i32.eq
               else
@@ -14319,29 +15921,29 @@
                   local.set 13
                   local.get 0
                   local.get 1
-                  call $dynrt__fn135
+                  call $dynrt__fn148
                   global.get $dynrt_global1
                   local.set 15
                   global.get $dynrt_global2
                   local.set 16
                   local.get 0
                   local.get 1
-                  call $dynrt__fn117
+                  call $dynrt__fn130
                 end
               end
               local.get 15
               local.get 16
-              i32.const 866
+              i32.const 952
               i32.const 3
-              call $dynrt__fn112
+              call $dynrt__fn125
               i32.const 1
               i32.eq
               if (result i32)  ;; label = @6
                 local.get 0
                 local.get 1
-                call $dynrt__fn118
+                call $dynrt__fn131
                 i32.const 0
-                call $dynrt__fn116
+                call $dynrt__fn129
                 i32.const 1
                 i32.eq
               else
@@ -14353,29 +15955,29 @@
                   local.set 14
                   local.get 0
                   local.get 1
-                  call $dynrt__fn135
+                  call $dynrt__fn148
                   global.get $dynrt_global1
                   local.set 15
                   global.get $dynrt_global2
                   local.set 16
                   local.get 0
                   local.get 1
-                  call $dynrt__fn117
+                  call $dynrt__fn130
                 end
               else
                 local.get 15
                 local.get 16
-                i32.const 869
+                i32.const 955
                 i32.const 3
-                call $dynrt__fn112
+                call $dynrt__fn125
                 i32.const 1
                 i32.eq
                 if (result i32)  ;; label = @7
                   local.get 0
                   local.get 1
-                  call $dynrt__fn118
+                  call $dynrt__fn131
                   i32.const 0
-                  call $dynrt__fn116
+                  call $dynrt__fn129
                   i32.const 1
                   i32.eq
                 else
@@ -14387,20 +15989,20 @@
                     local.set 14
                     local.get 0
                     local.get 1
-                    call $dynrt__fn135
+                    call $dynrt__fn148
                     global.get $dynrt_global1
                     local.set 15
                     global.get $dynrt_global2
                     local.set 16
                     local.get 0
                     local.get 1
-                    call $dynrt__fn117
+                    call $dynrt__fn130
                   end
                 end
               end
               local.get 0
               local.get 1
-              call $dynrt__fn118
+              call $dynrt__fn131
               local.set 17
               local.get 17
               i32.const 40
@@ -14409,20 +16011,20 @@
                 block  ;; label = @7
                   local.get 0
                   local.get 1
-                  call $dynrt__fn149
+                  call $dynrt__fn162
                   local.set 17
                   local.get 0
                   local.get 1
-                  call $dynrt__fn117
+                  call $dynrt__fn130
                   local.get 0
                   local.get 1
-                  call $dynrt__fn150
+                  call $dynrt__fn163
                   local.set 18
                   local.get 15
                   local.get 16
-                  i32.const 872
+                  i32.const 958
                   i32.const 11
-                  call $dynrt__fn112
+                  call $dynrt__fn125
                   i32.const 1
                   i32.eq
                   if  ;; label = @8
@@ -14430,7 +16032,7 @@
                       local.get 17
                       local.set 10
                       local.get 18
-                      call $dynrt__fn65
+                      call $dynrt__fn77
                       global.get $dynrt_global1
                       local.set 5
                       global.get $dynrt_global2
@@ -14441,7 +16043,7 @@
                       local.get 17
                       local.get 18
                       local.get 8
-                      call $dynrt__fn95
+                      call $dynrt__fn108
                       local.set 17
                       local.get 15
                       local.set 18
@@ -14452,7 +16054,7 @@
                       i32.eq
                       if  ;; label = @10
                         block  ;; label = @11
-                          i32.const 697
+                          i32.const 783
                           local.set 18
                           i32.const 6
                           local.set 19
@@ -14460,7 +16062,7 @@
                           local.get 19
                           local.get 15
                           local.get 16
-                          call $dynrt__fn3
+                          call $dynrt__fn4
                           local.set 19
                           nop
                           local.set 18
@@ -14471,7 +16073,7 @@
                         i32.eq
                         if  ;; label = @11
                           block  ;; label = @12
-                            i32.const 709
+                            i32.const 795
                             local.set 18
                             i32.const 6
                             local.set 19
@@ -14479,7 +16081,7 @@
                             local.get 19
                             local.get 15
                             local.get 16
-                            call $dynrt__fn3
+                            call $dynrt__fn4
                             local.set 19
                             nop
                             local.set 18
@@ -14525,7 +16127,7 @@
                           global.set $dynrt_global19
                           local.get 0
                           local.get 1
-                          call $dynrt__fn132
+                          call $dynrt__fn145
                           local.set 13
                         end
                       end
@@ -14558,7 +16160,7 @@
                           global.set $dynrt_global19
                           local.get 0
                           local.get 1
-                          call $dynrt__fn117
+                          call $dynrt__fn130
                           global.get $dynrt_global19
                           local.tee 22
                           local.set 13
@@ -14568,7 +16170,7 @@
                           global.set $dynrt_global21
                           local.get 0
                           local.get 1
-                          call $dynrt__fn132
+                          call $dynrt__fn145
                           drop
                           local.get 14
                           global.set $dynrt_global21
@@ -14576,7 +16178,7 @@
                           local.get 1
                           local.get 13
                           global.get $dynrt_global19
-                          call $dynrt__fn4
+                          call $dynrt__fn5
                           local.set 14
                           nop
                           local.set 13
@@ -14590,9 +16192,9 @@
                       local.set 12
                       local.get 11
                       local.get 12
-                      i32.const 883
+                      i32.const 969
                       i32.const 5
-                      call $dynrt__fn3
+                      call $dynrt__fn4
                       local.set 12
                       nop
                       local.set 11
@@ -14600,15 +16202,15 @@
                       local.get 12
                       local.get 15
                       local.get 16
-                      call $dynrt__fn3
+                      call $dynrt__fn4
                       local.set 12
                       nop
                       local.set 11
                       local.get 11
                       local.get 12
-                      i32.const 888
+                      i32.const 974
                       i32.const 3
-                      call $dynrt__fn3
+                      call $dynrt__fn4
                       local.set 12
                       nop
                       local.set 11
@@ -14616,15 +16218,15 @@
                       local.get 12
                       local.get 13
                       local.get 14
-                      call $dynrt__fn3
+                      call $dynrt__fn4
                       local.set 12
                       nop
                       local.set 11
                       local.get 11
                       local.get 12
-                      i32.const 891
+                      i32.const 977
                       i32.const 2
-                      call $dynrt__fn3
+                      call $dynrt__fn4
                       local.set 12
                       nop
                       local.set 11
@@ -14632,10 +16234,10 @@
                   end
                   local.get 0
                   local.get 1
-                  call $dynrt__fn117
+                  call $dynrt__fn130
                   local.get 0
                   local.get 1
-                  call $dynrt__fn118
+                  call $dynrt__fn131
                   i32.const 59
                   i32.eq
                   if  ;; label = @8
@@ -14648,7 +16250,7 @@
               end
               local.get 0
               local.get 1
-              call $dynrt__fn117
+              call $dynrt__fn130
             end
           end
           br 1 (;@2;)
@@ -14657,7 +16259,7 @@
     end
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 125
     i32.eq
     if  ;; label = @1
@@ -14705,7 +16307,7 @@
         local.get 12
         local.get 5
         local.get 9
-        call $dynrt__fn3
+        call $dynrt__fn4
         local.set 12
         nop
         local.set 11
@@ -14714,17 +16316,17 @@
         local.get 12
         call $dynrt_dynString
         local.get 8
-        call $dynrt__fn95
+        call $dynrt__fn108
         local.set 5
         local.get 7
-        i32.const 755
+        i32.const 841
         i32.const 6
         local.get 5
         call $dynrt_dynSet
       end
     end
     local.get 7
-    i32.const 853
+    i32.const 939
     i32.const 7
     local.get 6
     call $dynrt_dynSet
@@ -14733,7 +16335,7 @@
     i32.ne
     if  ;; label = @1
       local.get 7
-      i32.const 743
+      i32.const 829
       i32.const 12
       local.get 4
       call $dynrt_dynSet
@@ -14748,7 +16350,7 @@
       local.get 7
       call $dynrt_dynSet
     end)
-  (func $dynrt__fn156 (param i32 i32) (result i32)
+  (func $dynrt__fn169 (param i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.tee 5
@@ -14766,7 +16368,7 @@
     call $dynrt_dynObject
     local.set 2
     local.get 0
-    i32.const 853
+    i32.const 939
     i32.const 7
     call $dynrt_dynGet
     local.set 3
@@ -14787,7 +16389,7 @@
       end
     end
     local.get 0
-    i32.const 755
+    i32.const 841
     i32.const 6
     call $dynrt_dynGet
     local.set 3
@@ -14808,21 +16410,21 @@
           local.get 3
           local.get 1
           local.get 2
-          call $dynrt__fn104
+          call $dynrt__fn117
           drop
         end
       end
     end
     local.get 2
     return)
-  (func $dynrt__fn157 (param i32 i32)
+  (func $dynrt__fn170 (param i32 i32)
     (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     local.set 2
     local.get 2
     i32.const 123
@@ -14836,26 +16438,26 @@
         global.get $dynrt_global20
         local.set 2
         local.get 2
-        call $dynrt__fn100
+        call $dynrt__fn113
         local.set 3
         local.get 3
         local.tee 14
         global.set $dynrt_global20
         local.get 3
-        call $dynrt__fn41
+        call $dynrt__fn53
         local.get 0
         local.get 1
-        call $dynrt__fn158
-        call $dynrt__fn42
+        call $dynrt__fn171
+        call $dynrt__fn54
         local.get 2
         local.tee 15
         global.set $dynrt_global20
         local.get 0
         local.get 1
-        call $dynrt__fn117
+        call $dynrt__fn130
         local.get 0
         local.get 1
-        call $dynrt__fn118
+        call $dynrt__fn131
         i32.const 125
         i32.eq
         if  ;; label = @3
@@ -14881,7 +16483,7 @@
     end
     local.get 2
     i32.const 0
-    call $dynrt__fn116
+    call $dynrt__fn129
     i32.const 1
     i32.eq
     if  ;; label = @1
@@ -14890,16 +16492,16 @@
         local.set 2
         local.get 0
         local.get 1
-        call $dynrt__fn135
+        call $dynrt__fn148
         global.get $dynrt_global1
         local.set 3
         global.get $dynrt_global2
         local.set 4
         local.get 3
         local.get 4
-        i32.const 813
+        i32.const 899
         i32.const 3
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if (result i32)  ;; label = @3
@@ -14907,9 +16509,9 @@
         else
           local.get 3
           local.get 4
-          i32.const 808
+          i32.const 894
           i32.const 5
-          call $dynrt__fn112
+          call $dynrt__fn125
           i32.const 1
           i32.eq
         end
@@ -14918,9 +16520,9 @@
         else
           local.get 3
           local.get 4
-          i32.const 816
+          i32.const 902
           i32.const 3
-          call $dynrt__fn112
+          call $dynrt__fn125
           i32.const 1
           i32.eq
         end
@@ -14928,75 +16530,105 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn136
+            call $dynrt__fn149
             return
           end
         end
         local.get 3
         local.get 4
-        i32.const 893
+        i32.const 979
         i32.const 2
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn138
+            call $dynrt__fn151
             return
           end
         end
         local.get 3
         local.get 4
-        i32.const 895
+        i32.const 981
         i32.const 5
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn139
+            call $dynrt__fn152
             return
           end
         end
         local.get 3
         local.get 4
-        i32.const 900
+        i32.const 986
         i32.const 2
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn140
+            call $dynrt__fn153
             return
           end
         end
         local.get 3
         local.get 4
-        i32.const 902
+        i32.const 988
         i32.const 3
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn141
+            call $dynrt__fn154
             return
           end
         end
         local.get 3
         local.get 4
-        i32.const 905
+        i32.const 991
         i32.const 6
-        call $dynrt__fn112
+        call $dynrt__fn125
+        i32.const 1
+        i32.eq
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 0
+            local.get 1
+            call $dynrt__fn158
+            return
+          end
+        end
+        local.get 3
+        local.get 4
+        i32.const 997
+        i32.const 3
+        call $dynrt__fn125
+        i32.const 1
+        i32.eq
+        if  ;; label = @3
+          block  ;; label = @4
+            local.get 0
+            local.get 1
+            call $dynrt__fn161
+            return
+          end
+        end
+        local.get 3
+        local.get 4
+        i32.const 1000
+        i32.const 5
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
@@ -15004,36 +16636,6 @@
             local.get 0
             local.get 1
             call $dynrt__fn145
-            return
-          end
-        end
-        local.get 3
-        local.get 4
-        i32.const 911
-        i32.const 3
-        call $dynrt__fn112
-        i32.const 1
-        i32.eq
-        if  ;; label = @3
-          block  ;; label = @4
-            local.get 0
-            local.get 1
-            call $dynrt__fn148
-            return
-          end
-        end
-        local.get 3
-        local.get 4
-        i32.const 914
-        i32.const 5
-        call $dynrt__fn112
-        i32.const 1
-        i32.eq
-        if  ;; label = @3
-          block  ;; label = @4
-            local.get 0
-            local.get 1
-            call $dynrt__fn132
             local.set 2
             global.get $dynrt_global21
             i32.const 1
@@ -15048,10 +16650,10 @@
             end
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -15065,54 +16667,54 @@
         end
         local.get 3
         local.get 4
-        i32.const 919
+        i32.const 1005
         i32.const 6
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn137
+            call $dynrt__fn150
             return
           end
         end
         local.get 3
         local.get 4
-        i32.const 715
+        i32.const 801
         i32.const 8
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn154
+            call $dynrt__fn167
             return
           end
         end
         local.get 3
         local.get 4
-        i32.const 925
+        i32.const 1011
         i32.const 5
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn155
+            call $dynrt__fn168
             return
           end
         end
         local.get 3
         local.get 4
-        i32.const 930
+        i32.const 1016
         i32.const 5
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
@@ -15126,10 +16728,10 @@
             end
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -15143,9 +16745,9 @@
         end
         local.get 3
         local.get 4
-        i32.const 935
+        i32.const 1021
         i32.const 8
-        call $dynrt__fn112
+        call $dynrt__fn125
         i32.const 1
         i32.eq
         if  ;; label = @3
@@ -15159,10 +16761,10 @@
             end
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -15176,10 +16778,10 @@
         end
         local.get 0
         local.get 1
-        call $dynrt__fn117
+        call $dynrt__fn130
         local.get 0
         local.get 1
-        call $dynrt__fn118
+        call $dynrt__fn131
         local.set 5
         local.get 5
         i32.const 61
@@ -15187,7 +16789,7 @@
         if (result i32)  ;; label = @3
           local.get 0
           local.get 1
-          call $dynrt__fn119
+          call $dynrt__fn132
           i32.const 61
           i32.ne
         else
@@ -15196,7 +16798,7 @@
         if (result i32)  ;; label = @3
           local.get 0
           local.get 1
-          call $dynrt__fn119
+          call $dynrt__fn132
           i32.const 62
           i32.ne
         else
@@ -15210,7 +16812,7 @@
             global.set $dynrt_global19
             local.get 0
             local.get 1
-            call $dynrt__fn132
+            call $dynrt__fn145
             local.set 2
             global.get $dynrt_global21
             i32.const 1
@@ -15220,14 +16822,14 @@
               local.get 3
               local.get 4
               local.get 2
-              call $dynrt__fn101
+              call $dynrt__fn114
             end
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -15245,7 +16847,7 @@
         if (result i32)  ;; label = @3
           local.get 0
           local.get 1
-          call $dynrt__fn119
+          call $dynrt__fn132
           i32.const 43
           i32.eq
         else
@@ -15265,7 +16867,7 @@
                 global.get $dynrt_global20
                 local.get 3
                 local.get 4
-                call $dynrt__fn99
+                call $dynrt__fn112
                 local.set 5
                 global.get $dynrt_global20
                 local.get 3
@@ -15274,15 +16876,15 @@
                 f64.const 0x1.0p+0 (;=1;)
                 call $dynrt_dynNumber
                 call $dynrt_dynAdd
-                call $dynrt__fn101
+                call $dynrt__fn114
               end
             end
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -15300,7 +16902,7 @@
         if (result i32)  ;; label = @3
           local.get 0
           local.get 1
-          call $dynrt__fn119
+          call $dynrt__fn132
           i32.const 45
           i32.eq
         else
@@ -15320,7 +16922,7 @@
                 global.get $dynrt_global20
                 local.get 3
                 local.get 4
-                call $dynrt__fn99
+                call $dynrt__fn112
                 local.set 5
                 global.get $dynrt_global20
                 local.get 3
@@ -15329,15 +16931,15 @@
                 f64.const 0x1.0p+0 (;=1;)
                 call $dynrt_dynNumber
                 call $dynrt_dynSub
-                call $dynrt__fn101
+                call $dynrt__fn114
               end
             end
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -15376,7 +16978,7 @@
         if (result i32)  ;; label = @3
           local.get 0
           local.get 1
-          call $dynrt__fn119
+          call $dynrt__fn132
           i32.const 61
           i32.eq
         else
@@ -15392,7 +16994,7 @@
             global.set $dynrt_global19
             local.get 0
             local.get 1
-            call $dynrt__fn132
+            call $dynrt__fn145
             local.set 6
             global.get $dynrt_global21
             i32.const 1
@@ -15402,7 +17004,7 @@
                 global.get $dynrt_global20
                 local.get 3
                 local.get 4
-                call $dynrt__fn99
+                call $dynrt__fn112
                 local.set 5
                 local.get 5
                 local.tee 16
@@ -15445,15 +17047,15 @@
                 local.get 3
                 local.get 4
                 local.get 5
-                call $dynrt__fn101
+                call $dynrt__fn114
               end
             end
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -15486,7 +17088,7 @@
               global.get $dynrt_global20
               local.get 3
               local.get 4
-              call $dynrt__fn99
+              call $dynrt__fn112
             end
             local.set 3
             local.get 3
@@ -15511,10 +17113,10 @@
                   block  ;; label = @8
                     local.get 0
                     local.get 1
-                    call $dynrt__fn117
+                    call $dynrt__fn130
                     local.get 0
                     local.get 1
-                    call $dynrt__fn118
+                    call $dynrt__fn131
                     local.set 6
                     i32.const 0
                     local.tee 19
@@ -15537,7 +17139,7 @@
                         global.set $dynrt_global19
                         local.get 0
                         local.get 1
-                        call $dynrt__fn135
+                        call $dynrt__fn148
                         global.get $dynrt_global1
                         local.set 8
                         global.get $dynrt_global2
@@ -15558,14 +17160,14 @@
                           global.set $dynrt_global19
                           local.get 0
                           local.get 1
-                          call $dynrt__fn132
+                          call $dynrt__fn145
                           local.set 10
                           local.get 0
                           local.get 1
-                          call $dynrt__fn117
+                          call $dynrt__fn130
                           local.get 0
                           local.get 1
-                          call $dynrt__fn118
+                          call $dynrt__fn131
                           i32.const 93
                           i32.eq
                           if  ;; label = @12
@@ -15587,14 +17189,14 @@
                       block  ;; label = @10
                         local.get 0
                         local.get 1
-                        call $dynrt__fn117
+                        call $dynrt__fn130
                         local.get 0
                         local.get 1
-                        call $dynrt__fn118
+                        call $dynrt__fn131
                         local.set 11
                         local.get 0
                         local.get 1
-                        call $dynrt__fn119
+                        call $dynrt__fn132
                         local.set 6
                         local.get 11
                         i32.const 61
@@ -15684,7 +17286,7 @@
                             end
                             local.get 0
                             local.get 1
-                            call $dynrt__fn132
+                            call $dynrt__fn145
                             local.set 6
                             global.get $dynrt_global21
                             i32.const 1
@@ -15757,12 +17359,12 @@
                                   local.get 8
                                   local.get 9
                                   local.get 5
-                                  call $dynrt__fn114
+                                  call $dynrt__fn127
                                 else
                                   local.get 3
                                   local.get 10
                                   local.get 5
-                                  call $dynrt__fn81
+                                  call $dynrt__fn94
                                 end
                               end
                             end
@@ -15802,10 +17404,10 @@
               block  ;; label = @6
                 local.get 0
                 local.get 1
-                call $dynrt__fn117
+                call $dynrt__fn130
                 local.get 0
                 local.get 1
-                call $dynrt__fn118
+                call $dynrt__fn131
                 i32.const 59
                 i32.eq
                 if  ;; label = @7
@@ -15821,7 +17423,7 @@
             global.set $dynrt_global19
             local.get 0
             local.get 1
-            call $dynrt__fn132
+            call $dynrt__fn145
             local.set 2
             global.get $dynrt_global21
             i32.const 1
@@ -15832,10 +17434,10 @@
             end
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             i32.const 59
             i32.eq
             if  ;; label = @5
@@ -15851,7 +17453,7 @@
         global.set $dynrt_global19
         local.get 0
         local.get 1
-        call $dynrt__fn132
+        call $dynrt__fn145
         local.set 2
         global.get $dynrt_global21
         i32.const 1
@@ -15862,10 +17464,10 @@
         end
         local.get 0
         local.get 1
-        call $dynrt__fn117
+        call $dynrt__fn130
         local.get 0
         local.get 1
-        call $dynrt__fn118
+        call $dynrt__fn131
         i32.const 59
         i32.eq
         if  ;; label = @3
@@ -15879,7 +17481,7 @@
     end
     local.get 0
     local.get 1
-    call $dynrt__fn132
+    call $dynrt__fn145
     local.set 2
     global.get $dynrt_global21
     i32.const 1
@@ -15890,10 +17492,10 @@
     end
     local.get 0
     local.get 1
-    call $dynrt__fn117
+    call $dynrt__fn130
     local.get 0
     local.get 1
-    call $dynrt__fn118
+    call $dynrt__fn131
     i32.const 59
     i32.eq
     if  ;; label = @1
@@ -15902,7 +17504,7 @@
       i32.add
       global.set $dynrt_global19
     end)
-  (func $dynrt__fn158 (param i32 i32)
+  (func $dynrt__fn171 (param i32 i32)
     (local i32) (local i32)
     i32.const 1
     local.set 2
@@ -15917,10 +17519,10 @@
           block  ;; label = @4
             local.get 0
             local.get 1
-            call $dynrt__fn117
+            call $dynrt__fn130
             local.get 0
             local.get 1
-            call $dynrt__fn118
+            call $dynrt__fn131
             local.set 3
             local.get 3
             i32.const -1
@@ -15937,7 +17539,7 @@
               local.set 2
             else
               block  ;; label = @6
-                call $dynrt__fn53
+                call $dynrt__fn65
                 global.get $dynrt_global21
                 local.set 3
                 global.get $dynrt_global23
@@ -15970,7 +17572,7 @@
                 end
                 local.get 0
                 local.get 1
-                call $dynrt__fn157
+                call $dynrt__fn170
                 local.get 3
                 global.set $dynrt_global21
               end
@@ -15983,7 +17585,7 @@
   (func $dynrt_dynRun (param i32 i32 i32) (result i32)
     (local i32) (local i32) (local i32) (local i32) (local i32)
     local.get 2
-    call $dynrt__fn41
+    call $dynrt__fn53
     i32.const 0
     local.tee 4
     global.set $dynrt_global19
@@ -16004,7 +17606,7 @@
     global.set $dynrt_global25
     local.get 0
     local.get 1
-    call $dynrt__fn158
+    call $dynrt__fn171
     global.get $dynrt_global23
     i32.const 1
     i32.eq
@@ -16014,7 +17616,7 @@
       global.get $dynrt_global25
     end
     local.set 3
-    call $dynrt__fn42
+    call $dynrt__fn54
     local.get 3
     return)
   ;; data from dynrt
@@ -16045,62 +17647,74 @@
   (data (;24;) (i32.const 647) "some")
   (data (;25;) (i32.const 651) "every")
   (data (;26;) (i32.const 656) "sort")
-  (data (;27;) (i32.const 660) "this")
-  (data (;28;) (i32.const 664) "abs")
-  (data (;29;) (i32.const 667) "sqrt")
-  (data (;30;) (i32.const 671) "floor")
-  (data (;31;) (i32.const 676) "ceil")
-  (data (;32;) (i32.const 680) "round")
-  (data (;33;) (i32.const 685) "min")
-  (data (;34;) (i32.const 688) "max")
-  (data (;35;) (i32.const 691) "len")
-  (data (;36;) (i32.const 694) "inc")
-  (data (;37;) (i32.const 697) "__get_")
-  (data (;38;) (i32.const 703) "length")
-  (data (;39;) (i32.const 709) "__set_")
-  (data (;40;) (i32.const 715) "function")
-  (data (;41;) (i32.const 723) "Object")
-  (data (;42;) (i32.const 729) "create")
-  (data (;43;) (i32.const 735) "new")
-  (data (;44;) (i32.const 738) "super")
-  (data (;45;) (i32.const 743) "__superclass")
-  (data (;46;) (i32.const 755) "__ctor")
-  (data (;47;) (i32.const 761) "__superproto")
-  (data (;48;) (i32.const 773) "boolean")
-  (data (;49;) (i32.const 780) "number")
-  (data (;50;) (i32.const 786) "string")
-  (data (;51;) (i32.const 792) "object")
-  (data (;52;) (i32.const 798) "typeof")
-  (data (;53;) (i32.const 804) "else")
-  (data (;54;) (i32.const 808) "const")
-  (data (;55;) (i32.const 813) "let")
-  (data (;56;) (i32.const 816) "var")
-  (data (;57;) (i32.const 819) "of")
-  (data (;58;) (i32.const 821) "in")
-  (data (;59;) (i32.const 823) "case")
-  (data (;60;) (i32.const 827) "default")
-  (data (;61;) (i32.const 834) "catch")
-  (data (;62;) (i32.const 839) "finally")
-  (data (;63;) (i32.const 846) "extends")
-  (data (;64;) (i32.const 853) "__proto")
-  (data (;65;) (i32.const 860) "static")
-  (data (;66;) (i32.const 866) "get")
-  (data (;67;) (i32.const 869) "set")
-  (data (;68;) (i32.const 872) "constructor")
-  (data (;69;) (i32.const 883) "this.")
-  (data (;70;) (i32.const 888) " = ")
-  (data (;71;) (i32.const 891) "; ")
-  (data (;72;) (i32.const 893) "if")
-  (data (;73;) (i32.const 895) "while")
-  (data (;74;) (i32.const 900) "do")
-  (data (;75;) (i32.const 902) "for")
-  (data (;76;) (i32.const 905) "switch")
-  (data (;77;) (i32.const 911) "try")
-  (data (;78;) (i32.const 914) "throw")
-  (data (;79;) (i32.const 919) "return")
-  (data (;80;) (i32.const 925) "class")
-  (data (;81;) (i32.const 930) "break")
-  (data (;82;) (i32.const 935) "continue")
+  (data (;27;) (i32.const 660) "charAt")
+  (data (;28;) (i32.const 666) "charCodeAt")
+  (data (;29;) (i32.const 676) "toUpperCase")
+  (data (;30;) (i32.const 687) "toLowerCase")
+  (data (;31;) (i32.const 698) "trim")
+  (data (;32;) (i32.const 702) "startsWith")
+  (data (;33;) (i32.const 712) "endsWith")
+  (data (;34;) (i32.const 720) "repeat")
+  (data (;35;) (i32.const 726) "padStart")
+  (data (;36;) (i32.const 734) " ")
+  (data (;37;) (i32.const 735) "padEnd")
+  (data (;38;) (i32.const 741) "split")
+  (data (;39;) (i32.const 746) "this")
+  (data (;40;) (i32.const 750) "abs")
+  (data (;41;) (i32.const 753) "sqrt")
+  (data (;42;) (i32.const 757) "floor")
+  (data (;43;) (i32.const 762) "ceil")
+  (data (;44;) (i32.const 766) "round")
+  (data (;45;) (i32.const 771) "min")
+  (data (;46;) (i32.const 774) "max")
+  (data (;47;) (i32.const 777) "len")
+  (data (;48;) (i32.const 780) "inc")
+  (data (;49;) (i32.const 783) "__get_")
+  (data (;50;) (i32.const 789) "length")
+  (data (;51;) (i32.const 795) "__set_")
+  (data (;52;) (i32.const 801) "function")
+  (data (;53;) (i32.const 809) "Object")
+  (data (;54;) (i32.const 815) "create")
+  (data (;55;) (i32.const 821) "new")
+  (data (;56;) (i32.const 824) "super")
+  (data (;57;) (i32.const 829) "__superclass")
+  (data (;58;) (i32.const 841) "__ctor")
+  (data (;59;) (i32.const 847) "__superproto")
+  (data (;60;) (i32.const 859) "boolean")
+  (data (;61;) (i32.const 866) "number")
+  (data (;62;) (i32.const 872) "string")
+  (data (;63;) (i32.const 878) "object")
+  (data (;64;) (i32.const 884) "typeof")
+  (data (;65;) (i32.const 890) "else")
+  (data (;66;) (i32.const 894) "const")
+  (data (;67;) (i32.const 899) "let")
+  (data (;68;) (i32.const 902) "var")
+  (data (;69;) (i32.const 905) "of")
+  (data (;70;) (i32.const 907) "in")
+  (data (;71;) (i32.const 909) "case")
+  (data (;72;) (i32.const 913) "default")
+  (data (;73;) (i32.const 920) "catch")
+  (data (;74;) (i32.const 925) "finally")
+  (data (;75;) (i32.const 932) "extends")
+  (data (;76;) (i32.const 939) "__proto")
+  (data (;77;) (i32.const 946) "static")
+  (data (;78;) (i32.const 952) "get")
+  (data (;79;) (i32.const 955) "set")
+  (data (;80;) (i32.const 958) "constructor")
+  (data (;81;) (i32.const 969) "this.")
+  (data (;82;) (i32.const 974) " = ")
+  (data (;83;) (i32.const 977) "; ")
+  (data (;84;) (i32.const 979) "if")
+  (data (;85;) (i32.const 981) "while")
+  (data (;86;) (i32.const 986) "do")
+  (data (;87;) (i32.const 988) "for")
+  (data (;88;) (i32.const 991) "switch")
+  (data (;89;) (i32.const 997) "try")
+  (data (;90;) (i32.const 1000) "throw")
+  (data (;91;) (i32.const 1005) "return")
+  (data (;92;) (i32.const 1011) "class")
+  (data (;93;) (i32.const 1016) "break")
+  (data (;94;) (i32.const 1021) "continue")
   (export "dynNumber" (func $dynrt_dynNumber))
   (export "dynNumberValue" (func $dynrt_dynNumberValue))
   (export "dynString" (func $dynrt_dynString))

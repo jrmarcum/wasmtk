@@ -1053,6 +1053,17 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
      (c) inline `(arr as Int32Array)[1]` cast-then-index unsupported — bind the view to a local first.
      **Gaps:** `splice`/`flat`/`flatMap` and `["method"]()` bracket-form dispatch; `sort` default is numeric
      (JS default is string-lexicographic — a documented deviation).
+   - **2f.3 String methods** — **SHIPPED 2026-06-26** (test `18zr`): `charAt`/`charCodeAt`/`toUpperCase`/
+     `toLowerCase`/`trim`/`slice` (incl. negative)/`indexOf`/`includes`/`startsWith`/`endsWith`/`repeat`/
+     `padStart`/`padEnd`/`concat`/`split`. New `dynStringMethod(str,name,args)`; dispatched from
+     `parsePostfix` when the receiver is a tag-4 string and the member isn't a tag-7 function (same
+     discriminator as arrays). **Implementation leverage:** the dynrt string is unboxed to a wasic `string`
+     via `boxToStr`, then the wasic compiler's OWN string ops (Phase 11/27) do the work; results re-box via
+     `dynString` (so methods chain — `"…".toLowerCase().split(" ")`) — `split` returns a dynrt array of
+     strings. `.length` was already a dynMember property. **Purely interpreter-side.** Suite 352/352
+     (+`18zr`), bindgen 131/131, jstyper 73/73. Subset note: every string-method CALL result is bound to a
+     `string` local before re-boxing (the subset can't pass a string-returning call straight into another
+     call). **Gaps:** `replace`/`replaceAll`/`substring`/`trimStart`/`trimEnd`/`at`/`split` with regex.
 7. **2e.9 generators**, then **2e.10 async/await** (hardest — needs a microtask loop; ties to #13).
 8. **2h removal** — the full-dynamic-compile entry + the Javy-parity conformance gate + delete
    `src/javyc.ts` & wiring.
