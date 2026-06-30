@@ -1142,6 +1142,22 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
    Suite 358/358 (+`18zx`), bindgen 131/131, jstyper 73/73. **Known v1 limits:** no deferred microtask
    ORDERING (everything settles synchronously); `async` arrows parse as plain arrows (await still works — a
    standalone operator; only the return isn't promise-wrapped, which await tolerates); no real async I/O.
+7c. **2e.11 remaining ES6 surface** — **SHIPPED 2026-06-30** (test `18zy`): the last of the common ES6
+   syntax in eval source — `instanceof`, object/call spread, destructuring, class expressions. **Purely
+   interpreter-side.** Details: (a) **`instanceof`** — `dynInstanceof(obj,cls)` walks obj's `__proto__`
+   chain (slot 2) looking for `cls`'s `__proto`; wired into `parseRel` as a `c===105` ('i') operator branch
+   (readIdent + save/restore fall-through so a leading-`i` identifier isn't mis-eaten). (b) **object spread
+   `{ ...src }`** — in the object-literal parser, a `...` prefix copies src's own keys (`dynObjKeyVal` +
+   `dynObjValAt`) into the literal via `dynSet`; later keys win (dynSet updates in place). (c) **call spread
+   `f(...args)`** — in the parsePostfix call-arg loop, a `...` prefix expands a tag-5 array's elements
+   (`dynArrGet`) as individual args. (d) **destructuring `const`/`let`/`var`** — `runDecl` branches on a
+   leading `[` (array: comma-separated names incl. holes `[a, , c]` → bound to `arr[i]`, missing →
+   undefined) or `{` (object: `key` and `key: alias` → bound to `dynMember(obj,key)`). (e) **class
+   expressions `const C = class {…}`** — `runClassDecl` refactored into a shared `buildClass(s)` helper
+   (parses optional name + `extends`, returns the class object, stashing any name under `__name`);
+   `runClassDecl` binds `__name`, and a new `parsePrimary` `class` handler returns the object directly
+   (anonymous + `extends` both work). Driver `main_es6misc.ts` (18 checkRun cases). Suite 359/359 (+`18zy`),
+   bindgen 131/131, jstyper 73/73.
 8. **2h removal** — the full-dynamic-compile entry + the Javy-parity conformance gate + delete
    `src/javyc.ts` & wiring.
 

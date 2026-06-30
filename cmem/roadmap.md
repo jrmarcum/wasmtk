@@ -1,10 +1,24 @@
 # Roadmap, phase status & vision
 
-## Release status (2026-06-26)
+## Release status (2026-06-30)
 
-**Version 1.10.9 is PUBLISHED to JSR** (`@jrmarcum/wasmtk@1.10.9` is `latest`). The 1.10.x line is the
-**Route A javyc-retirement track** — growing the `#14` own dynamic runtime (dynrt) interpreter toward
-full-JS coverage. **1.10.9 is the STDLIB + generators batch** — the dynrt interpreter now has the JS
+**Version 1.11.0 is PUBLISHED to JSR** (`@jrmarcum/wasmtk@1.11.0` is `latest`). The 1.10.x–1.11.x line is
+the **Route A javyc-retirement track** — growing the `#14` own dynamic runtime (dynrt) interpreter toward
+full-JS coverage. **1.11.0 is the async + remaining-ES6 batch** (two increments): **2e.10** async/await +
+Promise in eval source — a **SYNCHRONOUS** model (the re-parse interpreter has no event loop): an `async
+function` (id=-4) runs to completion and wraps its result in a settled Promise (rejected if it throws),
+`await` unwraps a settled promise (throws on rejected → integrates with 2e.6 try/catch), `.then`/`.catch`/
+`.finally` run callbacks immediately, `Promise.resolve`/`reject`/`all` (`18zx`); and **2e.11** the
+remaining common ES6 surface — `instanceof` (walks the instance `__proto__` chain for the class
+prototype), object spread `{ ...o }` + call spread `f(...args)`, array/object destructuring (`const
+[a, , c] = …` incl. holes/missing, `const { x, y: z } = …` incl. rename), and class expressions (`const C
+= class {…}`, anonymous + `extends`; `runClassDecl` refactored into a shared `buildClass` helper) (`18zy`).
+Both increments are purely interpreter-side (no wasic compiler change). At the 1.11.0 tag: `tests/wasm_wasi`
+suite **359/359**, bindgen 131/131, jstyper 73/73. JSR score 100% (provenance `true`, docs clean). With
+2e.11, the dynrt interpreter's ES6 syntactic surface is essentially complete; what remains on Route A is
+**2h removal** (the full-dynamic-compile entry + a Javy-parity conformance gate + deleting `src/javyc.ts`).
+
+**Version 1.10.9** (2026-06-26) was the STDLIB + generators batch — the dynrt interpreter gained the JS
 standard-library surface plus generators: **2f.2** Array methods (push/pop/shift/unshift/indexOf/
 lastIndexOf/includes/at/join/slice/concat/reverse/sort + map/filter/forEach/reduce/find/findIndex/some/
 every — `18zq`); **2f.3** String methods (charAt/charCodeAt/case/trim/slice/indexOf/includes/startsWith/
