@@ -1113,7 +1113,21 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
      division ambiguity is deferred); deep recursion uses the WAT call stack.
    - **f-series stdlib COMPLETE** (2f.2 Array, 2f.3 String, 2f.4 Object/Math, 2f.5 JSON, 2f.6 Map/Set,
      2f.7 RegExp). The remaining 2f items (e.g. Number/Promise/Date statics) fold into later increments.
-7. **2e.9 generators**, then **2e.10 async/await** (hardest — needs a microtask loop; ties to #13).
+7. **2e.9 generators** — **SHIPPED 2026-06-26** (test `18zw`): `function*` / `yield` via **EAGER
+   COLLECTION** (the re-parse interpreter can't suspend a call stack). A `function*` is marked id=-3 on its
+   function cell (`runFuncDecl` detects the `*`); calling it runs the body to completion in `dynApplyThis`
+   (the `id===-1||id===-3` branch) with a fresh `genYields` array installed (gcPushRoot-ed across the run —
+   nested generators stack their own collections), `yield x` (handled in `parsePrimary`) pushes x onto
+   `genYields`, and the call returns a generator OBJECT holding `__genv` (collected values) + `__geni`
+   (cursor). `g.next()` (`dynGenMethod`, dispatched in parsePostfix for an object with `__genv`) returns a
+   fresh `{ value, done }` and advances the cursor; `for…of` over a generator extracts `__genv` (in
+   `runForOf`). Verified: next-sequence/done, empty gen, for-of, while-loops, params, computed + conditional
+   yields, and NESTED generators (90). **Purely interpreter-side.** Suite 357/357 (+`18zw`), bindgen
+   131/131, jstyper 73/73. **Known v1 limits (documented):** FINITE generators only — an infinite generator
+   (`while(true) yield…`) collects forever / hangs; `yield` evaluates to `undefined` (no value passed back
+   via `next(v)`); lazy/incremental side effects differ from JS (the whole body runs at call time). True
+   coroutine suspension would need a CPS transform or a separate VM — out of scope for the re-parse model.
+   then **2e.10 async/await** (hardest — needs a microtask loop; ties to #13).
 8. **2h removal** — the full-dynamic-compile entry + the Javy-parity conformance gate + delete
    `src/javyc.ts` & wiring.
 

@@ -2182,6 +2182,31 @@ function dynRegexMethod(re: i32, name: string, args: i32): i32 {
   return dynUndefined();
 }
 
+// #14 2e.9 — generator object methods. A generator is a dynrt object holding `__genv` (the eagerly
+// collected yields) + `__geni` (the cursor). `next()` returns a fresh `{ value, done }` object and
+// advances the cursor.
+function dynGenMethod(g: i32, name: string, args: i32): i32 {
+  if (strEq(name, "next") === 1) {
+    const gv: i32 = dynGet(g, "__genv");
+    const gi: i32 = dynGet(g, "__geni");
+    const idxf: f64 = dynNumberValue(gi);
+    const idx: i32 = idxf as unknown as i32;
+    const len: i32 = dynArrLen(gv);
+    const result: i32 = dynObject();
+    if (idx < len) {
+      dynSet(result, "value", dynArrGet(gv, idx));
+      dynSet(result, "done", dynBool(0));
+      const ni: i32 = idx + 1;
+      dynSet(g, "__geni", dynNumber(ni));
+    } else {
+      dynSet(result, "value", dynUndefined());
+      dynSet(result, "done", dynBool(1));
+    }
+    return result;
+  }
+  return dynUndefined();
+}
+
 // #14 2e.4 — `container[idx] = val` for arrays (number index) and objects (string key); mirrors
 // dynIndexValue's dispatch. Non-matching container/index kinds are no-ops in v1.
 function dynIndexSet(container: i32, idxBox: i32, val: i32): void {
@@ -2535,7 +2560,7 @@ function dynApplyThis(callee: i32, argsArr: i32, thisVal: i32): i32 {
     return __host.call(cn[2], argsArr);
   }
   const argc: i32 = dynArrLen(argsArr);
-  if (id === -1) { // USER function (2d.2): run its body in a fresh scope linked to its defining env
+  if (id === -1 || id === -3) { // USER function (id -1); GENERATOR function (id -3, #14 2e.9)
     const bodyBox: i32 = cn[2];
     const paramsArr: i32 = cn[3];
     const defEnv: i32 = cn[4];
@@ -2553,6 +2578,14 @@ function dynApplyThis(callee: i32, argsArr: i32, thisVal: i32): i32 {
       i = i + 1;
     }
     const bodySrc: string = boxToStr(bodyBox);
+    // #14 2e.9 — generator: install a fresh yield-collection (rooted across the body run; nested
+    // generators stack their own collections — each gcPushRoot stays live until its body finishes).
+    const savedYields: i32 = genYields;
+    if (id === -3) {
+      genYields = dynArray();
+      gcPushRoot(genYields);
+    }
+    const collected: i32 = genYields;
     // dynRun resets the shared parser globals — save/restore them around the nested run so the
     // OUTER parse resumes correctly (the source string `s` is a param, so it stays on the stack).
     const savedPos: i32 = evalPos;
@@ -2568,6 +2601,14 @@ function dynApplyThis(callee: i32, argsArr: i32, thisVal: i32): i32 {
     evalReturned = savedRet;
     evalReturnVal = savedRetVal;
     lastValue = savedLast;
+    if (id === -3) {
+      gcPopRoot(); // `collected` stays alive via the generator object we return
+      genYields = savedYields;
+      const gobj: i32 = dynObject();
+      dynSet(gobj, "__genv", collected);
+      dynSet(gobj, "__geni", dynNumber(0));
+      return gobj;
+    }
     return result;
   }
   if (id === 8) { // inc() — the observable side effect
@@ -2696,6 +2737,10 @@ let evalContinued: i32 = 0; // set by `continue`
 // a throw is NOT consumed by a function call boundary (dynApply) — it unwinds through callers.
 let evalThrew: i32 = 0;
 let evalThrowVal: i32 = 0;
+// #14 2e.9 — generators (eager collection). While a `function*` body runs, `yield x` pushes x onto
+// `genYields` (the array the generator object will serve). -1 outside any generator body. Saved/restored
+// around each generator call so nested generators each collect into their own array.
+let genYields: i32 = -1;
 
 // Compare two wasic strings byte-for-byte (avoids relying on `===` over reconstructed substrings).
 function strEq(a: string, b: string): i32 {
@@ -3069,6 +3114,17 @@ function parsePrimary(s: string): i32 {
     if (strEq(name, "false") === 1) return dynBool(0);
     if (strEq(name, "null") === 1) return dynNull();
     if (strEq(name, "undefined") === 1) return dynUndefined();
+    if (strEq(name, "yield") === 1) { // #14 2e.9 — collect the operand; yield evaluates to undefined (v1)
+      evalSkipWs(s);
+      const yc: i32 = evalPeek(s);
+      if (yc === 59 || yc === 41 || yc === 125 || yc === 93 || yc === -1) {
+        if (evalLive === 1 && genYields !== -1) dynPush(genYields, dynUndefined());
+      } else {
+        const yv: i32 = parseExpr(s);
+        if (evalLive === 1 && genYields !== -1) dynPush(genYields, yv);
+      }
+      return dynUndefined();
+    }
     if (strEq(name, "Object") === 1) { // #14 2f.1/2f.4 — Object.create/keys/values/entries/assign(args)
       const save: i32 = evalPos;
       evalSkipWs(s);
@@ -3447,6 +3503,8 @@ function parsePostfix(s: string): i32 {
             v = dynSetMethod(recv, recvMethod, argsArr); // #14 2f.6
           } else if (rvn[0] === 6 && vvn[0] !== 7 && dynHas(recv, "__regex") === 1) {
             v = dynRegexMethod(recv, recvMethod, argsArr); // #14 2f.7
+          } else if (rvn[0] === 6 && vvn[0] !== 7 && dynHas(recv, "__genv") === 1) {
+            v = dynGenMethod(recv, recvMethod, argsArr); // #14 2e.9
           } else {
             v = dynApplyThis(v, argsArr, recv);
           }
@@ -3961,7 +4019,12 @@ function runForIn(s: string, loopVar: string, outer: i32, perIter: i32): void {
 // each iteration gets a FRESH binding (so a closure in the body captures that element); `var` shares.
 function runForOf(s: string, loopVar: string, outer: i32, perIter: i32): void {
   const loopEnv2: i32 = evalEnv; // #14 2e.7a — parent for per-iteration binding envs
-  const arr: i32 = parseExpr(s); // the iterable (cursor was just past `of`)
+  let arr: i32 = parseExpr(s); // the iterable (cursor was just past `of`)
+  const itn: Int32Array = arr as unknown as Int32Array;
+  if (itn[0] === 6) { // #14 2e.9 — a generator object → iterate its collected `__genv` values
+    const gv: i32 = dynGet(arr, "__genv");
+    if (gv !== -1) arr = gv;
+  }
   evalSkipWs(s);
   if (evalPeek(s) === 41) evalPos = evalPos + 1; // ')'
   const bodyStart: i32 = evalPos;
@@ -4436,6 +4499,12 @@ function isArrowAhead(s: string): i32 {
 
 function runFuncDecl(s: string): void {
   evalSkipWs(s);
+  let isGen: i32 = 0;
+  if (evalPeek(s) === 42) { // `function*` — generator (#14 2e.9)
+    evalPos = evalPos + 1;
+    evalSkipWs(s);
+    isGen = 1;
+  }
   const name: string = readIdent(s);
   evalSkipWs(s);
   const paramsArr: i32 = parseParams(s);
@@ -4443,6 +4512,10 @@ function runFuncDecl(s: string): void {
   let bodyBox: i32 = dynString("");
   if (evalPeek(s) === 123) bodyBox = parseBlockBody(s);
   const f: i32 = makeUserFunc(paramsArr, bodyBox, evalEnv);
+  if (isGen === 1) {
+    const fn: Int32Array = f as unknown as Int32Array;
+    fn[1] = -3; // id -3 marks a generator function (dynApply runs it eagerly → generator object)
+  }
   if (evalLive === 1) dynSet(evalEnv, name, f);
 }
 
