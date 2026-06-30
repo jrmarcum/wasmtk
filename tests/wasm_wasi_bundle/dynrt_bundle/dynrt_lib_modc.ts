@@ -2326,6 +2326,25 @@ function dynPromiseMethod(p: i32, name: string, args: i32): i32 {
   return dynUndefined();
 }
 
+// #14 2e.11 — `obj instanceof Class`: 1 if Class's prototype (`__proto`) is anywhere on obj's __proto__
+// chain. (Both must be objects; a class value carries its prototype under `__proto`.)
+function dynInstanceof(obj: i32, cls: i32): i32 {
+  const on: Int32Array = obj as unknown as Int32Array;
+  if (on[0] !== 6) return 0;
+  const cnn: Int32Array = cls as unknown as Int32Array;
+  if (cnn[0] !== 6) return 0;
+  const proto: i32 = dynGet(cls, "__proto");
+  if (proto === -1) return 0;
+  let p: i32 = on[2]; // obj.__proto__
+  while (p !== 0) {
+    if (p === proto) return 1;
+    const pn: Int32Array = p as unknown as Int32Array;
+    if (pn[0] !== 6) break;
+    p = pn[2];
+  }
+  return 0;
+}
+
 // #14 2e.4 — `container[idx] = val` for arrays (number index) and objects (string key); mirrors
 // dynIndexValue's dispatch. Non-matching container/index kinds are no-ops in v1.
 function dynIndexSet(container: i32, idxBox: i32, val: i32): void {
@@ -3164,27 +3183,46 @@ function parsePrimary(s: string): i32 {
     let go: i32 = evalPeek(s) === 125 ? 0 : 1; // empty {}
     while (go === 1) {
       evalSkipWs(s);
-      let key: string = "";
-      const kc: i32 = evalPeek(s);
-      if (kc === 39 || kc === 34) {
-        key = boxToStr(parseStringLit(s)); // "quoted" key
+      let isSpread: i32 = 0;
+      if (evalPeek(s) === 46 && evalPeek2(s) === 46) {
+        if (evalPos + 2 < s.length && s.charCodeAt(evalPos + 2) === 46) isSpread = 1;
+      }
+      if (isSpread === 1) { // #14 2e.11 — object spread `{ ...src }`: copy src's own keys into obj
+        evalPos = evalPos + 3;
+        const src: i32 = parseExpr(s);
+        const srcn: Int32Array = src as unknown as Int32Array;
+        if (srcn[0] === 6) {
+          const sn: i32 = dynObjLen(src);
+          let si: i32 = 0;
+          while (si < sn) {
+            const sk: string = boxToStr(dynObjKeyVal(src, si));
+            dynSet(obj, sk, dynObjValAt(src, si));
+            si = si + 1;
+          }
+        }
       } else {
-        key = readIdent(s); // bare identifier key
-      }
-      evalSkipWs(s);
-      let val: i32 = 0;
-      if (evalPeek(s) === 58) { // ':'
-        evalPos = evalPos + 1;
-        val = parseExpr(s);
-      } else if (evalPeek(s) === 40) { // '(' → shorthand method `{ m(params) { body } }` (#14 2f.1)
-        const mp: i32 = parseParams(s);
+        let key: string = "";
+        const kc: i32 = evalPeek(s);
+        if (kc === 39 || kc === 34) {
+          key = boxToStr(parseStringLit(s)); // "quoted" key
+        } else {
+          key = readIdent(s); // bare identifier key
+        }
         evalSkipWs(s);
-        val = makeUserFunc(mp, parseBlockBody(s), evalEnv);
-      } else { // shorthand { x } → resolve x from the env
-        val = evalEnv === -1 ? dynUndefined() : envLookup(evalEnv, key);
-        if (val === -1) val = dynUndefined();
+        let val: i32 = 0;
+        if (evalPeek(s) === 58) { // ':'
+          evalPos = evalPos + 1;
+          val = parseExpr(s);
+        } else if (evalPeek(s) === 40) { // '(' → shorthand method `{ m(params) { body } }` (#14 2f.1)
+          const mp: i32 = parseParams(s);
+          evalSkipWs(s);
+          val = makeUserFunc(mp, parseBlockBody(s), evalEnv);
+        } else { // shorthand { x } → resolve x from the env
+          val = evalEnv === -1 ? dynUndefined() : envLookup(evalEnv, key);
+          if (val === -1) val = dynUndefined();
+        }
+        dynSet(obj, key, val);
       }
-      dynSet(obj, key, val);
       evalSkipWs(s);
       if (evalPeek(s) === 44) {
         evalPos = evalPos + 1; // ','
@@ -3237,6 +3275,7 @@ function parsePrimary(s: string): i32 {
     }
     const name: string = s.slice(start, evalPos);
     if (strEq(name, "function") === 1) return parseFuncExpr(s); // #14 2e.3 function expression
+    if (strEq(name, "class") === 1) return buildClass(s); // #14 2e.11 class expression `const C = class {…}`
     if (strEq(name, "true") === 1) return dynBool(1);
     if (strEq(name, "false") === 1) return dynBool(0);
     if (strEq(name, "null") === 1) return dynNull();
@@ -3636,8 +3675,27 @@ function parsePostfix(s: string): i32 {
       } else {
         let more: i32 = 1;
         while (more === 1) {
-          const a: i32 = parseExpr(s);
-          dynPush(argsArr, a);
+          evalSkipWs(s);
+          let isSpread: i32 = 0; // #14 2e.11 — call spread `f(...arr)`
+          if (evalPeek(s) === 46 && evalPeek2(s) === 46) {
+            if (evalPos + 2 < s.length && s.charCodeAt(evalPos + 2) === 46) isSpread = 1;
+          }
+          if (isSpread === 1) {
+            evalPos = evalPos + 3;
+            const sp: i32 = parseExpr(s);
+            const spn: Int32Array = sp as unknown as Int32Array;
+            if (spn[0] === 5) {
+              const spl: i32 = dynArrLen(sp);
+              let spi: i32 = 0;
+              while (spi < spl) {
+                dynPush(argsArr, dynArrGet(sp, spi));
+                spi = spi + 1;
+              }
+            }
+          } else {
+            const a: i32 = parseExpr(s);
+            dynPush(argsArr, a);
+          }
           evalSkipWs(s);
           const cc: i32 = evalPeek(s);
           if (cc === 44) {
@@ -3788,7 +3846,19 @@ function parseRel(s: string): i32 {
     evalSkipWs(s);
     const c: i32 = evalPeek(s);
     const c2: i32 = evalPeek2(s);
-    if (c === 60 || c === 62) { // < <= > >=
+    if (c === 105) { // 'i' — maybe the `instanceof` operator (#14 2e.11)
+      const save: i32 = evalPos;
+      const w: string = readIdent(s);
+      if (strEq(w, "instanceof") === 1) {
+        gcPushRoot(left);
+        const r: i32 = parseAdd(s);
+        gcPopRoot();
+        left = dynBool(dynInstanceof(left, r));
+      } else {
+        evalPos = save; // not instanceof — restore and end the relational chain
+        go = 0;
+      }
+    } else if (c === 60 || c === 62) { // < <= > >=
       const isLt: i32 = c === 60 ? 1 : 0;
       const orEq: i32 = c2 === 61 ? 1 : 0;
       evalPos = orEq === 1 ? evalPos + 2 : evalPos + 1;
@@ -3966,6 +4036,100 @@ function readIdent(s: string): string {
 // `let`/`const`/`var name [= expr];` — the keyword has already been consumed.
 function runDecl(s: string): void {
   evalSkipWs(s);
+  const pc: i32 = evalPeek(s);
+  if (pc === 91) { // #14 2e.11 — array destructuring `const [a, b] = arr`
+    evalPos = evalPos + 1;
+    const names: i32 = dynArray();
+    let dgo: i32 = 1;
+    while (dgo === 1) {
+      evalSkipWs(s);
+      const dc: i32 = evalPeek(s);
+      if (dc === 93 || dc === -1) {
+        dgo = 0;
+      } else if (dc === 44) {
+        dynPush(names, dynString("")); // hole `[a, , c]`
+        evalPos = evalPos + 1;
+      } else {
+        dynPush(names, dynString(readIdent(s)));
+        evalSkipWs(s);
+        if (evalPeek(s) === 44) evalPos = evalPos + 1;
+      }
+    }
+    if (evalPeek(s) === 93) evalPos = evalPos + 1; // ']'
+    evalSkipWs(s);
+    let arr: i32 = dynUndefined();
+    if (evalPeek(s) === 61) {
+      evalPos = evalPos + 1;
+      arr = parseExpr(s);
+    }
+    if (evalLive === 1) {
+      const arrn: Int32Array = arr as unknown as Int32Array;
+      let alen: i32 = 0;
+      if (arrn[0] === 5) alen = dynArrLen(arr);
+      const cnt: i32 = dynArrLen(names);
+      let i: i32 = 0;
+      while (i < cnt) {
+        const nm: string = boxToStr(dynArrGet(names, i));
+        if (nm.length > 0) {
+          let elem: i32 = dynUndefined();
+          if (i < alen) elem = dynArrGet(arr, i);
+          dynSet(evalEnv, nm, elem);
+        }
+        i = i + 1;
+      }
+    }
+    evalSkipWs(s);
+    if (evalPeek(s) === 59) evalPos = evalPos + 1;
+    return;
+  }
+  if (pc === 123) { // #14 2e.11 — object destructuring `const {x, y: z} = obj`
+    evalPos = evalPos + 1;
+    const keys: i32 = dynArray();
+    const binds: i32 = dynArray();
+    let dgo: i32 = 1;
+    while (dgo === 1) {
+      evalSkipWs(s);
+      const dc: i32 = evalPeek(s);
+      if (dc === 125 || dc === -1) {
+        dgo = 0;
+      } else if (dc === 44) {
+        evalPos = evalPos + 1;
+      } else {
+        const key: string = readIdent(s);
+        let bind: string = key;
+        evalSkipWs(s);
+        if (evalPeek(s) === 58) { // `key: alias`
+          evalPos = evalPos + 1;
+          evalSkipWs(s);
+          bind = readIdent(s);
+        }
+        dynPush(keys, dynString(key));
+        dynPush(binds, dynString(bind));
+        evalSkipWs(s);
+        if (evalPeek(s) === 44) evalPos = evalPos + 1;
+      }
+    }
+    if (evalPeek(s) === 125) evalPos = evalPos + 1; // '}'
+    evalSkipWs(s);
+    let obj: i32 = dynUndefined();
+    if (evalPeek(s) === 61) {
+      evalPos = evalPos + 1;
+      obj = parseExpr(s);
+    }
+    if (evalLive === 1) {
+      const cnt: i32 = dynArrLen(keys);
+      let i: i32 = 0;
+      while (i < cnt) {
+        const k: string = boxToStr(dynArrGet(keys, i));
+        const b: string = boxToStr(dynArrGet(binds, i));
+        dynSet(evalEnv, b, dynMember(obj, k));
+        i = i + 1;
+      }
+    }
+    evalSkipWs(s);
+    if (evalPeek(s) === 59) evalPos = evalPos + 1;
+    return;
+  }
   const name: string = readIdent(s);
   evalSkipWs(s);
   let val: i32 = dynUndefined();
@@ -4697,25 +4861,41 @@ function runFuncDecl(s: string, isAsync: i32): void {
 // carrying the prototype (an object holding the methods) under key "__proto" and the constructor function
 // under "__ctor". `new Name(args)` (dynNew) instantiates it. Methods reuse the object-method machinery
 // (makeUserFunc + the prototype-chain dispatch from 2f.1). No extends/super/static/fields in v1.
-function runClassDecl(s: string): void {
+// #14 2e.11 — builds (and returns) a class object from the cursor positioned just after `class`. Handles
+// an optional name (`class C …` vs anonymous `class …`) and an optional `extends Base`. The name (if any)
+// is stored on the class object under "__name" so the declaration form can bind it; the expression form
+// (`const C = class {…}`) ignores it. Shared by runClassDecl (statement) and parsePrimary (expression).
+function buildClass(s: string): i32 {
   evalSkipWs(s);
-  const cname: string = readIdent(s);
-  evalSkipWs(s);
+  let cname: string = "";
+  let baseName: string = "";
+  if (isIdentChar(evalPeek(s), 0) === 1) {
+    const w: string = readIdent(s);
+    if (strEq(w, "extends") === 1) { // anonymous class with extends: `class extends Base {…}`
+      evalSkipWs(s);
+      baseName = readIdent(s);
+    } else {
+      cname = w;
+      evalSkipWs(s);
+      if (isIdentChar(evalPeek(s), 0) === 1) {
+        const w2: string = readIdent(s);
+        if (strEq(w2, "extends") === 1) {
+          evalSkipWs(s);
+          baseName = readIdent(s);
+        }
+      }
+    }
+    evalSkipWs(s);
+  }
   // #14 2e.8a — optional `extends Base`: link prototypes (inherited methods) + remember the base for super
   let baseClass: i32 = -1;
   let baseProto: i32 = -1;
-  if (isIdentChar(evalPeek(s), 0) === 1) {
-    const w: string = readIdent(s);
-    if (strEq(w, "extends") === 1) {
-      evalSkipWs(s);
-      const baseName: string = readIdent(s);
-      const bc: i32 = evalEnv === -1 ? -1 : envLookup(evalEnv, baseName);
-      if (bc !== -1) {
-        baseClass = bc;
-        const bp: i32 = dynGet(bc, "__proto");
-        if (bp !== -1) baseProto = bp;
-      }
-      evalSkipWs(s);
+  if (baseName.length > 0) {
+    const bc: i32 = evalEnv === -1 ? -1 : envLookup(evalEnv, baseName);
+    if (bc !== -1) {
+      baseClass = bc;
+      const bp: i32 = dynGet(bc, "__proto");
+      if (bp !== -1) baseProto = bp;
     }
   }
   const proto: i32 = dynObject();
@@ -4814,7 +4994,18 @@ function runClassDecl(s: string): void {
   }
   dynSet(classObj, "__proto", proto);
   if (baseClass !== -1) dynSet(classObj, "__superclass", baseClass);
-  if (evalLive === 1) dynSet(evalEnv, cname, classObj);
+  if (cname.length > 0) dynSet(classObj, "__name", dynString(cname));
+  return classObj;
+}
+
+// `class Name … { … }` statement — binds the class object to its name in the current env (#14 2e.8).
+function runClassDecl(s: string): void {
+  const classObj: i32 = buildClass(s);
+  const nmBox: i32 = dynGet(classObj, "__name");
+  if (nmBox !== -1 && evalLive === 1) {
+    const nm: string = boxToStr(nmBox);
+    if (nm.length > 0) dynSet(evalEnv, nm, classObj);
+  }
 }
 
 // #14 2e.8 — `new Class(args)`: a fresh instance whose __proto__ (slot 2) is the class prototype; run the
