@@ -1075,6 +1075,18 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
      into the target. **Purely interpreter-side.** Suite 353/353 (+`18zs`), bindgen 131/131, jstyper 73/73.
      **Gaps:** other `Math` fns (trig/exp/log — would bridge `mathlib`), `Math.random`, `Object.freeze`/
      `getPrototypeOf`/`fromEntries`, `Number`/`JSON` statics (JSON is the 2f.5 bridge).
+   - **2f.5 JSON** — **SHIPPED 2026-06-26** (test `18zt`): `JSON.parse(str)` + `JSON.stringify(value)`,
+     special-cased in `parsePrimary` (`JSON.method(args)`, same namespace pattern as Math/Object). **Elegant
+     bridge — NOT the i32-handle JSON cap lib:** JSON is a SUBSET of the interpreter's own expression grammar
+     (object/array/string/number/true/false/null), so `dynJsonParse` just re-enters `parseExpr` on the JSON
+     string (save `evalPos` → `evalPos=0` → parse → restore) and gets NATIVE dynrt values for free — no
+     separate parser, no model conversion. `dynJsonStringify` recursively serializes by tag (recursion is
+     safe — each WAT call frame has its own locals); `jsonQuote` escapes `"`/`\`/`\n`/`\r`/`\t`. Verified
+     incl. parse∘stringify ROUND-TRIPS (object/array/nested/object-with-array) — the strongest check.
+     **Purely interpreter-side.** Suite 354/354 (+`18zt`), bindgen 131/131, jstyper 73/73. **Driver tip:**
+     wrap JSON docs in SINGLE-quoted eval-source strings so the inner double-quoted JSON needs no extra
+     escaping. **Gaps:** `JSON.stringify` indent/replacer args, `JSON.parse` reviver, `\uXXXX` (inherits the
+     interpreter's literal-parser limits — exponent numbers / `\u` are the interpreter's gaps, not JSON's).
 7. **2e.9 generators**, then **2e.10 async/await** (hardest — needs a microtask loop; ties to #13).
 8. **2h removal** — the full-dynamic-compile entry + the Javy-parity conformance gate + delete
    `src/javyc.ts` & wiring.

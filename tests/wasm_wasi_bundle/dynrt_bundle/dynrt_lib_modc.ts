@@ -1724,6 +1724,91 @@ function dynMathMethod(name: string, args: i32): i32 {
   return dynUndefined();
 }
 
+// #14 2f.5 — JSON. `JSON.parse(s)` reuses the interpreter's own literal parser (JSON is a subset of the
+// expression grammar: object/array/string/number/true/false/null) — save evalPos, parse the JSON string
+// as an expression, restore. `JSON.stringify(v)` recursively serializes a dynrt value (recursion is safe:
+// WAT gives each call frame its own locals). Each string sub-result is bound to a local before concat.
+function jsonQuote(s: string): string {
+  let out: string = '"';
+  const n: i32 = s.length;
+  let i: i32 = 0;
+  while (i < n) {
+    const c: i32 = s.charCodeAt(i);
+    if (c === 34) {
+      out = out + '\\"';
+    } else if (c === 92) {
+      out = out + "\\\\";
+    } else if (c === 10) {
+      out = out + "\\n";
+    } else if (c === 13) {
+      out = out + "\\r";
+    } else if (c === 9) {
+      out = out + "\\t";
+    } else {
+      const ch: string = s.charAt(i);
+      out = out + ch;
+    }
+    i = i + 1;
+  }
+  out = out + '"';
+  return out;
+}
+
+function dynJsonStringify(v: i32): string {
+  const n: Int32Array = v as unknown as Int32Array;
+  const t: i32 = n[0];
+  if (t === 1) return "null";
+  if (t === 0) return "null"; // undefined → null (no key context here; top-level/array slot)
+  if (t === 2) {
+    if (dynToBool(v) === 1) return "true";
+    return "false";
+  }
+  if (t === 3) {
+    const ns: string = stringForm(v);
+    return ns;
+  }
+  if (t === 4) {
+    const qs: string = jsonQuote(boxToStr(v));
+    return qs;
+  }
+  if (t === 5) {
+    let out: string = "[";
+    const len: i32 = dynArrLen(v);
+    let i: i32 = 0;
+    while (i < len) {
+      if (i > 0) out = out + ",";
+      const part: string = dynJsonStringify(dynArrGet(v, i));
+      out = out + part;
+      i = i + 1;
+    }
+    out = out + "]";
+    return out;
+  }
+  if (t === 6) {
+    let out: string = "{";
+    const len: i32 = dynObjLen(v);
+    let i: i32 = 0;
+    while (i < len) {
+      if (i > 0) out = out + ",";
+      const qk: string = jsonQuote(boxToStr(dynObjKeyVal(v, i)));
+      const val: string = dynJsonStringify(dynObjValAt(v, i));
+      out = out + qk + ":" + val;
+      i = i + 1;
+    }
+    out = out + "}";
+    return out;
+  }
+  return "null"; // function → null (JSON drops functions)
+}
+
+function dynJsonParse(jsonStr: string): i32 {
+  const savedPos: i32 = evalPos; // re-enter the literal parser on a fresh source string, then restore
+  evalPos = 0;
+  const v: i32 = parseExpr(jsonStr);
+  evalPos = savedPos;
+  return v;
+}
+
 // #14 2e.4 — `container[idx] = val` for arrays (number index) and objects (string key); mirrors
 // dynIndexValue's dispatch. Non-matching container/index kinds are no-ops in v1.
 function dynIndexSet(container: i32, idxBox: i32, val: i32): void {
@@ -2671,6 +2756,52 @@ function parsePrimary(s: string): i32 {
         }
       }
       evalPos = save; // not `Math.…` — fall through to normal resolution
+    }
+    if (strEq(name, "JSON") === 1) { // #14 2f.5 — JSON.parse(str) / JSON.stringify(value)
+      const save: i32 = evalPos;
+      evalSkipWs(s);
+      if (evalPeek(s) === 46) { // '.'
+        evalPos = evalPos + 1;
+        const meth: string = readIdent(s);
+        evalSkipWs(s);
+        if (evalPeek(s) === 40) { // '(args)'
+          evalPos = evalPos + 1;
+          const jargs: i32 = dynArray();
+          gcPushRoot(jargs);
+          evalSkipWs(s);
+          if (evalPeek(s) === 41) {
+            evalPos = evalPos + 1;
+          } else {
+            let more: i32 = 1;
+            while (more === 1) {
+              dynPush(jargs, parseExpr(s));
+              evalSkipWs(s);
+              const cc: i32 = evalPeek(s);
+              if (cc === 44) {
+                evalPos = evalPos + 1;
+              } else {
+                if (cc === 41) evalPos = evalPos + 1;
+                more = 0;
+              }
+            }
+          }
+          let rv: i32 = dynUndefined();
+          if (evalLive === 1) {
+            let arg0: i32 = dynUndefined();
+            if (dynArrLen(jargs) > 0) arg0 = dynArrGet(jargs, 0);
+            if (strEq(meth, "parse") === 1) {
+              const js: string = boxToStr(arg0);
+              rv = dynJsonParse(js);
+            } else if (strEq(meth, "stringify") === 1) {
+              const ss: string = dynJsonStringify(arg0);
+              rv = dynString(ss);
+            }
+          }
+          gcPopRoot();
+          return rv;
+        }
+      }
+      evalPos = save; // not `JSON.…` — fall through to normal resolution
     }
     if (strEq(name, "new") === 1) { // #14 2e.8 — `new Class(args)`
       evalSkipWs(s);
