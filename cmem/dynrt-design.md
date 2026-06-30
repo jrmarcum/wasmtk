@@ -1127,7 +1127,21 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
    (`while(true) yield…`) collects forever / hangs; `yield` evaluates to `undefined` (no value passed back
    via `next(v)`); lazy/incremental side effects differ from JS (the whole body runs at call time). True
    coroutine suspension would need a CPS transform or a separate VM — out of scope for the re-parse model.
-   then **2e.10 async/await** (hardest — needs a microtask loop; ties to #13).
+7b. **2e.10 async/await + Promise** — **SHIPPED 2026-06-26** (test `18zx`): a **SYNCHRONOUS** model (the
+   re-parse interpreter has no event loop — nothing async to defer). A Promise is a SETTLED value wrapper: a
+   dynrt object with `__promv` (value/reason) + `__promrej` (1=rejected). An `async function` is id=-4
+   (`runFuncDecl(s,isAsync)`; `async` detected in the runStatement dispatch before `function`); the
+   `id===-1||-3||-4` branch in `dynApplyThis` runs the body to completion and, for -4, wraps the result in
+   `dynPromiseResolve` (or `dynPromiseReject` + clears `evalThrew` if it threw). `await` (a `parseUnary`
+   operator → `dynAwait`) unwraps a settled promise — returns `__promv`, or sets `evalThrew`=the reason on a
+   rejected one (so a rejected await integrates with 2e.6 try/catch). `.then`/`.catch`/`.finally`
+   (`dynPromiseMethod`, dispatched in parsePostfix for an object with `__promv`) run callbacks IMMEDIATELY +
+   re-wrap; `Promise.resolve`/`reject`/`all` is a `Promise.…` namespace static. Verified: async-return+await,
+   await-of-nonpromise, await-inside-async, chaining, multi-await, rejection via try/catch (Promise.reject +
+   async-throw), then/catch/finally, Promise.all (promises + plain values). **Purely interpreter-side.**
+   Suite 358/358 (+`18zx`), bindgen 131/131, jstyper 73/73. **Known v1 limits:** no deferred microtask
+   ORDERING (everything settles synchronously); `async` arrows parse as plain arrows (await still works — a
+   standalone operator; only the return isn't promise-wrapped, which await tolerates); no real async I/O.
 8. **2h removal** — the full-dynamic-compile entry + the Javy-parity conformance gate + delete
    `src/javyc.ts` & wiring.
 

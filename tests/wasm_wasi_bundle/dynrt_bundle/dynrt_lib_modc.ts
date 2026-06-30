@@ -2207,6 +2207,125 @@ function dynGenMethod(g: i32, name: string, args: i32): i32 {
   return dynUndefined();
 }
 
+// #14 2e.10 — async/await + Promise (SYNCHRONOUS model). The re-parse interpreter has no event loop, so a
+// Promise is a SETTLED value wrapper: a dynrt object with `__promv` (the value/reason) + `__promrej`
+// (1 = rejected). An `async` function (id=-4) runs to completion and wraps its result; `await` unwraps a
+// settled promise (throws on rejected); `.then`/`.catch`/`.finally` run their callbacks immediately;
+// `Promise.resolve`/`reject`/`all`. (No deferred microtasks — there's nothing async to defer here.)
+function dynPromiseResolve(v: i32): i32 {
+  // awaiting/resolving a promise is idempotent — pass an existing promise through
+  const vn: Int32Array = v as unknown as Int32Array;
+  if (vn[0] === 6 && dynHas(v, "__promv") === 1) return v;
+  const p: i32 = dynObject();
+  dynSet(p, "__promv", v);
+  dynSet(p, "__promrej", dynNumber(0));
+  return p;
+}
+
+function dynPromiseReject(r: i32): i32 {
+  const p: i32 = dynObject();
+  dynSet(p, "__promv", r);
+  dynSet(p, "__promrej", dynNumber(1));
+  return p;
+}
+
+function dynIsRejected(p: i32): i32 {
+  const f: i32 = dynGet(p, "__promrej");
+  if (f === -1) return 0;
+  return dynNumberValue(f) === 1 ? 1 : 0;
+}
+
+// `await v`: a settled promise → its value (or set a throw if rejected); a non-promise → itself.
+function dynAwait(v: i32): i32 {
+  const vn: Int32Array = v as unknown as Int32Array;
+  if (vn[0] === 6 && dynHas(v, "__promv") === 1) {
+    const inner: i32 = dynGet(v, "__promv");
+    if (dynIsRejected(v) === 1) {
+      if (evalLive === 1) {
+        evalThrew = 1;
+        evalThrowVal = inner;
+      }
+      return dynUndefined();
+    }
+    return inner;
+  }
+  return v;
+}
+
+// `Promise.resolve(v)` / `Promise.reject(r)` / `Promise.all([…])`.
+function dynPromiseStatic(name: string, args: i32): i32 {
+  const argc: i32 = dynArrLen(args);
+  let a0: i32 = dynUndefined();
+  if (argc > 0) a0 = dynArrGet(args, 0);
+  if (strEq(name, "resolve") === 1) return dynPromiseResolve(a0);
+  if (strEq(name, "reject") === 1) return dynPromiseReject(a0);
+  if (strEq(name, "all") === 1) {
+    const an: Int32Array = a0 as unknown as Int32Array;
+    const out: i32 = dynArray();
+    if (an[0] === 5) {
+      const len: i32 = dynArrLen(a0);
+      let i: i32 = 0;
+      while (i < len) {
+        const item: i32 = dynArrGet(a0, i);
+        const itn: Int32Array = item as unknown as Int32Array;
+        if (itn[0] === 6 && dynHas(item, "__promv") === 1) {
+          if (dynIsRejected(item) === 1) return item; // first rejection wins
+          dynPush(out, dynGet(item, "__promv"));
+        } else {
+          dynPush(out, item);
+        }
+        i = i + 1;
+      }
+    }
+    return dynPromiseResolve(out);
+  }
+  return dynUndefined();
+}
+
+// `.then(onF, onR)` / `.catch(onR)` / `.finally(onFin)`. Callbacks run immediately (settled model); the
+// result is re-wrapped in a promise so chaining works.
+function dynPromiseMethod(p: i32, name: string, args: i32): i32 {
+  const argc: i32 = dynArrLen(args);
+  const val: i32 = dynGet(p, "__promv");
+  const rejected: i32 = dynIsRejected(p);
+  if (strEq(name, "then") === 1) {
+    if (rejected === 1) {
+      if (argc > 1) {
+        const onR: i32 = dynArrGet(args, 1);
+        const ca: i32 = dynArray();
+        dynPush(ca, val);
+        return dynPromiseResolve(dynApply(onR, ca));
+      }
+      return p; // no rejection handler → propagate
+    }
+    if (argc > 0) {
+      const onF: i32 = dynArrGet(args, 0);
+      const ca: i32 = dynArray();
+      dynPush(ca, val);
+      return dynPromiseResolve(dynApply(onF, ca));
+    }
+    return p;
+  }
+  if (strEq(name, "catch") === 1) {
+    if (rejected === 1 && argc > 0) {
+      const onR: i32 = dynArrGet(args, 0);
+      const ca: i32 = dynArray();
+      dynPush(ca, val);
+      return dynPromiseResolve(dynApply(onR, ca));
+    }
+    return p;
+  }
+  if (strEq(name, "finally") === 1) {
+    if (argc > 0) {
+      const onFin: i32 = dynArrGet(args, 0);
+      const ca: i32 = dynArray();
+      dynApply(onFin, ca);
+    }
+    return p; // finally doesn't change the settled value
+  }
+  return dynUndefined();
+}
+
 // #14 2e.4 — `container[idx] = val` for arrays (number index) and objects (string key); mirrors
 // dynIndexValue's dispatch. Non-matching container/index kinds are no-ops in v1.
 function dynIndexSet(container: i32, idxBox: i32, val: i32): void {
@@ -2560,7 +2679,7 @@ function dynApplyThis(callee: i32, argsArr: i32, thisVal: i32): i32 {
     return __host.call(cn[2], argsArr);
   }
   const argc: i32 = dynArrLen(argsArr);
-  if (id === -1 || id === -3) { // USER function (id -1); GENERATOR function (id -3, #14 2e.9)
+  if (id === -1 || id === -3 || id === -4) { // USER (-1); GENERATOR (-3, 2e.9); ASYNC (-4, 2e.10)
     const bodyBox: i32 = cn[2];
     const paramsArr: i32 = cn[3];
     const defEnv: i32 = cn[4];
@@ -2608,6 +2727,14 @@ function dynApplyThis(callee: i32, argsArr: i32, thisVal: i32): i32 {
       dynSet(gobj, "__genv", collected);
       dynSet(gobj, "__geni", dynNumber(0));
       return gobj;
+    }
+    if (id === -4) { // #14 2e.10 — async function → settle a promise (rejected if the body threw)
+      if (evalThrew === 1) {
+        const reason: i32 = evalThrowVal;
+        evalThrew = 0; // the async boundary catches the throw into a rejected promise
+        return dynPromiseReject(reason);
+      }
+      return dynPromiseResolve(result);
     }
     return result;
   }
@@ -3245,6 +3372,42 @@ function parsePrimary(s: string): i32 {
       }
       evalPos = save; // not `JSON.…` — fall through to normal resolution
     }
+    if (strEq(name, "Promise") === 1) { // #14 2e.10 — Promise.resolve/reject/all(args)
+      const save: i32 = evalPos;
+      evalSkipWs(s);
+      if (evalPeek(s) === 46) { // '.'
+        evalPos = evalPos + 1;
+        const meth: string = readIdent(s);
+        evalSkipWs(s);
+        if (evalPeek(s) === 40) { // '(args)'
+          evalPos = evalPos + 1;
+          const pargs: i32 = dynArray();
+          gcPushRoot(pargs);
+          evalSkipWs(s);
+          if (evalPeek(s) === 41) {
+            evalPos = evalPos + 1;
+          } else {
+            let more: i32 = 1;
+            while (more === 1) {
+              dynPush(pargs, parseExpr(s));
+              evalSkipWs(s);
+              const cc: i32 = evalPeek(s);
+              if (cc === 44) {
+                evalPos = evalPos + 1;
+              } else {
+                if (cc === 41) evalPos = evalPos + 1;
+                more = 0;
+              }
+            }
+          }
+          let rv: i32 = dynUndefined();
+          if (evalLive === 1) rv = dynPromiseStatic(meth, pargs);
+          gcPopRoot();
+          return rv;
+        }
+      }
+      evalPos = save; // not `Promise.…` — fall through to normal resolution
+    }
     if (strEq(name, "new") === 1) { // #14 2e.8 — `new Class(args)`
       evalSkipWs(s);
       const cstart: i32 = evalPos; // constructor name (v1: a bare identifier)
@@ -3505,6 +3668,8 @@ function parsePostfix(s: string): i32 {
             v = dynRegexMethod(recv, recvMethod, argsArr); // #14 2f.7
           } else if (rvn[0] === 6 && vvn[0] !== 7 && dynHas(recv, "__genv") === 1) {
             v = dynGenMethod(recv, recvMethod, argsArr); // #14 2e.9
+          } else if (rvn[0] === 6 && vvn[0] !== 7 && dynHas(recv, "__promv") === 1) {
+            v = dynPromiseMethod(recv, recvMethod, argsArr); // #14 2e.10
           } else {
             v = dynApplyThis(v, argsArr, recv);
           }
@@ -3558,6 +3723,12 @@ function parseUnary(s: string): i32 {
     const w: string = readIdent(s);
     if (strEq(w, "typeof") === 1) return dynTypeofStr(parseUnary(s));
     evalPos = save; // not typeof — restore and fall through
+  }
+  if (c === 97) { // 'a' — maybe the `await` operator (#14 2e.10)
+    const save: i32 = evalPos;
+    const w: string = readIdent(s);
+    if (strEq(w, "await") === 1) return dynAwait(parseUnary(s));
+    evalPos = save; // not await — restore and fall through
   }
   return parsePostfix(s);
 }
@@ -4497,7 +4668,7 @@ function isArrowAhead(s: string): i32 {
   return found;
 }
 
-function runFuncDecl(s: string): void {
+function runFuncDecl(s: string, isAsync: i32): void {
   evalSkipWs(s);
   let isGen: i32 = 0;
   if (evalPeek(s) === 42) { // `function*` — generator (#14 2e.9)
@@ -4515,6 +4686,9 @@ function runFuncDecl(s: string): void {
   if (isGen === 1) {
     const fn: Int32Array = f as unknown as Int32Array;
     fn[1] = -3; // id -3 marks a generator function (dynApply runs it eagerly → generator object)
+  } else if (isAsync === 1) {
+    const fn: Int32Array = f as unknown as Int32Array;
+    fn[1] = -4; // #14 2e.10 — id -4 marks an async function (dynApply wraps its result in a promise)
   }
   if (evalLive === 1) dynSet(evalEnv, name, f);
 }
@@ -4729,8 +4903,20 @@ function runStatement(s: string): void {
       return;
     }
     if (strEq(word, "function") === 1) {
-      runFuncDecl(s);
+      runFuncDecl(s, 0);
       return;
+    }
+    if (strEq(word, "async") === 1) { // #14 2e.10 — `async function name() {…}`
+      const saveAsync: i32 = evalPos;
+      evalSkipWs(s);
+      if (isIdentChar(evalPeek(s), 0) === 1) {
+        const w2: string = readIdent(s);
+        if (strEq(w2, "function") === 1) {
+          runFuncDecl(s, 1);
+          return;
+        }
+      }
+      evalPos = saveAsync; // not `async function` (e.g. async arrow) — fall through to expression
     }
     if (strEq(word, "class") === 1) { // #14 2e.8
       runClassDecl(s);
