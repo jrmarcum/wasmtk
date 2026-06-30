@@ -1809,6 +1809,162 @@ function dynJsonParse(jsonStr: string): i32 {
   return v;
 }
 
+// #14 2f.6 — Map / Set. Represented as a dynrt OBJECT (tag 6) carrying internal arrays: a Map holds
+// `__mapk` (keys) + `__mapv` (values); a Set holds `__setk` (items). Keys/values are arbitrary boxed
+// values compared with `dynStrictEq` (linear scan — O(n), fine for v1). `new Map()`/`new Set(iterable)`
+// construct them; methods dispatch from parsePostfix; `.size` is handled in dynMember.
+function mapIndexOf(keys: i32, k: i32): i32 {
+  const len: i32 = dynArrLen(keys);
+  let i: i32 = 0;
+  while (i < len) {
+    if (dynStrictEq(dynArrGet(keys, i), k) === 1) return i;
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+function arrCopy(arr: i32): i32 {
+  const out: i32 = dynArray();
+  const len: i32 = dynArrLen(arr);
+  let i: i32 = 0;
+  while (i < len) {
+    dynPush(out, dynArrGet(arr, i));
+    i = i + 1;
+  }
+  return out;
+}
+
+function arrDeleteAt(arr: i32, idx: i32): void {
+  const len: i32 = dynArrLen(arr);
+  let i: i32 = idx;
+  while (i < len - 1) {
+    dynArrSet(arr, i, dynArrGet(arr, i + 1));
+    i = i + 1;
+  }
+  const an: Int32Array = arr as unknown as Int32Array;
+  const lp: i32 = an[1];
+  const ln: Int32Array = lp as unknown as Int32Array;
+  ln[0] = len - 1; // truncate the values list by one
+}
+
+function dynMapNew(): i32 {
+  const m: i32 = dynObject();
+  dynSet(m, "__mapk", dynArray());
+  dynSet(m, "__mapv", dynArray());
+  return m;
+}
+
+function dynSetNew(init: i32): i32 {
+  const sobj: i32 = dynObject();
+  const sk: i32 = dynArray();
+  dynSet(sobj, "__setk", sk);
+  const in2: Int32Array = init as unknown as Int32Array;
+  if (in2[0] === 5) { // initialize from an array iterable (unique elements)
+    const len: i32 = dynArrLen(init);
+    let i: i32 = 0;
+    while (i < len) {
+      const v: i32 = dynArrGet(init, i);
+      if (mapIndexOf(sk, v) < 0) dynPush(sk, v);
+      i = i + 1;
+    }
+  }
+  return sobj;
+}
+
+function dynMapMethod(map: i32, name: string, args: i32): i32 {
+  const mk: i32 = dynGet(map, "__mapk");
+  const mv: i32 = dynGet(map, "__mapv");
+  const argc: i32 = dynArrLen(args);
+  let k: i32 = dynUndefined();
+  if (argc > 0) k = dynArrGet(args, 0);
+  if (strEq(name, "set") === 1) {
+    let val: i32 = dynUndefined();
+    if (argc > 1) val = dynArrGet(args, 1);
+    const idx: i32 = mapIndexOf(mk, k);
+    if (idx >= 0) {
+      dynArrSet(mv, idx, val);
+    } else {
+      dynPush(mk, k);
+      dynPush(mv, val);
+    }
+    return map; // chainable
+  }
+  if (strEq(name, "get") === 1) {
+    const idx: i32 = mapIndexOf(mk, k);
+    if (idx >= 0) return dynArrGet(mv, idx);
+    return dynUndefined();
+  }
+  if (strEq(name, "has") === 1) {
+    if (mapIndexOf(mk, k) >= 0) return dynBool(1);
+    return dynBool(0);
+  }
+  if (strEq(name, "delete") === 1) {
+    const idx: i32 = mapIndexOf(mk, k);
+    if (idx >= 0) {
+      arrDeleteAt(mk, idx);
+      arrDeleteAt(mv, idx);
+      return dynBool(1);
+    }
+    return dynBool(0);
+  }
+  if (strEq(name, "keys") === 1) return arrCopy(mk);
+  if (strEq(name, "values") === 1) return arrCopy(mv);
+  if (strEq(name, "forEach") === 1) {
+    let cb: i32 = dynUndefined();
+    if (argc > 0) cb = dynArrGet(args, 0);
+    const len: i32 = dynArrLen(mk);
+    let i: i32 = 0;
+    while (i < len) {
+      const ca: i32 = dynArray();
+      dynPush(ca, dynArrGet(mv, i)); // (value, key) per JS
+      dynPush(ca, dynArrGet(mk, i));
+      dynApply(cb, ca);
+      i = i + 1;
+    }
+    return dynUndefined();
+  }
+  return dynUndefined();
+}
+
+function dynSetMethod(set: i32, name: string, args: i32): i32 {
+  const sk: i32 = dynGet(set, "__setk");
+  const argc: i32 = dynArrLen(args);
+  let v: i32 = dynUndefined();
+  if (argc > 0) v = dynArrGet(args, 0);
+  if (strEq(name, "add") === 1) {
+    if (mapIndexOf(sk, v) < 0) dynPush(sk, v);
+    return set; // chainable
+  }
+  if (strEq(name, "has") === 1) {
+    if (mapIndexOf(sk, v) >= 0) return dynBool(1);
+    return dynBool(0);
+  }
+  if (strEq(name, "delete") === 1) {
+    const idx: i32 = mapIndexOf(sk, v);
+    if (idx >= 0) {
+      arrDeleteAt(sk, idx);
+      return dynBool(1);
+    }
+    return dynBool(0);
+  }
+  if (strEq(name, "values") === 1) return arrCopy(sk);
+  if (strEq(name, "keys") === 1) return arrCopy(sk);
+  if (strEq(name, "forEach") === 1) {
+    let cb: i32 = dynUndefined();
+    if (argc > 0) cb = dynArrGet(args, 0);
+    const len: i32 = dynArrLen(sk);
+    let i: i32 = 0;
+    while (i < len) {
+      const ca: i32 = dynArray();
+      dynPush(ca, dynArrGet(sk, i));
+      dynApply(cb, ca);
+      i = i + 1;
+    }
+    return dynUndefined();
+  }
+  return dynUndefined();
+}
+
 // #14 2e.4 — `container[idx] = val` for arrays (number index) and objects (string key); mirrors
 // dynIndexValue's dispatch. Non-matching container/index kinds are no-ops in v1.
 function dynIndexSet(container: i32, idxBox: i32, val: i32): void {
@@ -2353,6 +2509,19 @@ export function dynMember(obj: i32, name: string): i32 {
       if (r !== -1) return r;
       o = on[2]; // walk to __proto__
     }
+    // #14 2f.6 — Map/Set `.size`
+    if (strEq(name, "size") === 1) {
+      const mk: i32 = dynGet(obj, "__mapk");
+      if (mk !== -1) {
+        const ms: i32 = dynArrLen(mk);
+        return dynNumber(ms);
+      }
+      const sk: i32 = dynGet(obj, "__setk");
+      if (sk !== -1) {
+        const ss: i32 = dynArrLen(sk);
+        return dynNumber(ss);
+      }
+    }
     // #14 2e.8a — getter fallback: a `__get_<name>` accessor anywhere on the chain → call it (this=obj)
     const gkey: string = "__get_" + name;
     let g: i32 = obj;
@@ -2839,7 +3008,17 @@ function parsePrimary(s: string): i32 {
         }
       }
       let inst: i32 = dynUndefined();
-      if (evalLive === 1) inst = dynNew(classVal, argsArr);
+      if (evalLive === 1) {
+        if (strEq(cnm, "Map") === 1) { // #14 2f.6 — built-in Map/Set constructors
+          inst = dynMapNew();
+        } else if (strEq(cnm, "Set") === 1) {
+          let init: i32 = dynUndefined();
+          if (dynArrLen(argsArr) > 0) init = dynArrGet(argsArr, 0);
+          inst = dynSetNew(init);
+        } else {
+          inst = dynNew(classVal, argsArr);
+        }
+      }
       gcPopRoot();
       return inst;
     }
@@ -3037,9 +3216,17 @@ function parsePostfix(s: string): i32 {
           // tag-7 function (so `arr[i]()` calling a stored function, and a user-set arr.foo(), still win)
           const rvn: Int32Array = recv as unknown as Int32Array;
           const vvn: Int32Array = v as unknown as Int32Array;
-          if (rvn[0] === 5 && vvn[0] !== 7) v = dynArrayMethod(recv, recvMethod, argsArr);
-          else if (rvn[0] === 4 && vvn[0] !== 7) v = dynStringMethod(recv, recvMethod, argsArr);
-          else v = dynApplyThis(v, argsArr, recv);
+          if (rvn[0] === 5 && vvn[0] !== 7) {
+            v = dynArrayMethod(recv, recvMethod, argsArr);
+          } else if (rvn[0] === 4 && vvn[0] !== 7) {
+            v = dynStringMethod(recv, recvMethod, argsArr);
+          } else if (rvn[0] === 6 && vvn[0] !== 7 && dynHas(recv, "__mapk") === 1) {
+            v = dynMapMethod(recv, recvMethod, argsArr); // #14 2f.6
+          } else if (rvn[0] === 6 && vvn[0] !== 7 && dynHas(recv, "__setk") === 1) {
+            v = dynSetMethod(recv, recvMethod, argsArr); // #14 2f.6
+          } else {
+            v = dynApplyThis(v, argsArr, recv);
+          }
         } else {
           v = dynApply(v, argsArr);
         }

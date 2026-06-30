@@ -1087,6 +1087,19 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
      wrap JSON docs in SINGLE-quoted eval-source strings so the inner double-quoted JSON needs no extra
      escaping. **Gaps:** `JSON.stringify` indent/replacer args, `JSON.parse` reviver, `\uXXXX` (inherits the
      interpreter's literal-parser limits — exponent numbers / `\u` are the interpreter's gaps, not JSON's).
+   - **2f.6 Map + Set** — **SHIPPED 2026-06-26** (test `18zu`): `new Map()` + `new Set(iterable)`; Map
+     `set`/`get`/`has`/`delete`/`keys`/`values`/`forEach`/`size`, Set `add`/`has`/`delete`/`values`/
+     `forEach`/`size`. **Like JSON, NOT a bridge to the i32-handle cap libs** (those are i32-keyed; dynrt
+     Map/Set keys are arbitrary BOXED values) — implemented directly in the value model: a Map/Set is a
+     dynrt OBJECT (tag 6) carrying internal arrays (`__mapk`+`__mapv` / `__setk`); lookup is a linear
+     `dynStrictEq` scan (O(n), fine for v1). `new Map`/`new Set` are special-cased in the `new` operator;
+     methods dispatch in `parsePostfix` for object receivers whose member isn't a tag-7 function AND which
+     have `__mapk`/`__setk` (so normal class-method calls — `vvn[0]===7` — skip the check entirely, no
+     overhead); `.size` is handled in `dynMember`; `set`/`add` return the collection (chainable); the Map
+     constructor updates-in-place on a duplicate key, the Set constructor de-dups its array arg. `delete`
+     shifts the internal array(s) down + truncates the values list. **Purely interpreter-side.** Suite
+     355/355 (+`18zu`), bindgen 131/131, jstyper 73/73. **Gaps:** `entries()`/iterator protocol, `Map`
+     constructor from an entries array, `WeakMap`/`WeakSet`.
 7. **2e.9 generators**, then **2e.10 async/await** (hardest — needs a microtask loop; ties to #13).
 8. **2h removal** — the full-dynamic-compile entry + the Javy-parity conformance gate + delete
    `src/javyc.ts` & wiring.
