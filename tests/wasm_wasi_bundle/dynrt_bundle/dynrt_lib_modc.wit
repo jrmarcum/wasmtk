@@ -3,6 +3,7 @@ package local:dynrt-lib-modc;
 
 world dynrt-lib-modc {
   import --host-call: func(p0: s32, p1: s32) -> s32;
+  import --host-print: func(p0: s32, p1: s32);
 
   export dyn-undefined: func() -> s32;
   export dyn-null: func() -> s32;
@@ -72,4 +73,5 @@ world dynrt-lib-modc {
   export dyn-eval: func(s: string) -> s32;
   export dyn-eval-env: func(s: string, env: s32) -> s32;
   export dyn-run: func(s: string, env: s32) -> s32;
+  export dyn-run-b64: func(b64: string, env: s32) -> s32;
 }

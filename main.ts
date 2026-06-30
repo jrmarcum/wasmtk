@@ -29,6 +29,7 @@ import {
   wasm2js,
 } from "./src/utils.ts";
 import { rt } from "./src/rt.ts";
+import { compileDyn } from "./src/dync.ts";
 import { runJstyper } from "./src/jstyper.ts";
 import { runBindgen } from "./src/bindgen.ts";
 import { runHybrid } from "./src/hybrid.ts";
@@ -149,7 +150,8 @@ Usage:
   wasmtk run     --lang=rust [path]       Build + run a Rust wasi program       (rsxtk run; or: wasmtk run <file.rs>)
   wasmtk add|remove|list --lang=rust      Manage Rust dependencies              (delegates to rsxtk)
   wasmtk fmt|clean --lang=rust            Inject a manifest (fmt) · wipe the .tk cache (clean)  (rsxtk)
-  wasmtk javyc <file.ts>                  Compile a TypeScript file to a WASI module via Javy/QuickJS
+  wasmtk dync <file.ts>                   Compile a fully-dynamic TS/JS file to a self-contained WASI module via wasmtk's own runtime (no Javy)
+  wasmtk javyc <file.ts>                  Compile a TypeScript file to a WASI module via Javy/QuickJS (DEPRECATED — prefer dync)
   wasmtk run <file>                       Run a .wasm, .wat, .js, .ts, .go, .zig, or .rs file (Go/Zig/Rust auto-detected)
   wasmtk mod <file> [fn] [...]            Call a function in a WASM library module (no fn = list functions)
   wasmtk info <file>                      Show callable WASM functions in .wasm or .wat library/module
@@ -307,6 +309,9 @@ Options:
       break;
     case "javyc":
       await compileJavy(target, outPath);
+      break;
+    case "dync":
+      await compileDyn(target, outPath);
       break;
     case "run": {
       // Auto-detect producer source so `wasmtk run foo.go` / `foo.zig` / `./pkg` (dir w/ go.mod)

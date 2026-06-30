@@ -40,7 +40,12 @@ type f64 = number;
 // function-table index (see `dynMakeHostFn`); `dynApply` then calls back into the host through this
 // import. Maps to `(import "env" "__host_call" (func (param i32 i32) (result i32)))`, preserved
 // through the wasmmerge; the test runner stubs it (returns 0) and bindgen provides the real impl.
-declare const __host: { call(fnIndex: i32, argsArr: i32): i32 };
+// #14 2h (console I/O for the full-dynamic-compile entry): `print(ptr, len)` writes `len` UTF-8 bytes
+// at `ptr` (in this module's linear memory) to the host's stdout. Maps to
+// `(import "env" "__host_print" (func (param i32 i32)))`, preserved through the wasmmerge; the `wasmtk
+// run` WASI runner implements it (decode + write to stdout), and the env Proxy stubs it to a no-op
+// elsewhere. It is what `console.log`/`error`/`warn` in eval source route to (see parsePrimary).
+declare const __host: { call(fnIndex: i32, argsArr: i32): i32; print(ptr: i32, len: i32): void };
 
 // ── Tag constants (kept as literals at use sites; listed here for reference) ──────────────────
 //   0 undefined · 1 null · 2 boolean · 3 number · 4 string · 5 array · 6 object
@@ -1823,6 +1828,31 @@ function dynJsonParse(jsonStr: string): i32 {
   return v;
 }
 
+// #14 2h — `console.log` value display: like JSON.stringify EXCEPT a top-level string prints RAW (no
+// surrounding quotes), matching Node/console semantics (`console.log("hi")` → `hi`, not `"hi"`).
+// undefined prints as `undefined` (JSON would emit `null`); nested values keep JSON form (quoted strings).
+function dynDisplay(v: i32): string {
+  const n: Int32Array = v as unknown as Int32Array;
+  const t: i32 = n[0];
+  if (t === 4) return boxToStr(v); // top-level string → raw
+  if (t === 0) return "undefined"; // console shows `undefined`, JSON shows `null`
+  return dynJsonStringify(v);
+}
+
+// #14 2h — join the args of one `console.log(...)` with single spaces (Node separator).
+function dynConsoleLine(args: i32): string {
+  let out: string = "";
+  const cnt: i32 = dynArrLen(args);
+  let i: i32 = 0;
+  while (i < cnt) {
+    if (i > 0) out = out + " ";
+    const part: string = dynDisplay(dynArrGet(args, i));
+    out = out + part;
+    i = i + 1;
+  }
+  return out;
+}
+
 // #14 2f.6 — Map / Set. Represented as a dynrt OBJECT (tag 6) carrying internal arrays: a Map holds
 // `__mapk` (keys) + `__mapv` (values); a Set holds `__setk` (items). Keys/values are arbitrary boxed
 // values compared with `dynStrictEq` (linear scan — O(n), fine for v1). `new Map()`/`new Set(iterable)`
@@ -3030,14 +3060,35 @@ function isIdentChar(c: i32, cont: i32): i32 {
 }
 
 function evalSkipWs(s: string): void {
+  const slen: i32 = s.length;
   let go: i32 = 1;
   while (go === 1) {
-    if (evalPos >= s.length) {
+    if (evalPos >= slen) {
       go = 0;
     } else {
       const c: i32 = s.charCodeAt(evalPos);
       if (c === 32 || c === 9 || c === 10 || c === 13) {
         evalPos = evalPos + 1;
+      } else if (c === 47 && evalPos + 1 < slen && s.charCodeAt(evalPos + 1) === 47) {
+        // #14 2h — `//` line comment: skip to end of line. (The interpreter has no regex LITERALS —
+        // RegExp is `new RegExp("…")` — so `//` and `/*` are unambiguously comments. Byte-accurate:
+        // a multi-byte UTF-8 char in the comment is just skipped one byte at a time.)
+        evalPos = evalPos + 2;
+        while (evalPos < slen && s.charCodeAt(evalPos) !== 10) {
+          evalPos = evalPos + 1;
+        }
+      } else if (c === 47 && evalPos + 1 < slen && s.charCodeAt(evalPos + 1) === 42) {
+        // #14 2h — `/* … */` block comment.
+        evalPos = evalPos + 2;
+        let done: i32 = 0;
+        while (done === 0 && evalPos < slen) {
+          if (s.charCodeAt(evalPos) === 42 && evalPos + 1 < slen && s.charCodeAt(evalPos + 1) === 47) {
+            evalPos = evalPos + 2;
+            done = 1;
+          } else {
+            evalPos = evalPos + 1;
+          }
+        }
       } else {
         go = 0;
       }
@@ -3326,6 +3377,55 @@ function parsePrimary(s: string): i32 {
         }
       }
       evalPos = save; // not `Object.method(…)` — fall through to normal resolution
+    }
+    if (strEq(name, "console") === 1) { // #14 2h — console.log/error/warn/info(args) → host stdout
+      const save: i32 = evalPos;
+      evalSkipWs(s);
+      if (evalPeek(s) === 46) { // '.'
+        evalPos = evalPos + 1;
+        const meth: string = readIdent(s);
+        evalSkipWs(s);
+        if (evalPeek(s) === 40) { // '('
+          evalPos = evalPos + 1;
+          const cargs: i32 = dynArray();
+          gcPushRoot(cargs);
+          evalSkipWs(s);
+          if (evalPeek(s) === 41) {
+            evalPos = evalPos + 1;
+          } else {
+            let more: i32 = 1;
+            while (more === 1) {
+              dynPush(cargs, parseExpr(s));
+              evalSkipWs(s);
+              const cc: i32 = evalPeek(s);
+              if (cc === 44) {
+                evalPos = evalPos + 1;
+              } else {
+                if (cc === 41) evalPos = evalPos + 1;
+                more = 0;
+              }
+            }
+          }
+          if (evalLive === 1) {
+            let isLog: i32 = 0;
+            if (strEq(meth, "log") === 1) isLog = 1;
+            if (strEq(meth, "error") === 1) isLog = 1;
+            if (strEq(meth, "warn") === 1) isLog = 1;
+            if (strEq(meth, "info") === 1) isLog = 1;
+            if (isLog === 1) {
+              const body: string = dynConsoleLine(cargs);
+              const line: string = body + "\n";
+              const lbox: i32 = dynString(line);
+              const lp: i32 = dynStrBytes(lbox);
+              const ll: i32 = dynStrLen(lbox);
+              __host.print(lp, ll);
+            }
+          }
+          gcPopRoot();
+          return dynUndefined();
+        }
+      }
+      evalPos = save; // not `console.…(` — fall through to normal resolution
     }
     if (strEq(name, "Math") === 1) { // #14 2f.4 — Math.method(args) / Math.PI / Math.E
       const save: i32 = evalPos;
@@ -5306,4 +5406,50 @@ export function dynRun(s: string, env: i32): i32 {
   const result: i32 = evalReturned === 1 ? evalReturnVal : lastValue;
   gcPopRoot();
   return result;
+}
+
+// #14 2h — base64 alphabet → 6-bit value (-1 for '=' / whitespace / padding).
+function b64dec(c: i32): i32 {
+  if (c >= 65 && c <= 90) return c - 65; // A-Z → 0-25
+  if (c >= 97 && c <= 122) return c - 71; // a-z → 26-51
+  if (c >= 48 && c <= 57) return c + 4; // 0-9 → 52-61
+  if (c === 43) return 62; // '+'
+  if (c === 47) return 63; // '/'
+  return -1;
+}
+
+// #14 2h (full-dynamic-compile entry, `wasmtk dync`) — run a program whose SOURCE is supplied as
+// base64. The `dync` driver embeds the whole program as a base64 string (whose alphabet has no
+// `{` `}` `;` `"` or newline, so wasic's source scanner never mis-parses the payload as code), then
+// calls this. We decode the base64 to the raw UTF-8 source bytes, wrap them as a tag-4 string value,
+// unbox to a wasic string, and hand it to `dynRun`.
+/** @export */
+export function dynRunB64(b64: string, env: i32): i32 {
+  const blen: i32 = b64.length;
+  const buf: Uint8Array = dynAlloc(8 + blen + 4) as unknown as Uint8Array; // output ≤ ¾·blen
+  let acc: i32 = 0;
+  let bits: i32 = 0;
+  let outN: i32 = 0;
+  let i: i32 = 0;
+  while (i < blen) {
+    const v: i32 = b64dec(b64.charCodeAt(i));
+    i = i + 1;
+    if (v >= 0) {
+      acc = (acc << 6) | v;
+      bits = bits + 6;
+      if (bits >= 8) {
+        bits = bits - 8;
+        const byte: i32 = (acc >> bits) & 255;
+        buf[outN] = byte;
+        outN = outN + 1;
+      }
+    }
+  }
+  const sn: Int32Array = mkCell() as unknown as Int32Array;
+  sn[0] = 4; // string tag
+  sn[1] = buf as unknown as i32;
+  sn[2] = outN;
+  const box: i32 = sn as unknown as i32;
+  const src: string = boxToStr(box);
+  return dynRun(src, env);
 }

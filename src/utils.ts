@@ -256,6 +256,15 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
       abort: (): void => {
         throw new WebAssembly.RuntimeError("abort");
       },
+      // #14 2h: the own dynamic runtime's `console.log`/`error`/`warn` route here. Writes `len`
+      // raw UTF-8 bytes at `ptr` (the interpreter already appended the trailing newline) to stdout.
+      __host_print: (...args: unknown[]): void => {
+        if (!wasiInstance) return;
+        const ptr = args[0] as number;
+        const len = args[1] as number;
+        const memory = wasiInstance.exports.memory as WebAssembly.Memory;
+        rt.stdout.writeSync(new Uint8Array(memory.buffer, ptr, len).slice());
+      },
     };
     const envProxy = new Proxy(envBase, {
       get(target, prop) {
