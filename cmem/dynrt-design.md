@@ -1100,6 +1100,19 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
      shifts the internal array(s) down + truncates the values list. **Purely interpreter-side.** Suite
      355/355 (+`18zu`), bindgen 131/131, jstyper 73/73. **Gaps:** `entries()`/iterator protocol, `Map`
      constructor from an entries array, `WeakMap`/`WeakSet`.
+   - **2f.7 RegExp** — **SHIPPED 2026-06-26** (test `18zv`; **completes the f-series stdlib**): `new
+     RegExp(pat)` + a compact recursive backtracking matcher (`reMatchHere`/`reMatchStar`/`reMatchPlus`/
+     `reMatchQuestion` + `reMatchAtom`/`reMatchClass`/`reAtomLen`) supporting literals, `.`, quantifiers
+     `*`/`+`/`?` (greedy), anchors `^`/`$`, character classes `[…]`/`[^…]` with ranges, and the escapes
+     `\d \w \s \D \W \S \n \t`. A RegExp is a dynrt object holding `__regex`=the pattern string; `re.test`
+     → bool, `re.exec`/`str.match(re)` → first matched substring or null. `new RegExp` special-cased in the
+     `new` operator; `re.test`/`exec` dispatch in `parsePostfix` (object receiver with `__regex`);
+     `str.match` added to `dynStringMethod`. **Purely interpreter-side.** Suite 356/356 (+`18zv`), bindgen
+     131/131, jstyper 73/73. **Gaps:** alternation `|`, groups/captures, backreferences, regex flags (`g`/
+     `i`/`m`), `str.replace` with regex, `/…/` LITERAL syntax (use `new RegExp` — the `/…/` tokenizer-vs-
+     division ambiguity is deferred); deep recursion uses the WAT call stack.
+   - **f-series stdlib COMPLETE** (2f.2 Array, 2f.3 String, 2f.4 Object/Math, 2f.5 JSON, 2f.6 Map/Set,
+     2f.7 RegExp). The remaining 2f items (e.g. Number/Promise/Date statics) fold into later increments.
 7. **2e.9 generators**, then **2e.10 async/await** (hardest — needs a microtask loop; ties to #13).
 8. **2h removal** — the full-dynamic-compile entry + the Javy-parity conformance gate + delete
    `src/javyc.ts` & wiring.

@@ -1594,6 +1594,20 @@ function dynStringMethod(str: i32, name: string, args: i32): i32 {
     }
     return out;
   }
+  if (strEq(name, "match") === 1) { // #14 2f.7 — str.match(re|pattern) → first matched substring or null
+    let pat: string = "";
+    if (argc > 0) {
+      const arg: i32 = dynArrGet(args, 0);
+      const an: Int32Array = arg as unknown as Int32Array;
+      if (an[0] === 6) {
+        const rp: i32 = dynGet(arg, "__regex");
+        if (rp !== -1) pat = boxToStr(rp);
+      } else if (an[0] === 4) {
+        pat = boxToStr(arg);
+      }
+    }
+    return reFirstMatch(pat, s);
+  }
   return dynUndefined();
 }
 
@@ -1962,6 +1976,209 @@ function dynSetMethod(set: i32, name: string, args: i32): i32 {
     }
     return dynUndefined();
   }
+  return dynUndefined();
+}
+
+// #14 2f.7 — RegExp: a compact recursive backtracking matcher over wasic strings. Supports literals, `.`,
+// quantifiers `*`/`+`/`?` (greedy), anchors `^`/`$`, character classes `[…]`/`[^…]` with ranges, and the
+// escapes `\d \w \s \D \W \S \n \t`. A RegExp is a dynrt object holding `__regex` = the pattern string;
+// `new RegExp(p)` builds it; `re.test`/`re.exec` + `str.match` use it. (Alternation `|`, groups, and
+// backreferences are a later increment. Deep recursion uses the WAT call stack.)
+function reIsDigit(c: i32): i32 {
+  return (c >= 48 && c <= 57) ? 1 : 0;
+}
+
+function reIsWord(c: i32): i32 {
+  if (c >= 48 && c <= 57) return 1;
+  if (c >= 65 && c <= 90) return 1;
+  if (c >= 97 && c <= 122) return 1;
+  if (c === 95) return 1;
+  return 0;
+}
+
+function reIsSpace(c: i32): i32 {
+  if (c === 32 || c === 9 || c === 10 || c === 13) return 1;
+  return 0;
+}
+
+// length (in chars) of the atom starting at pat[pi]: 2 for `\x`, N+1 for `[…]`, else 1.
+function reAtomLen(pat: string, pi: i32): i32 {
+  const c: i32 = pat.charCodeAt(pi);
+  if (c === 92) return 2; // backslash escape
+  if (c === 91) { // '[' — scan to the matching ']'
+    let j: i32 = pi + 1;
+    if (j < pat.length && pat.charCodeAt(j) === 94) j = j + 1; // leading '^'
+    if (j < pat.length && pat.charCodeAt(j) === 93) j = j + 1; // a ']' right after is literal
+    while (j < pat.length && pat.charCodeAt(j) !== 93) j = j + 1;
+    return (j - pi) + 1;
+  }
+  return 1;
+}
+
+// does char `c` match the character class `[…]` starting at pat[pi]?
+function reMatchClass(pat: string, pi: i32, c: i32): i32 {
+  let j: i32 = pi + 1;
+  let negate: i32 = 0;
+  if (j < pat.length && pat.charCodeAt(j) === 94) {
+    negate = 1;
+    j = j + 1;
+  }
+  let found: i32 = 0;
+  let go: i32 = 1;
+  while (go === 1 && j < pat.length) {
+    const ch: i32 = pat.charCodeAt(j);
+    if (ch === 93) { // ']'
+      go = 0;
+    } else if (j + 2 < pat.length && pat.charCodeAt(j + 1) === 45 && pat.charCodeAt(j + 2) !== 93) {
+      const hi: i32 = pat.charCodeAt(j + 2); // range a-z
+      if (c >= ch && c <= hi) found = 1;
+      j = j + 3;
+    } else if (ch === 92) {
+      const e: i32 = pat.charCodeAt(j + 1); // escape inside the class
+      if (e === 100 && reIsDigit(c) === 1) found = 1;
+      else if (e === 119 && reIsWord(c) === 1) found = 1;
+      else if (e === 115 && reIsSpace(c) === 1) found = 1;
+      else if (c === e) found = 1;
+      j = j + 2;
+    } else {
+      if (c === ch) found = 1;
+      j = j + 1;
+    }
+  }
+  if (negate === 1) return found === 1 ? 0 : 1;
+  return found;
+}
+
+// does char `c` match the single atom at pat[pi]?
+function reMatchAtom(pat: string, pi: i32, c: i32): i32 {
+  const p: i32 = pat.charCodeAt(pi);
+  if (p === 46) return 1; // '.' = any
+  if (p === 92) {
+    const e: i32 = pat.charCodeAt(pi + 1);
+    if (e === 100) return reIsDigit(c);
+    if (e === 68) return reIsDigit(c) === 1 ? 0 : 1;
+    if (e === 119) return reIsWord(c);
+    if (e === 87) return reIsWord(c) === 1 ? 0 : 1;
+    if (e === 115) return reIsSpace(c);
+    if (e === 83) return reIsSpace(c) === 1 ? 0 : 1;
+    if (e === 110) return c === 10 ? 1 : 0; // \n
+    if (e === 116) return c === 9 ? 1 : 0; // \t
+    return c === e ? 1 : 0; // escaped literal
+  }
+  if (p === 91) return reMatchClass(pat, pi, c);
+  return c === p ? 1 : 0;
+}
+
+// match pat[pi..] against text[ti..]; returns the END index in text on success, or -1.
+function reMatchHere(pat: string, pi: i32, text: string, ti: i32): i32 {
+  if (pi >= pat.length) return ti;
+  if (pat.charCodeAt(pi) === 36 && pi === pat.length - 1) { // '$'
+    return ti === text.length ? ti : -1;
+  }
+  const al: i32 = reAtomLen(pat, pi);
+  let quant: i32 = 0;
+  if (pi + al < pat.length) quant = pat.charCodeAt(pi + al);
+  if (quant === 42) return reMatchStar(pat, pi, al, text, ti); // '*'
+  if (quant === 43) return reMatchPlus(pat, pi, al, text, ti); // '+'
+  if (quant === 63) return reMatchQuestion(pat, pi, al, text, ti); // '?'
+  if (ti < text.length && reMatchAtom(pat, pi, text.charCodeAt(ti)) === 1) {
+    return reMatchHere(pat, pi + al, text, ti + 1);
+  }
+  return -1;
+}
+
+function reMatchStar(pat: string, pi: i32, al: i32, text: string, ti: i32): i32 {
+  let maxT: i32 = ti;
+  while (maxT < text.length && reMatchAtom(pat, pi, text.charCodeAt(maxT)) === 1) maxT = maxT + 1;
+  let t: i32 = maxT;
+  let go: i32 = 1;
+  while (go === 1) {
+    const r: i32 = reMatchHere(pat, pi + al + 1, text, t);
+    if (r >= 0) return r;
+    if (t === ti) go = 0;
+    else t = t - 1;
+  }
+  return -1;
+}
+
+function reMatchPlus(pat: string, pi: i32, al: i32, text: string, ti: i32): i32 {
+  if (ti >= text.length) return -1;
+  if (reMatchAtom(pat, pi, text.charCodeAt(ti)) === 0) return -1;
+  let maxT: i32 = ti + 1;
+  while (maxT < text.length && reMatchAtom(pat, pi, text.charCodeAt(maxT)) === 1) maxT = maxT + 1;
+  let t: i32 = maxT;
+  let go: i32 = 1;
+  while (go === 1) {
+    const r: i32 = reMatchHere(pat, pi + al + 1, text, t);
+    if (r >= 0) return r;
+    if (t === ti + 1) go = 0;
+    else t = t - 1;
+  }
+  return -1;
+}
+
+function reMatchQuestion(pat: string, pi: i32, al: i32, text: string, ti: i32): i32 {
+  if (ti < text.length && reMatchAtom(pat, pi, text.charCodeAt(ti)) === 1) {
+    const r: i32 = reMatchHere(pat, pi + al + 1, text, ti + 1);
+    if (r >= 0) return r;
+  }
+  return reMatchHere(pat, pi + al + 1, text, ti); // 0 matches
+}
+
+// 1 if `pat` matches anywhere in `text`, else 0.
+function reSearch(pat: string, text: string): i32 {
+  let pi0: i32 = 0;
+  let anchored: i32 = 0;
+  if (pat.length > 0 && pat.charCodeAt(0) === 94) {
+    anchored = 1;
+    pi0 = 1;
+  }
+  if (anchored === 1) {
+    return reMatchHere(pat, pi0, text, 0) >= 0 ? 1 : 0;
+  }
+  let ti: i32 = 0;
+  while (ti <= text.length) {
+    if (reMatchHere(pat, pi0, text, ti) >= 0) return 1;
+    ti = ti + 1;
+  }
+  return 0;
+}
+
+// the FIRST matched substring as a dynrt string, or null.
+function reFirstMatch(pat: string, text: string): i32 {
+  let pi0: i32 = 0;
+  let anchored: i32 = 0;
+  if (pat.length > 0 && pat.charCodeAt(0) === 94) {
+    anchored = 1;
+    pi0 = 1;
+  }
+  let ti: i32 = 0;
+  let go: i32 = 1;
+  while (go === 1 && ti <= text.length) {
+    const end: i32 = reMatchHere(pat, pi0, text, ti);
+    if (end >= 0) {
+      const sub: string = text.slice(ti, end);
+      return dynString(sub);
+    }
+    if (anchored === 1) go = 0;
+    else ti = ti + 1;
+  }
+  return dynNull();
+}
+
+function dynRegexNew(pat: i32): i32 {
+  const re: i32 = dynObject();
+  dynSet(re, "__regex", pat);
+  return re;
+}
+
+function dynRegexMethod(re: i32, name: string, args: i32): i32 {
+  const pat: string = boxToStr(dynGet(re, "__regex"));
+  const argc: i32 = dynArrLen(args);
+  let text: string = "";
+  if (argc > 0) text = boxToStr(dynArrGet(args, 0));
+  if (strEq(name, "test") === 1) return dynBool(reSearch(pat, text));
+  if (strEq(name, "exec") === 1) return reFirstMatch(pat, text);
   return dynUndefined();
 }
 
@@ -3015,6 +3232,10 @@ function parsePrimary(s: string): i32 {
           let init: i32 = dynUndefined();
           if (dynArrLen(argsArr) > 0) init = dynArrGet(argsArr, 0);
           inst = dynSetNew(init);
+        } else if (strEq(cnm, "RegExp") === 1) { // #14 2f.7
+          let pat: i32 = dynString("");
+          if (dynArrLen(argsArr) > 0) pat = dynArrGet(argsArr, 0);
+          inst = dynRegexNew(pat);
         } else {
           inst = dynNew(classVal, argsArr);
         }
@@ -3224,6 +3445,8 @@ function parsePostfix(s: string): i32 {
             v = dynMapMethod(recv, recvMethod, argsArr); // #14 2f.6
           } else if (rvn[0] === 6 && vvn[0] !== 7 && dynHas(recv, "__setk") === 1) {
             v = dynSetMethod(recv, recvMethod, argsArr); // #14 2f.6
+          } else if (rvn[0] === 6 && vvn[0] !== 7 && dynHas(recv, "__regex") === 1) {
+            v = dynRegexMethod(recv, recvMethod, argsArr); // #14 2f.7
           } else {
             v = dynApplyThis(v, argsArr, recv);
           }
