@@ -1064,6 +1064,17 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
      (+`18zr`), bindgen 131/131, jstyper 73/73. Subset note: every string-method CALL result is bound to a
      `string` local before re-boxing (the subset can't pass a string-returning call straight into another
      call). **Gaps:** `replace`/`replaceAll`/`substring`/`trimStart`/`trimEnd`/`at`/`split` with regex.
+   - **2f.4 Object + Math statics** — **SHIPPED 2026-06-26** (test `18zs`): `Math.floor`/`ceil`/`round`/
+     `trunc`/`abs`/`sqrt`/`sign`/`min`/`max`/`pow` + `Math.PI`/`Math.E`; `Object.keys`/`values`/`entries`/
+     `assign` (`Object.create` was 2f.1). Both are NAMESPACE statics special-cased in `parsePrimary` (like
+     the existing `Object.create`): when the identifier is exactly `Math`/`Object` and a `.method(` follows,
+     parse the args and dispatch to `dynMathMethod`/`dynObjectStatic`; `Math.PI`/`Math.E` (no parens) return
+     the constant; otherwise a save/restore fall-through to normal resolution. `Math` reuses the wasic
+     compiler's f64 intrinsics (`Math.floor`/`pow`/… directly in the lib); `Object.keys`/`values`/`entries`
+     iterate own entries via `dynObjLen`/`dynObjKeyVal`/`dynObjValAt`, `assign` copies each source's own keys
+     into the target. **Purely interpreter-side.** Suite 353/353 (+`18zs`), bindgen 131/131, jstyper 73/73.
+     **Gaps:** other `Math` fns (trig/exp/log — would bridge `mathlib`), `Math.random`, `Object.freeze`/
+     `getPrototypeOf`/`fromEntries`, `Number`/`JSON` statics (JSON is the 2f.5 bridge).
 7. **2e.9 generators**, then **2e.10 async/await** (hardest — needs a microtask loop; ties to #13).
 8. **2h removal** — the full-dynamic-compile entry + the Javy-parity conformance gate + delete
    `src/javyc.ts` & wiring.

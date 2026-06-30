@@ -1597,6 +1597,133 @@ function dynStringMethod(str: i32, name: string, args: i32): i32 {
   return dynUndefined();
 }
 
+// #14 2f.4 — Object static methods: create(proto) / keys(o) / values(o) / entries(o) / assign(t,…src).
+// Called from the `Object.…(…)` handler in parsePrimary. keys/values/entries iterate own entries.
+function dynObjectStatic(name: string, args: i32): i32 {
+  const argc: i32 = dynArrLen(args);
+  let target: i32 = dynUndefined();
+  if (argc > 0) target = dynArrGet(args, 0);
+  const tn: Int32Array = target as unknown as Int32Array;
+  if (strEq(name, "create") === 1) {
+    const o: i32 = dynObject();
+    const on: Int32Array = o as unknown as Int32Array;
+    if (tn[0] === 6) on[2] = target; // link prototype (only when proto is an object)
+    return o;
+  }
+  if (strEq(name, "keys") === 1) {
+    const out: i32 = dynArray();
+    if (tn[0] === 6) {
+      const n: i32 = dynObjLen(target);
+      let i: i32 = 0;
+      while (i < n) {
+        dynPush(out, dynObjKeyVal(target, i));
+        i = i + 1;
+      }
+    }
+    return out;
+  }
+  if (strEq(name, "values") === 1) {
+    const out: i32 = dynArray();
+    if (tn[0] === 6) {
+      const n: i32 = dynObjLen(target);
+      let i: i32 = 0;
+      while (i < n) {
+        dynPush(out, dynObjValAt(target, i));
+        i = i + 1;
+      }
+    }
+    return out;
+  }
+  if (strEq(name, "entries") === 1) {
+    const out: i32 = dynArray();
+    if (tn[0] === 6) {
+      const n: i32 = dynObjLen(target);
+      let i: i32 = 0;
+      while (i < n) {
+        const pair: i32 = dynArray();
+        dynPush(pair, dynObjKeyVal(target, i));
+        dynPush(pair, dynObjValAt(target, i));
+        dynPush(out, pair);
+        i = i + 1;
+      }
+    }
+    return out;
+  }
+  if (strEq(name, "assign") === 1) {
+    let a: i32 = 1;
+    while (a < argc) {
+      const src: i32 = dynArrGet(args, a);
+      const sn: Int32Array = src as unknown as Int32Array;
+      if (sn[0] === 6) {
+        const n: i32 = dynObjLen(src);
+        let i: i32 = 0;
+        while (i < n) {
+          const kstr: string = boxToStr(dynObjKeyVal(src, i));
+          dynSet(target, kstr, dynObjValAt(src, i));
+          i = i + 1;
+        }
+      }
+      a = a + 1;
+    }
+    return target;
+  }
+  return dynUndefined();
+}
+
+// #14 2f.4 — Math functions (Math.PI / Math.E constants are handled inline in the parsePrimary handler).
+// One- and two-arg forms; reuses the wasic compiler's own f64 Math intrinsics.
+function dynMathMethod(name: string, args: i32): i32 {
+  const argc: i32 = dynArrLen(args);
+  let x: f64 = 0;
+  if (argc > 0) x = dynToNumber(dynArrGet(args, 0));
+  if (strEq(name, "floor") === 1) {
+    const r: f64 = Math.floor(x);
+    return dynNumber(r);
+  }
+  if (strEq(name, "ceil") === 1) {
+    const r: f64 = Math.ceil(x);
+    return dynNumber(r);
+  }
+  if (strEq(name, "round") === 1) {
+    const r: f64 = Math.round(x);
+    return dynNumber(r);
+  }
+  if (strEq(name, "abs") === 1) {
+    const r: f64 = Math.abs(x);
+    return dynNumber(r);
+  }
+  if (strEq(name, "sqrt") === 1) {
+    const r: f64 = Math.sqrt(x);
+    return dynNumber(r);
+  }
+  if (strEq(name, "sign") === 1) {
+    let sg: f64 = 0;
+    if (x > 0) sg = 1;
+    if (x < 0) sg = 0 - 1;
+    return dynNumber(sg);
+  }
+  if (strEq(name, "trunc") === 1) {
+    let t: f64 = Math.floor(x);
+    if (x < 0) t = Math.ceil(x);
+    return dynNumber(t);
+  }
+  let y: f64 = 0;
+  if (argc > 1) y = dynToNumber(dynArrGet(args, 1));
+  if (strEq(name, "max") === 1) {
+    const r: f64 = x > y ? x : y;
+    return dynNumber(r);
+  }
+  if (strEq(name, "min") === 1) {
+    const r: f64 = x < y ? x : y;
+    return dynNumber(r);
+  }
+  if (strEq(name, "pow") === 1) {
+    const r: f64 = Math.pow(x, y);
+    return dynNumber(r);
+  }
+  return dynUndefined();
+}
+
 // #14 2e.4 — `container[idx] = val` for arrays (number index) and objects (string key); mirrors
 // dynIndexValue's dispatch. Non-matching container/index kinds are no-ops in v1.
 function dynIndexSet(container: i32, idxBox: i32, val: i32): void {
@@ -2471,26 +2598,79 @@ function parsePrimary(s: string): i32 {
     if (strEq(name, "false") === 1) return dynBool(0);
     if (strEq(name, "null") === 1) return dynNull();
     if (strEq(name, "undefined") === 1) return dynUndefined();
-    if (strEq(name, "Object") === 1) { // #14 2f.1 — Object.create(proto): new object with __proto__=proto
+    if (strEq(name, "Object") === 1) { // #14 2f.1/2f.4 — Object.create/keys/values/entries/assign(args)
       const save: i32 = evalPos;
       evalSkipWs(s);
       if (evalPeek(s) === 46) { // '.'
         evalPos = evalPos + 1;
         const meth: string = readIdent(s);
         evalSkipWs(s);
-        if (strEq(meth, "create") === 1 && evalPeek(s) === 40) {
-          evalPos = evalPos + 1; // '('
-          const proto: i32 = parseExpr(s);
+        if (evalPeek(s) === 40) { // '(args)'
+          evalPos = evalPos + 1;
+          const oargs: i32 = dynArray();
+          gcPushRoot(oargs);
           evalSkipWs(s);
-          if (evalPeek(s) === 41) evalPos = evalPos + 1; // ')'
-          const o: i32 = dynObject();
-          const on: Int32Array = o as unknown as Int32Array;
-          const pn: Int32Array = proto as unknown as Int32Array;
-          if (pn[0] === 6) on[2] = proto; // link the prototype (only when proto is an object)
-          return o;
+          if (evalPeek(s) === 41) {
+            evalPos = evalPos + 1;
+          } else {
+            let more: i32 = 1;
+            while (more === 1) {
+              dynPush(oargs, parseExpr(s));
+              evalSkipWs(s);
+              const cc: i32 = evalPeek(s);
+              if (cc === 44) {
+                evalPos = evalPos + 1;
+              } else {
+                if (cc === 41) evalPos = evalPos + 1;
+                more = 0;
+              }
+            }
+          }
+          let rv: i32 = dynUndefined();
+          if (evalLive === 1) rv = dynObjectStatic(meth, oargs);
+          gcPopRoot();
+          return rv;
         }
       }
-      evalPos = save; // not Object.create(…) — fall through to normal resolution
+      evalPos = save; // not `Object.method(…)` — fall through to normal resolution
+    }
+    if (strEq(name, "Math") === 1) { // #14 2f.4 — Math.method(args) / Math.PI / Math.E
+      const save: i32 = evalPos;
+      evalSkipWs(s);
+      if (evalPeek(s) === 46) { // '.'
+        evalPos = evalPos + 1;
+        const meth: string = readIdent(s);
+        evalSkipWs(s);
+        if (strEq(meth, "PI") === 1) return dynNumber(3.141592653589793);
+        if (strEq(meth, "E") === 1) return dynNumber(2.718281828459045);
+        if (evalPeek(s) === 40) { // '(args)'
+          evalPos = evalPos + 1;
+          const margs: i32 = dynArray();
+          gcPushRoot(margs);
+          evalSkipWs(s);
+          if (evalPeek(s) === 41) {
+            evalPos = evalPos + 1;
+          } else {
+            let more: i32 = 1;
+            while (more === 1) {
+              dynPush(margs, parseExpr(s));
+              evalSkipWs(s);
+              const cc: i32 = evalPeek(s);
+              if (cc === 44) {
+                evalPos = evalPos + 1;
+              } else {
+                if (cc === 41) evalPos = evalPos + 1;
+                more = 0;
+              }
+            }
+          }
+          let rv: i32 = dynUndefined();
+          if (evalLive === 1) rv = dynMathMethod(meth, margs);
+          gcPopRoot();
+          return rv;
+        }
+      }
+      evalPos = save; // not `Math.…` — fall through to normal resolution
     }
     if (strEq(name, "new") === 1) { // #14 2e.8 — `new Class(args)`
       evalSkipWs(s);
