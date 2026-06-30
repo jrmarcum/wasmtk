@@ -1147,6 +1147,176 @@ function dynArrSet(arr: i32, i: i32, val: i32): void {
   }
 }
 
+// #14 2f.2 — built-in Array methods. Dispatched from parsePostfix when the receiver is a tag-5 array
+// and the resolved member is NOT a tag-7 function (so a user-set arr.foo() still wins). Non-mutating
+// methods build a new array; push appends in place. Callback methods (map/filter/forEach/reduce) invoke
+// the callback via dynApply with (element, index). Unrecognized names → undefined. Index args truncate
+// toward zero. `pop`/`shift`/`splice`/`sort` are a later increment (need list truncation).
+function dynArrayMethod(arr: i32, name: string, args: i32): i32 {
+  const len: i32 = dynArrLen(arr);
+  const argc: i32 = dynArrLen(args);
+  if (strEq(name, "push") === 1) {
+    let i: i32 = 0;
+    while (i < argc) {
+      dynPush(arr, dynArrGet(args, i));
+      i = i + 1;
+    }
+    const nl: i32 = dynArrLen(arr); // bind the i32 call result to a local so the i32→f64 arg coerce fires
+    return dynNumber(nl);
+  }
+  if (strEq(name, "indexOf") === 1) {
+    let target: i32 = dynUndefined();
+    if (argc > 0) target = dynArrGet(args, 0);
+    let i: i32 = 0;
+    while (i < len) {
+      if (dynStrictEq(dynArrGet(arr, i), target) === 1) return dynNumber(i);
+      i = i + 1;
+    }
+    return dynNumber(0 - 1);
+  }
+  if (strEq(name, "includes") === 1) {
+    let target: i32 = dynUndefined();
+    if (argc > 0) target = dynArrGet(args, 0);
+    let i: i32 = 0;
+    while (i < len) {
+      if (dynStrictEq(dynArrGet(arr, i), target) === 1) return dynBool(1);
+      i = i + 1;
+    }
+    return dynBool(0);
+  }
+  if (strEq(name, "join") === 1) {
+    let sep: string = ",";
+    if (argc > 0) sep = stringForm(dynArrGet(args, 0));
+    let joined: string = "";
+    let i: i32 = 0;
+    while (i < len) {
+      if (i > 0) joined = joined + sep;
+      joined = joined + stringForm(dynArrGet(arr, i));
+      i = i + 1;
+    }
+    return dynString(joined);
+  }
+  if (strEq(name, "slice") === 1) {
+    let start: i32 = 0;
+    let end: i32 = len;
+    if (argc > 0) {
+      const s0: f64 = dynToNumber(dynArrGet(args, 0));
+      start = s0 as unknown as i32;
+    }
+    if (argc > 1) {
+      const e0: f64 = dynToNumber(dynArrGet(args, 1));
+      end = e0 as unknown as i32;
+    }
+    if (start < 0) start = len + start;
+    if (end < 0) end = len + end;
+    if (start < 0) start = 0;
+    if (end > len) end = len;
+    const out: i32 = dynArray();
+    let i: i32 = start;
+    while (i < end) {
+      dynPush(out, dynArrGet(arr, i));
+      i = i + 1;
+    }
+    return out;
+  }
+  if (strEq(name, "concat") === 1) {
+    const out: i32 = dynArray();
+    let i: i32 = 0;
+    while (i < len) {
+      dynPush(out, dynArrGet(arr, i));
+      i = i + 1;
+    }
+    let a: i32 = 0;
+    while (a < argc) {
+      const item: i32 = dynArrGet(args, a);
+      const it: Int32Array = item as unknown as Int32Array;
+      if (it[0] === 5) {
+        const ilen: i32 = dynArrLen(item);
+        let j: i32 = 0;
+        while (j < ilen) {
+          dynPush(out, dynArrGet(item, j));
+          j = j + 1;
+        }
+      } else {
+        dynPush(out, item);
+      }
+      a = a + 1;
+    }
+    return out;
+  }
+  if (strEq(name, "reverse") === 1) {
+    const out: i32 = dynArray();
+    let i: i32 = len - 1;
+    while (i >= 0) {
+      dynPush(out, dynArrGet(arr, i));
+      i = i - 1;
+    }
+    return out;
+  }
+  // callback methods: the callback is args[0]; called with (element, index)
+  let cb: i32 = dynUndefined();
+  if (argc > 0) cb = dynArrGet(args, 0);
+  if (strEq(name, "map") === 1) {
+    const out: i32 = dynArray();
+    let i: i32 = 0;
+    while (i < len) {
+      const ca: i32 = dynArray();
+      dynPush(ca, dynArrGet(arr, i));
+      dynPush(ca, dynNumber(i));
+      dynPush(out, dynApply(cb, ca));
+      i = i + 1;
+    }
+    return out;
+  }
+  if (strEq(name, "filter") === 1) {
+    const out: i32 = dynArray();
+    let i: i32 = 0;
+    while (i < len) {
+      const elem: i32 = dynArrGet(arr, i);
+      const ca: i32 = dynArray();
+      dynPush(ca, elem);
+      dynPush(ca, dynNumber(i));
+      if (dynToBool(dynApply(cb, ca)) === 1) dynPush(out, elem);
+      i = i + 1;
+    }
+    return out;
+  }
+  if (strEq(name, "forEach") === 1) {
+    let i: i32 = 0;
+    while (i < len) {
+      const ca: i32 = dynArray();
+      dynPush(ca, dynArrGet(arr, i));
+      dynPush(ca, dynNumber(i));
+      dynApply(cb, ca);
+      i = i + 1;
+    }
+    return dynUndefined();
+  }
+  if (strEq(name, "reduce") === 1) {
+    let acc: i32 = dynUndefined();
+    let start: i32 = 0;
+    if (argc > 1) {
+      acc = dynArrGet(args, 1);
+    } else {
+      if (len > 0) {
+        acc = dynArrGet(arr, 0);
+        start = 1;
+      }
+    }
+    let i: i32 = start;
+    while (i < len) {
+      const ca: i32 = dynArray();
+      dynPush(ca, acc);
+      dynPush(ca, dynArrGet(arr, i));
+      dynPush(ca, dynNumber(i));
+      acc = dynApply(cb, ca);
+      i = i + 1;
+    }
+    return acc;
+  }
+  return dynUndefined();
+}
+
 // #14 2e.4 — `container[idx] = val` for arrays (number index) and objects (string key); mirrors
 // dynIndexValue's dispatch. Non-matching container/index kinds are no-ops in v1.
 function dynIndexSet(container: i32, idxBox: i32, val: i32): void {
@@ -2181,6 +2351,7 @@ function parsePostfix(s: string): i32 {
   let v: i32 = parsePrimary(s);
   let go: i32 = 1;
   let recv: i32 = -1; // #14 2f.1: the receiver of the most recent member access → `this` for a method call
+  let recvMethod: string = ""; // #14 2f.2: the member NAME (for built-in Array method dispatch)
   let optDead: i32 = 0; // #14 2e.5: set once an optional `?.` hits a null/undefined receiver — the rest
   while (go === 1) { //                of the chain then short-circuits to undefined (still parsed).
     evalSkipWs(s);
@@ -2211,6 +2382,7 @@ function parsePostfix(s: string): i32 {
         }
         const name: string = s.slice(start, evalPos);
         recv = v;
+        recvMethod = name;
         v = optDead === 1 ? dynUndefined() : dynMember(v, name);
       }
       handled = 1; // optional access done — keep looping for any further chain
@@ -2228,6 +2400,7 @@ function parsePostfix(s: string): i32 {
       }
       const name: string = s.slice(start, evalPos);
       recv = v; // #14 2f.1 — receiver for a following `obj.name(args)` method call
+      recvMethod = name;
       v = optDead === 1 ? dynUndefined() : dynMember(v, name);
     } else if (c === 91) { // [expr]
       evalPos = evalPos + 1;
@@ -2235,6 +2408,7 @@ function parsePostfix(s: string): i32 {
       evalSkipWs(s);
       if (evalPeek(s) === 93) evalPos = evalPos + 1; // ']'
       recv = v;
+      recvMethod = "";
       v = optDead === 1 ? dynUndefined() : dynIndexValue(v, idx);
     } else if (c === 40) { // (args)  — call
       evalPos = evalPos + 1;
@@ -2267,8 +2441,16 @@ function parsePostfix(s: string): i32 {
       // The CALL is the only side-effecting op: skip the dispatch in a dead (short-circuited)
       // branch or a killed optional chain, but still parse the args above so the cursor advances.
       if (evalLive === 1 && optDead === 0) {
-        if (hasRecv === 1) v = dynApplyThis(v, argsArr, recv);
-        else v = dynApply(v, argsArr);
+        if (hasRecv === 1) {
+          // #14 2f.2 — built-in Array method: receiver is an array AND the resolved member is not a
+          // tag-7 function (so `arr[i]()` calling a stored function, and a user-set arr.foo(), still win)
+          const rvn: Int32Array = recv as unknown as Int32Array;
+          const vvn: Int32Array = v as unknown as Int32Array;
+          if (rvn[0] === 5 && vvn[0] !== 7) v = dynArrayMethod(recv, recvMethod, argsArr);
+          else v = dynApplyThis(v, argsArr, recv);
+        } else {
+          v = dynApply(v, argsArr);
+        }
       } else {
         v = dynUndefined();
       }

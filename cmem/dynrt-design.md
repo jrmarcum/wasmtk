@@ -1035,6 +1035,18 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
    gotcha: `dynString(strVarA + strVarB)` unsupported — bind the concat to a local first.
 6. **2f.2–2f.9 stdlib** — do the BRIDGES first (2f.5 JSON, 2f.6 Map/Set, 2f.7 RegExp reuse the existing
    capability libs → cheap), then Array/String/Object/Math methods.
+   - **2f.2 Array methods** — **SHIPPED 2026-06-26** (test `18zq`): `push`/`indexOf`/`includes`/`join`/
+     `slice`/`concat`/`reverse` + callback methods `map`/`filter`/`forEach`/`reduce` (callback called via
+     `dynApply` with element+index). New `dynArrayMethod(arr,name,args)` in the value model; dispatched from
+     `parsePostfix` when the receiver is a tag-5 array AND the resolved member is NOT a tag-7 function — so
+     `arr[i]()` (calling a stored function) and a user-set `arr.foo()` still win, while built-ins (which
+     `dynMember` returns undefined for) take the new path. Methods chain (`filter().map()`). `parsePostfix`
+     gained a `recvMethod` (member name) alongside `recv`. **Purely interpreter-side.** Suite 351/351
+     (+`18zq`). Two modc-subset gotchas hit + fixed: (a) reusing a local NAME with two types in one function
+     (`out` as both `string` and `i32`) — wasic hoists one `$out`, type-conflicts → use distinct names;
+     (b) an i32 CALL result passed straight to an `(f64)` param skips the i32→f64 coerce (same class as the
+     i32-global note) — bind to an i32 local first (`dynNumber(dynArrLen(arr))` → bind `nl` first). **Gaps:**
+     `pop`/`shift`/`splice`/`sort` (need list truncation — later), and `["method"]()` bracket-form dispatch.
 7. **2e.9 generators**, then **2e.10 async/await** (hardest — needs a microtask loop; ties to #13).
 8. **2h removal** — the full-dynamic-compile entry + the Javy-parity conformance gate + delete
    `src/javyc.ts` & wiring.
