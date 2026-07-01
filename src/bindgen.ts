@@ -213,6 +213,9 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
   if (needsAnyMarshal) {
     lines.push(`  const _hostFns: ((...a: unknown[]) => unknown)[] = [];`);
     lines.push(`  let _hostCallImpl: (fnIdx: number, argsArr: number) => number = () => 0;`);
+    // #14 2h: the dynrt runtime's console.log routes through `env.__host_print`. Forward-referenced
+    // like _hostCallImpl (it needs `_mem`, available only after instantiation); real impl set below.
+    lines.push(`  let _hostPrintImpl: (ptr: number, len: number) => void = () => {};`);
   }
 
   // Import object
@@ -238,6 +241,9 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
     if (needsAnyMarshal) {
       lines.push(
         `  env["__host_call"] = (fnIdx: number, argsArr: number) => _hostCallImpl(fnIdx, argsArr);`,
+      );
+      lines.push(
+        `  env["__host_print"] = (ptr: number, len: number) => _hostPrintImpl(ptr, len);`,
       );
     }
     lines.push(`  const importObj = { env };`);
@@ -279,6 +285,15 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
 
   if (needsMemory) {
     lines.push(`  const _mem = exp["memory"] as WebAssembly.Memory;`);
+  }
+  if (needsAnyMarshal && needsMemory) {
+    // #14 2h: real console.log sink for dynamic code run through this host. Decode `len` UTF-8 bytes
+    // at `ptr` (the interpreter already appended the newline) and print (strip it — console.log re-adds).
+    lines.push(`  _hostPrintImpl = (ptr: number, len: number): void => {`);
+    lines.push(`    let _s = new TextDecoder().decode(new Uint8Array(_mem.buffer, ptr, len));`);
+    lines.push(`    if (_s.endsWith("\\n")) _s = _s.slice(0, -1);`);
+    lines.push(`    console.log(_s);`);
+    lines.push(`  };`);
   }
   if (needsMalloc) {
     lines.push(

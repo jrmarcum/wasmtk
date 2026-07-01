@@ -1158,8 +1158,33 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
    `runClassDecl` binds `__name`, and a new `parsePrimary` `class` handler returns the object directly
    (anonymous + `extends` both work). Driver `main_es6misc.ts` (18 checkRun cases). Suite 359/359 (+`18zy`),
    bindgen 131/131, jstyper 73/73.
-8. **2h removal** — the full-dynamic-compile entry + the Javy-parity conformance gate + delete
-   `src/javyc.ts` & wiring.
+8. **2h removal** — **SHIPPED 2026-06-30** (test `18zz` + gate `tests/dync_conformance_tests.ts`):
+   the cutover that **retires `javyc`**. Four parts: (a) **interpreter console I/O** —
+   `console.log`/`error`/`warn`/`info` in eval source now print to stdout via a new
+   `env.__host_print(ptr, len)` import (the `declare const __host` was extended; values format via
+   `dynDisplay`/`dynConsoleLine` — top-level strings raw, else JSON-ish). `runWasi` (utils.ts) decodes
+   the bytes from the instance memory → `rt.stdout`; the bindgen loader installs a real
+   `_hostPrintImpl` (forward-referenced like `_hostCallImpl`) so dynamic code run through a bindgen
+   host prints too. **This also surfaced + fixed an interpreter HANG**: `evalSkipWs` had NO comment
+   handling (comments "worked" by accident via a downstream path that LOOPED on a multi-byte UTF-8 char
+   in a comment — e.g. an em-dash); `evalSkipWs` now skips `//` and `/* */` (the interpreter has no
+   regex LITERALS — RegExp is `new RegExp("…")` — so `//`/`/*` are unambiguously comments). (b) **the
+   `wasmtk dync <file>` command** (`src/dync.ts`) — the javyc replacement: generates a tiny wasic
+   driver that imports `wasmtk:dynrt` and calls a new `dynRunB64(b64, env)` export, which base64-decodes
+   the WHOLE program source and runs it. The source is **base64-embedded** because wasic's line-based
+   source scanner is string-blind to `{` (a raw string literal containing a brace makes wasic's
+   statement collector mis-count depth and split on inner `;` — see compiler-bugs.md); base64's alphabet
+   has no `{}`/`;`/`"`/newline, so the payload is opaque to the scanner. (c) **the conformance gate** —
+   `tests/dync_conformance_tests.ts` output-diffs `wasmtk dync`→wasm against a `deno run` JS baseline
+   over `tests/wasm_wasi_dync/demo1..3` (closures/class/array-methods/loops; JSON/Map/Set/string/Math/
+   try-catch; recursion/generators/destructuring/spread/templates) — **3/3 byte-exact**. Also fixed a
+   real interpreter bug the gate caught: `Math.min`/`max` were 2-arg only (`dynMathMethod` now variadic).
+   (d) **deletion** — removed `src/javyc.ts`, the `case "javyc"`, `deno.json` `./javyc`,
+   `tests/wasi_javy_tests.ts` + `tests/wasm_wasi_javy/`, and all the Javy download/detect/convert code in
+   `utils.ts` (`ensureJavy`/`detectJavyProvider`/`findSourceAlongside` + the convert-path QuickJS
+   handling). **No external Javy/QuickJS dependency remains.** Suite 360/360 (+`18zz`), bindgen 131/131,
+   jstyper 73/73. **Out of scope (documented):** interactive `prompt` (no host stdin in the interpreter)
+   and ESM `import`/`export` of OTHER modules — a single self-contained dynamic file is the `dync` surface.
 
 ### Language consumption profile — ES6 base; older ES auto-repaired ONLY when provably safe (DECIDED 2026-06-26)
 

@@ -9,10 +9,8 @@ import { rt } from "./rt.ts";
 import wasm2js_compiler from "wasm2js";
 import binaryen from "./binaryen.ts";
 import wabt from "wabt";
-import { detectJavyProvider, ensureJavy, getJavyInstallPath, isJavyAvailable } from "./javyc.ts";
 import { bundleImports } from "./tsbundler.ts";
 
-export { compileJavy } from "./javyc.ts";
 export { compileWasi } from "./wasic.ts";
 export { compileModule } from "./modc.ts";
 
@@ -442,13 +440,7 @@ export async function showInfo(path: string): Promise<void> {
         (imp) => imp.module === "wasi_snapshot_preview1",
       );
     } catch { /* fall through — isWasi stays false */ }
-    // Detect Javy binary for informational note (Wizer fuses WASI imports so isWasi may be false)
-    const isJavy = path.endsWith(".wasm") && detectJavyProvider(bytes) !== null;
-    console.log(
-      `\n🛠️  WASI Support: ${isWasi || isJavy ? "Yes" : "No"}${
-        isJavy ? " (Javy/QuickJS — WASI internalized by Wizer)" : ""
-      }`,
-    );
+    console.log(`\n🛠️  WASI Support: ${isWasi ? "Yes" : "No"}`);
     console.log("─".repeat(40));
     module.dispose();
   } catch (err) {
@@ -477,28 +469,7 @@ export async function wasm2js(path: string, outPath?: string): Promise<void> {
 }
 
 /**
- * Finds the original JS/TS source file alongside a WASM file.
- * Checks for <name>.js and <name>.ts in the same directory.
- * Returns the path if found, or null.
- */
-async function findSourceAlongside(wasmPath: string): Promise<string | null> {
-  const base = wasmPath.replace(/\.wasm$/, "");
-  for (const ext of [".js", ".ts"]) {
-    const candidate = base + ext;
-    try {
-      await rt.stat(candidate);
-      return candidate;
-    } catch { /* not found */ }
-  }
-  return null;
-}
-
-/**
- * Toggles format between .wasm and .wat.
- * Javy WASM files receive special handling:
- *   - WASM → WAT: recompiles source with `javy build -d` to extract the clean app-layer WAT,
- *     with the QuickJS engine excluded. Emits a one-way warning.
- *   - WAT → WASM: detects javy_quickjs_provider imports in the WAT text and blocks conversion with a clear notice.
+ * Toggles format between .wasm and .wat (plain wabt round-trip in both directions).
  * @param p - Path to the input file.
  */
 export async function convertFile(p: string, outPath?: string): Promise<void> {
@@ -511,22 +482,6 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
       // --- WAT → WASM ---
       const watSource = await rt.readTextFile(p);
 
-      // Detect Javy dynamic module by checking for javy_quickjs_provider imports in the WAT text
-      if (
-        watSource.includes("javy_quickjs_provider") || watSource.includes("javy-default-plugin")
-      ) {
-        const inferredTs = p.replace(/\.wat$/, ".ts");
-        console.warn(`⚠️  Javy WAT detected: "${p}"`);
-        console.warn(`   This WAT represents the app layer of a Javy dynamic module.`);
-        console.warn(`   The QuickJS engine is not embedded — this WAT cannot be merged`);
-        console.warn(
-          `   back into a standalone WASM compatible with wasmtk/wasmtime/wasmer/wazero.`,
-        );
-        console.warn(`   To produce a runnable binary, recompile the original source:`);
-        console.warn(`     wasmtk wasic ${inferredTs}`);
-        return;
-      }
-
       // Normal WAT → WASM round-trip
       const wabtModule = await (wabt as unknown as () => Promise<WabtModule>)();
       const parsed = wabtModule.parseWat(p, watSource, { enable_all: true } as WasmFeatures);
@@ -537,99 +492,13 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
     } else {
       // --- WASM → WAT ---
       const wasmBytes = await rt.readFile(p);
-      const isJavyBinary = detectJavyProvider(wasmBytes) !== null;
-
-      if (isJavyBinary) {
-        // Javy static binary — attempt clean app-layer WAT via dynamic recompile
-        const sourcePath = await findSourceAlongside(p);
-
-        if (!sourcePath) {
-          // No source available — warn and fall through to standard full-binary WAT conversion
-          console.warn(`⚠️  Javy WASM detected: "${p}"`);
-          console.warn(`   This binary embeds the QuickJS runtime and was built with Javy.`);
-          console.warn(`   The original source file was not found alongside the WASM.`);
-          console.warn(`   The WAT file produced is large due to QuickJS inclusion.`);
-          const wabtModule = await (wabt as unknown as () => Promise<WabtModule>)();
-          const mod = wabtModule.readWasm(wasmBytes, { readDebugNames: true });
-          const wat = mod.toText({ foldExprs: false, inlineExport: false });
-          mod.destroy();
-          await rt.writeTextFile(out, wat);
-          console.log(`✅ Converted to ${out}`);
-          return;
-        }
-
-        // Source found — recompile with javy -C dynamic to get the clean dynamic app module, then WAT-ify it
-        // Javy v6+ requires: (1) emit-plugin to get the provider wasm, (2) build -C dynamic -C plugin=<plugin>
-        console.log(`🔍 Javy WASM detected. Extracting app-layer WAT from: ${sourcePath}`);
-        await ensureJavy();
-        const javyCmd = (await isJavyAvailable()) ? "javy" : getJavyInstallPath();
-        const tempWasm = p.replace(".wasm", ".dynamic.tmp.wasm");
-        const tempPlugin = p.replace(".wasm", ".plugin.tmp.wasm");
-
-        // Step 1: emit the default plugin
-        const emitPlugin = new rt.Command(javyCmd, {
-          args: ["emit-plugin", "-o", tempPlugin],
-        });
-        const emitResult = await emitPlugin.output();
-        if (!emitResult.success) {
-          const errText = new TextDecoder().decode(emitResult.stderr);
-          console.error(`❌ Javy emit-plugin failed: ${errText}`);
-          return;
-        }
-
-        // Step 2: build the dynamic app module against the emitted plugin
-        const javy = new rt.Command(javyCmd, {
-          args: [
-            "build",
-            "-C",
-            "dynamic",
-            "-C",
-            `plugin=${tempPlugin}`,
-            sourcePath,
-            "-o",
-            tempWasm,
-          ],
-        });
-        const javyResult = await javy.output();
-        try {
-          await rt.remove(tempPlugin);
-        } catch { /* ignore */ }
-
-        if (!javyResult.success) {
-          const errText = new TextDecoder().decode(javyResult.stderr);
-          console.error(`❌ Javy dynamic recompile failed: ${errText}`);
-          return;
-        }
-
-        try {
-          const dynBytes = await rt.readFile(tempWasm);
-          const wabtModule = await (wabt as unknown as () => Promise<WabtModule>)();
-          const mod = wabtModule.readWasm(dynBytes, { readDebugNames: true });
-          const wat = mod.toText({ foldExprs: false, inlineExport: false });
-          mod.destroy();
-          await rt.writeTextFile(out, wat);
-        } finally {
-          try {
-            await rt.remove(tempWasm);
-          } catch { /* ignore */ }
-        }
-
-        console.log(`✅ Converted to ${out}`);
-        console.warn(`⚠️  One-way conversion: this WAT represents the app layer only.`);
-        console.warn(`   The QuickJS engine is excluded.`);
-        console.warn(`   This WAT cannot be converted back into a standalone WASM.`);
-        console.warn(
-          `   To modify and rebuild, edit the source and run: wasmtk wasic ${sourcePath}`,
-        );
-      } else {
-        // Normal WASM → WAT round-trip
-        const wabtModule = await (wabt as unknown as () => Promise<WabtModule>)();
-        const mod = wabtModule.readWasm(wasmBytes, { readDebugNames: true });
-        const wat = mod.toText({ foldExprs: false, inlineExport: false });
-        mod.destroy();
-        await rt.writeTextFile(out, wat);
-        console.log(`✅ Converted to ${out}`);
-      }
+      // Normal WASM → WAT round-trip
+      const wabtModule = await (wabt as unknown as () => Promise<WabtModule>)();
+      const mod = wabtModule.readWasm(wasmBytes, { readDebugNames: true });
+      const wat = mod.toText({ foldExprs: false, inlineExport: false });
+      mod.destroy();
+      await rt.writeTextFile(out, wat);
+      console.log(`✅ Converted to ${out}`);
     }
   } catch (err) {
     console.error(`❌ Conversion failed: ${err}`);

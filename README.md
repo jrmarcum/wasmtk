@@ -125,7 +125,7 @@ wasmtk/
 │   ├── wasmmerge.ts     # WAT-level merge of pre-compiled .wasm modules
 │   ├── wasmbundle.ts    # CLI bundler for combining multiple .wasm files
 │   ├── modc.ts          # Library-mode compilation (no _start, no WASI)
-│   ├── javyc.ts         # TypeScript via Javy/QuickJS embedded runtime
+│   ├── dync.ts          # Full-dynamic-compile entry — whole TS/JS file → WASI via the own runtime (dync CLI)
 │   ├── jstyper.ts       # .js + .d.ts → typed .ts pre-processor (jstyper CLI)
 │   ├── bindgen.ts       # WIT → TypeScript host binding generator (bindgen CLI)
 │   ├── hybrid.ts        # TypeScript/WASM split compiler (hybrid CLI)
@@ -142,13 +142,13 @@ wasmtk/
 │   ├── jstyper_tests.ts # jstyper unit test runner
 │   ├── bundle_tests.ts
 │   ├── mod_tests.ts
-│   ├── wasi_javy_tests.ts
+│   ├── dync_conformance_tests.ts  # dync vs `deno run` output-parity gate (javyc-retirement conformance)
 │   ├── wasm_wasi/            # wasic test programs (one per feature/phase)
 │   ├── bindgen_fixtures/     # wasic modc source files for bindgen integration tests
 │   ├── jstyper_fixtures/     # .js + .d.ts fixture pairs for jstyper tests
 │   ├── hybrid_fixtures/      # input TypeScript files for hybrid tests
 │   ├── wasm_wasi_bundle/
-│   ├── wasm_wasi_javy/
+│   ├── wasm_wasi_dync/          # dync conformance fixtures (whole-file dynamic programs)
 │   └── wasm_mod/
 └── README.md
 
@@ -650,39 +650,35 @@ All eight typed array types from the JavaScript standard library are supported. 
 | --- | --- |
 | Multi-dimensional arrays beyond `f64[][]` | `i32[][]` and `f64[][]` / `number[][]` are fully supported (including `Array.from({ length: N }, () => [])` init, element reads with type coercion); 3D and deeper nesting is not yet implemented |
 
-> **Why the limitations?** `wasic` compiles directly to raw WAT with no runtime. Dynamic allocation, garbage collection, and prototype semantics cannot be expressed without an embedded runtime library. Use `wasmtk javyc` for programs that need them today.
+> **Why the limitations?** `wasic` compiles directly to raw WAT with no runtime. For fully-dynamic programs (`any`, dynamic objects, `eval`) use `wasmtk dync`, which routes the whole file through wasmtk's own embedded dynamic runtime.
 
 ---
 
-### `wasmtk javyc` — TypeScript/JavaScript via Javy/QuickJS
+### `wasmtk dync` — Fully-dynamic TS/JS via the own runtime (the `javyc` replacement)
 
-Compiles a TypeScript or JavaScript file to a **WASI module that embeds the QuickJS JavaScript engine**. The full JavaScript runtime is bundled into the output `.wasm`.
+Compiles an **entire** dynamic TypeScript/JavaScript file to a **self-contained WASI module** by running its whole source through wasmtk's own embedded dynamic runtime (the `wasmtk:dynrt` interpreter). **No external Javy/QuickJS binary and no ~500 KB embedded engine** — the interpreter is authored in the wasic subset and merged on demand, so only the dynamic-runtime capability is bundled.
 
 ```bash
-wasmtk javyc myprogram.ts
+wasmtk dync myprogram.ts
 wasmtk run myprogram.wasm
 ```
 
-**What it produces:** A WASI executable that runs your TypeScript/JavaScript through an embedded QuickJS interpreter inside WASM.
+**What it produces:** A self-contained WASI executable that interprets your whole program at module start; `console.log`/`error`/`warn` print to stdout via the runtime's host-print import.
 
 **Best suited for:**
 
-- Full TypeScript/JavaScript semantics where runtime compatibility matters more than size
-- Programs that need the *full* `Date`/`JSON`/`Map`/`Set`/`RegExp` libraries or prototype-based features, or **cross-async / real async sources** (timers, host I/O). (`wasic` covers `Set`/`Map`/`Date`/`JSON`/`RegExp` as bundled capabilities and `Promise`/`async`/`await` for self-contained intra-module code — see the Async row in Completed Phases — so reach for `javyc` when you need the dynamic/full-library semantics beyond that.)
-- Rapid prototyping where you need the full JS standard library
-- Code that cannot be easily expressed in numeric/systems style
+- Fully-dynamic programs that `wasic` cannot compile statically (`any`, dynamic objects, `eval`, prototype-shaped code) — the interpreter covers the dynrt language subset (functions/closures/classes, the Array/String/Object/Math/JSON/Map/Set/RegExp stdlib, generators, async/await, and `console.log`).
+- Prototyping dynamic code that should ship as one portable `.wasm` with no runtime dependency.
 
-**Trade-offs vs `wasic`:**
+**How it differs from `wasic`:** `wasic` validates and lowers statically-typed TypeScript to hand-tuned WAT (smallest, fastest). `dync` embeds the source and interprets it (larger, interpreter-speed) but accepts fully-dynamic code. When a program is statically typeable, prefer `wasic`; reach for `dync` when it isn't.
 
-- Larger binary (the QuickJS engine is bundled in every output module)
-- Slower startup (the JS engine must initialize before your code runs)
-- No hand-tuned WAT output — you get JS interpreter performance, not native WASM performance
+**Out of scope (v1):** interactive `prompt` (the interpreter has no host stdin) and ESM `import`/`export` of *other* modules — `dync` compiles a single self-contained file. Output parity with a real JS engine is enforced by `tests/dync_conformance_tests.ts` (byte-diff vs `deno run`).
 
 ---
 
 ### `wasmtk modc` — WASM Library Module
 
-Compiles a TypeScript file to a **WASM library module** — not a runnable WASI program. The output contains only your exported functions, callable from any WASM host environment. Implemented in `modc.ts` as a standalone module, parallel to `wasic.ts` and `javyc.ts`.
+Compiles a TypeScript file to a **WASM library module** — not a runnable WASI program. The output contains only your exported functions, callable from any WASM host environment. Implemented in `modc.ts` as a standalone module, parallel to `wasic.ts` and `dync.ts`.
 
 ```bash
 wasmtk modc mylib.ts
@@ -726,7 +722,7 @@ export function multiply(a: f64, b: f64): f64 {
 - Interop scenarios where WASM functions are invoked by name from outside
 - Replacing performance-critical JS functions with fast WASM equivalents
 
-**Key distinction from `wasic` and `javyc`:**
+**Key distinction from `wasic` and `dync`:**
 
 - `modc` output is **not a standalone program** — it has no entry point and cannot be run as a WASI process
 - The module is **imported and called** by a host environment rather than executed independently
@@ -894,7 +890,7 @@ Each compiler is a standalone importable module. You can use them directly in De
 ```typescript
 import { compileWasiTs, compileWasi, compileLibTs } from "@jrmarcum/wasmtk/wasic";
 import { compileModule }                            from "@jrmarcum/wasmtk/modc";
-import { compileJavy }                              from "@jrmarcum/wasmtk/javyc";
+import { compileDyn }                               from "@jrmarcum/wasmtk/dync";
 import { bundleImports }                            from "@jrmarcum/wasmtk/tsbundler";
 import { runWasmBundle }                            from "@jrmarcum/wasmtk/wasmbundle";
 import { mergeWasmWat, extractExportNames }         from "@jrmarcum/wasmtk/wasmmerge";
@@ -911,7 +907,7 @@ import { runHybrid }                                from "@jrmarcum/wasmtk/hybri
 | `compileLibTs(path, outPath?)` | `./wasic` | TypeScript → WASM library (no `_start`, no WASI scaffolding) |
 | `compileWat(path, outPath?)` | `./wasic` | WAT-only path — `@jrmarcum/wabt-ts` parse + Binaryen `-Oz` |
 | `compileModule(path, outPath?)` | `./modc` | Compile `.ts` to a WASM library via wasic transpiler |
-| `compileJavy(path, outPath?)` | `./javyc` | Compile `.ts` to a WASI module via Javy/QuickJS |
+| `compileDyn(path, outPath?)` | `./dync` | Compile a fully-dynamic `.ts`/`.js` file to a self-contained WASI module via the own runtime |
 | `bundleImports(entryPath)` | `./tsbundler` | Resolve and merge relative imports into a single source string |
 | `runWasmBundle(inputs, out, onConflict?, aliases?)` | `./wasmbundle` | Bundle multiple `.wasm` files into a single `.wasm` library |
 | `mergeWasmWat(wat, prefix, dataReloc, overrides?)` | `./wasmmerge` | Merge one WAT module into a parent with prefix mangling and data relocation; returns `exportMap` |
@@ -931,13 +927,13 @@ import { runHybrid }                                from "@jrmarcum/wasmtk/hybri
 
 | Need | Use |
 | --- | --- |
-| Run a standalone program with WASI I/O | `wasic` or `javyc` |
+| Run a standalone program with WASI I/O | `wasic` or `dync` |
 | Maximum performance, minimal binary size | `wasic` |
 | Multi-file TypeScript project with local imports | `wasic` |
-| Full JS standard library (Date, JSON, Map, Set) | `javyc` |
+| Fully-dynamic code (`any`, dynamic objects, `eval`) | `dync` |
 | Export functions for use from JavaScript/browser | `modc` |
 | Numeric/systems code, tight loops, DSP, crypto | `wasic` |
-| Existing JS/TS codebase with complex runtime needs | `javyc` |
+| Existing dynamic JS/TS that `wasic` can't type statically | `dync` |
 | WASM library for Deno/Node/browser consumption | `modc` |
 | Combine multiple `.wasm` files into one library | `wasmbundle` |
 | Distribute a set of compiled modules as a single artifact | `wasmbundle` |
@@ -1163,7 +1159,7 @@ your own modc libraries. (Capabilities are v1 — integer Set/Map/JSON keys, etc
 
 **`RegExp`** (fifth/final Tier-1; *leaf*) is a classic Kernighan/Pike recursive backtracking matcher (`tests/wasm_wasi_bundle/regex_bundle/regex_lib_modc.ts`), index-based over two `(string, index)` pairs threaded through the recursion — no heap, straight function splice. Exports `reTest(p, t)` (1/0), `reSearch(p, t)` (first-match start index, or -1; sets `reEnd()`), and `reEnd()` (match end, exclusive). v1 scope: literals, `.`, char classes `[...]` (ranges, negation, `\d \w \s`), escapes `\d \w \s \D \W \S \n \t \r`, quantifiers `* + ?` (greedy + backtracking), anchors `^ $`; v2 gap: alternation `|`, groups/captures, `{n,m}`, lazy `*?`, backreferences. Self-checking `@test-pipeline` `18g_RegexCapabilityLibrary.ts` (PASS). RegExp surfaced a merge-path bug — an out-of-bounds `charCodeAt` evaluated inside a non-short-circuit `&&` loop condition was mis-encoded by the splice (the matcher ran correctly standalone but trapped once merged) — that is now **fixed (2026-06-02)**: wasic emits **short-circuit** `&&`/`||`, so the guarded `charCodeAt` is never evaluated out of bounds. The library's defensive workaround was removed (it now uses the natural `i < len && …charCodeAt…` form directly in the matcher's loop condition) and 18g still passes merged — see `cmem/compiler-bugs.md` and the brief §7d.
 
-See [`cmem/stdlib-bundling-brief.md`](cmem/stdlib-bundling-brief.md). **All five Tier-1 stdlib capabilities complete**; feature-level tree-shake wiring (§7-#4) and **Promise/async (§7-#5) are done** (see the Async row in Completed Phases). **The own dynamic runtime (§7-#7) is now substantially shipped** — a boxed-value + dynamic-object model plus a JavaScript interpreter (`eval` / `new Function`, recursive descent), all authored in the wasic TS subset and merged on demand. It is wired into the compiler via an `any` type that auto-merges the runtime, with host↔core marshalling of dynamic values — numbers, strings, booleans, objects, arrays, **and functions**: a function returned as `any` (built in source via `Function(params, body)`) becomes a callable JS proxy on the host, pinned so it survives garbage collection while the host holds it. So a `wasic` program that uses `: any` or `eval(...)` no longer needs `javyc` for the covered (and growing) dynamic subset. A precise mark-sweep **garbage collector for that runtime is complete** (auto-grow heap → free-list → cell registry → mark → interpreter shadow-stack roots → mark-sweep `collect()` with payload reclamation and an auto-collect trigger, over a hybrid segregated-bucket + batch-coalescing recycling allocator), so **long-running dynamic code runs in bounded memory** — a 10000-iteration interpreted loop that allocates ~30000 boxed cells settles to a handful of live cells, and deep recursion reclaims as it unwinds. **Host→core callbacks shipped (v1.10.0)** — a JS function passed *into* the core (via an `env.__host_call` import) is called back from dynamic code, so functions-as-`any` is now bidirectional. The interpreter is actively growing toward full-JS coverage to retire `javyc` entirely: **Route A** increments (v1.10.1–v1.11.0) have added C-style/`for-of`/`for-in`/`switch` control flow, array/object/template literals, function expressions + arrow functions (with closures), member/index assignment (`o.x = v` / `arr[i] = v`), operators (`typeof`, `??`, `?.` optional chaining, array spread), exception handling (`throw` / `try` / `catch` / `finally`, with throws propagating through function calls), lexical block scoping (each `{ }` block / loop / `catch` is a fresh scope; `let` / `const` don't leak, with per-iteration `let` bindings in loops so closures capture each iteration's value), object methods with `this` + prototypes (object-literal method shorthand `{ m() {…} }`, `obj.m()` binds `this` to the receiver, and `Object.create(proto)` with prototype-chain lookup), classes (`class Name { … }` + `new Name(args)` with `extends` inheritance, `super(…)` / `super.method()`, `static` members, instance fields, getters/setters, and prototype method dispatch), and built-in Array methods (`push`/`pop`/`shift`/`unshift`/`indexOf`/`lastIndexOf`/`includes`/`at`/`join`/`slice`/`concat`/`reverse`/`sort` + `map`/`filter`/`forEach`/`reduce`/`find`/`findIndex`/`some`/`every`, chainable), and built-in String methods (`charAt`/`charCodeAt`/`toUpperCase`/`toLowerCase`/`trim`/`slice`/`indexOf`/`includes`/`startsWith`/`endsWith`/`repeat`/`padStart`/`padEnd`/`concat`/`split`), and `Math` (`floor`/`ceil`/`round`/`trunc`/`abs`/`sqrt`/`sign`/`min`/`max`/`pow` + `PI`/`E`) `Object` (`keys`/`values`/`entries`/`assign`/`create`) statics, `JSON` (`parse` / `stringify`), `Map` / `Set` (`new Map()` / `new Set()` with `set`/`get`/`has`/`delete`/`add`/`keys`/`values`/`forEach`/`size`), `RegExp` (`new RegExp(pattern)` with a backtracking matcher — literals, `.`, `*`/`+`/`?`, `^`/`$`, character classes, `\d`/`\w`/`\s` — plus `re.test` / `re.exec` / `str.match`), and generators (`function*` / `yield`, served via `.next()` and `for…of` — finite generators), async/await + Promise (a synchronous model — the re-parse interpreter has no event loop: an `async function` runs to completion and wraps its result in a settled Promise, `await` unwraps it and an awaited rejection integrates with `try` / `catch`, `.then` / `.catch` / `.finally` run their callbacks immediately, plus `Promise.resolve` / `reject` / `all`), and the remaining common ES6 surface — `instanceof` (walks the instance prototype chain), object spread `{ ...o }` and call spread `f(...args)`, array/object destructuring (`const [a, , c] = …` with holes, `const { x, y: z } = …` with rename), and class expressions (`const C = class {…}`, anonymous or `extends`) — to the dynamic-source grammar. Alongside this, **ES6 (`let` / `const`) is now the compiler's preferred consumption format**: a legacy `var` is auto-repaired to `let` when it is provably safe, and otherwise hard-errors with a precise diagnostic (it is never silently rewritten when the semantics would change — block-escape, use-before-declaration, redeclaration, or loop-closure capture). Design + log in [`cmem/dynrt-design.md`](cmem/dynrt-design.md). Remaining track: the deferred P2-component container.
+See [`cmem/stdlib-bundling-brief.md`](cmem/stdlib-bundling-brief.md). **All five Tier-1 stdlib capabilities complete**; feature-level tree-shake wiring (§7-#4) and **Promise/async (§7-#5) are done** (see the Async row in Completed Phases). **The own dynamic runtime (§7-#7) is now substantially shipped** — a boxed-value + dynamic-object model plus a JavaScript interpreter (`eval` / `new Function`, recursive descent), all authored in the wasic TS subset and merged on demand. It is wired into the compiler via an `any` type that auto-merges the runtime, with host↔core marshalling of dynamic values — numbers, strings, booleans, objects, arrays, **and functions**: a function returned as `any` (built in source via `Function(params, body)`) becomes a callable JS proxy on the host, pinned so it survives garbage collection while the host holds it. So a `wasic` program that uses `: any` or `eval(...)` no longer needs `javyc` for the covered (and growing) dynamic subset. A precise mark-sweep **garbage collector for that runtime is complete** (auto-grow heap → free-list → cell registry → mark → interpreter shadow-stack roots → mark-sweep `collect()` with payload reclamation and an auto-collect trigger, over a hybrid segregated-bucket + batch-coalescing recycling allocator), so **long-running dynamic code runs in bounded memory** — a 10000-iteration interpreted loop that allocates ~30000 boxed cells settles to a handful of live cells, and deep recursion reclaims as it unwinds. **Host→core callbacks shipped (v1.10.0)** — a JS function passed *into* the core (via an `env.__host_call` import) is called back from dynamic code, so functions-as-`any` is now bidirectional. The interpreter grew toward full-JS coverage and — as of **v1.11.1** — **`javyc` is now retired and deleted** (see `wasmtk dync` above, the self-contained replacement; no external Javy/QuickJS dependency remains). **Route A** increments (v1.10.1–v1.11.1) added C-style/`for-of`/`for-in`/`switch` control flow, array/object/template literals, function expressions + arrow functions (with closures), member/index assignment (`o.x = v` / `arr[i] = v`), operators (`typeof`, `??`, `?.` optional chaining, array spread), exception handling (`throw` / `try` / `catch` / `finally`, with throws propagating through function calls), lexical block scoping (each `{ }` block / loop / `catch` is a fresh scope; `let` / `const` don't leak, with per-iteration `let` bindings in loops so closures capture each iteration's value), object methods with `this` + prototypes (object-literal method shorthand `{ m() {…} }`, `obj.m()` binds `this` to the receiver, and `Object.create(proto)` with prototype-chain lookup), classes (`class Name { … }` + `new Name(args)` with `extends` inheritance, `super(…)` / `super.method()`, `static` members, instance fields, getters/setters, and prototype method dispatch), and built-in Array methods (`push`/`pop`/`shift`/`unshift`/`indexOf`/`lastIndexOf`/`includes`/`at`/`join`/`slice`/`concat`/`reverse`/`sort` + `map`/`filter`/`forEach`/`reduce`/`find`/`findIndex`/`some`/`every`, chainable), and built-in String methods (`charAt`/`charCodeAt`/`toUpperCase`/`toLowerCase`/`trim`/`slice`/`indexOf`/`includes`/`startsWith`/`endsWith`/`repeat`/`padStart`/`padEnd`/`concat`/`split`), and `Math` (`floor`/`ceil`/`round`/`trunc`/`abs`/`sqrt`/`sign`/`min`/`max`/`pow` + `PI`/`E`) `Object` (`keys`/`values`/`entries`/`assign`/`create`) statics, `JSON` (`parse` / `stringify`), `Map` / `Set` (`new Map()` / `new Set()` with `set`/`get`/`has`/`delete`/`add`/`keys`/`values`/`forEach`/`size`), `RegExp` (`new RegExp(pattern)` with a backtracking matcher — literals, `.`, `*`/`+`/`?`, `^`/`$`, character classes, `\d`/`\w`/`\s` — plus `re.test` / `re.exec` / `str.match`), and generators (`function*` / `yield`, served via `.next()` and `for…of` — finite generators), async/await + Promise (a synchronous model — the re-parse interpreter has no event loop: an `async function` runs to completion and wraps its result in a settled Promise, `await` unwraps it and an awaited rejection integrates with `try` / `catch`, `.then` / `.catch` / `.finally` run their callbacks immediately, plus `Promise.resolve` / `reject` / `all`), and the remaining common ES6 surface — `instanceof` (walks the instance prototype chain), object spread `{ ...o }` and call spread `f(...args)`, array/object destructuring (`const [a, , c] = …` with holes, `const { x, y: z } = …` with rename), and class expressions (`const C = class {…}`, anonymous or `extends`) — to the dynamic-source grammar. Finally, **v1.11.1 (increment 2h) made the interpreter print** — `console.log`/`error`/`warn` in dynamic source now write to stdout via a host-print import — and shipped **`wasmtk dync`**, a full-dynamic-compile entry that runs a whole TS/JS file through this runtime, replacing (and retiring) `javyc`. Alongside this, **ES6 (`let` / `const`) is now the compiler's preferred consumption format**: a legacy `var` is auto-repaired to `let` when it is provably safe, and otherwise hard-errors with a precise diagnostic (it is never silently rewritten when the semantics would change — block-escape, use-before-declaration, redeclaration, or loop-closure capture). Design + log in [`cmem/dynrt-design.md`](cmem/dynrt-design.md). Remaining track: the deferred P2-component container.
 
 ### WASM Compatibility Limitations
 
@@ -1386,7 +1382,7 @@ The TypeScript multi-file import bundler command is renamed from `bundle` to `ts
 
 ### Future Directions
 
-Phase 50 completed the DLL model and Stage 0 aligned the ABI with the WASM Component Model Canonical ABI calling convention (`cabi_realloc` + `(ptr,len)` string params, and — forward-aligned 2026-06-15 — **callee-allocated string returns + `cabi_post_<name>`**; the output is still a WASI-P1 core module with a sidecar `.wit`, only the P2 container is deferred — see [`cmem/polyglot-producers.md`](cmem/polyglot-producers.md)) — `wasmtk bindgen` generates typed TypeScript host bindings from a `.wit` file so that wasic-compiled WASM modules are loaded from a TypeScript host with full type safety and no manual `WebAssembly` API work. The `hybrid` command (post-Phase-50 prototype) bridges wasic and javyc: annotate pure-computation functions with `// @wasm` and the tool splits the file into a WASM core + TypeScript runner automatically. No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring `javyc`](#types-requiring-javyc) below.
+Phase 50 completed the DLL model and Stage 0 aligned the ABI with the WASM Component Model Canonical ABI calling convention (`cabi_realloc` + `(ptr,len)` string params, and — forward-aligned 2026-06-15 — **callee-allocated string returns + `cabi_post_<name>`**; the output is still a WASI-P1 core module with a sidecar `.wit`, only the P2 container is deferred — see [`cmem/polyglot-producers.md`](cmem/polyglot-producers.md)) — `wasmtk bindgen` generates typed TypeScript host bindings from a `.wit` file so that wasic-compiled WASM modules are loaded from a TypeScript host with full type safety and no manual `WebAssembly` API work. The `hybrid` command (post-Phase-50 prototype) bridges wasic and plain TypeScript: annotate pure-computation functions with `// @wasm` and the tool splits the file into a WASM core + TypeScript runner automatically (the un-annotated dynamic parts stay as host TypeScript). No phase requires an embedded runtime — everything maps to static WASM constructs. Features that need a runtime are listed under [Types Requiring the dynamic runtime](#types-requiring-the-dynamic-runtime-dync) below.
 
 ---
 
@@ -1670,7 +1666,7 @@ const lib = await loadModule("./sensor.wasm", {
 
 ### `hybrid` — TypeScript/WASM Split Compiler
 
-`wasmtk hybrid` bridges the gap between wasic and javyc: annotate the pure-computation functions in an existing TypeScript file with `// @wasm`, and the tool automatically extracts them into a compiled WASM module, generates TypeScript bindings, and produces a runner file that wires everything back together.
+`wasmtk hybrid` bridges the gap between wasic and plain TypeScript: annotate the pure-computation functions in an existing TypeScript file with `// @wasm`, and the tool automatically extracts them into a compiled WASM module, generates TypeScript bindings, and produces a runner file that wires everything back together (the un-annotated dynamic code stays as host TypeScript).
 
 **Workflow:**
 
@@ -1742,9 +1738,9 @@ wasmtk hybrid <file.ts> [-o outdir]
 
 ---
 
-#### Types Requiring `javyc`
+#### Types Requiring the dynamic runtime (`dync`)
 
-The following TypeScript types require a dynamic runtime and cannot be compiled by `wasic`. Use `wasmtk javyc` for programs that need them:
+The following TypeScript types require a dynamic runtime and cannot be compiled statically by `wasic`. Use `wasmtk dync` (whole-file) — or `: any` / `eval(...)` inside a `wasic` program, which auto-merges the same `wasmtk:dynrt` runtime — for programs that need them:
 
 | Type | Reason |
 | --- | --- |

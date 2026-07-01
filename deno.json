@@ -6,7 +6,6 @@
   "exports": {
     ".": "./main.ts",
     "./utils": "./src/utils.ts",
-    "./javyc": "./src/javyc.ts",
     "./dync": "./src/dync.ts",
     "./wasic": "./src/wasic.ts",
     "./modc": "./src/modc.ts",

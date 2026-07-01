@@ -2,9 +2,23 @@
 
 ## Release status (2026-06-30)
 
-**Version 1.11.0 is PUBLISHED to JSR** (`@jrmarcum/wasmtk@1.11.0` is `latest`). The 1.10.x–1.11.x line is
-the **Route A javyc-retirement track** — growing the `#14` own dynamic runtime (dynrt) interpreter toward
-full-JS coverage. **1.11.0 is the async + remaining-ES6 batch** (two increments): **2e.10** async/await +
+**Version 1.11.1 is PUBLISHED to JSR** (`@jrmarcum/wasmtk@1.11.1` is `latest`). **1.11.1 COMPLETES the
+Route A javyc-retirement track — `javyc` is now DELETED.** This is **2h, the cutover**: (a) the dynrt
+interpreter gained **console I/O** — `console.log`/`error`/`warn` in eval source print to stdout via a new
+`env.__host_print` import (`runWasi` + the bindgen loader implement it); this also surfaced + fixed an
+interpreter HANG (`evalSkipWs` had no comment handling and looped on a multi-byte UTF-8 char in a comment —
+now skips `//` + `/* */`). (b) A new **`wasmtk dync <file>`** command — the `javyc` replacement — compiles
+an ENTIRE dynamic TS/JS file to a self-contained WASI module by base64-embedding its source and running it
+through the embedded `wasmtk:dynrt` (`dynRunB64`), **no external Javy/QuickJS**. (c) A **conformance gate**
+(`tests/dync_conformance_tests.ts`) output-diffs `dync` vs a `deno run` JS baseline (demo1/2/3, **3/3**;
+caught + fixed a `Math.min`/`max` variadic bug). (d) **Deletion** of `src/javyc.ts`, the `javyc` command +
+`./javyc` export, `tests/wasi_javy_tests.ts`, and all Javy download/detect/convert code in `utils.ts`.
+Suite **360/360** (+`18zz`), bindgen 131/131, jstyper 73/73. **Out of scope (documented):** interactive
+`prompt` and ESM import/export of other modules. With 2h done, **the dynrt own-runtime track is
+functionally complete** — `wasic` (`any`/`eval`) and `dync` (whole-file dynamic) both route to wasmtk's own
+runtime; the interim `javyc` fallback is gone.
+
+**Version 1.11.0** (2026-06-30) was the async + remaining-ES6 batch (two increments): **2e.10** async/await +
 Promise in eval source — a **SYNCHRONOUS** model (the re-parse interpreter has no event loop): an `async
 function` (id=-4) runs to completion and wraps its result in a settled Promise (rejected if it throws),
 `await` unwraps a settled promise (throws on rejected → integrates with 2e.6 try/catch), `.then`/`.catch`/
@@ -14,9 +28,8 @@ prototype), object spread `{ ...o }` + call spread `f(...args)`, array/object de
 [a, , c] = …` incl. holes/missing, `const { x, y: z } = …` incl. rename), and class expressions (`const C
 = class {…}`, anonymous + `extends`; `runClassDecl` refactored into a shared `buildClass` helper) (`18zy`).
 Both increments are purely interpreter-side (no wasic compiler change). At the 1.11.0 tag: `tests/wasm_wasi`
-suite **359/359**, bindgen 131/131, jstyper 73/73. JSR score 100% (provenance `true`, docs clean). With
-2e.11, the dynrt interpreter's ES6 syntactic surface is essentially complete; what remains on Route A is
-**2h removal** (the full-dynamic-compile entry + a Javy-parity conformance gate + deleting `src/javyc.ts`).
+suite **359/359**, bindgen 131/131, jstyper 73/73. With 2e.11 the dynrt interpreter's ES6 syntactic surface
+was essentially complete (2h — the removal — followed in 1.11.1).
 
 **Version 1.10.9** (2026-06-26) was the STDLIB + generators batch — the dynrt interpreter gained the JS
 standard-library surface plus generators: **2f.2** Array methods (push/pop/shift/unshift/indexOf/

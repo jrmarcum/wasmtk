@@ -8499,12 +8499,12 @@
     call $dynrt_dynUndefined
     return)
   (func $dynrt__fn97 (param i32 i32 i32) (result i32)
-    (local i32) (local f64) (local f64) (local f64) (local f64) (local f64) (local f64) (local f64) (local f64) (local f64)
+    (local i32) (local f64) (local f64) (local i32) (local f64) (local f64) (local f64) (local f64) (local f64) (local i32) (local f64) (local i32) (local f64) (local f64) (local f64)
     local.get 2
     call $dynrt_dynArrLen
     local.set 3
     f64.const 0x0p+0 (;=0;)
-    local.tee 11
+    local.tee 16
     local.set 4
     local.get 3
     i32.const 0
@@ -8526,7 +8526,7 @@
     if  ;; label = @1
       block  ;; label = @2
         local.get 4
-        local.tee 6
+        local.tee 7
         f64.floor
         local.set 4
         local.get 4
@@ -8544,7 +8544,7 @@
     if  ;; label = @1
       block  ;; label = @2
         local.get 4
-        local.tee 7
+        local.tee 8
         f64.ceil
         local.set 4
         local.get 4
@@ -8562,7 +8562,7 @@
     if  ;; label = @1
       block  ;; label = @2
         local.get 4
-        local.tee 8
+        local.tee 9
         f64.const 0x1.0p-1 (;=0.5;)
         f64.add
         f64.floor
@@ -8582,7 +8582,7 @@
     if  ;; label = @1
       block  ;; label = @2
         local.get 4
-        local.tee 9
+        local.tee 10
         f64.abs
         local.set 4
         local.get 4
@@ -8600,7 +8600,7 @@
     if  ;; label = @1
       block  ;; label = @2
         local.get 4
-        local.tee 10
+        local.tee 11
         f64.sqrt
         local.set 4
         local.get 4
@@ -8665,19 +8665,6 @@
         return
       end
     end
-    f64.const 0x0p+0 (;=0;)
-    local.tee 12
-    local.set 5
-    local.get 3
-    i32.const 1
-    i32.gt_s
-    if  ;; label = @1
-      local.get 2
-      i32.const 1
-      call $dynrt_dynArrGet
-      call $dynrt_dynToNumber
-      local.set 5
-    end
     local.get 0
     local.get 1
     i32.const 893
@@ -8688,14 +8675,41 @@
     if  ;; label = @1
       block  ;; label = @2
         local.get 4
-        local.get 5
-        f64.gt
-        if (result f64)  ;; label = @3
-          local.get 4
-        else
-          local.get 5
-        end
+        local.tee 13
         local.set 4
+        i32.const 1
+        local.set 6
+        block  ;; label = @3
+          loop  ;; label = @4
+            block  ;; label = @5
+              local.get 6
+              local.get 3
+              i32.lt_s
+              i32.eqz
+              br_if 2 (;@3;)
+              block  ;; label = @6
+                local.get 2
+                local.get 6
+                call $dynrt_dynArrGet
+                call $dynrt_dynToNumber
+                local.set 5
+                local.get 5
+                local.get 4
+                f64.gt
+                if  ;; label = @7
+                  local.get 5
+                  local.set 4
+                end
+                local.get 6
+                local.tee 12
+                i32.const 1
+                i32.add
+                local.set 6
+              end
+              br 1 (;@4;)
+            end
+          end
+        end
         local.get 4
         call $dynrt_dynNumber
         return
@@ -8711,18 +8725,58 @@
     if  ;; label = @1
       block  ;; label = @2
         local.get 4
-        local.get 5
-        f64.lt
-        if (result f64)  ;; label = @3
-          local.get 4
-        else
-          local.get 5
-        end
+        local.tee 15
         local.set 4
+        i32.const 1
+        local.set 6
+        block  ;; label = @3
+          loop  ;; label = @4
+            block  ;; label = @5
+              local.get 6
+              local.get 3
+              i32.lt_s
+              i32.eqz
+              br_if 2 (;@3;)
+              block  ;; label = @6
+                local.get 2
+                local.get 6
+                call $dynrt_dynArrGet
+                call $dynrt_dynToNumber
+                local.set 5
+                local.get 5
+                local.get 4
+                f64.lt
+                if  ;; label = @7
+                  local.get 5
+                  local.set 4
+                end
+                local.get 6
+                local.tee 14
+                i32.const 1
+                i32.add
+                local.set 6
+              end
+              br 1 (;@4;)
+            end
+          end
+        end
         local.get 4
         call $dynrt_dynNumber
         return
       end
+    end
+    f64.const 0x0p+0 (;=0;)
+    local.tee 17
+    local.set 5
+    local.get 3
+    i32.const 1
+    i32.gt_s
+    if  ;; label = @1
+      local.get 2
+      i32.const 1
+      call $dynrt_dynArrGet
+      call $dynrt_dynToNumber
+      local.set 5
     end
     local.get 0
     local.get 1

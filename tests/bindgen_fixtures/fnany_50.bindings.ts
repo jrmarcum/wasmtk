@@ -11,8 +11,10 @@ export async function loadModule(
 ): Promise<ModuleExports> {
   const _hostFns: ((...a: unknown[]) => unknown)[] = [];
   let _hostCallImpl: (fnIdx: number, argsArr: number) => number = () => 0;
+  let _hostPrintImpl: (ptr: number, len: number) => void = () => {};
   const env: Record<string, unknown> = {};
   env["__host_call"] = (fnIdx: number, argsArr: number) => _hostCallImpl(fnIdx, argsArr);
+  env["__host_print"] = (ptr: number, len: number) => _hostPrintImpl(ptr, len);
   const importObj = { env };
   let raw: ArrayBuffer;
   if (source instanceof ArrayBuffer) {
@@ -25,6 +27,11 @@ export async function loadModule(
   const { instance } = await WebAssembly.instantiate(raw, importObj);
   const exp = instance.exports as Record<string, unknown>;
   const _mem = exp["memory"] as WebAssembly.Memory;
+  _hostPrintImpl = (ptr: number, len: number): void => {
+    let _s = new TextDecoder().decode(new Uint8Array(_mem.buffer, ptr, len));
+    if (_s.endsWith("\n")) _s = _s.slice(0, -1);
+    console.log(_s);
+  };
   const _cabi_realloc = exp["cabi_realloc"] as ((ptr: number, oldSize: number, align: number, newSize: number) => number);
   function _writeStr(s: string): [number, number] {
     const b = new TextEncoder().encode(s);

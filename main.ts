@@ -4,7 +4,7 @@
  * Supports a comprehensive suite of WebAssembly development tools:
  * - `wasic`: Direct TypeScript-to-WASM compiler (no embedded JS runtime)
  * - `modc`: WASM library module compilation (TypeScript → WASM, no _start entry point)
- * - `javyc`: TypeScript/JavaScript via Javy/QuickJS embedded runtime
+ * - `dync`: Fully-dynamic TS/JS → self-contained WASI module via wasmtk's own runtime (no Javy/QuickJS)
  * - `bindgen`: TypeScript host binding generator from WIT interface files
  * - `hybrid`: TypeScript/WASM split compiler (// @wasm annotations)
  * - `jstyper`: Convert .js + .d.ts pairs to typed .ts for wasic compilation
@@ -19,7 +19,6 @@ import { join } from "@std/path";
 import {
   bundleTs,
   callExport,
-  compileJavy,
   compileModule,
   compileWasi,
   convertFile,
@@ -151,7 +150,6 @@ Usage:
   wasmtk add|remove|list --lang=rust      Manage Rust dependencies              (delegates to rsxtk)
   wasmtk fmt|clean --lang=rust            Inject a manifest (fmt) · wipe the .tk cache (clean)  (rsxtk)
   wasmtk dync <file.ts>                   Compile a fully-dynamic TS/JS file to a self-contained WASI module via wasmtk's own runtime (no Javy)
-  wasmtk javyc <file.ts>                  Compile a TypeScript file to a WASI module via Javy/QuickJS (DEPRECATED — prefer dync)
   wasmtk run <file>                       Run a .wasm, .wat, .js, .ts, .go, .zig, or .rs file (Go/Zig/Rust auto-detected)
   wasmtk mod <file> [fn] [...]            Call a function in a WASM library module (no fn = list functions)
   wasmtk info <file>                      Show callable WASM functions in .wasm or .wat library/module
@@ -306,9 +304,6 @@ Options:
         Deno.exit(1);
       }
       await compileWasi(target, outPath);
-      break;
-    case "javyc":
-      await compileJavy(target, outPath);
       break;
     case "dync":
       await compileDyn(target, outPath);

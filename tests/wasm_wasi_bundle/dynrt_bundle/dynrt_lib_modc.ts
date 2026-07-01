@@ -1726,16 +1726,28 @@ function dynMathMethod(name: string, args: i32): i32 {
     if (x < 0) t = Math.ceil(x);
     return dynNumber(t);
   }
+  if (strEq(name, "max") === 1) { // #14 2h — variadic: Math.max(a, b, c, …)
+    let r: f64 = x;
+    let i: i32 = 1;
+    while (i < argc) {
+      const v: f64 = dynToNumber(dynArrGet(args, i));
+      if (v > r) r = v;
+      i = i + 1;
+    }
+    return dynNumber(r);
+  }
+  if (strEq(name, "min") === 1) { // #14 2h — variadic: Math.min(a, b, c, …)
+    let r: f64 = x;
+    let i: i32 = 1;
+    while (i < argc) {
+      const v: f64 = dynToNumber(dynArrGet(args, i));
+      if (v < r) r = v;
+      i = i + 1;
+    }
+    return dynNumber(r);
+  }
   let y: f64 = 0;
   if (argc > 1) y = dynToNumber(dynArrGet(args, 1));
-  if (strEq(name, "max") === 1) {
-    const r: f64 = x > y ? x : y;
-    return dynNumber(r);
-  }
-  if (strEq(name, "min") === 1) {
-    const r: f64 = x < y ? x : y;
-    return dynNumber(r);
-  }
   if (strEq(name, "pow") === 1) {
     const r: f64 = Math.pow(x, y);
     return dynNumber(r);
