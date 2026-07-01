@@ -5807,9 +5807,10 @@ class WasicTranspiler {
                 const segArrInfo = this.arrayVars.get(strArrSegM[1]);
                 if (segArrInfo && (segArrInfo.isStringArr || segArrInfo.elemType === "string")) {
                   const segIdxWat = this.emitArrayIndex(strArrSegM[2].trim(), locals);
-                  const segBase = (segArrInfo.ptr === -1 || segArrInfo.dynamic)
-                    ? this.arrGetWat(strArrSegM[1])
-                    : `(i32.const ${segArrInfo.ptr})`;
+                  const segBase =
+                    (segArrInfo.ptr === -1 || segArrInfo.ptr === -2 || segArrInfo.dynamic)
+                      ? this.arrGetWat(strArrSegM[1])
+                      : `(i32.const ${segArrInfo.ptr})`;
                   const segAddr =
                     `(i32.add (i32.add ${segBase} (i32.const 8)) (i32.shl ${segIdxWat} (i32.const 3)))`;
                   emitTmplConcat(`(i32.load ${segAddr})`, `(i32.load offset=4 ${segAddr})`);
@@ -6179,7 +6180,7 @@ class WasicTranspiler {
       const sarrInfo = this.arrayVars.get(sarrN);
       if (sarrInfo && (sarrInfo.isStringArr || sarrInfo.elemType === "string")) {
         const idxWat = this.emitArrayIndex(sarrIdx.trim(), locals);
-        const baseWat = (sarrInfo.ptr === -1 || sarrInfo.dynamic)
+        const baseWat = (sarrInfo.ptr === -1 || sarrInfo.ptr === -2 || sarrInfo.dynamic)
           ? this.arrGetWat(sarrN)
           : `(i32.const ${sarrInfo.ptr})`;
         const addrWat =
@@ -6840,7 +6841,7 @@ class WasicTranspiler {
         );
         if (field) {
           const idxWat = this.emitArrayIndex(structArrFieldSPLM[2].trim(), locals);
-          const baseWat = (arrI.ptr === -1 || arrI.dynamic)
+          const baseWat = (arrI.ptr === -1 || arrI.ptr === -2 || arrI.dynamic)
             ? this.arrGetWat(structArrFieldSPLM[1])
             : `(i32.const ${arrI.ptr})`;
           const elemPtrWat =
@@ -6874,7 +6875,7 @@ class WasicTranspiler {
       const arrInfoSA = this.arrayVars.get(arrN);
       if (arrInfoSA && (arrInfoSA.isStringArr || arrInfoSA.elemType === "string")) {
         const idxWat = this.emitArrayIndex(idxRaw.trim(), locals);
-        const baseWat = (arrInfoSA.ptr === -1 || arrInfoSA.dynamic)
+        const baseWat = (arrInfoSA.ptr === -1 || arrInfoSA.ptr === -2 || arrInfoSA.dynamic)
           ? this.arrGetWat(arrN)
           : `(i32.const ${arrInfoSA.ptr})`;
         // String elements: 8 bytes each (ptr i32 at +0, len i32 at +4)
@@ -7462,7 +7463,7 @@ class WasicTranspiler {
       const idxWat = this.emitArrayIndex(idxLenMatch[2], locals);
       // String array element .length: arr[i].length → len field of the 8-byte ptr+len pair
       if (arrInfo && (arrInfo.isStringArr || arrInfo.elemType === "string")) {
-        const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
+        const baseWat = (arrInfo.ptr === -1 || arrInfo.ptr === -2 || arrInfo.dynamic)
           ? this.arrGetWat(arrName)
           : `(i32.const ${arrInfo.ptr})`;
         const elemAddrWat =
@@ -7775,7 +7776,7 @@ class WasicTranspiler {
           const field = structDef.fields.find((f) => f.name === fieldName);
           if (field) {
             const idxWat = this.emitArrayIndex(idxExpr, locals);
-            const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
+            const baseWat = (arrInfo.ptr === -1 || arrInfo.ptr === -2 || arrInfo.dynamic)
               ? this.arrGetWat(arrName)
               : `(i32.const ${arrInfo.ptr})`;
             const ptrWat =
@@ -7804,7 +7805,7 @@ class WasicTranspiler {
           : undefined);
       if (amcInfo && amcStn && this.classDefs.has(amcStn)) {
         const amcIdxWat = this.emitArrayIndex(amcIdx, locals);
-        const amcBase = (amcInfo.ptr === -1 || amcInfo.dynamic)
+        const amcBase = (amcInfo.ptr === -1 || amcInfo.ptr === -2 || amcInfo.dynamic)
           ? this.arrGetWat(amcArr)
           : `(i32.const ${amcInfo.ptr})`;
         // Object pointer stored in array at shift=2 (i32 elements)
@@ -7894,9 +7895,13 @@ class WasicTranspiler {
           : 2;
         const idxWat = this.emitArrayIndex(bracketMatch[2], locals);
         // All arrays (static, dynamic, params) use an 8-byte [length, capacity] header.
-        const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
-          ? this.arrGetWat(bracketMatch[1])
-          : `(i32.const ${arrInfo.ptr})`;
+        // Bug fix 2026-06-30: a module-GLOBAL array (ptr === -2) read INSIDE a function must resolve its
+        // base to `(global.get $arr)`, not the raw `(i32.const -2)` sentinel — arrGetWat handles both the
+        // -1 (param/local) and -2 (module global) cases. Was reading address -2 → 0.
+        const baseWat =
+          (arrInfo.ptr === -1 || arrInfo.dynamic || this.isModuleGlobalArr(bracketMatch[1]))
+            ? this.arrGetWat(bracketMatch[1])
+            : `(i32.const ${arrInfo.ptr})`;
         const dataBase = `(i32.add ${baseWat} (i32.const 8))`;
         return `(${loadOp} (i32.add ${dataBase} (i32.shl ${idxWat} (i32.const ${shift}))))`;
       }
@@ -11404,7 +11409,7 @@ class WasicTranspiler {
           const field = structDef.fields.find((f) => f.name === fieldName);
           if (field) {
             const idxWat = this.emitArrayIndex(idxExpr, locals);
-            const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
+            const baseWat = (arrInfo.ptr === -1 || arrInfo.ptr === -2 || arrInfo.dynamic)
               ? this.arrGetWat(arrName)
               : `(i32.const ${arrInfo.ptr})`;
             const ptrWat =
@@ -11463,7 +11468,7 @@ class WasicTranspiler {
         // String array element write: arr[idx] = "str" — store ptr+len at 8-byte slot
         if (arrInfo.isStringArr || arrInfo.elemType === "string") {
           const idxWat = this.emitArrayIndex(arrWriteMatch[2], locals);
-          const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
+          const baseWat = (arrInfo.ptr === -1 || arrInfo.ptr === -2 || arrInfo.dynamic)
             ? this.arrGetWat(arrWriteMatch[1])
             : `(i32.const ${arrInfo.ptr})`;
           const elemAddrWat =
@@ -11490,7 +11495,7 @@ class WasicTranspiler {
         } else {
           valWat = this.emitExpr(arrWriteMatch[3], locals, arrInfo.elemType);
         }
-        const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
+        const baseWat = (arrInfo.ptr === -1 || arrInfo.ptr === -2 || arrInfo.dynamic)
           ? this.arrGetWat(arrWriteMatch[1])
           : `(i32.const ${arrInfo.ptr})`;
         const dataBase = `(i32.add ${baseWat} (i32.const 8))`;
@@ -11933,7 +11938,7 @@ class WasicTranspiler {
             const field = structDefBV.fields.find((f) => f.name === fn);
             if (field) {
               const idxWat = this.emitArrayIndex(idxExpr, locals);
-              const baseWat = (arrInfo.ptr === -1 || arrInfo.dynamic)
+              const baseWat = (arrInfo.ptr === -1 || arrInfo.ptr === -2 || arrInfo.dynamic)
                 ? this.arrGetWat(arrName)
                 : `(i32.const ${arrInfo.ptr})`;
               const ptrWat =
@@ -12310,7 +12315,7 @@ class WasicTranspiler {
             const field = structDefE.fields.find((f) => f.name === fn);
             if (field) {
               const idxWat = this.emitArrayIndex(idxExprE, locals);
-              const baseWat = (arrInfoE.ptr === -1 || arrInfoE.dynamic)
+              const baseWat = (arrInfoE.ptr === -1 || arrInfoE.ptr === -2 || arrInfoE.dynamic)
                 ? this.arrGetWat(arrNameE)
                 : `(i32.const ${arrInfoE.ptr})`;
               const ptrWat =
@@ -18916,6 +18921,37 @@ class WasicTranspiler {
       ) {
         startDeclaredLocals.push(["__fn_tmp", "i32"]);
         startLocals.set("__fn_tmp", "i32");
+      }
+      // Bug fix 2026-06-30: a `const NAME: T[] = …` nested in a SINGLE-PHYSICAL-line loop/block body
+      // (`for(…){ const row: i32[] = []; row.push(…) }`) isn't seen by the anchored pre-scans above →
+      // `'row' is not defined`. Emission handles single-line bodies (splitStmts), so registering the
+      // array in arrayVars + declaring its local suffices. Scan string/comment-masked lines for nested
+      // array decls not already registered. (Mirrors the Gap-3 nested-primitive-local scan.)
+      for (const rawLine of this.startBodyLines) {
+        const masked = maskCode(rawLine);
+        const re = /[{;]\s*(?:const|let|var)\s+(\w+)\s*:\s*(\w+)((?:\[\])+)\s*=/g;
+        let mm: RegExpExecArray | null;
+        while ((mm = re.exec(masked)) !== null) {
+          const nm = mm[1];
+          if (startLocals.has(nm) || this.arrayVars.has(nm)) continue;
+          const hint = mm[2];
+          let et: WatType = "i32";
+          if (hint === "number") et = "f64";
+          else if (hint !== "string" && !this.structDefs.has(hint)) {
+            et = (mapType(hint) as WatType) ?? "i32";
+          }
+          this.arrayVars.set(nm, {
+            elemType: et,
+            ptr: -1,
+            length: 0,
+            dynamic: startDynArrayNames.has(nm),
+            is2D: mm[3] === "[][]",
+            isStringArr: hint === "string",
+            structTypeName: this.structDefs.has(hint) ? hint : undefined,
+          });
+          startLocals.set(nm, "i32");
+          startDeclaredLocals.push([nm, "i32"]);
+        }
       }
       // Save module-level array registrations so functions can access them via emitFunction seed.
       this.moduleArrayVars = new Map(this.arrayVars);

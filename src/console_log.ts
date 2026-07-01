@@ -303,6 +303,8 @@ export type ArrayLookup = (name: string) => {
   isGlobal?: boolean;
   /** True when this is a string array (8-byte elements: [ptr i32, len i32]). */
   isStringArr?: boolean;
+  /** Phase 6d: true when this is a 2D array (outer stores i32 row pointers). */
+  is2D?: boolean;
 } | undefined;
 
 /**
@@ -1008,6 +1010,57 @@ function parseSingleArg(
   // brackets), and the branches below would emit a single mangled access — dropping the `+ arr[1]`.
   // Nullify on an unbalanced index so the whole expression falls through to the binary-op-aware
   // exprToWat routing below (which handles array-element arithmetic correctly).
+  // Bug fix 2026-06-30: 2D dynamic-array element `arr[i][j]` directly in console.log. The 1D bracket
+  // regex below rejects it (its index `i][j` fails parenDepthNeverNegative), so it used to fall to the
+  // terminal `(i32.const 0)` stub. Load the row pointer (outer stores i32 row ptrs, shift=2), then the
+  // element from the row (elemType shift/loadOp).
+  const twoDMatch = token.match(/^(\w+)\[([^\]]+)\]\[([^\]]+)\]$/);
+  if (twoDMatch && arrayLookup) {
+    const a2 = arrayLookup(twoDMatch[1]);
+    if (a2 && a2.is2D) {
+      const base = a2.isGlobal
+        ? `(global.get $${twoDMatch[1]})`
+        : (a2.ptr === -1 || a2.ptr === -2 || a2.dynamic)
+        ? `(local.get $${twoDMatch[1]})`
+        : `(i32.const ${a2.ptr})`;
+      const rowIdx = exprToWat(
+        twoDMatch[2],
+        locals,
+        "i32",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      );
+      const colIdx = exprToWat(
+        twoDMatch[3],
+        locals,
+        "i32",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      );
+      const rowPtr =
+        `(i32.load (i32.add (i32.add ${base} (i32.const 8)) (i32.shl ${rowIdx} (i32.const 2))))`;
+      const eShift = (a2.elemType === "f64" || a2.elemType === "i64") ? 3 : 2;
+      const eLoad = a2.elemType === "f64"
+        ? "f64.load"
+        : a2.elemType === "i64"
+        ? "i64.load"
+        : "i32.load";
+      const wat =
+        `(${eLoad} (i32.add (i32.add ${rowPtr} (i32.const 8)) (i32.shl ${colIdx} (i32.const ${eShift}))))`;
+      const kind = a2.elemType === "f64" || a2.elemType === "f32"
+        ? "f64expr" as const
+        : a2.elemType === "i64"
+        ? "i64expr" as const
+        : "i32expr" as const;
+      return [{ kind, wat }];
+    }
+  }
   let bracketMatch = token.match(/^(\w+)\[(.+)\]$/);
   if (bracketMatch && !parenDepthNeverNegative(bracketMatch[2])) bracketMatch = null;
   // Phase 23: tuple element access t[N] where N is a numeric index → struct field _N
@@ -1594,6 +1647,48 @@ function exprToWat(
     if (r) return `(block (result i32) (drop ${r.ptrWat}) ${r.lenWat})`;
   }
 
+  // Bug fix 2026-06-30: 2D dynamic-array element `arr[i][j]` as an OPERAND (e.g. `arr[0][0] + arr[0][1]`).
+  // The recursive per-operand exprToWat call lands here; without this it fell to the terminal 0 stub.
+  const twoDM = expr.match(/^(\w+)\[([^\]]+)\]\[([^\]]+)\]$/);
+  if (twoDM && arrayLookup) {
+    const a2 = arrayLookup(twoDM[1]);
+    if (a2 && a2.is2D) {
+      const base = a2.isGlobal
+        ? `(global.get $${twoDM[1]})`
+        : (a2.ptr === -1 || a2.ptr === -2 || a2.dynamic)
+        ? `(local.get $${twoDM[1]})`
+        : `(i32.const ${a2.ptr})`;
+      const rowIdx = exprToWat(
+        twoDM[2],
+        locals,
+        "i32",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      );
+      const colIdx = exprToWat(
+        twoDM[3],
+        locals,
+        "i32",
+        funcLookup,
+        allocString,
+        arrayLookup,
+        structLookup,
+        globals,
+      );
+      const rowPtr =
+        `(i32.load (i32.add (i32.add ${base} (i32.const 8)) (i32.shl ${rowIdx} (i32.const 2))))`;
+      const eShift = (a2.elemType === "f64" || a2.elemType === "i64") ? 3 : 2;
+      const eLoad = a2.elemType === "f64"
+        ? "f64.load"
+        : a2.elemType === "i64"
+        ? "i64.load"
+        : "i32.load";
+      return `(${eLoad} (i32.add (i32.add ${rowPtr} (i32.const 8)) (i32.shl ${colIdx} (i32.const ${eShift}))))`;
+    }
+  }
   // Array element read: arr[idx]. Guard the greedy index capture so `arr[0] + arr[1]` (index would
   // capture `0] + arr[1`) falls through to the binary-op loop below instead of emitting one mangled
   // access (mirrors emitExpr in wasic.ts, which already guards this).
