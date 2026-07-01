@@ -911,159 +911,391 @@
     i32.wrap_i64
     i32.const 2147483647
     i32.and)
-  (func $mathlib__fn2 (param f64 f64 i32) (result f64)
-    (local f64) (local f64) (local f64) (local f64)
+  (func $mathlib__fn2 (param f64 f64) (result f64 f64)
+    (local f64) (local f64)
     local.get 0
-    call $mathlib__fn1
-    i32.const 1044381696
-    i32.lt_u
-    if  ;; label = @1
-      local.get 0
-      return
-    end
-    local.get 0
-    local.get 0
-    f64.mul
-    local.set 3
-    local.get 3
-    local.get 3
-    f64.mul
-    local.set 4
-    f64.const 0x1.111111110f8a6p-7 (;=0.00833333333332249;)
-    local.get 3
-    f64.const -0x1.a01a019c161d5p-13 (;=-0.0001984126982985795;)
-    local.get 3
-    f64.const 0x1.71de357b1fe7dp-19 (;=0.0000027557313707070068;)
-    f64.mul
+    local.get 1
     f64.add
-    f64.mul
-    f64.add
-    local.get 3
-    local.get 4
-    f64.mul
-    f64.const -0x1.ae5e68a2b9cebp-26 (;=-2.5050760253406863e-8;)
-    local.get 3
-    f64.const 0x1.5d93a5acfd57cp-33 (;=1.58969099521155e-10;)
-    f64.mul
-    f64.add
-    f64.mul
-    f64.add
-    local.set 5
-    local.get 3
-    local.get 0
-    f64.mul
-    local.set 6
-    local.get 2
-    i32.eqz
-    if (result f64)  ;; label = @1
-      local.get 0
-      local.get 6
-      f64.const -0x1.5555555555549p-3 (;=-0.16666666666666632;)
-      local.get 3
-      local.get 5
-      f64.mul
-      f64.add
-      f64.mul
-      f64.add
-    else
-      local.get 0
-      local.get 3
-      f64.const 0x1.0p-1 (;=0.5;)
-      local.get 1
-      f64.mul
-      local.get 6
-      local.get 5
-      f64.mul
-      f64.sub
-      f64.mul
-      local.get 1
-      f64.sub
-      local.get 6
-      f64.const -0x1.5555555555549p-3 (;=-0.16666666666666632;)
-      f64.mul
-      f64.sub
-      f64.sub
-    end)
-  (func $mathlib__fn3 (param f64 f64) (result f64)
-    (local f64) (local f64) (local f64) (local f64) (local f64)
-    local.get 0
-    local.get 0
-    f64.mul
     local.set 2
     local.get 2
-    local.get 2
-    f64.mul
+    local.get 0
+    f64.sub
     local.set 3
     local.get 2
-    f64.const 0x1.555555555554cp-5 (;=0.0416666666666666;)
+    local.get 0
     local.get 2
-    f64.const -0x1.6c16c16c15177p-10 (;=-0.001388888888887411;)
-    local.get 2
-    f64.const 0x1.a01a019cb159p-16 (;=0.00002480158728947673;)
+    local.get 3
+    f64.sub
+    f64.sub
+    local.get 1
+    local.get 3
+    f64.sub
+    f64.add)
+  (func $mathlib__fn3 (param f64 f64) (result f64 f64)
+    (local f64) (local f64) (local f64) (local f64) (local f64) (local f64)
+    local.get 0
+    local.get 1
     f64.mul
-    f64.add
+    local.set 2
+    f64.const 0x1.0000002p+27 (;=134217729;)
+    local.get 0
     f64.mul
-    f64.add
-    f64.mul
+    local.set 3
     local.get 3
     local.get 3
+    local.get 0
+    f64.sub
+    f64.sub
+    local.set 4
+    local.get 0
+    local.get 4
+    f64.sub
+    local.set 5
+    f64.const 0x1.0000002p+27 (;=134217729;)
+    local.get 1
     f64.mul
-    f64.const -0x1.27e4f809c52adp-22 (;=-2.7557314351390663e-7;)
+    local.set 3
+    local.get 3
+    local.get 3
+    local.get 1
+    f64.sub
+    f64.sub
+    local.set 6
+    local.get 1
+    local.get 6
+    f64.sub
+    local.set 7
     local.get 2
-    f64.const 0x1.1ee9ebdb4b1c4p-29 (;=2.087572321298175e-9;)
+    local.get 4
+    local.get 6
+    f64.mul
     local.get 2
-    f64.const -0x1.8fae9be8838d4p-37 (;=-1.1359647557788195e-11;)
+    f64.sub
+    local.get 4
+    local.get 7
     f64.mul
     f64.add
+    local.get 5
+    local.get 6
     f64.mul
     f64.add
+    local.get 5
+    local.get 7
+    f64.mul
+    f64.add)
+  (func $mathlib__fn4 (param f64 f64 f64 f64) (result f64 f64)
+    (local f64) (local f64)
+    local.get 0
+    local.get 2
+    call $mathlib__fn2
+    local.set 5
+    nop
+    nop
+    local.set 4
+    local.get 5
+    local.get 1
+    local.get 3
+    f64.add
+    f64.add
+    local.set 5
+    local.get 4
+    local.get 5
+    call $mathlib__fn2)
+  (func $mathlib__fn5 (param f64 f64 f64 f64) (result f64 f64)
+    (local f64) (local f64)
+    local.get 0
+    local.get 2
+    call $mathlib__fn3
+    local.set 5
+    nop
+    nop
+    local.set 4
+    local.get 5
+    local.get 0
+    local.get 3
+    f64.mul
+    local.get 1
+    local.get 2
+    f64.mul
+    f64.add
+    f64.add
+    local.set 5
+    local.get 4
+    local.get 5
+    call $mathlib__fn2)
+  (func $mathlib__fn6 (param f64) (result f64 f64)
+    (local f64) (local f64) (local f64) (local f64)
+    f64.const 0x1.0p+0 (;=1;)
+    local.get 0
+    f64.div
+    local.set 1
+    local.get 1
+    local.get 0
+    call $mathlib__fn3
+    local.set 3
+    nop
+    nop
+    local.set 2
+    f64.const 0x1.0p+0 (;=1;)
+    local.get 2
+    f64.sub
+    local.get 3
+    f64.sub
+    local.set 4
+    local.get 1
+    local.get 4
+    local.get 1
+    f64.mul
+    call $mathlib__fn2)
+  (func $mathlib__fn7 (param f64 f64 f64) (result f64 f64)
+    (local f64) (local f64)
+    local.get 0
+    local.get 2
+    call $mathlib__fn3
+    local.set 4
+    nop
+    nop
+    local.set 3
+    local.get 4
+    local.get 1
+    local.get 2
     f64.mul
     f64.add
     local.set 4
+    local.get 3
+    local.get 4
+    call $mathlib__fn2)
+  (func $mathlib__fn8 (param f64 f64 f64 f64) (result f64 f64)
+    (local f64) (local f64) (local f64) (local f64) (local f64) (local f64) (local f64) (local f64) (local f64)
     local.get 0
-    call $mathlib__fn1
-    i32.const 1070805811
-    i32.lt_u
-    if (result f64)  ;; label = @1
-      f64.const 0x1.0p+0 (;=1;)
-      f64.const 0x1.0p-1 (;=0.5;)
-      local.get 2
-      f64.mul
-      local.get 2
-      local.get 4
-      f64.mul
-      local.get 0
-      local.get 1
-      f64.mul
-      f64.sub
-      f64.sub
-      f64.sub
-    else
-      f64.const 0x1.0p-1 (;=0.5;)
-      local.get 2
-      f64.mul
-      local.set 5
-      f64.const 0x1.0p+0 (;=1;)
-      local.get 5
-      f64.sub
-      local.set 6
-      local.get 6
-      f64.const 0x1.0p+0 (;=1;)
-      local.get 6
-      f64.sub
-      local.get 5
-      f64.sub
-      local.get 2
-      local.get 4
-      f64.mul
-      local.get 0
-      local.get 1
-      f64.mul
-      f64.sub
-      f64.add
-      f64.add
-    end)
-  (func $mathlib__fn4 (param f64) (result i32)
+    local.get 2
+    f64.div
+    local.set 4
+    local.get 2
+    local.get 3
+    local.get 4
+    call $mathlib__fn7
+    local.set 8
+    nop
+    nop
+    local.set 7
+    local.get 0
+    local.get 1
+    local.get 7
+    f64.neg
+    local.get 8
+    f64.neg
+    call $mathlib__fn4
+    local.set 10
+    nop
+    nop
+    local.set 9
+    local.get 9
+    local.get 2
+    f64.div
+    local.set 5
+    local.get 2
+    local.get 3
+    local.get 5
+    call $mathlib__fn7
+    local.set 8
+    nop
+    nop
+    local.set 7
+    local.get 9
+    local.get 10
+    local.get 7
+    f64.neg
+    local.get 8
+    f64.neg
+    call $mathlib__fn4
+    local.set 10
+    nop
+    nop
+    local.set 9
+    local.get 9
+    local.get 2
+    f64.div
+    local.set 6
+    local.get 4
+    local.get 5
+    call $mathlib__fn2
+    local.set 12
+    nop
+    nop
+    local.set 11
+    local.get 12
+    local.get 6
+    f64.add
+    local.set 12
+    local.get 11
+    local.get 12
+    call $mathlib__fn2)
+  (func $mathlib__fn9 (param f64 f64) (result f64 f64)
+    (local f64) (local f64) (local f64) (local f64) (local f64) (local f64) (local f64) (local f64) (local i32) (local f64)
+    local.get 0
+    local.get 1
+    local.get 0
+    local.get 1
+    call $mathlib__fn5
+    local.set 3
+    nop
+    nop
+    local.set 2
+    local.get 0
+    local.set 4
+    local.get 1
+    local.set 5
+    local.get 0
+    local.set 6
+    local.get 1
+    local.set 7
+    i32.const 1
+    local.set 10
+    block  ;; label = @1
+      loop  ;; label = @2
+        local.get 10
+        i32.const 11
+        i32.gt_u
+        br_if 1 (;@1;)
+        local.get 4
+        local.get 5
+        local.get 2
+        local.get 3
+        call $mathlib__fn5
+        local.set 5
+        nop
+        nop
+        local.set 4
+        i32.const -1
+        i32.const 2
+        local.get 10
+        i32.mul
+        i32.const 2
+        local.get 10
+        i32.mul
+        i32.const 1
+        i32.add
+        i32.mul
+        i32.mul
+        f64.convert_i32_s
+        local.set 11
+        local.get 11
+        call $mathlib__fn6
+        local.set 9
+        nop
+        nop
+        local.set 8
+        local.get 4
+        local.get 5
+        local.get 8
+        local.get 9
+        call $mathlib__fn5
+        local.set 5
+        nop
+        nop
+        local.set 4
+        local.get 6
+        local.get 7
+        local.get 4
+        local.get 5
+        call $mathlib__fn4
+        local.set 7
+        nop
+        nop
+        local.set 6
+        local.get 10
+        i32.const 1
+        i32.add
+        local.set 10
+        br 0 (;@2;)
+      end
+    end
+    local.get 6
+    local.get 7)
+  (func $mathlib__fn10 (param f64 f64) (result f64 f64)
+    (local f64) (local f64) (local f64) (local f64) (local f64) (local f64) (local f64) (local f64) (local i32) (local f64)
+    local.get 0
+    local.get 1
+    local.get 0
+    local.get 1
+    call $mathlib__fn5
+    local.set 3
+    nop
+    nop
+    local.set 2
+    f64.const 0x1.0p+0 (;=1;)
+    local.set 4
+    f64.const 0x0p+0 (;=0;)
+    local.set 5
+    f64.const 0x1.0p+0 (;=1;)
+    local.set 6
+    f64.const 0x0p+0 (;=0;)
+    local.set 7
+    i32.const 1
+    local.set 10
+    block  ;; label = @1
+      loop  ;; label = @2
+        local.get 10
+        i32.const 11
+        i32.gt_u
+        br_if 1 (;@1;)
+        local.get 4
+        local.get 5
+        local.get 2
+        local.get 3
+        call $mathlib__fn5
+        local.set 5
+        nop
+        nop
+        local.set 4
+        i32.const -1
+        i32.const 2
+        local.get 10
+        i32.mul
+        i32.const 1
+        i32.sub
+        i32.const 2
+        local.get 10
+        i32.mul
+        i32.mul
+        i32.mul
+        f64.convert_i32_s
+        local.set 11
+        local.get 11
+        call $mathlib__fn6
+        local.set 9
+        nop
+        nop
+        local.set 8
+        local.get 4
+        local.get 5
+        local.get 8
+        local.get 9
+        call $mathlib__fn5
+        local.set 5
+        nop
+        nop
+        local.set 4
+        local.get 6
+        local.get 7
+        local.get 4
+        local.get 5
+        call $mathlib__fn4
+        local.set 7
+        nop
+        nop
+        local.set 6
+        local.get 10
+        i32.const 1
+        i32.add
+        local.set 10
+        br 0 (;@2;)
+      end
+    end
+    local.get 6
+    local.get 7)
+  (func $mathlib__fn11 (param f64) (result i32)
     (local f64) (local f64) (local f64) (local f64) (local f64) (local f64) (local f64) (local f64) (local i32) (local f64)
     local.get 0
     f64.const 0x1.45f306dc9c883p-1 (;=0.6366197723675814;)
@@ -1073,17 +1305,17 @@
     f64.const 0x1.00000008p+29 (;=536870913;)
     local.get 1
     f64.mul
-    local.set 4
-    local.get 4
-    local.get 4
-    local.get 1
-    f64.sub
-    f64.sub
     local.set 2
-    local.get 1
     local.get 2
+    local.get 2
+    local.get 1
+    f64.sub
     f64.sub
     local.set 3
+    local.get 1
+    local.get 3
+    f64.sub
+    local.set 4
     local.get 0
     local.set 5
     f64.const 0x0p+0 (;=0;)
@@ -1127,7 +1359,7 @@
         i32.eqz
         select
         local.set 10
-        local.get 2
+        local.get 3
         local.get 10
         f64.mul
         local.set 7
@@ -1145,7 +1377,7 @@
         local.set 6
         local.get 8
         local.set 5
-        local.get 3
+        local.get 4
         local.get 10
         f64.mul
         local.set 7
@@ -1172,35 +1404,38 @@
     end
     local.get 5
     local.get 6
-    f64.add
-    global.set $mathlib_global1
-    local.get 6
-    global.get $mathlib_global1
-    local.get 5
-    f64.sub
-    f64.sub
+    call $mathlib__fn2
     global.set $mathlib_global2
+    nop
+    nop
+    global.set $mathlib_global1
     local.get 1
     i64.trunc_f64_s
     i32.wrap_i64
     i32.const 3
     i32.and)
   (func $mathlib_sin (param f64) (result f64)
-    (local i32) (local i32)
+    (local i32) (local i32) (local f64) (local f64)
     local.get 0
     call $mathlib__fn1
-    local.set 2
-    local.get 2
+    local.set 1
+    local.get 1
     i32.const 1072243195
     i32.le_u
     if  ;; label = @1
       local.get 0
       f64.const 0x0p+0 (;=0;)
-      i32.const 0
-      call $mathlib__fn2
+      call $mathlib__fn9
+      local.set 4
+      nop
+      nop
+      local.set 3
+      local.get 3
+      local.get 4
+      f64.add
       return
     end
-    local.get 2
+    local.get 1
     i32.const 2146435072
     i32.ge_u
     if  ;; label = @1
@@ -1210,56 +1445,63 @@
       return
     end
     local.get 0
-    call $mathlib__fn4
-    local.set 1
-    local.get 1
-    i32.eqz
-    if (result f64)  ;; label = @1
+    call $mathlib__fn11
+    local.set 2
+    local.get 2
+    i32.const 1
+    i32.and
+    if  ;; label = @1
       global.get $mathlib_global1
       global.get $mathlib_global2
-      i32.const 1
-      call $mathlib__fn2
+      call $mathlib__fn10
+      local.set 4
+      nop
+      nop
+      local.set 3
     else
-      local.get 1
-      i32.const 1
-      i32.eq
-      if (result f64)  ;; label = @2
-        global.get $mathlib_global1
-        global.get $mathlib_global2
-        call $mathlib__fn3
-      else
-        local.get 1
-        i32.const 2
-        i32.eq
-        if (result f64)  ;; label = @3
-          global.get $mathlib_global1
-          global.get $mathlib_global2
-          i32.const 1
-          call $mathlib__fn2
-          f64.neg
-        else
-          global.get $mathlib_global1
-          global.get $mathlib_global2
-          call $mathlib__fn3
-          f64.neg
-        end
-      end
+      global.get $mathlib_global1
+      global.get $mathlib_global2
+      call $mathlib__fn9
+      local.set 4
+      nop
+      nop
+      local.set 3
+    end
+    local.get 2
+    i32.const 2
+    i32.ge_u
+    if (result f64)  ;; label = @1
+      local.get 3
+      local.get 4
+      f64.add
+      f64.neg
+    else
+      local.get 3
+      local.get 4
+      f64.add
     end)
   (func $mathlib_cos (param f64) (result f64)
-    (local i32) (local i32)
+    (local i32) (local i32) (local f64) (local f64)
     local.get 0
     call $mathlib__fn1
-    local.set 2
-    local.get 2
+    local.set 1
+    local.get 1
     i32.const 1072243195
     i32.le_u
     if  ;; label = @1
       local.get 0
       f64.const 0x0p+0 (;=0;)
-      call $mathlib__fn3
+      call $mathlib__fn10
+      local.set 4
+      nop
+      nop
+      local.set 3
+      local.get 3
+      local.get 4
+      f64.add
       return
     end
-    local.get 2
+    local.get 1
     i32.const 2146435072
     i32.ge_u
     if  ;; label = @1
@@ -1269,47 +1511,123 @@
       return
     end
     local.get 0
-    call $mathlib__fn4
-    local.set 1
-    local.get 1
-    i32.eqz
-    if (result f64)  ;; label = @1
+    call $mathlib__fn11
+    local.set 2
+    local.get 2
+    i32.const 1
+    i32.and
+    if  ;; label = @1
       global.get $mathlib_global1
       global.get $mathlib_global2
-      call $mathlib__fn3
+      call $mathlib__fn9
+      local.set 4
+      nop
+      nop
+      local.set 3
     else
-      local.get 1
-      i32.const 1
-      i32.eq
-      if (result f64)  ;; label = @2
-        global.get $mathlib_global1
-        global.get $mathlib_global2
-        i32.const 1
-        call $mathlib__fn2
-        f64.neg
-      else
-        local.get 1
-        i32.const 2
-        i32.eq
-        if (result f64)  ;; label = @3
-          global.get $mathlib_global1
-          global.get $mathlib_global2
-          call $mathlib__fn3
-          f64.neg
-        else
-          global.get $mathlib_global1
-          global.get $mathlib_global2
-          i32.const 1
-          call $mathlib__fn2
-        end
-      end
+      global.get $mathlib_global1
+      global.get $mathlib_global2
+      call $mathlib__fn10
+      local.set 4
+      nop
+      nop
+      local.set 3
+    end
+    local.get 2
+    i32.const 1
+    i32.eq
+    local.get 2
+    i32.const 2
+    i32.eq
+    i32.or
+    if (result f64)  ;; label = @1
+      local.get 3
+      local.get 4
+      f64.add
+      f64.neg
+    else
+      local.get 3
+      local.get 4
+      f64.add
     end)
   (func $mathlib_tan (param f64) (result f64)
+    (local i32) (local i32) (local f64) (local f64) (local f64) (local f64) (local f64) (local f64) (local f64) (local f64)
     local.get 0
-    call $mathlib_sin
-    local.get 0
-    call $mathlib_cos
-    f64.div)
+    call $mathlib__fn1
+    local.set 1
+    local.get 1
+    i32.const 2146435072
+    i32.ge_u
+    if  ;; label = @1
+      local.get 0
+      local.get 0
+      f64.sub
+      return
+    end
+    local.get 1
+    i32.const 1072243195
+    i32.le_u
+    if  ;; label = @1
+      local.get 0
+      local.set 3
+      f64.const 0x0p+0 (;=0;)
+      local.set 4
+      i32.const 0
+      local.set 2
+    else
+      local.get 0
+      call $mathlib__fn11
+      local.set 2
+      global.get $mathlib_global1
+      local.set 3
+      global.get $mathlib_global2
+      local.set 4
+    end
+    local.get 3
+    local.get 4
+    call $mathlib__fn9
+    local.set 6
+    nop
+    nop
+    local.set 5
+    local.get 3
+    local.get 4
+    call $mathlib__fn10
+    local.set 8
+    nop
+    nop
+    local.set 7
+    local.get 2
+    i32.const 1
+    i32.and
+    if (result f64)  ;; label = @1
+      local.get 7
+      local.get 8
+      local.get 5
+      local.get 6
+      call $mathlib__fn8
+      local.set 10
+      nop
+      nop
+      local.set 9
+      local.get 9
+      local.get 10
+      f64.add
+      f64.neg
+    else
+      local.get 5
+      local.get 6
+      local.get 7
+      local.get 8
+      call $mathlib__fn8
+      local.set 10
+      nop
+      nop
+      local.set 9
+      local.get 9
+      local.get 10
+      f64.add
+    end)
   (func $mathlib_atan (param f64) (result f64)
     (local i32) (local f64) (local f64) (local f64) (local f64) (local i32) (local i32)
     i32.const 1

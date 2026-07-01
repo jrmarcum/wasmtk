@@ -1,6 +1,6 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 374/374** (`bindgen` 131/131, `jstyper` 73/73, `dync` conformance 3/3) as of **2026-07-01** (mathlib `sin`/`cos` rewritten to fdlibm kernels + table-free Veltkamp reduction → V8-parity ≤1 ULP; `sin(5e8)` byte-exact so `7a_constants` dropped its marker — see issue 5 below + design-decisions.md. Plus `66_Dragon4Formatting` for the Dragon4 f64→string rewrite — see issue 6 below and design-decisions.md; prior baseline 373/373 = #14 Route A `18zh`–`18zz` + gap regressions `62_Gap*` + `63_Gap*` + user-report `64_Report*` + trig 5a `65_ReportTrigLargeArg`).
+Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 375/375** (`bindgen` 131/131, `jstyper` 73/73, `dync` conformance 3/3) as of **2026-07-01** (mathlib `sin`/`cos`/`tan` are now **correctly-rounded** double-double — the canonical value every libm agrees on, validated bit-for-bit vs a BigInt CR oracle through the full pipeline; regression `67_TrigCorrectlyRounded` — see issue 5 below + design-decisions.md. Plus `66_Dragon4Formatting` for the Dragon4 f64→string rewrite — see issue 6 below and design-decisions.md; prior baseline 373/373 = #14 Route A `18zh`–`18zz` + gap regressions `62_Gap*` + `63_Gap*` + user-report `64_Report*` + trig 5a `65_ReportTrigLargeArg`).
 
 **f64 `toString` — issue 6 (2026-07-01) ✅ FIXED with pure Dragon4.** The old `$__f64_to_str`
 (×1e15 + shortest-round-trip shortening loop) both (a) capped at ~15 sig-figs — diverging from
@@ -24,20 +24,23 @@ libm; ~13 sig-figs agree), NOT formatting — Dragon4 renders mathlib's value ex
 - **Issue 2 (HIGH — compile abort):** `str += someString[index]` → `$__str_op_ptr cannot be resolved` — the `$__str_op` temp-declaration trigger's char-subscript regex required an adjacent `+`, missing a bare `x += s[i]`. FIXED: added `\+=[^;]*\w+\[` to the trigger (both pre-scans). (Blocked `57_base64-encoding`.)
 - **Issue 3 (MEDIUM — compile abort):** a module-scope `try/catch` with a bound catch var → `$e_ptr/$e_len cannot be resolved` — `_start`'s `(local …)` declarations were built ONLY from `startLocals`, but the catch handler pushes the `(ptr,len)` pair to `startDeclaredLocals` (which was never emitted). Most handlers set both, so it only bit the catch var. FIXED: `_start` local decls are now the UNION of `startLocals` (non-string) and `startDeclaredLocals`, de-duped (mirrors the in-function path, which builds from `declaredLocals`).
 - **Issue 4 (HIGH — compile abort):** an array-typed interface field via a function PARAM — `p.origin.length` / `p.origin[i]` — was "Unsupported expression". Two root causes: (a) `StructField` didn't remember a field's array element type (a `T[]` field stored plain `i32`), and (b) `allocStructData` had NO array-field case, so a struct literal `{ origin: ["a","b"] }` hit the numeric branch → `parseFloat("[…]")` → 0 (field never held the array — so even the documented alias workaround produced empty output). FIXED: `StructField` gained `arrayElemType`/`arrayIsString` (set in `parseStructs`); `allocStructData` allocates a literal array field and stores its pointer; `emitExpr` + `emitStringPtrLen` gained `structVar.field.length` / `structVar.field[i]` (string + numeric) handlers. (Blocked `49_xml`.)
-- **Issue 5 (LOW/MED — ✅ NOW FULL V8 PARITY 2026-07-01; supersedes the 5a note below):** the whole
-  `sin`/`cos` implementation in `mathlib.wat` was replaced with **fdlibm `__kernel_sin`/`__kernel_cos`**
-  (the exact polynomials V8 uses) + a **table-free Veltkamp-split argument reduction**: `n = rint(x·2/π)`,
-  then `r + rt = x − n·(π/2)` accumulated in double-double over the 7 fdlibm `PIo2[]` 24-bit chunks —
-  `n` is Veltkamp-split into `nhi` (≤24 sig bits) + `nlo` so every `nhi·PIo2[i]` / `nlo·PIo2[i]` product
-  is EXACT and each subtraction is Sterbenz-exact (`Fast2Sum` tail captures the low bits). Result:
-  **≤1 ULP vs V8 for |x| < ~1e12** (bit-exact on ~97%; the residual ~3% 1-ULP is V8's correctly-rounded
-  path — matching it fully would need a correctly-rounded kernel), graceful ~14-sig-fig out to 1e15.
-  Deliberately **no Payne-Hanek table / no linear-memory scratch** — pure f64 arithmetic, so it splices
-  cleanly into the merged mathlib. Uses two new mathlib globals `$__tr`/`$__trt` for the (r, rt) output
-  (verified to survive the merge + coexist with the RNG global). `tan` stays `sin/cos` (≤1–2 ULP; suite
-  `tan` checks are `Math.round`-based). **`sin(5e8)` is now BYTE-EXACT with V8**, so `7a_constants`
-  dropped its `@allow-output-diff` (full suite 374/374). Reference-validated (fdlibm JS port vs V8) before
-  the WAT port, same as Dragon4. See design-decisions.md. — Prior 5a note (large-arg range reduction only):
+- **Issue 5 (LOW/MED — ✅ NOW CORRECTLY-ROUNDED 2026-07-01; supersedes the fdlibm + 5a notes below):**
+  mathlib `sin`/`cos`/`tan` now return the **IEEE-754 correctly-rounded** result — the canonical value
+  every correct libm agrees on (max accuracy + max cross-language compat; see design-decisions.md for the
+  full rationale vs "match V8 bit-for-bit"). **Key finding driving this:** modern V8's `Math.sin/cos`
+  delegate to LLVM-libc's `shared::sin/cos`, which are only *faithfully*-rounded (≤1 ULP, ~99.76%
+  correctly-rounded) and a moving version-pinned target — so bit-for-bit-V8 is both fragile and less
+  accurate than correct rounding. **Implementation:** double-double (dd) arithmetic in `mathlib.wat` —
+  `$__ts`/`$__tp` (Veltkamp twoProduct, no FMA) + `$__dda`/`$__ddm`/`$__ddmd`/`$__ddri`/`$__dddiv`
+  (multi-value `(hi,lo)` returns), dd Taylor kernels `$__ddsin`/`$__ddcos` (11 terms), the table-free
+  Veltkamp n-split reduction `$__trig_reduce` (dd remainder in `$__tr`/`$__trt`); `tan = dd sin/cos` via
+  `$__dddiv`. **Validated bit-for-bit vs a BigInt correctly-rounded oracle through the FULL pipeline**
+  (wat2wasm + merge + Binaryen `-Oz` preserves the dd ops): sin/cos 1032/1032 + tan 412/412, 0 off,
+  `|x|` to 1e12 (CR to ~1e15). Pure f64 (no Payne-Hanek table / no linear memory) → survives the merge.
+  Regression `67_TrigCorrectlyRounded`; `7a_constants` byte-exact (`sin(5e8)` is a CR==V8 arg). NOTE:
+  wasic trig now differs from Deno's V8 on the ~0.24% where V8 isn't correctly-rounded — intended (wasic
+  is more correct). Reference-validated (dd JS impl vs oracle) before the WAT port, same as Dragon4.
+  — Prior fdlibm note (≤1-ULP, superseded) / 5a note (large-arg range reduction only):
 - **Issue 5 (LOW/MED — ✅ FIXED 2026-06-30, "5a"):** `Math.sin`/`cos`/`tan` of a LARGE argument diverged at the ~7th sig-fig. Root cause was the **range reduction**, not the polynomial: `mathlib.wat` reduced mod 2π with a SINGLE f64 2π constant, so for `sin(5e8)` the constant's ~1e-16 relative error was multiplied by `floor(x/2π) ≈ 8e7` → ~5e-8 absolute error in the reduced angle. FIXED with a **3-term Cody-Waite split** of 2π (HI with low mantissa bits zeroed so `k*HI` is exact for `|k| < 2^30`, + LO1 + LO2) in `$sin` and `$cos` (`tan = sin/cos`). `sin(5e8)` now matches JS to ~13 sig figs (was 7). Regenerated `mathlib.wasm` + `mathlib_bytes.ts`. Regression `65_ReportTrigLargeArg` (self-checking tolerance bands). NOTE: the trig POLYNOMIALS are still ~1e-11-accurate minimax approximations (e.g. `cos(1.0)` differs from JS at the ~11th digit) — a separate, deeper limit (better coefficients / more terms) not addressed here; only the large-argument reduction blow-up was fixed.
 - **Issue 6 (LOW — ✅ FIXED 2026-07-01):** f64 `toString` differed (`.wasm` ~15 sig-figs vs the JS engine's 17-sig-fig shortest-round-trip) and TRAPPED / lacked scientific notation for large-magnitude runtime values. Replaced `$__f64_to_str` with pure Dragon4 → 100% byte-exact parity with V8. Full write-up at the top of this file + design-decisions.md.
 

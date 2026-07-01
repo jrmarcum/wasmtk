@@ -23,17 +23,28 @@ high-value subset.
 
 - **`Math.round` = `floor(x + 0.5)`**, NOT `f64.nearest` (which is banker's rounding and gives
   `round(2.5)=2`). Both `wasic.ts` (F64_UNARY special case) and `console_log.ts` must agree.
-- **mathlib `sin`/`cos` are fdlibm** (`src/wasm/mathlib.wat`, 2026-07-01): `__kernel_sin`/`__kernel_cos`
-  (the exact polynomials V8 uses) + a **table-free Veltkamp-split argument reduction** (`$__trig_reduce`):
-  `n = f64.nearest(x·2/π)`; `r + rt = x − n·(π/2)` accumulated in double-double over the 7 fdlibm `PIo2[]`
-  24-bit chunks. `n` is Veltkamp-split (`nhi` ≤24 sig bits + `nlo`) so every product is EXACT and each
-  subtraction Sterbenz-exact; a `Fast2Sum` tail keeps the low bits. `≤1 ULP` vs V8 for `|x| < ~1e12`
-  (bit-exact ~97%; the ~3% 1-ULP residual is V8's correctly-rounded path), ~14-sig-fig out to 1e15.
-  **No Payne-Hanek table / no linear memory** — pure f64 arithmetic, so it survives the wasmmerge splice.
-  Output goes through two mathlib globals `$__tr`/`$__trt` (survive the merge; coexist with the RNG global).
-  `tan = sin/cos` (≤1–2 ULP). Do NOT reintroduce the old single-range degree-13 minimax (was ~1e-11).
-  After editing `mathlib.wat`: `wasmtk convert src/wasm/mathlib.wat` then
-  `deno run --allow-read --allow-write scripts/gen_mathlib_bytes.ts`. Reference: `sin(5e8)` byte-exact.
+- **mathlib `sin`/`cos`/`tan` are CORRECTLY-ROUNDED double-double** (`src/wasm/mathlib.wat`, 2026-07-01).
+  They return the IEEE-754 correctly-rounded result — the unique, platform/version/language-independent
+  value every correct libm agrees on (max accuracy AND max cross-language compatibility for the polyglot
+  loader ecosystem). **Rationale over "match V8 bit-for-bit":** modern V8's `Math.sin/cos` delegate to
+  LLVM-libc's `shared::sin/cos`, which are only *faithfully*-rounded (≤1 ULP, ~99.76% correctly-rounded)
+  and a moving version-pinned target; every faithful libm (glibc/MSVC/Go/Rust/V8) disagrees with the
+  others by ~1 ULP, but they all cluster on the correctly-rounded value, so correct rounding is the
+  maximally-compatible choice. **Implementation:** double-double (dd) helpers `$__ts` (twoSum),
+  `$__tp` (Veltkamp twoProduct — no FMA needed), `$__dda`/`$__ddm`/`$__ddmd`/`$__ddri`/`$__dddiv`, each
+  returning `(hi, lo)` via WASM multi-value; dd Taylor kernels `$__ddsin`/`$__ddcos` (11 terms); the
+  table-free Veltkamp n-split reduction `$__trig_reduce` producing a dd remainder `r` in globals
+  `$__tr`/`$__trt` (survive the merge; coexist with the RNG global). `tan = dd sin(r)/cos(r)` via
+  `$__dddiv` with quadrant sign. **Validated bit-for-bit vs a BigInt fixed-point correctly-rounded
+  oracle** — through the FULL pipeline (wat2wasm + merge + Binaryen `-Oz`, which preserves the dd
+  arithmetic): sin/cos 1032/1032 + tan 412/412, 0 off, `|x|` to 1e12; CR holds to ~1e15, ≤1 ULP beyond.
+  Pure f64 arithmetic (no Payne-Hanek table, no linear memory) so it survives the wasmmerge splice.
+  Do NOT let an optimizer reassociate the dd ops (Binaryen doesn't by default; never enable `--fast-math`).
+  Regression: `67_TrigCorrectlyRounded`. Supersedes the earlier fdlibm/≤1-ULP and degree-13-minimax
+  versions. After editing `mathlib.wat`: `wasmtk convert src/wasm/mathlib.wat` then
+  `deno run --allow-read --allow-write scripts/gen_mathlib_bytes.ts`. NOTE: a wasic program's trig now
+  differs from Deno's `Math.*` (V8) on the ~0.24% where V8 isn't correctly-rounded — this is intended
+  (wasic is more correct); tests byte-comparing raw trig must use CR==V8 args or tolerances.
 - **`$__f64_to_str` is pure Dragon4 (Burger-Dybvig free-format)** as of 2026-07-01 — hand-written
   WAT bignums (48 u32 limbs) over a lazily-`$__malloc`'d scratch region held in the `$__d4s` module
   global, then ECMAScript `Number.prototype.toString` formatting (fixed vs scientific both
