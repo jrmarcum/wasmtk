@@ -1,12 +1,18 @@
 # wasmtk own dynamic runtime (#14) — design + implementation log
 
+> **CURRENT STATE (v1.11.1, 2026-06-30): the own runtime is SHIPPED and `javyc` is DELETED.** The
+> interpreter covers the dynamic kernel; it's auto-merged on `: any`/`eval` in a `wasic` program and run
+> whole-file via the new `wasmtk dync` command (base64 source → `dynRunB64`). `src/javyc.ts` + the
+> external Javy/QuickJS dependency were removed (2h). The planning/decision narrative below is the
+> historical log — wherever it says "`javyc` stays the interim fallback", read "done: dynrt replaced it".
+
 **Roadmap #14 / stdlib-bundling brief §6/§7-#7.** DECISION (project owner, 2026-06-02): rather than
 declaring the irreducible dynamic kernel out of scope or depending on `javyc`/QuickJS long-term,
 wasmtk **ships its own dynamic runtime** — boxed values + a property map + (later) an interpreter for
-`eval`/`new Function`. `javyc` stays the interim fallback until this lands. This is the largest single
-remaining track; it is gated behind Phase 51 (complete), so it is unblocked. The kernel it must cover:
-runtime code-gen from strings (`eval`/`new Function`), pervasive `any` over runtime-unknown shapes,
-and open-ended prototype mutation (brief §6).
+`eval`/`new Function`. (`javyc` was the interim fallback until this landed — now retired, see banner
+above.) This is the largest single track; it was gated behind Phase 51 (complete), so it was unblocked.
+The kernel it must cover: runtime code-gen from strings (`eval`/`new Function`), pervasive `any` over
+runtime-unknown shapes, and open-ended prototype mutation (brief §6).
 
 ## Locked architecture decisions (owner, 2026-06-22)
 

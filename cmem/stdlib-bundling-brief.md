@@ -1,5 +1,13 @@
 # wasmtk: On-Demand stdlib Bundling as an Alternative to `javyc`
 
+> **RESOLUTION (v1.11.1, 2026-06-30): `javyc` is RETIRED and DELETED.** Both directions in this
+> brief's verdict (§6/§7-#7) shipped: typed programs get JSON/Date/Map/Set/RegExp as merged `modc`
+> capabilities (route a — all five Tier-1 shipped), AND the irreducible dynamic kernel is now covered
+> by wasmtk's **own** dynamic runtime (route b — the `wasmtk:dynrt` interpreter; see dynrt-design.md),
+> reached via `: any`/`eval` in a `wasic` program or the new `wasmtk dync` whole-file entry. `src/javyc.ts`
+> and the external Javy/QuickJS dependency were removed. The analysis below is kept as the historical
+> rationale; wherever it says "`javyc` stays the interim fallback", read "superseded by dynrt".
+
 **Purpose:** Implementation brief for the wasmtk team. Proposes a change that lets
 `wasmbundle` merge stdlib capability modules into a `wasic` program on demand, so a
 growing class of programs can use stdlib features (JSON, Date, Map, Set, RegExp,

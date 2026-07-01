@@ -24,7 +24,7 @@ wasmtk/
 │   ├── gowasic.ts       # Go producer (--lang=go): init/modc/run via TinyGo/std; modc→wasm library, run auto-detects Go (2026-06-06, upd. 2026-06-07)
 │   ├── zigwasic.ts      # Zig producer (--lang=zig): init/modc/run via `zig`; modc→freestanding lib, run→wasm32-wasi (2026-06-07)
 │   ├── rustwasic.ts     # Rust producer (--lang=rust): delegates to rsxtk (init/initmod/modc/build/run/add/remove/list/fmt/clean) (2026-06-07)
-│   ├── javyc.ts         # TypeScript via Javy/QuickJS embedded runtime
+│   ├── dync.ts          # Full-dynamic-compile entry: whole TS/JS file → WASI via the own runtime (wasmtk:dynrt); replaced javyc (deleted v1.11.1)
 │   ├── jstyper.ts       # .js + .d.ts → typed .ts pre-processor (Phase 39)
 │   ├── binaryen.ts      # wrapper over npm vs JSR binaryen default-export shape + shared binaryenOptimize() (-Oz; used by Go/Zig producers)
 │   ├── rt.ts            # Runtime I/O shim (all I/O goes through rt.*, never Deno.* directly)

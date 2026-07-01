@@ -2,7 +2,9 @@
 
 Goal (stdlib-bundling brief §5/§7-#3): author stdlib features as `modc` libraries in the wasic
 TS subset, and let `wasmbundle`/`wasmmerge` merge only the ones a program references — so typed
-programs get JSON/Date/Map/Set/RegExp **without** embedding QuickJS via `javyc`.
+programs get JSON/Date/Map/Set/RegExp **without** any external JS engine. (This was framed against
+`javyc`/QuickJS; `javyc` has since been **deleted v1.11.1** — fully-dynamic code now goes through
+wasmtk's own runtime via `wasmtk dync` / `: any` / `eval`, also no external engine.)
 
 **Two regimes:**
 - **Shared-heap** (Set, Map, JSON): the library builds a live structure on the **one** heap it

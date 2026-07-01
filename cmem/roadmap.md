@@ -125,13 +125,13 @@ detail lives in `README.md` ("Completed Phases") and the legacy `CLAUDE.md`. Sum
 | 6 | Evolve `hybrid` from `// @wasm` annotations → TS-type-driven routing | ✅ 2026-06-02 — `--auto` mode routes fully-typed fns to wasic, dynamic to host |
 | 7 | Decide the §6 kernel scope question (drop `javyc` vs ship own dynamic runtime) | ✅ DECIDED 2026-06-02 — **build wasmtk's own dynamic runtime** (see below) |
 
-**§7-#7 decision (2026-06-02, project owner):** wasmtk will **ship its own dynamic-runtime module**
-to cover the irreducible kernel (`eval`/`new Function`, pervasive `any`, open-prototype mutation)
-rather than declaring it out of scope or relying on `javyc` long-term. This is a **major new track**
-on the order of #5 async — a small boxed-value + property-map + interpreter runtime — and is NOT
-implemented yet; `javyc` (QuickJS) remains the interim dynamic fallback until the own-runtime lands.
-`hybrid --auto` (#6) currently routes dynamic-shaped functions to `javyc`; that target will migrate
-to the own-runtime once it exists.
+**§7-#7 decision (2026-06-02, project owner) — ✅ DELIVERED (v1.9.0–v1.11.1):** wasmtk **shipped its own
+dynamic-runtime module** to cover the irreducible kernel (`eval`/`new Function`, pervasive `any`,
+open-prototype mutation) rather than declaring it out of scope or relying on `javyc` long-term. The
+own runtime (the `wasmtk:dynrt` interpreter) is complete; **`javyc` (QuickJS) was retired and DELETED
+in v1.11.1** (the whole-file entry is `wasmtk dync`). `hybrid --auto` (#6) routes dynamic-shaped
+functions to the own runtime (its fallback is the HOST, never Javy). The paragraph's original
+"not implemented yet / interim fallback" wording reflects the 2026-06-02 state.
 
 **#5 Promise/async is COMPLETE** (2026-06-15 — #13 13.1a–13.5; eager microtask runtime + `hybrid`
 lift; suite 317/317). The remaining large track is the **own dynamic runtime** (#7 decision) — gated

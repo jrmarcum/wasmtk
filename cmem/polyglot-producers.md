@@ -52,7 +52,7 @@ Still distinguish `rsxtk` (a build/run **CLI toolkit**) from the planned `univer
 ### Producer → contract mapping
 
 - **TS (typed subset):** `wasic` — direct TS → optimized WAT → wasm, no JS runtime. (existing)
-- **TS/JS (dynamic):** `javyc` — embedded Javy/QuickJS engine path. (existing)
+- **TS/JS (dynamic):** `dync` — the whole program runs through wasmtk's OWN embedded dynamic runtime (`wasmtk:dynrt`), no external Javy/QuickJS. (`javyc`/QuickJS was deleted v1.11.1.)
 - **Zig:** `zig build-exe -target wasm32-wasi` (or freestanding). Cleanest native path.
 - **Rust:** build/run driver is **`rsxtk`** (jrmarcum's Rust WASM toolkit — see note below), which
   compiles Rust → `wasm32-wasip1` and runs it; underneath it's `rustc` `wasm32-wasip1` (WASI 0.1;

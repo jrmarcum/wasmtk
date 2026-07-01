@@ -504,9 +504,11 @@ revert these (full rationale in [polyglot-producers.md](polyglot-producers.md)):
 These are deliberate design choices that can look like workarounds in a sweep. They are correct as-is;
 removing them would break things. Listed so a future audit doesn't re-flag them.
 
-- **`javyc` (QuickJS) as the interim dynamic runtime.** Covers the irreducible dynamic kernel
-  (`eval`/`new Function`, pervasive `any`, open-prototype mutation) that wasic deliberately does not
-  compile. Stays until wasmtk's own dynamic runtime lands (roadmap §7-#7). Not a bug.
+- **~~`javyc` (QuickJS) as the interim dynamic runtime~~ — SUPERSEDED + DELETED v1.11.1.** wasmtk's
+  OWN dynamic runtime (the `wasmtk:dynrt` interpreter, roadmap §7-#7 / dynrt-design.md) now covers the
+  dynamic kernel (`eval`/`new Function`, pervasive `any`, open-prototype mutation). It's auto-merged on
+  `: any`/`eval` in a `wasic` program, and `wasmtk dync` runs a whole fully-dynamic file through it —
+  both with NO external Javy/QuickJS. `src/javyc.ts` and the Javy dependency were removed (#14 2h).
 - **`npm:wabt` / `npm:binaryen` as fallback backends.** `deno.json` is the single switch; the JSR
   `/compat` packages are the default, npm is the always-available fallback for the migration's
   lifetime. Both code paths are intentional (see architecture.md).
