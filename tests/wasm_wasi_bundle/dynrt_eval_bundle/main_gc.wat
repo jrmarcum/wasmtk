@@ -541,15 +541,6 @@
       )
     )
   )
-
-  (func $fib (param $n f64) 
-    (if (f64.lt (local.get $n) (f64.const 2))
-      (then
-      (return)
-      )
-    )
-    (return)
-  )
   (func $_start (export "_start")
     (local $e i32)
     (local $r i32)

@@ -550,14 +550,6 @@
     (call $check (if (result i32) (i32.eq (call $dynrt_lib_modc_dynTypeof (local.get $r)) (i32.const 3)) (then (i32.const 1)) (else (i32.const 0))))
     (call $check (if (result i32) (f64.eq (call $dynrt_lib_modc_dynNumberValue (local.get $r)) (local.get $expected)) (then (i32.const 1)) (else (i32.const 0))))
   )
-
-  (func $add (param $a f64) (param $b f64) (param $c f64) 
-    (return)
-  )
-
-  (func $add (param $a f64) (param $b f64) (param $c f64) 
-    (return)
-  )
   (func $_start (export "_start")
     (local $__iface_tmp i32)
     (local $__concat_self_ptr i32)

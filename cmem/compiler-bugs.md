@@ -1,6 +1,17 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 360/360** (`bindgen` 131/131, `jstyper` 73/73, `dync` conformance 3/3) as of **2026-06-30** (#14 Route A 2e.6 try/catch `18zh` + 2e.7 block scoping `18zi` + 2e.7a per-iteration let `18zj` + 2e.7b var→let gate `18zk`/`18zl`/`18zm` + 2f.1 this+prototype `18zn` + 2e.8 classes `18zo` + 2e.8a class completion `18zp` + 2f.2 array methods `18zq` + 2f.3 string methods `18zr` + 2f.4 object+math `18zs` + 2f.5 JSON `18zt` + 2f.6 map+set `18zu` + 2f.7 regexp `18zv` + 2e.9 generators `18zw` + 2e.10 async `18zx` + 2e.11 remaining ES6 `18zy` + 2h full-dynamic-compile/javyc-retirement `18zz`).
+Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 365/365** (`bindgen` 131/131, `jstyper` 73/73, `dync` conformance 3/3) as of **2026-06-30** (#14 Route A `18zh`–`18zz` + the 5 low-priority-gap regressions `62_Gap*`).
+
+**Low-priority OPEN-gap cleanup (2026-06-30) — all 5 documented gaps FIXED.** Regressions `62_GapNumericCoercion` / `62_GapStringCalls` / `62_GapSingleLineLocals` / `62_GapEmptyArrayGrow` / `62_GapStringLiteralBraces`. Each is a `src/wasic.ts` codegen fix (see the individual sections below, now marked FIXED):
+- **Gap 1** (single-line brace `if (c){return 1}else{return -1}` return mis-type) — was ALREADY resolved by the `fixTerminalFallthru` + `expandInlineBraceChain` work; verified across i32/f64/no-else/nested/brace-less/multi-line-else forms. The old "still-open" note was stale.
+- **Gap 2** — an **f64-returning call in an i32 context** (`f() | 0`) now truncates: the general user-call return in `emitExpr` wraps `(i32.trunc_f64_s …)` when `fn.result` is f64/f32 and `defaultType` is i32 (mirrors the f64-local + parseInt paths). `| 0` folds away in Binaryen, so the raw f64 call was landing under an i32 op.
+- **Gap 3** — a **primitive `const`/`let` nested in a block on a single-PHYSICAL-line function body** is now declared as a WAT local (supplementary `maskCode`-masked scan in `emitFunction` after the anchored pre-scan). Was `local "$x" cannot be resolved`.
+- **Gap 4** — `parseFunctions` was **string-blind**: `function f(){…}` INSIDE a string literal (`const s = "function f(){…}"`) parsed as a real declaration → mangled source. Now detects headers over `maskCode(src)` (positions preserved → slice from real). Same class as the `parseClasses` fix. (`parseTopLevel`'s brace-count also now masks strings, defensively.) `dync`'s base64 embedding no longer strictly needs this but keeps it.
+- **Gap 5.0/5.1/5.2/5.3** (the "4 gaps surfaced by dynrt", worked-around-in-lib) — now fixed in the compiler: **5.0** i32 global / TypedArray element as an f64 call-arg (module-global path + TypedArray-element read now coerce like the local path); **5.1** `+` of two string-returning CALLS (guarded the greedy string-call regex + a call-in-concat handler that emits the call then reads the `$__str_ret_*` globals into the accumulator before the next call clobbers them); **5.2** Float64Array element in a comparison (binary-op `lhsType` inference now consults `typedArrayVars`, so `fa[i] === fa[j]` uses `f64.eq`); **5.3** empty `[]` grown from capacity 0 (the `push`/`unshift`/`push_string` grow helpers now use `select(8, cap<<1, cap==0)` so a cap-0 array grows to 8 instead of staying 0 — empty arrays reconstructed each loop iteration + pushed now work).
+
+**Separately DISCOVERED while testing the gaps (NOT yet fixed — silent-wrong; noted for a future pass):** (a) a **module-global array read INSIDE a function** uses the `-2` moduleArrayVars ptr sentinel as the base → reads 0 (affects both single- and multi-line forms); (b) **`console.log(grid[i][j])`** (2D dynamic-array element directly in console.log) emits a comment-stub → 0 (works when assigned to a temp first); (c) a **`const`-declared array inside a single-PHYSICAL-line loop body** (`for(…){ const row=[]; row.push(…) }` on one line) isn't registered → `'row' is not defined`. All three have simple workarounds and did not block the gap regressions.
+
+**#14 2h (2026-06-30) — three interpreter/compiler fixes surfaced building `wasmtk dync`:** (1) **interpreter HANG on a multi-byte UTF-8 char in a comment** — `evalSkipWs` had NO comment handling; line/block comments "worked" only by accident via a downstream parse path that LOOPED on a high byte (e.g. an em-dash `—` in `// …`). FIXED by giving `evalSkipWs` real `//` and `/* */` skipping (safe: the interpreter has no regex LITERALS — RegExp is `new RegExp("…")` — so `//`/`/*` are unambiguously comments). (2) **`Math.min`/`max` were 2-arg only** in `dynMathMethod` (ignored args 3+; `Math.min(3,7,2)`→3) — now variadic; caught by the dync conformance gate. (3) **wasic source scanner was string-blind to `{`** — a module-level string literal CONTAINING a brace made `parseTopLevel`/`parseFunctions` mis-parse it. `dync` sidesteps it by **base64-embedding** the program source; **now also FIXED directly** (Gap 4 above — `parseFunctions` + `parseTopLevel` mask strings). (+`18j`–`18t` dynrt: value-model / virtual
 
 **#14 2h (2026-06-30) — three interpreter/compiler fixes surfaced building `wasmtk dync`:** (1) **interpreter HANG on a multi-byte UTF-8 char in a comment** — `evalSkipWs` had NO comment handling; line/block comments "worked" only by accident via a downstream parse path that LOOPED on a high byte (e.g. an em-dash `—` in `// …`). FIXED by giving `evalSkipWs` real `//` and `/* */` skipping (safe: the interpreter has no regex LITERALS — RegExp is `new RegExp("…")` — so `//`/`/*` are unambiguously comments). (2) **`Math.min`/`max` were 2-arg only** in `dynMathMethod` (ignored args 3+; `Math.min(3,7,2)`→3) — now variadic; caught by the dync conformance gate. (3) **wasic source scanner is string-blind to `{`** (KNOWN limitation, worked AROUND not fixed): a module-level string literal CONTAINING a brace makes `parseTopLevel`'s regex brace-count mis-count depth and split the line on `;` inside the string (`const s = "function f() {\n …;\n}"` → "Unsupported statement" fragments). `dync` sidesteps it by **base64-embedding** the program source (alphabet has no `{}`/`;`/`"`/newline). A proper fix would make `parseTopLevel` mask strings via `maskCode` — deferred (higher regression risk; not needed for any current path). (+`18j`–`18t` dynrt: value-model / virtual
 import / eval / eval-env / calls / statements / functions+`new Function` / `18q` wasic `any`
@@ -126,7 +137,9 @@ regression), bindgen **119 → 122**.
   sentinel — valid handles are never 0), `dynMakeFn`'s comma-scanner (relies on the now-shipped `||`
   short-circuit), and the marshal-export DCE protection were all audited CLEAN.
 
-## OPEN (worked around) — `f64call() | 0` doesn't truncate a call result in i32 context (2026-06-23)
+## ✅ FIXED 2026-06-30 (was OPEN) — `f64call() | 0` doesn't truncate a call result in i32 context (found 2026-06-23)
+
+**Fix:** the general user-call return in `emitExpr` (`src/wasic.ts`) now wraps `(i32.trunc_f64_s …)` when the called fn's `result` is f64/f32 and `defaultType` is i32. Regression `62_GapNumericCoercion`. Original note below.
 
 `s = s + (dynNumberValue(x) | 0)` where `dynNumberValue` returns `f64` miscompiles:
 `i32.add[1] expected type i32, found call of type f64`. The `| 0` integer-truncation idiom doesn't fire
@@ -160,7 +173,9 @@ Diagnosis trail (worth remembering): the tell was `dynGcCellCount()` returning a
 (768) when the registry was DISABLED — proof the global being read wasn't the one being (not) written,
 i.e. an initial-value/relocation problem, not a logic bug.
 
-## OPEN — single-physical-line function: nested-block `const` not declared as a WAT local (2026-06-22)
+## ✅ FIXED 2026-06-30 (was OPEN) — single-physical-line function: nested-block `const` not declared as a WAT local (found 2026-06-22)
+
+**Fix:** a supplementary `maskCode`-masked scan in `emitFunction` (after the anchored pre-scan) declares any primitive `const`/`let` that follows a `{`/`;` on the same physical line. Regression `62_GapSingleLineLocals`. Original note below.
 
 A function written on ONE physical line whose body has a nested block declaring a local —
 `function check(c){ if(c===0){ const x = a[i]; console.log(x); } }` — emits `(local.set $x …)` /
@@ -171,11 +186,20 @@ locals to declare. Low severity (rare hand-written form); surfaced writing a GC 
 by writing the test's `check` multi-line. Fix site: the local-declaration pre-scan for single-line
 bodies in `emitFunction`.
 
-## OPEN (worked around) — 4 gaps surfaced by the #14 dynamic runtime (2026-06-22)
+## ✅ FIXED 2026-06-30 (was OPEN, worked-around-in-lib) — 4 gaps surfaced by the #14 dynamic runtime (found 2026-06-22)
+
+**All four are now fixed in the compiler** (regressions `62_GapNumericCoercion` + `62_GapStringCalls` +
+`62_GapEmptyArrayGrow`): **0/5.0** module-global + TypedArray-element reads now coerce like the local
+path (i32→f64 / f64→i32 by context); **1/5.1** the greedy string-call regex in `emitStringAssign` is
+paren-guarded + a call-in-concat handler emits the call then captures the `$__str_ret_*` globals into
+the accumulator; **2/5.2** binary-op `lhsType` inference consults `typedArrayVars` so a Float64Array
+element compares with `f64.eq`; **3/5.3** the `push`/`unshift`/`push_string` grow helpers use
+`select(8, cap<<1, cap==0)` so a capacity-0 array grows to 8. The library workarounds are left in place
+(still correct). Original notes below.
 
 Surfaced building `tests/wasm_wasi_bundle/dynrt_bundle/dynrt_lib_modc.ts` (boxed-value runtime +
-expression evaluator in the wasic subset). All four are worked around IN the library; full design +
-context in [dynrt-design.md](dynrt-design.md). None fail the suite.
+expression evaluator in the wasic subset). All four were worked around IN the library; full design +
+context in [dynrt-design.md](dynrt-design.md). None failed the suite.
 
 0. **i32 GLOBAL / typed-array-element as an f64 call-arg skips the `f64.convert`** (2c). `dynNumber(g)`
    where `g` is an i32 module-global emitted `(call $dynNumber (global.get $g))` → `call[0] expected

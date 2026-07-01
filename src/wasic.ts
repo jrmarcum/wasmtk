@@ -2494,11 +2494,17 @@ class WasicTranspiler {
 
   private parseFunctions(): void {
     const src = this.src;
+    // Gap fix 2026-06-30: run the header DETECTION over a string/comment-MASKED copy so a
+    // `function f(){…}` INSIDE a string literal (e.g. `const code = "function f() {…}"`) isn't parsed
+    // as a real function declaration (which then mangled the source → "Unsupported statement"
+    // fragments of the string's body). maskCode is length-preserving, so `m.index` is valid in the
+    // REAL `src` used for all param/body extraction below. Mirrors the parseClasses string-blind fix.
+    const masked = maskCode(src);
     // Find `[export] [async] function name(` — params extracted separately to handle nested parens
     const headerRe = /(export\s+)?(async\s+)?function\s+(\w+)\s*\(/g;
     let m: RegExpExecArray | null;
 
-    while ((m = headerRe.exec(src)) !== null) {
+    while ((m = headerRe.exec(masked)) !== null) {
       const exported = !!m[1];
       const isAsync = !!m[2]; // Phase 13 (#13 async)
       const name = m[3];
@@ -3048,8 +3054,13 @@ class WasicTranspiler {
     let collectBlock = false; // true while collecting body of a top-level for/while/if block
 
     for (const line of lines) {
-      const opens = (line.match(/\{/g) ?? []).length;
-      const closes = (line.match(/\}/g) ?? []).length;
+      // Gap fix 2026-06-30: count braces on a string/comment-MASKED copy so a `{`/`}` INSIDE a string
+      // literal — `const s = "function f() {…}"` — doesn't mis-raise the block depth and split the line
+      // on a `;` that's also inside the string ("Unsupported statement" fragments). Emission below still
+      // uses the REAL `line`. (maskCode blanks string/comment bytes to spaces, length-preserving.)
+      const maskedLine = maskCode(line);
+      const opens = (maskedLine.match(/\{/g) ?? []).length;
+      const closes = (maskedLine.match(/\}/g) ?? []).length;
 
       if (depth === 0) {
         // Regular function declaration — skip body, already parsed (Phase 13: incl. `async`)
@@ -5986,7 +5997,10 @@ class WasicTranspiler {
     // Call to a string-returning user function: funcName(args)
     {
       const callM = initExpr.match(/^(\w+)\s*\((.*)?\)\s*;?$/);
-      if (callM) {
+      // Gap fix 2026-06-30: guard the greedy `(.*)?` — `name1() + name2()` would match as callee
+      // `name1` with args `) + name2(` (last-paren) → "Unsupported expression: ) + name2(". The
+      // balanced-paren check fails on the concat, so it correctly falls through to the concat path.
+      if (callM && parenDepthNeverNegative(callM[2]?.trim() ?? "")) {
         const callee = callM[1];
         const strFn = this.functions.find((f) => f.name === callee && f.result === "string");
         if (strFn) {
@@ -6525,6 +6539,35 @@ class WasicTranspiler {
             stmts.push(`(local.set $__str_op_len)`);
             stmts.push(`(local.set $__str_op_ptr)`);
             concatAppend(`(local.get $__str_op_ptr)`, `(local.get $__str_op_len)`);
+            return;
+          }
+        }
+        // String-returning user function CALL in concat (gap fix 2026-06-30). A string-returning fn is
+        // a VOID WAT fn that sets the $__str_ret_ptr/len GLOBALS as a side-channel — it can't be spliced
+        // as a value into emitStringPtrLen's two-expr form (that produced `local.set $x (call $void)` +
+        // a 2-value local.set). Emit the call as a STATEMENT, then feed the globals to concatAppend:
+        // the accumulator captures the first part's globals immediately, and each later part reads the
+        // globals right after its own call, so a following call never clobbers an unconsumed result.
+        const callCP = part.match(/^(\w+)\s*\((.*)?\)$/);
+        if (callCP && parenDepthNeverNegative(callCP[2]?.trim() ?? "")) {
+          const calleeCP = callCP[1];
+          const fnCP = this.functions.find((f) => f.name === calleeCP && f.result === "string");
+          if (fnCP) {
+            this.needsStringRetGlobals = true;
+            const rawArgsCP = callCP[2]?.trim() ?? "";
+            const argListCP = rawArgsCP ? this.splitArgs(rawArgsCP) : [];
+            const watArgsCP = argListCP.flatMap((a, i) => {
+              const p = fnCP.params[i];
+              if (!p) return [this.emitExpr(a.trim(), locals, "i32")];
+              if (p.type === "string") return [this.emitStringPtrLen(a.trim(), locals)];
+              return [this.emitExpr(a.trim(), locals, p.type)];
+            });
+            stmts.push(
+              watArgsCP.length > 0
+                ? `(call $${calleeCP} ${watArgsCP.join(" ")})`
+                : `(call $${calleeCP})`,
+            );
+            concatAppend(`(global.get $__str_ret_ptr)`, `(global.get $__str_ret_len)`);
             return;
           }
         }
@@ -7866,7 +7909,18 @@ class WasicTranspiler {
           : `(i32.add (i32.add (local.get $${
             bracketMatch[1]
           }) (i32.const 8)) (i32.shl ${idxWat} (i32.const ${taInfoBr.shift})))`;
-        return `(${taInfoBr.loadOp} ${addrWat})`;
+        const rawLoad = `(${taInfoBr.loadOp} ${addrWat})`;
+        // Gap fix 2026-06-30: context type-coercion (mirrors the local/global identifier paths) —
+        // an Int32Array (i32) element passed to an f64 param / used in f64 arithmetic needs
+        // f64.convert; a Float64Array (f64) element in an i32 context needs i32.trunc. Without this,
+        // `takeF(arr[i])` emitted a raw `(i32.load …)` → `call[0] expected f64, found i32.load`.
+        if (taInfoBr.elemType === "i32" && (defaultType === "f64" || defaultType === "f32")) {
+          return `(f64.convert_i32_s ${rawLoad})`;
+        }
+        if (taInfoBr.elemType === "f64" && defaultType === "i32") {
+          return `(i32.trunc_f64_s ${rawLoad})`;
+        }
+        return rawLoad;
       }
       // Phase 12: fallback — i32 local holding a dynamic i32[] array pointer (captured or assigned)
       // Phase 23: skip if variable is a struct/tuple pointer (not a dynamic array)
@@ -8585,9 +8639,20 @@ class WasicTranspiler {
         const [offset] = this.moduleStringConsts.get(expr)!;
         return `(i32.const ${offset})`;
       }
-      // Module global — emit global.get
+      // Module global — emit global.get (with the same context type-coercion as the local path:
+      // gap fix 2026-06-30 — an i32 global passed to an f64 param emitted a raw `(global.get $g)` →
+      // `call[0] expected f64, found global.get i32`; symmetric to the f64-global-in-i32-context case).
       const globalInfo = this.moduleGlobals.get(expr);
-      if (globalInfo) return `(global.get $${expr})`;
+      if (globalInfo) {
+        const rawGet = `(global.get $${expr})`;
+        const gt = globalInfo.type;
+        if (gt === "f64" && defaultType === "i32") return `(i32.trunc_f64_s ${rawGet})`;
+        if (
+          (gt === "i32" || gt === "bool") &&
+          (defaultType === "f64" || defaultType === "f32")
+        ) return `(f64.convert_i32_s ${rawGet})`;
+        return rawGet;
+      }
       // Known function name used as a value → funcref table index
       if (this.functions.find((f) => f.name === expr)) {
         return `(i32.const ${this.getFuncTableIdx(expr)})`;
@@ -8995,7 +9060,18 @@ class WasicTranspiler {
           if (capType) emittedArgsList.push(this.emitExpr(cap, locals, capType));
         }
       }
-      return `(call $${callee} ${emittedArgsList.join(" ")})`.trim();
+      const callWat = `(call $${callee} ${emittedArgsList.join(" ")})`.trim();
+      // Gap fix (2026-06-30): an f64/f32-returning call used in an i32 context — e.g. `f() | 0`,
+      // `s + (f() | 0)`, `let n: i32 = f()` — must truncate. The `| 0` idiom folds away in Binaryen,
+      // leaving the raw f64 call under an i32 op → `i32.add/or expected i32, found call of type f64`.
+      // Mirrors the f64-LOCAL-in-i32-context truncation (identifier path) + the parseInt/Number radix path.
+      if (
+        (fn.result === "f64" || fn.result === "f32") &&
+        watBaseType(defaultType as WatType) === "i32"
+      ) {
+        return `(i32.trunc_f64_s ${callWat})`;
+      }
+      return callWat;
     }
 
     // Ternary: cond ? then : else
@@ -9301,6 +9377,11 @@ class WasicTranspiler {
                 this.arrayVars.get(_lhsLeadId)!.elemType === "string"
               ? "string"
               : this.arrayVars.get(_lhsLeadId)!.elemType)
+            // TypedArray element access ta[idx] (gap fix 2026-06-30): use the element type so a
+            // Float64Array element compares/arithmetics as f64 — else it fell through to the pointer's
+            // i32 type → `fa[i] === fa[j]` emitted i32.eq over f64.loads (silently truncated: 1.5===1.9→true).
+            : _lhsLeadId && lhs.includes("[") && this.typedArrayVars.has(_lhsLeadId)
+            ? (this.typedArrayVars.get(_lhsLeadId)!.elemType as WatType)
             // Fix 5: closure-typed variable call (e.g. r1()) → use the closure's return type, not the i32 pointer type
             : _lhsFnName && this.closureTypedVars.has(_lhsFnName)
             ? (this.closureTypedVars.get(_lhsFnName)!.result ?? "f64") as WatType
@@ -14751,7 +14832,7 @@ class WasicTranspiler {
     (local.set $cap (i32.load offset=4 (local.get $arr)))
     (if (i32.ge_u (local.get $len) (local.get $cap))
       (then
-        (local.set $arr (call $__dynarr_grow_${elemType} (local.get $arr) (i32.shl (local.get $cap) (i32.const 1))))
+        (local.set $arr (call $__dynarr_grow_${elemType} (local.get $arr) (select (i32.const 8) (i32.shl (local.get $cap) (i32.const 1)) (i32.eqz (local.get $cap)))))
       )
     )
     (${storeOp}
@@ -14816,7 +14897,7 @@ class WasicTranspiler {
     (local.set $cap (i32.load offset=4 (local.get $arr)))
     (if (i32.ge_u (local.get $len) (local.get $cap))
       (then
-        (local.set $arr (call $__dynarr_grow_${elemType} (local.get $arr) (i32.shl (local.get $cap) (i32.const 1))))
+        (local.set $arr (call $__dynarr_grow_${elemType} (local.get $arr) (select (i32.const 8) (i32.shl (local.get $cap) (i32.const 1)) (i32.eqz (local.get $cap)))))
       )
     )
     (local.set $i (local.get $len))
@@ -15473,7 +15554,7 @@ class WasicTranspiler {
     (local.set $cap (i32.load offset=4 (local.get $arr)))
     (if (i32.ge_u (local.get $elemLen) (local.get $cap))
       (then
-        (local.set $arr (call $__dynarr_grow_string (local.get $arr) (i32.shl (local.get $cap) (i32.const 1))))
+        (local.set $arr (call $__dynarr_grow_string (local.get $arr) (select (i32.const 8) (i32.shl (local.get $cap) (i32.const 1)) (i32.eqz (local.get $cap)))))
       )
     )
     (local.set $base (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $elemLen) (i32.const 3))))
@@ -17381,6 +17462,30 @@ class WasicTranspiler {
     ) {
       declaredLocals.push(["__fn_tmp", "i32"]);
       locals.set("__fn_tmp", "i32");
+    }
+    // Gap fix 2026-06-30: single-PHYSICAL-line function bodies. The pre-scan above only matches a
+    // declaration at the START of a bodyLine, so a primitive `const`/`let` nested inside a block on the
+    // SAME physical line — `function f(c){ if(c){ const x: i32 = a[1]; … } }` — never gets a `(local $x)`
+    // → `local "$x" cannot be resolved`. (The multi-line form works: the decl starts its own line.)
+    // Supplementary scan over string/comment-MASKED lines (so a decl-shaped substring inside a string
+    // literal can't false-match): declare any primitive nested decl not already declared.
+    for (const rawLine of fn.bodyLines) {
+      const masked = maskCode(rawLine);
+      const re =
+        /[{;]\s*(?:const|let|var)\s+(\w+)\s*:\s*(i32|i64|f32|f64|number|bool|boolean|string)\b\s*=/g;
+      let mm: RegExpExecArray | null;
+      while ((mm = re.exec(masked)) !== null) {
+        const nm = mm[1];
+        if (locals.has(nm)) continue;
+        if (mm[2] === "string") {
+          declaredLocals.push([`${nm}_ptr`, "i32"], [`${nm}_len`, "i32"]);
+          locals.set(nm, "string");
+        } else {
+          const ty = mapType(mm[2]) as WatType;
+          declaredLocals.push([nm, ty]);
+          locals.set(nm, ty);
+        }
+      }
     }
     const localDecls = declaredLocals
       .map(([n, t]) => `    (local $${n} ${watBaseType(t)})`)

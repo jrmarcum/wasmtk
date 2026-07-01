@@ -625,7 +625,7 @@
     (local.set $cap (i32.load offset=4 (local.get $arr)))
     (if (i32.ge_u (local.get $elemLen) (local.get $cap))
       (then
-        (local.set $arr (call $__dynarr_grow_string (local.get $arr) (i32.shl (local.get $cap) (i32.const 1))))
+        (local.set $arr (call $__dynarr_grow_string (local.get $arr) (select (i32.const 8) (i32.shl (local.get $cap) (i32.const 1)) (i32.eqz (local.get $cap)))))
       )
     )
     (local.set $base (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $elemLen) (i32.const 3))))
@@ -674,7 +674,7 @@
     (local.set $cap (i32.load offset=4 (local.get $arr)))
     (if (i32.ge_u (local.get $len) (local.get $cap))
       (then
-        (local.set $arr (call $__dynarr_grow_f64 (local.get $arr) (i32.shl (local.get $cap) (i32.const 1))))
+        (local.set $arr (call $__dynarr_grow_f64 (local.get $arr) (select (i32.const 8) (i32.shl (local.get $cap) (i32.const 1)) (i32.eqz (local.get $cap)))))
       )
     )
     (f64.store
@@ -694,7 +694,7 @@
     (local.set $cap (i32.load offset=4 (local.get $arr)))
     (if (i32.ge_u (local.get $len) (local.get $cap))
       (then
-        (local.set $arr (call $__dynarr_grow_i32 (local.get $arr) (i32.shl (local.get $cap) (i32.const 1))))
+        (local.set $arr (call $__dynarr_grow_i32 (local.get $arr) (select (i32.const 8) (i32.shl (local.get $cap) (i32.const 1)) (i32.eqz (local.get $cap)))))
       )
     )
     (i32.store
@@ -1044,7 +1044,8 @@
           )
           (local.set $twoDStr_ptr (local.get $twoDStr_ptr))
       (local.set $twoDStr_len (local.get $twoDStr_len))
-      (call $__str_concat (local.get $twoDStr_ptr) (local.get $twoDStr_len) (call $numArrStr (i32.load (i32.add (i32.add (local.get $twoD) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 2))))) (global.get $__str_ret_ptr) (global.get $__str_ret_len))
+      (call $numArrStr (i32.load (i32.add (i32.add (local.get $twoD) (i32.const 8)) (i32.shl (i32.trunc_f64_s (local.get $i)) (i32.const 2)))))
+      (call $__str_concat (local.get $twoDStr_ptr) (local.get $twoDStr_len) (global.get $__str_ret_ptr) (global.get $__str_ret_len))
       (local.set $twoDStr_len)
       (local.set $twoDStr_ptr)
         )

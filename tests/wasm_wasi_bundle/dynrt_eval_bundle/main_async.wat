@@ -7,11 +7,7 @@
   (memory (export "memory") 2)
   (global $__heap_ptr (mut i32) (i32.const 2405))
   (global $__free_list (mut i32) (i32.const 0))
-  (global $__mt_head (mut i32) (i32.const 0))
-  (global $__mt_tail (mut i32) (i32.const 0))
   (global $guard (mut i32) (i32.const 0))
-  (tag $__exn_tag (export "__exn_tag") (param i32 i32))
-  (type $ftype_i32_i32_i32_r_void (func (param i32) (param i32) (param i32)))
   ;; Free-list + bump allocator (auto-grows). GC Part 1+2.
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
@@ -387,74 +383,6 @@
     ;; Return total length (including leading '-' and trailing 'n')
     (i32.sub (local.get $end) (local.get $orig))
   )
-  ;; ---- Promise runtime (Phase 13.1, #13 async) ----
-  (func $__promise_alloc (result i32)
-    (call $__malloc (i32.const 32)))
-  (func $__promise_resolve_i32 (param $v i32) (result i32)
-    (local $p i32)
-    (local.set $p (call $__promise_alloc))
-    (i32.store (local.get $p) (i32.const 1))
-    (i32.store offset=16 (local.get $p) (local.get $v))
-    (local.get $p))
-  (func $__promise_resolve_f64 (param $v f64) (result i32)
-    (local $p i32)
-    (local.set $p (call $__promise_alloc))
-    (i32.store (local.get $p) (i32.const 1))
-    (i32.store offset=4 (local.get $p) (i32.const 1))
-    (f64.store offset=16 (local.get $p) (local.get $v))
-    (local.get $p))
-  (func $__promise_await_i32 (param $p i32) (result i32)
-    (call $__drain_microtasks)
-    (if (i32.eqz (i32.load (local.get $p))) (then (call $__on_quiescent)))
-    (i32.load offset=16 (local.get $p)))
-  (func $__promise_await_f64 (param $p i32) (result f64)
-    (call $__drain_microtasks)
-    (if (i32.eqz (i32.load (local.get $p))) (then (call $__on_quiescent)))
-    (f64.load offset=16 (local.get $p)))
-  (func $__on_quiescent (unreachable))
-  ;; ---- Microtask queue (Phase 13.2 / 13.1b) ----
-  ;; FIFO linked list of reaction records (20 B): [tramp_idx@0 | env@4 | src@8 | result@12 | next@16].
-  ;; env is the capturing-closure struct ptr (0 for a named callback). $__mt_head / $__mt_tail are
-  ;; module globals (emitted in the globals section).
-  (func $__promise_enqueue (param $tramp i32) (param $env i32) (param $src i32) (param $result i32)
-    (local $r i32)
-    (local.set $r (call $__malloc (i32.const 20)))
-    (i32.store (local.get $r) (local.get $tramp))
-    (i32.store offset=4 (local.get $r) (local.get $env))
-    (i32.store offset=8 (local.get $r) (local.get $src))
-    (i32.store offset=12 (local.get $r) (local.get $result))
-    (i32.store offset=16 (local.get $r) (i32.const 0))
-    (if (i32.eqz (global.get $__mt_head))
-      (then
-        (global.set $__mt_head (local.get $r))
-        (global.set $__mt_tail (local.get $r)))
-      (else
-        (i32.store offset=16 (global.get $__mt_tail) (local.get $r))
-        (global.set $__mt_tail (local.get $r)))))
-  ;; Register a reaction: alloc a pending result promise, enqueue the reaction (src is settled
-  ;; under the eager model), and return the result promise. tramp = funcref table index; env =
-  ;; closure struct ptr (0 if the callback is a named function).
-  (func $__promise_then (param $src i32) (param $tramp i32) (param $env i32) (result i32)
-    (local $result i32)
-    (local.set $result (call $__promise_alloc))
-    (call $__promise_enqueue (local.get $tramp) (local.get $env) (local.get $src) (local.get $result))
-    (local.get $result))
-  ;; Run queued microtasks FIFO until empty. A reaction may enqueue more (chained .then) — they
-  ;; append to the tail and run in this same loop. Each trampoline has type (env,src,result)->void.
-  (func $__drain_microtasks
-    (local $cur i32)
-    (block $done
-      (loop $L
-        (br_if $done (i32.eqz (global.get $__mt_head)))
-        (local.set $cur (global.get $__mt_head))
-        (global.set $__mt_head (i32.load offset=16 (local.get $cur)))
-        (if (i32.eqz (global.get $__mt_head)) (then (global.set $__mt_tail (i32.const 0))))
-        (call_indirect (type $ftype_i32_i32_i32_r_void)
-          (i32.load offset=4 (local.get $cur))
-          (i32.load offset=8 (local.get $cur))
-          (i32.load offset=12 (local.get $cur))
-          (i32.load (local.get $cur)))
-        (br $L))))
 
 
 
@@ -622,41 +550,6 @@
     (call $check (if (result i32) (i32.eq (call $dynrt_lib_modc_dynTypeof (local.get $r)) (i32.const 3)) (then (i32.const 1)) (else (i32.const 0))))
     (call $check (if (result i32) (f64.eq (call $dynrt_lib_modc_dynNumberValue (local.get $r)) (local.get $expected)) (then (i32.const 1)) (else (i32.const 0))))
   )
-
-  (func $f  
-    (return)
-  )
-
-  (func $f  
-    (local $x i32)
-    (local $__iface_tmp i32)
-    (local.set $x (call $__promise_await_i32 (call $__promise_resolve_i32 (i32.const 10))))
-    (return)
-  )
-
-  (func $a  
-    (return)
-  )
-
-  (func $b (param $a i32) 
-    (local $x i32)
-    (local.set $x (call $__promise_await_i32 (call $a )))
-    (return)
-  )
-
-  (func $sum  
-    (local $a i32)
-    (local $b i32)
-    (local $__iface_tmp i32)
-    (local.set $a (call $__promise_await_i32 (call $__promise_resolve_i32 (i32.const 1))))
-    (local.set $b (call $__promise_await_i32 (call $__promise_resolve_i32 (i32.const 2))))
-    (return)
-  )
-
-  (func $f  
-    (call $proc_exit (i32.const 0))
-      (unreachable)
-  )
   (func $_start (export "_start")
     (local $__iface_tmp i32)
     (local $__str_op_ptr i32)
@@ -688,10 +581,8 @@
             (i32.const 0)
             (i32.const 1)
             (i32.const 128)))
-    (call $__drain_microtasks)
     (call $proc_exit (i32.const 0))
   )
-  (table 1 funcref)
   (data (i32.const 260) "\61\73\79\6e\63\20\66\75\6e\63\74\69\6f\6e\20\66\28\29\20\7b\20\72\65\74\75\72\6e\20\34\32\3b\20\7d\20\72\65\74\75\72\6e\20\61\77\61\69\74\20\66\28\29\3b")
   (data (i32.const 311) "\72\65\74\75\72\6e\20\61\77\61\69\74\20\35\3b")
   (data (i32.const 326) "\72\65\74\75\72\6e\20\61\77\61\69\74\20\50\72\6f\6d\69\73\65\2e\72\65\73\6f\6c\76\65\28\39\39\29\3b")

@@ -1131,7 +1131,7 @@
     (local.set $cap (i32.load offset=4 (local.get $arr)))
     (if (i32.ge_u (local.get $elemLen) (local.get $cap))
       (then
-        (local.set $arr (call $__dynarr_grow_string (local.get $arr) (i32.shl (local.get $cap) (i32.const 1))))
+        (local.set $arr (call $__dynarr_grow_string (local.get $arr) (select (i32.const 8) (i32.shl (local.get $cap) (i32.const 1)) (i32.eqz (local.get $cap)))))
       )
     )
     (local.set $base (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.shl (local.get $elemLen) (i32.const 3))))

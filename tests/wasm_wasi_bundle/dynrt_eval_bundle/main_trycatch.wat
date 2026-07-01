@@ -8,7 +8,6 @@
   (global $__heap_ptr (mut i32) (i32.const 2466))
   (global $__free_list (mut i32) (i32.const 0))
   (global $guard (mut i32) (i32.const 0))
-  (tag $__exn_tag (export "__exn_tag") (param i32 i32))
   ;; Free-list + bump allocator (auto-grows). GC Part 1+2.
   (func $__malloc (param $size i32) (result i32)
     (local $ptr i32)
@@ -550,21 +549,6 @@
     (local.set $r (call $dynrt_lib_modc_dynRun (local.get $src_ptr) (local.get $src_len) (local.get $e)))
     (call $check (if (result i32) (i32.eq (call $dynrt_lib_modc_dynTypeof (local.get $r)) (i32.const 3)) (then (i32.const 1)) (else (i32.const 0))))
     (call $check (if (result i32) (f64.eq (call $dynrt_lib_modc_dynNumberValue (local.get $r)) (local.get $expected)) (then (i32.const 1)) (else (i32.const 0))))
-  )
-
-  (func $f  
-    (call $proc_exit (i32.const 0))
-      (unreachable)
-  )
-
-  (func $g  
-    (call $proc_exit (i32.const 0))
-      (unreachable)
-  )
-
-  (func $f  
-    (call $g )
-    (return)
   )
   (func $_start (export "_start")
     (local $__iface_tmp i32)

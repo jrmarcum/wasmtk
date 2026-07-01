@@ -541,24 +541,6 @@
       )
     )
   )
-
-  (func $f (param $n f64) 
-    (if (f64.lt (local.get $n) (f64.const 1))
-      (then
-      (return)
-      )
-    )
-    (return)
-  )
-
-  (func $outer  
-    (local $cap i32)
-    (local.set $cap (i32.const 42))
-  )
-
-  (func $inner  
-    (return)
-  )
   (func $_start (export "_start")
     (local $arr i32)
     (local $e i32)

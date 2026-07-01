@@ -557,10 +557,6 @@
       )
     )
   )
-
-  (func $dbl (param $x f64) 
-    (return)
-  )
   (func $_start (export "_start")
     (local $env1 i32)
     (local $fn i32)
