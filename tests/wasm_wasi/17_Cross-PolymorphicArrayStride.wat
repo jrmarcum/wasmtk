@@ -456,6 +456,8 @@
     (local $totalArea i32)
     (local $i i32)
     (local $__iface_tmp i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
         (i32.store (i32.const 0) (i32.const 260))
           (i32.store (i32.const 4) (i32.const 41))
           (drop (call $fd_write

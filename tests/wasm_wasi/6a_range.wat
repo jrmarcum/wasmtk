@@ -546,6 +546,8 @@
     (local $__iface_tmp i32)
     (local $__tmpl_num_ptr i32)
     (local $__tmpl_num_len i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $nums (i32.const 260))
     (local.set $idx (f64.const 0))
     (block $break_0

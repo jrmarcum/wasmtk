@@ -637,6 +637,11 @@ interface StructField {
   /** Phase 21: when this field is an embedded tuple, names the tuple StructDef.
    *  Field bytes are stored inline (not as a pointer); access yields a tuple pointer. */
   tupleTypeName?: string;
+  /** 2026-06-30: when this i32 field holds a `T[]` array pointer, the element WAT type
+   *  (+ arrayIsString for `string[]`, whose elements are 8-byte [ptr,len] pairs). Enables
+   *  `structVar.field.length` / `structVar.field[i]` directly (report issue 4). */
+  arrayElemType?: WatType;
+  arrayIsString?: boolean;
 }
 
 interface StructDef {
@@ -3975,6 +3980,14 @@ class WasicTranspiler {
       ) {
         fieldEntry.structType = originalTypeName;
       }
+      // 2026-06-30 (report issue 4): an array field `f: T[]` stores an i32 array pointer; remember its
+      // element type so `structVar.f.length` / `structVar.f[i]` can be accessed directly (not just via
+      // an intermediate local alias).
+      if (originalTypeName.endsWith("[]")) {
+        const arrElem = originalTypeName.slice(0, -2).trim();
+        fieldEntry.arrayIsString = arrElem === "string";
+        fieldEntry.arrayElemType = arrElem === "string" ? "i32" : (mapType(arrElem) as WatType);
+      }
       fields.push(fieldEntry);
       offset += size;
     }
@@ -4795,6 +4808,18 @@ class WasicTranspiler {
             view.setInt32(field.offset, nestedPtr, true);
           }
         }
+      } else if (field.arrayElemType !== undefined && raw.trim().startsWith("[")) {
+        // 2026-06-30 (report issue 4): array field `f: T[]` initialised with a literal `[…]` — allocate
+        // the array in the data section and store its i32 pointer in the field (was hitting the numeric
+        // branch → parseFloat("[…]") → 0, so the field never held the array). Enables `x.f.length`/`x.f[i]`.
+        const t = raw.trim();
+        const inner = t.slice(1, t.lastIndexOf("]")).trim();
+        const elems = inner ? this.splitArgs(inner).map((e) => e.trim()).filter(Boolean) : [];
+        const arrPtr = this.allocArrayData(
+          elems,
+          (field.arrayIsString ? "string" : field.arrayElemType) as WatType,
+        );
+        view.setInt32(field.offset, arrPtr, true);
       } else {
         const val = (raw === "true") ? 1 : (raw === "false") ? 0 : parseFloat(raw) || 0;
         if (field.type === "f64") view.setFloat64(field.offset, val, true);
@@ -6786,6 +6811,24 @@ class WasicTranspiler {
     if (dotMsgMatch && locals.get(dotMsgMatch[1]) === "string") {
       return `(local.get $${dotMsgMatch[1]}_ptr) (local.get $${dotMsgMatch[1]}_len)`;
     }
+    // 2026-06-30 (report issue 4): a `string[]` element accessed via a struct/interface array field —
+    // `structVar.field[i]` (e.g. `s + p.origin[i]`). Load the field (array ptr), then the 8-byte
+    // [ptr,len] element at fieldPtr + 8 + i*8.
+    {
+      const sfM = expr.match(/^(\w+)\.(\w+)\[([^\]]+)\]$/);
+      if (sfM) {
+        const sv = this.structVars.get(sfM[1]);
+        const fld = sv?.def.fields.find((f) => f.name === sfM[2]);
+        if (sv && fld && fld.arrayIsString) {
+          const base = sv.ptr === -1 ? `(local.get $${sfM[1]})` : `(i32.const ${sv.ptr})`;
+          const fieldPtr = `(i32.load (i32.add ${base} (i32.const ${fld.offset})))`;
+          const idxWat = this.emitArrayIndex(sfM[3], locals);
+          const elemAddr =
+            `(i32.add (i32.add ${fieldPtr} (i32.const 8)) (i32.shl ${idxWat} (i32.const 3)))`;
+          return `(i32.load ${elemAddr}) (i32.load offset=4 ${elemAddr})`;
+        }
+      }
+    }
     // String literal — escape-aware so `\"` / `\\` inside the literal don't terminate the
     // match early (allocString → unescapeString decodes the captured escapes to bytes).
     const litMatch = expr.match(/^"((?:[^"\\]|\\.)*)"$/) ?? expr.match(/^'((?:[^'\\]|\\.)*)'$/);
@@ -7452,6 +7495,44 @@ class WasicTranspiler {
       if (defaultType === "i32") return `(i32.const ${n})`;
       if (defaultType === "i64") return `(i64.const ${n})`;
       return `(f64.const ${n})`;
+    }
+
+    // 2026-06-30 (report issue 4): an ARRAY-typed struct/interface field accessed directly —
+    // `structVar.field.length` and `structVar.field[i]` — where `structVar` may be a function PARAM
+    // (previously "Unsupported expression"; only worked via an intermediate `const f = p.field` alias).
+    // Load the field (an i32 array pointer) from the struct, then apply the array op.
+    {
+      const saM = expr.match(/^(\w+)\.(\w+)\.length$/);
+      if (saM) {
+        const sv = this.structVars.get(saM[1]);
+        const fld = sv?.def.fields.find((f) => f.name === saM[2]);
+        if (sv && fld && fld.arrayElemType !== undefined) {
+          const base = sv.ptr === -1 ? `(local.get $${saM[1]})` : `(i32.const ${sv.ptr})`;
+          const fieldPtr = `(i32.load (i32.add ${base} (i32.const ${fld.offset})))`;
+          const lenWat = `(i32.load ${fieldPtr})`; // length at offset 0 of the array header
+          // `.length` is i32; coerce to f64 when the context (e.g. a `number` loop var comparison) wants it.
+          return watBaseType(defaultType as WatType) === "f64"
+            ? `(f64.convert_i32_s ${lenWat})`
+            : lenWat;
+        }
+      }
+      const siM = expr.match(/^(\w+)\.(\w+)\[([^\]]+)\]$/);
+      if (siM) {
+        const sv = this.structVars.get(siM[1]);
+        const fld = sv?.def.fields.find((f) => f.name === siM[2]);
+        if (sv && fld && fld.arrayElemType !== undefined && !fld.arrayIsString) {
+          const base = sv.ptr === -1 ? `(local.get $${siM[1]})` : `(i32.const ${sv.ptr})`;
+          const fieldPtr = `(i32.load (i32.add ${base} (i32.const ${fld.offset})))`;
+          const idxWat = this.emitArrayIndex(siM[3], locals);
+          const shift = (fld.arrayElemType === "f64" || fld.arrayElemType === "i64") ? 3 : 2;
+          const loadOp = fld.arrayElemType === "f64"
+            ? "f64.load"
+            : fld.arrayElemType === "i64"
+            ? "i64.load"
+            : "i32.load";
+          return `(${loadOp} (i32.add (i32.add ${fieldPtr} (i32.const 8)) (i32.shl ${idxWat} (i32.const ${shift}))))`;
+        }
+      }
     }
 
     // Array .length property: dynamic → runtime load from header; static → compile-time constant
@@ -10162,6 +10243,22 @@ class WasicTranspiler {
       if (strLitMatch) {
         const [ptr, len] = this.allocString(strLitMatch[1]);
         return throwExnTag(ptr, len);
+      }
+      // Bug fix 2026-06-30 (report issue 1): `throw new Error(<expr>)` / `throw <expr>` where the message
+      // is a TEMPLATE literal, a string VARIABLE, or a concat — NOT a plain string literal. Previously
+      // these fell to the `proc_exit(0)` fallback (a SILENT clean exit that skips any enclosing catch).
+      // Build the message into the `$__throw_msg` (ptr,len) temp, then throw it. `$__throw_msg_ptr/len`
+      // are declared by the pre-scan when a body line has a non-literal throw.
+      const newErrExprMatch = throwExpr.match(/^new\s+Error\s*\((.+)\)$/);
+      // A bare identifier (`throw e` — e.g. a re-throw of the caught string) is left to the string-var
+      // path below (it already throws the var's own ptr/len directly — no temp needed).
+      const throwArg = newErrExprMatch ? newErrExprMatch[1].trim() : (!/^\w+$/.test(throwExpr) &&
+          (throwExpr.startsWith("`") || this.isStringExpr(throwExpr, locals))
+        ? throwExpr
+        : null);
+      if (throwArg !== null) {
+        const assignWat = this.emitStringAssign("__throw_msg", throwArg, locals);
+        return `${assignWat}\n      (throw $__exn_tag (local.get $__throw_msg_ptr) (local.get $__throw_msg_len))`;
       }
       // throw someVar (string variable — ptr/len locals)
       if (/^\w+$/.test(throwExpr)) {
@@ -17361,6 +17458,15 @@ class WasicTranspiler {
         }
       }
     }
+    // 2026-06-30 (report issue 1): $__throw_msg (ptr,len) temp — holds a THROWN message built from a
+    // template literal / variable / concat (a non-string-literal `throw new Error(…)` / `throw …`).
+    if (
+      !locals.has("__throw_msg_ptr") &&
+      fn.bodyLines.some((l) => /\bthrow\s/.test(l))
+    ) {
+      declaredLocals.push(["__throw_msg_ptr", "i32"], ["__throw_msg_len", "i32"]);
+      locals.set("__throw_msg_ptr", "i32");
+    }
     // Add $__rest_ptr if any body line calls a rest-param function with literal args
     if (this.hasRestLiteralCalls(fn.bodyLines) && !locals.has("__rest_ptr")) {
       declaredLocals.push(["__rest_ptr", "i32"]);
@@ -17436,7 +17542,7 @@ class WasicTranspiler {
         l.includes(".split(") ||
         l.includes(".padStart(") || l.includes(".padEnd(") || l.includes(".toString(") ||
         l.includes(".at(") || l.includes(".toUpperCase(") || l.includes(".toLowerCase(") ||
-        /\w\[[^\]]+\]\s*\+|\+\s*\w+\[/.test(l) || // string char subscript in a concat: s[i] + …
+        /\w\[[^\]]+\]\s*\+|\+\s*\w+\[|\+=[^;]*\w+\[/.test(l) || // char subscript in a concat: s[i] + … / x += s[i]
         // console.log/error/warn with a string-equality op: the comparison may route a non-trivial
         // operand (`a === getName()`, `a === obj.f`, `a === s.slice(…)`) through the string-expr
         // resolver, which captures len into $__str_op_len.
@@ -18852,6 +18958,14 @@ class WasicTranspiler {
         startDeclaredLocals.push(["__rest_ptr", "i32"]);
         startLocals.set("__rest_ptr", "i32");
       }
+      // 2026-06-30 (report issue 1): $__throw_msg temp for a non-literal `throw` at module scope.
+      if (
+        !startLocals.has("__throw_msg_ptr") &&
+        this.startBodyLines.some((l) => /\bthrow\s/.test(l))
+      ) {
+        startDeclaredLocals.push(["__throw_msg_ptr", "i32"], ["__throw_msg_len", "i32"]);
+        startLocals.set("__throw_msg_ptr", "i32");
+      }
       // Phase 12/5h: add $__iface_tmp for interface/factory method dispatch in start body
       if (
         !startLocals.has("__iface_tmp") &&
@@ -18891,7 +19005,7 @@ class WasicTranspiler {
           l.includes(".split(") ||
           l.includes(".padStart(") || l.includes(".padEnd(") || l.includes(".toString(") ||
           l.includes(".at(") || l.includes(".toUpperCase(") || l.includes(".toLowerCase(") ||
-          /\w\[[^\]]+\]\s*\+|\+\s*\w+\[/.test(l) || // string char subscript in a concat: s[i] + …
+          /\w\[[^\]]+\]\s*\+|\+\s*\w+\[|\+=[^;]*\w+\[/.test(l) || // char subscript in a concat: s[i] + … / x += s[i]
           // console.* with a string-equality op may route a non-trivial operand through the
           // string-expr resolver (captures len into $__str_op_len).
           (/\bconsole\.(log|error|warn)\b/.test(l) && /===|!==|==|!=/.test(l))
@@ -18955,9 +19069,17 @@ class WasicTranspiler {
       }
       // Save module-level array registrations so functions can access them via emitFunction seed.
       this.moduleArrayVars = new Map(this.arrayVars);
-      const localDecls = [...startLocals.entries()]
-        .filter(([, t]) => t !== "string") // "string" is a tracker only
-        .map(([n, t]) => `    (local $${n} ${watBaseType(t as WatType)})`)
+      // Bug fix 2026-06-30 (report issue 3): `_start`'s local declarations must include BOTH `startLocals`
+      // and `startDeclaredLocals`. Most pre-scan handlers register a var in both, but a few push only the
+      // helper (ptr,len) pair to `startDeclaredLocals` — notably a `} catch (e) {` binding, whose
+      // `$e_ptr`/`$e_len` were emitted by the handler yet never DECLARED at module scope (`cannot be
+      // resolved at IR level`). The in-function path already builds its decls from `declaredLocals`;
+      // this mirrors it. Union, de-duped by name (startLocals wins ties; "string" is a tracker → skip).
+      const declMap = new Map<string, WatType>();
+      for (const [n, t] of startLocals.entries()) if (t !== "string") declMap.set(n, t as WatType);
+      for (const [n, t] of startDeclaredLocals) if (!declMap.has(n)) declMap.set(n, t);
+      const localDecls = [...declMap.entries()]
+        .map(([n, t]) => `    (local $${n} ${watBaseType(t)})`)
         .join("\n");
       const bodyWat = this.emitBlock(this.startBodyLines, startLocals, null);
       startBody = `\n${localDecls ? localDecls + "\n" : ""}${bodyWat}${

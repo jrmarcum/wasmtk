@@ -538,6 +538,8 @@
     (i32.sub (local.get $end) (local.get $orig))
   )
   (func $divide (param $a i32) (param $b i32) (result i32)
+    (local $__throw_msg_ptr i32)
+    (local $__throw_msg_len i32)
     (if (i32.eq (local.get $b) (i32.const 0))
       (then
       (throw $__exn_tag (i32.const 260) (i32.const 16))
@@ -578,6 +580,8 @@
   (func $withFinally (param $x i32) 
     (local $e_ptr i32)
     (local $e_len i32)
+    (local $__throw_msg_ptr i32)
+    (local $__throw_msg_len i32)
     (local $__iface_tmp i32)
     (try
       (do
@@ -639,6 +643,8 @@
   )
 
   (func $throwString (param $msg_ptr i32) (param $msg_len i32) 
+    (local $__throw_msg_ptr i32)
+    (local $__throw_msg_len i32)
     (throw $__exn_tag (local.get $msg_ptr) (local.get $msg_len))
     (unreachable)
   )

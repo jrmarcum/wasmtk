@@ -229,6 +229,8 @@
     (local $__ret_str_len i32)
     (local $__tmpl_num_ptr i32)
     (local $__tmpl_num_len i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $result_ptr (i32.const 265))
       (local.set $result_len (i32.const 0))
     (local.set $i (f64.const 0))

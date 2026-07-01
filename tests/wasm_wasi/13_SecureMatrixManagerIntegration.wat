@@ -469,6 +469,8 @@
   )
 
   (func $__anon_0 (param $row i32) (param $val i32) (param $data i32) 
+    (local $__throw_msg_ptr i32)
+    (local $__throw_msg_len i32)
     (if (i32.ge_s (local.get $row) (i32.load (local.get $data)))
       (then
       (throw $__exn_tag (i32.const 260) (i32.const 19))
@@ -492,6 +494,8 @@
   )
 
   (func $__anon_1 (param $row i32) (param $data i32) (result i32)
+    (local $__throw_msg_ptr i32)
+    (local $__throw_msg_len i32)
     (if (i32.ge_s (local.get $row) (i32.load (local.get $data)))
       (then
       (throw $__exn_tag (i32.const 279) (i32.const 11))

@@ -217,6 +217,8 @@
     (local $__catch_e_len i32)
     (local $outerError_ptr i32)
     (local $outerError_len i32)
+    (local $__throw_msg_ptr i32)
+    (local $__throw_msg_len i32)
     (local $__iface_tmp i32)
     (local.set $e_ptr (i32.const 260))
       (local.set $e_len (i32.const 12))

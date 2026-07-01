@@ -211,6 +211,8 @@
     (i32.const -1)
   )
   (func $mayPanic  
+    (local $__throw_msg_ptr i32)
+    (local $__throw_msg_len i32)
     (throw $__exn_tag (i32.const 260) (i32.const 9))
   )
 

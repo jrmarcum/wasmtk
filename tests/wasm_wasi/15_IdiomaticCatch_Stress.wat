@@ -217,6 +217,8 @@
     (local $msg1_len i32)
     (local $msg2_ptr i32)
     (local $msg2_len i32)
+    (local $__throw_msg_ptr i32)
+    (local $__throw_msg_len i32)
     (local $__iface_tmp i32)
     (try
       (do

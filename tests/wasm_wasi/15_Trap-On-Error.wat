@@ -381,6 +381,8 @@
     (i32.sub (local.get $end) (local.get $orig))
   )
   (func $safeDivide (export "safeDivide") (param $a i32) (param $b i32) (result i32)
+    (local $__throw_msg_ptr i32)
+    (local $__throw_msg_len i32)
     (if (i32.eq (local.get $b) (i32.const 0))
       (then
       (throw $__exn_tag (i32.const 260) (i32.const 16))

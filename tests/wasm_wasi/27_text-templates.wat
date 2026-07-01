@@ -782,6 +782,8 @@
     (local $i f64)
     (local $__ret_str_ptr i32)
     (local $__ret_str_len i32)
+    (local $__str_op_ptr i32)
+    (local $__str_op_len i32)
     (local.set $s_ptr (i32.const 304))
       (local.set $s_len (i32.const 0))
     (local.set $i (f64.const 0))

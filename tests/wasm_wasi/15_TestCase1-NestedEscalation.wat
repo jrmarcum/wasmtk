@@ -539,6 +539,8 @@
     (i32.sub (local.get $end) (local.get $orig))
   )
   (func $levelThree (param $fail i32) 
+    (local $__throw_msg_ptr i32)
+    (local $__throw_msg_len i32)
     (if (i32.eq (local.get $fail) (i32.const 1))
       (then
       (throw $__exn_tag (i32.const 260) (i32.const 15))
