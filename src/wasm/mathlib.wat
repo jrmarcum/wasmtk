@@ -15,6 +15,9 @@
 (module
   ;; ── RNG state (xorshift64 seed) ─────────────────────────────────────────────
   (global $__rng_state (mut i64) (i64.const 0x6C62272E07BB0142))
+  ;; ── trig argument-reduction output (r, rt) — see $__trig_reduce ─────────────
+  (global $__tr  (mut f64) (f64.const 0.0))
+  (global $__trt (mut f64) (f64.const 0.0))
 
   ;; ── Math.random — xorshift64, returns f64 in [0, 1) ────────────────────────
   (func $random (export "random") (result f64)
@@ -30,78 +33,158 @@
       (f64.const 1.0))
   )
 
-  ;; ── Math.sin — range-reduce to [-pi/2, pi/2], fdlibm S1-S6 Horner ──────────
+  ;; ── fdlibm trig: __kernel_sin/__kernel_cos + Veltkamp-split argument reduction ──
+  ;; Reduction: n = rint(x * 2/pi); r + rt = x - n*(pi/2) accumulated in double-double
+  ;; using the 7 fdlibm PIo2[] 24-bit chunks. n is Veltkamp-split (nhi<=24 sig bits +
+  ;; nlo) so every nhi*PIo2[i] / nlo*PIo2[i] product is EXACT, and each subtraction is
+  ;; Sterbenz-exact — so r is accurate to full precision. Result matches V8 to <=1 ULP
+  ;; for |x| < ~1e12 (and stays ~14 sig-figs out to 1e15). Pure arithmetic: no table
+  ;; lookup, no linear memory, no Payne-Hanek — safe to splice into the merged module.
+  (func $__hiw (param $x f64) (result i32)
+    (i32.and (i32.wrap_i64 (i64.shr_u (i64.reinterpret_f64 (local.get $x)) (i64.const 32)))
+             (i32.const 0x7fffffff)))
+  ;; __kernel_sin(x, y, iy) — |x| <= pi/4; y = tail of x; iy=0 when y is 0
+  (func $__ksin (param $x f64) (param $y f64) (param $iy i32) (result f64)
+    (local $z f64) (local $w f64) (local $r f64) (local $v f64)
+    (if (i32.lt_u (call $__hiw (local.get $x)) (i32.const 0x3e400000))
+      (then (return (local.get $x))))                         ;; |x| < 2^-27 -> sin x = x
+    (local.set $z (f64.mul (local.get $x) (local.get $x)))
+    (local.set $w (f64.mul (local.get $z) (local.get $z)))
+    ;; r = S2 + z*(S3+z*S4) + z*w*(S5+z*S6)
+    (local.set $r
+      (f64.add
+        (f64.add (f64.const 8.33333333332248946124e-03)
+                 (f64.mul (local.get $z)
+                   (f64.add (f64.const -1.98412698298579493134e-04)
+                            (f64.mul (local.get $z) (f64.const 2.75573137070700676789e-06)))))
+        (f64.mul (f64.mul (local.get $z) (local.get $w))
+          (f64.add (f64.const -2.50507602534068634195e-08)
+                   (f64.mul (local.get $z) (f64.const 1.58969099521155010221e-10))))))
+    (local.set $v (f64.mul (local.get $z) (local.get $x)))
+    (if (result f64) (i32.eqz (local.get $iy))
+      (then
+        ;; x + v*(S1 + z*r)
+        (f64.add (local.get $x)
+          (f64.mul (local.get $v)
+            (f64.add (f64.const -1.66666666666666324348e-01) (f64.mul (local.get $z) (local.get $r))))))
+      (else
+        ;; x - ((z*(0.5*y - v*r) - y) - v*S1)
+        (f64.sub (local.get $x)
+          (f64.sub
+            (f64.sub
+              (f64.mul (local.get $z)
+                (f64.sub (f64.mul (f64.const 0.5) (local.get $y)) (f64.mul (local.get $v) (local.get $r))))
+              (local.get $y))
+            (f64.mul (local.get $v) (f64.const -1.66666666666666324348e-01)))))))
+  ;; __kernel_cos(x, y) — |x| <= pi/4
+  (func $__kcos (param $x f64) (param $y f64) (result f64)
+    (local $z f64) (local $w f64) (local $r f64) (local $hz f64) (local $qw f64)
+    (local.set $z (f64.mul (local.get $x) (local.get $x)))
+    (local.set $w (f64.mul (local.get $z) (local.get $z)))
+    ;; r = z*(C1+z*(C2+z*C3)) + w*w*(C4+z*(C5+z*C6))
+    (local.set $r
+      (f64.add
+        (f64.mul (local.get $z)
+          (f64.add (f64.const 4.16666666666666019037e-02)
+            (f64.mul (local.get $z)
+              (f64.add (f64.const -1.38888888888741095749e-03)
+                       (f64.mul (local.get $z) (f64.const 2.48015872894767294178e-05))))))
+        (f64.mul (f64.mul (local.get $w) (local.get $w))
+          (f64.add (f64.const -2.75573143513906633035e-07)
+            (f64.mul (local.get $z)
+              (f64.add (f64.const 2.08757232129817482790e-09)
+                       (f64.mul (local.get $z) (f64.const -1.13596475577881948265e-11))))))))
+    (if (result f64) (i32.lt_u (call $__hiw (local.get $x)) (i32.const 0x3FD33333))
+      (then
+        ;; 1 - (0.5*z - (z*r - x*y))
+        (f64.sub (f64.const 1.0)
+          (f64.sub (f64.mul (f64.const 0.5) (local.get $z))
+            (f64.sub (f64.mul (local.get $z) (local.get $r)) (f64.mul (local.get $x) (local.get $y))))))
+      (else
+        (local.set $hz (f64.mul (f64.const 0.5) (local.get $z)))
+        (local.set $qw (f64.sub (f64.const 1.0) (local.get $hz)))
+        ;; qw + (((1-qw)-hz) + (z*r - x*y))
+        (f64.add (local.get $qw)
+          (f64.add
+            (f64.sub (f64.sub (f64.const 1.0) (local.get $qw)) (local.get $hz))
+            (f64.sub (f64.mul (local.get $z) (local.get $r)) (f64.mul (local.get $x) (local.get $y))))))))
+  ;; Reduce |x| (large) to (r, rt) in $__tr / $__trt and return quadrant n&3.
+  (func $__trig_reduce (param $x f64) (result i32)
+    (local $n f64) (local $nhi f64) (local $nlo f64) (local $c f64)
+    (local $h f64) (local $l f64) (local $p f64) (local $s f64) (local $i i32) (local $pio f64)
+    (local.set $n (f64.nearest (f64.mul (local.get $x) (f64.const 6.36619772367581382433e-01))))
+    ;; Veltkamp split n = nhi + nlo (nhi has <=24 significant bits)
+    (local.set $c (f64.mul (f64.const 536870913.0) (local.get $n)))
+    (local.set $nhi (f64.sub (local.get $c) (f64.sub (local.get $c) (local.get $n))))
+    (local.set $nlo (f64.sub (local.get $n) (local.get $nhi)))
+    (local.set $h (local.get $x))
+    (local.set $l (f64.const 0.0))
+    ;; 7 PIo2[] chunks, each split into nhi/nlo exact products + Fast2Sum tail
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 7)))
+      (local.set $pio
+        (select (f64.const 1.57079625129699707031e+00)
+        (select (f64.const 7.54978941586159635335e-08)
+        (select (f64.const 5.39030252995776476554e-15)
+        (select (f64.const 3.28200341580791294123e-22)
+        (select (f64.const 1.27065575308067607349e-29)
+        (select (f64.const 1.22933308981111328932e-36)
+                (f64.const 2.73370053816464559624e-44)
+                (i32.eq (local.get $i) (i32.const 5)))
+                (i32.eq (local.get $i) (i32.const 4)))
+                (i32.eq (local.get $i) (i32.const 3)))
+                (i32.eq (local.get $i) (i32.const 2)))
+                (i32.eq (local.get $i) (i32.const 1)))
+                (i32.eqz (local.get $i))))
+      ;; subtract nhi*pio
+      (local.set $p (f64.mul (local.get $nhi) (local.get $pio)))
+      (local.set $s (f64.sub (local.get $h) (local.get $p)))
+      (local.set $l (f64.add (local.get $l) (f64.sub (f64.sub (local.get $h) (local.get $s)) (local.get $p))))
+      (local.set $h (local.get $s))
+      ;; subtract nlo*pio
+      (local.set $p (f64.mul (local.get $nlo) (local.get $pio)))
+      (local.set $s (f64.sub (local.get $h) (local.get $p)))
+      (local.set $l (f64.add (local.get $l) (f64.sub (f64.sub (local.get $h) (local.get $s)) (local.get $p))))
+      (local.set $h (local.get $s))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (global.set $__tr (f64.add (local.get $h) (local.get $l)))
+    (global.set $__trt (f64.sub (local.get $l) (f64.sub (global.get $__tr) (local.get $h))))
+    (i32.and (i32.wrap_i64 (i64.trunc_f64_s (local.get $n))) (i32.const 3)))
+  ;; ── Math.sin ────────────────────────────────────────────────────────────────
   (func $sin (export "sin") (param $x f64) (result f64)
-    (local $x2 f64)
-    (local $t f64)
-    (local $k f64)
-    ;; Reduce to [-pi, pi] via a 3-term Cody-Waite split of 2*pi. Splitting 2*pi into
-    ;; HI (low mantissa bits zeroed, so k*HI is EXACT for |k| < 2^30) + LO1 + LO2 keeps the
-    ;; high-order cancellation exact, so large arguments (e.g. sin(5e8)) no longer lose ~7 sig figs.
-    (local.set $k (f64.floor (f64.add
-      (f64.mul (local.get $x) (f64.const 0.15915494309189535))
-      (f64.const 0.5))))
-    (local.set $x (f64.sub (f64.sub (f64.sub (local.get $x)
-      (f64.mul (local.get $k) (f64.const 6.283185005187988)))
-      (f64.mul (local.get $k) (f64.const 3.0199159795074593e-7)))
-      (f64.mul (local.get $k) (f64.const 2.4492935982947064e-16))))
-    ;; Reduce to [-pi/2, pi/2]
-    (if (f64.gt (local.get $x) (f64.const 1.5707963267948966))
-      (then (local.set $x (f64.sub (f64.const 3.141592653589793) (local.get $x)))))
-    (if (f64.lt (local.get $x) (f64.const -1.5707963267948966))
-      (then (local.set $x (f64.neg (f64.add (f64.const 3.141592653589793) (local.get $x))))))
-    (local.set $x2 (f64.mul (local.get $x) (local.get $x)))
-    ;; Horner from innermost S6 up to S1, then multiply by (1 + x2*poly)
-    (local.set $t (f64.const 1.58962301576546568e-10))
-    (local.set $t (f64.add (f64.const -2.5052106814843123e-8)  (f64.mul (local.get $x2) (local.get $t))))
-    (local.set $t (f64.add (f64.const  2.7557313707070068e-6)  (f64.mul (local.get $x2) (local.get $t))))
-    (local.set $t (f64.add (f64.const -1.984126982985795e-4)   (f64.mul (local.get $x2) (local.get $t))))
-    (local.set $t (f64.add (f64.const  8.333333332539193e-3)   (f64.mul (local.get $x2) (local.get $t))))
-    (local.set $t (f64.add (f64.const -1.6666666666666632e-1)  (f64.mul (local.get $x2) (local.get $t))))
-    (local.set $t (f64.add (f64.const  1.0)                    (f64.mul (local.get $x2) (local.get $t))))
-    (f64.mul (local.get $x) (local.get $t))
-  )
-
-  ;; ── Math.cos — same range reduction, sign flip for quadrants 2/3 ────────────
+    (local $q i32) (local $ix i32)
+    (local.set $ix (call $__hiw (local.get $x)))
+    (if (i32.le_u (local.get $ix) (i32.const 0x3fe921fb))
+      (then (return (call $__ksin (local.get $x) (f64.const 0.0) (i32.const 0)))))  ;; |x| <= pi/4
+    (if (i32.ge_u (local.get $ix) (i32.const 0x7ff00000))
+      (then (return (f64.sub (local.get $x) (local.get $x)))))                      ;; NaN/Inf
+    (local.set $q (call $__trig_reduce (local.get $x)))
+    (if (result f64) (i32.eqz (local.get $q))
+      (then (call $__ksin (global.get $__tr) (global.get $__trt) (i32.const 1)))
+      (else (if (result f64) (i32.eq (local.get $q) (i32.const 1))
+        (then (call $__kcos (global.get $__tr) (global.get $__trt)))
+        (else (if (result f64) (i32.eq (local.get $q) (i32.const 2))
+          (then (f64.neg (call $__ksin (global.get $__tr) (global.get $__trt) (i32.const 1))))
+          (else (f64.neg (call $__kcos (global.get $__tr) (global.get $__trt))))))))))
+  ;; ── Math.cos ────────────────────────────────────────────────────────────────
   (func $cos (export "cos") (param $x f64) (result f64)
-    (local $x2 f64)
-    (local $t f64)
-    (local $sign i32)
-    (local $k f64)
-    (local.set $sign (i32.const 1))
-    ;; Reduce to [-pi, pi] via a 3-term Cody-Waite split of 2*pi (see $sin for the rationale) so
-    ;; large arguments keep full accuracy instead of losing ~7 sig figs to the single-constant subtract.
-    (local.set $k (f64.floor (f64.add
-      (f64.mul (local.get $x) (f64.const 0.15915494309189535))
-      (f64.const 0.5))))
-    (local.set $x (f64.sub (f64.sub (f64.sub (local.get $x)
-      (f64.mul (local.get $k) (f64.const 6.283185005187988)))
-      (f64.mul (local.get $k) (f64.const 3.0199159795074593e-7)))
-      (f64.mul (local.get $k) (f64.const 2.4492935982947064e-16))))
-    ;; Map to [-pi/2, pi/2], flip sign if in quadrant 2 or 3
-    (if (f64.gt (local.get $x) (f64.const 1.5707963267948966))
-      (then
-        (local.set $x (f64.sub (f64.const 3.141592653589793) (local.get $x)))
-        (local.set $sign (i32.const -1))))
-    (if (f64.lt (local.get $x) (f64.const -1.5707963267948966))
-      (then
-        (local.set $x (f64.neg (f64.add (f64.const 3.141592653589793) (local.get $x))))
-        (local.set $sign (i32.const -1))))
-    (local.set $x2 (f64.mul (local.get $x) (local.get $x)))
-    ;; Horner from innermost C6 up to C1
-    (local.set $t (f64.const 2.08767569878681e-9))
-    (local.set $t (f64.add (f64.const -2.7557319223985888e-7) (f64.mul (local.get $x2) (local.get $t))))
-    (local.set $t (f64.add (f64.const  2.4801587301587302e-5) (f64.mul (local.get $x2) (local.get $t))))
-    (local.set $t (f64.add (f64.const -1.3888888888888887e-3) (f64.mul (local.get $x2) (local.get $t))))
-    (local.set $t (f64.add (f64.const  4.166666666666667e-2)  (f64.mul (local.get $x2) (local.get $t))))
-    (local.set $t (f64.add (f64.const -4.9999999999999996e-1) (f64.mul (local.get $x2) (local.get $t))))
-    (local.set $t (f64.add (f64.const  1.0)                   (f64.mul (local.get $x2) (local.get $t))))
-    (if (i32.eq (local.get $sign) (i32.const -1))
-      (then (local.set $t (f64.neg (local.get $t)))))
-    (local.get $t)
-  )
-
-  ;; ── Math.tan ─────────────────────────────────────────────────────────────────
+    (local $q i32) (local $ix i32)
+    (local.set $ix (call $__hiw (local.get $x)))
+    (if (i32.le_u (local.get $ix) (i32.const 0x3fe921fb))
+      (then (return (call $__kcos (local.get $x) (f64.const 0.0)))))               ;; |x| <= pi/4
+    (if (i32.ge_u (local.get $ix) (i32.const 0x7ff00000))
+      (then (return (f64.sub (local.get $x) (local.get $x)))))                      ;; NaN/Inf
+    (local.set $q (call $__trig_reduce (local.get $x)))
+    (if (result f64) (i32.eqz (local.get $q))
+      (then (call $__kcos (global.get $__tr) (global.get $__trt)))
+      (else (if (result f64) (i32.eq (local.get $q) (i32.const 1))
+        (then (f64.neg (call $__ksin (global.get $__tr) (global.get $__trt) (i32.const 1))))
+        (else (if (result f64) (i32.eq (local.get $q) (i32.const 2))
+          (then (f64.neg (call $__kcos (global.get $__tr) (global.get $__trt))))
+          (else (call $__ksin (global.get $__tr) (global.get $__trt) (i32.const 1)))))))))
+  ;; ── Math.tan = sin/cos ───────────────────────────────────────────────────────
   (func $tan (export "tan") (param $x f64) (result f64)
     (f64.div (call $sin (local.get $x)) (call $cos (local.get $x)))
   )

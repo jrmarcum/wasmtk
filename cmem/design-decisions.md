@@ -23,6 +23,17 @@ high-value subset.
 
 - **`Math.round` = `floor(x + 0.5)`**, NOT `f64.nearest` (which is banker's rounding and gives
   `round(2.5)=2`). Both `wasic.ts` (F64_UNARY special case) and `console_log.ts` must agree.
+- **mathlib `sin`/`cos` are fdlibm** (`src/wasm/mathlib.wat`, 2026-07-01): `__kernel_sin`/`__kernel_cos`
+  (the exact polynomials V8 uses) + a **table-free Veltkamp-split argument reduction** (`$__trig_reduce`):
+  `n = f64.nearest(x·2/π)`; `r + rt = x − n·(π/2)` accumulated in double-double over the 7 fdlibm `PIo2[]`
+  24-bit chunks. `n` is Veltkamp-split (`nhi` ≤24 sig bits + `nlo`) so every product is EXACT and each
+  subtraction Sterbenz-exact; a `Fast2Sum` tail keeps the low bits. `≤1 ULP` vs V8 for `|x| < ~1e12`
+  (bit-exact ~97%; the ~3% 1-ULP residual is V8's correctly-rounded path), ~14-sig-fig out to 1e15.
+  **No Payne-Hanek table / no linear memory** — pure f64 arithmetic, so it survives the wasmmerge splice.
+  Output goes through two mathlib globals `$__tr`/`$__trt` (survive the merge; coexist with the RNG global).
+  `tan = sin/cos` (≤1–2 ULP). Do NOT reintroduce the old single-range degree-13 minimax (was ~1e-11).
+  After editing `mathlib.wat`: `wasmtk convert src/wasm/mathlib.wat` then
+  `deno run --allow-read --allow-write scripts/gen_mathlib_bytes.ts`. Reference: `sin(5e8)` byte-exact.
 - **`$__f64_to_str` is pure Dragon4 (Burger-Dybvig free-format)** as of 2026-07-01 — hand-written
   WAT bignums (48 u32 limbs) over a lazily-`$__malloc`'d scratch region held in the `$__d4s` module
   global, then ECMAScript `Number.prototype.toString` formatting (fixed vs scientific both
