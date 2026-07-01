@@ -1,4 +1,3 @@
-// @allow-output-diff: float formatting precision (last-digit f64-to-string difference vs native TS)
 function mulberry32(seed: number): () => number {
     let s: number = seed;
     return function(): number {

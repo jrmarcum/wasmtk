@@ -2,6 +2,7 @@
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
   (memory (export "memory") 2)
   (global $__heap_ptr (mut i32) (i32.const 289))
+  (global $__d4s (mut i32) (i32.const 0))
   (global $libraryMultiplier i32 (i32.const 3))
   ;; Bump allocator — advances __heap_ptr and returns the old value.
   (func $__malloc (param $size i32) (result i32)

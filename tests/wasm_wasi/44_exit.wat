@@ -3,6 +3,7 @@
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
   (memory (export "memory") 2)
   (global $__heap_ptr (mut i32) (i32.const 276))
+  (global $__d4s (mut i32) (i32.const 0))
   (global $__free_list (mut i32) (i32.const 0))
   (global $deferred (mut i32) (i32.const 0))
   (type $ftype_i32_r_void (func (param i32)))

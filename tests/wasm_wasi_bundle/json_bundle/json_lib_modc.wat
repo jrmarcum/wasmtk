@@ -1,6 +1,7 @@
 (module
   (memory (export "memory") 2)
   (global $__heap_ptr (mut i32) (i32.const 260))
+  (global $__d4s (mut i32) (i32.const 0))
   (global $pos (mut i32) (i32.const 0))
   (global $lastLen (mut i32) (i32.const 0))
   ;; Bump allocator — advances __heap_ptr and returns the old value.

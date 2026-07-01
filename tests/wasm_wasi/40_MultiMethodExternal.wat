@@ -6,6 +6,7 @@
   (import "env" "ops_negate" (func $ops_negate (param i32) (result i32)))
   (memory (export "memory") 2)
   (global $__heap_ptr (mut i32) (i32.const 263))
+  (global $__d4s (mut i32) (i32.const 0))
   (global $__free_list (mut i32) (i32.const 0))
   ;; Free-list + bump allocator (auto-grows). GC Part 1+2.
   (func $__malloc (param $size i32) (result i32)

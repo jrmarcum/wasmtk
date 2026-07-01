@@ -1,6 +1,7 @@
 (module
   (memory (export "memory") 2)
   (global $__heap_ptr (mut i32) (i32.const 260))
+  (global $__d4s (mut i32) (i32.const 0))
   (global $INITIAL_CAP i32 (i32.const 8))
   ;; Bump allocator — advances __heap_ptr and returns the old value.
   (func $__malloc (param $size i32) (result i32)

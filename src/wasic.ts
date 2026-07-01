@@ -19181,6 +19181,9 @@ class WasicTranspiler {
       imports,
       `  (memory (export "memory") ${memoryPages})`,
       `  (global $__heap_ptr (mut i32) (i32.const ${heapStart}))`,
+      // Dragon4 f64→string bignum scratch base (0 = not yet allocated; lazily malloc'd on first
+      // $__f64_to_str call). Unused-stripped by -Oz when no f64 is ever printed.
+      `  (global $__d4s (mut i32) (i32.const 0))`,
       // GC Part 2: free-list head (0 = empty). Executable-only — a merged library's allocator is
       // dropped + replaced by the host's, and the free-list logic would defeat detectBumpAllocator.
       this.mode === "library" ? "" : `  (global $__free_list (mut i32) (i32.const 0))`,
