@@ -1,6 +1,23 @@
 # Compiler bug log
 
-Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 373/373** (`bindgen` 131/131, `jstyper` 73/73, `dync` conformance 3/3) as of **2026-06-30** (#14 Route A `18zh`–`18zz` + the 5 low-priority-gap regressions `62_Gap*` + 3 discovered-bug regressions `63_Gap*` + 4 user-report regressions `64_Report*` + trig 5a `65_ReportTrigLargeArg`).
+Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 374/374** (`bindgen` 131/131, `jstyper` 73/73, `dync` conformance 3/3) as of **2026-07-01** (adds `66_Dragon4Formatting` for the Dragon4 f64→string rewrite — see issue 6 below and design-decisions.md; prior baseline 373/373 = #14 Route A `18zh`–`18zz` + gap regressions `62_Gap*` + `63_Gap*` + user-report `64_Report*` + trig 5a `65_ReportTrigLargeArg`).
+
+**f64 `toString` — issue 6 (2026-07-01) ✅ FIXED with pure Dragon4.** The old `$__f64_to_str`
+(×1e15 + shortest-round-trip shortening loop) both (a) capped at ~15 sig-figs — diverging from
+V8's 17-sig-fig shortest for values like `Math.SQRT2`, `7/3` — and (b) **trapped** (`i64.trunc_f64_s`
+"float unrepresentable in integer range") on `|x| ≥ ~9.2e18` and emitted **no scientific notation**
+for runtime values. Rewrote it in `src/console_log.ts` as a hand-written-WAT **Dragon4
+(Burger-Dybvig free-format)**: 48-limb (1536-bit) fixed-size bignums (`R/S/m+/m-`) in a lazily
+`$__malloc`'d 1 KB scratch region held in a new `$__d4s` module global (declared in `wasic.ts`
+`toWat()`), 7 bignum helpers (`$__bz/$__bset64/$__bmul_u32/$__bshl/$__bcmp/$__badd/$__bsub`),
+robust bidirectional k-estimate fixup, round-to-even ties, then full ECMAScript
+`Number.prototype.toString` formatting (fixed vs scientific in both directions; sign, zero,
+±Infinity, NaN). **100% byte-exact vs V8** — validated at `0/3017` fuzz mismatches (incl.
+subnormal `5e-324`, max `1.7976931348623157e308`, and previously-wrong Grisu cases) + regression
+`66_Dragon4Formatting`. Dropped the now-obsolete `// @allow-output-diff` on `1_values`,
+`7a_MathIntrinsics`, `45_random-numbers` (all now byte-exact). `7a_constants` keeps its marker but
+its one remaining diff is a **mathlib `sin(5e8)` last-ULP** difference (mathlib polynomial vs V8
+libm; ~13 sig-figs agree), NOT formatting — Dragon4 renders mathlib's value exactly.
 
 **User issue report (2026-06-30, "Basics of Coding WASM" lesson set) — 4 of 6 issues FIXED in `src/wasic.ts`; regressions `64_Report*`:**
 - **Issue 1 (HIGH — was SILENT, most dangerous):** `throw new Error(`template`)` (or a variable/concat message) ESCAPED an enclosing try/catch — the throw handler only matched a string-LITERAL `Error("…")`; a template/var fell to the `proc_exit(0)` fallback (a clean exit that skips the catch → no output, exit 0). FIXED: `throw new Error(<expr>)` / `throw <template|concat>` now builds the message into a `$__throw_msg` (ptr,len) temp (via `emitStringAssign`) and emits `(throw $__exn_tag …)`. A bare `throw e` (re-throw of the caught string var) still uses the direct var path. `$__throw_msg_ptr/len` declared in both pre-scans when a function/`_start` contains any `throw`. (`throw new Error(dynamicVar)` — which previously failed to COMPILE — is fixed by the same path.)
@@ -8,7 +25,7 @@ Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS —
 - **Issue 3 (MEDIUM — compile abort):** a module-scope `try/catch` with a bound catch var → `$e_ptr/$e_len cannot be resolved` — `_start`'s `(local …)` declarations were built ONLY from `startLocals`, but the catch handler pushes the `(ptr,len)` pair to `startDeclaredLocals` (which was never emitted). Most handlers set both, so it only bit the catch var. FIXED: `_start` local decls are now the UNION of `startLocals` (non-string) and `startDeclaredLocals`, de-duped (mirrors the in-function path, which builds from `declaredLocals`).
 - **Issue 4 (HIGH — compile abort):** an array-typed interface field via a function PARAM — `p.origin.length` / `p.origin[i]` — was "Unsupported expression". Two root causes: (a) `StructField` didn't remember a field's array element type (a `T[]` field stored plain `i32`), and (b) `allocStructData` had NO array-field case, so a struct literal `{ origin: ["a","b"] }` hit the numeric branch → `parseFloat("[…]")` → 0 (field never held the array — so even the documented alias workaround produced empty output). FIXED: `StructField` gained `arrayElemType`/`arrayIsString` (set in `parseStructs`); `allocStructData` allocates a literal array field and stores its pointer; `emitExpr` + `emitStringPtrLen` gained `structVar.field.length` / `structVar.field[i]` (string + numeric) handlers. (Blocked `49_xml`.)
 - **Issue 5 (LOW/MED — ✅ FIXED 2026-06-30, "5a"):** `Math.sin`/`cos`/`tan` of a LARGE argument diverged at the ~7th sig-fig. Root cause was the **range reduction**, not the polynomial: `mathlib.wat` reduced mod 2π with a SINGLE f64 2π constant, so for `sin(5e8)` the constant's ~1e-16 relative error was multiplied by `floor(x/2π) ≈ 8e7` → ~5e-8 absolute error in the reduced angle. FIXED with a **3-term Cody-Waite split** of 2π (HI with low mantissa bits zeroed so `k*HI` is exact for `|k| < 2^30`, + LO1 + LO2) in `$sin` and `$cos` (`tan = sin/cos`). `sin(5e8)` now matches JS to ~13 sig figs (was 7). Regenerated `mathlib.wasm` + `mathlib_bytes.ts`. Regression `65_ReportTrigLargeArg` (self-checking tolerance bands). NOTE: the trig POLYNOMIALS are still ~1e-11-accurate minimax approximations (e.g. `cos(1.0)` differs from JS at the ~11th digit) — a separate, deeper limit (better coefficients / more terms) not addressed here; only the large-argument reduction blow-up was fixed.
-- **Issue 6 (LOW — NOT fixed, ACCEPTED):** f64 `toString` differs (`.wasm` ~15 sig-figs vs the JS engine's 17-sig-fig shortest-round-trip). Known/accepted `$__f64_to_str` limitation (see design-decisions.md); tests that hit it carry `// @allow-output-diff`.
+- **Issue 6 (LOW — ✅ FIXED 2026-07-01):** f64 `toString` differed (`.wasm` ~15 sig-figs vs the JS engine's 17-sig-fig shortest-round-trip) and TRAPPED / lacked scientific notation for large-magnitude runtime values. Replaced `$__f64_to_str` with pure Dragon4 → 100% byte-exact parity with V8. Full write-up at the top of this file + design-decisions.md.
 
 **Separately DISCOVERED while fixing issue 1 (NOT yet fixed):** `"code " + x` where `x` is an i32 **parameter** drops the number (`"code 7"` → `"code "`) — a `string + i32-param` concat gap (template interpolation `${x}` works fine, so it's specific to the explicit `+` concat of a string with a numeric param). Simple workaround: use a template literal.
 

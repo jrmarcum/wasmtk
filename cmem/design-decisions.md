@@ -23,8 +23,15 @@ high-value subset.
 
 - **`Math.round` = `floor(x + 0.5)`**, NOT `f64.nearest` (which is banker's rounding and gives
   `round(2.5)=2`). Both `wasic.ts` (F64_UNARY special case) and `console_log.ts` must agree.
-- **`$__f64_to_str`** uses ×1e15 + a shortest-round-trip shortening loop (`$__pow10_f64`). Do not
-  revert to ×1e6 or drop the shortening loop. Known accepted limit: `Math.SQRT2` prints 15 dp.
+- **`$__f64_to_str` is pure Dragon4 (Burger-Dybvig free-format)** as of 2026-07-01 — hand-written
+  WAT bignums (48 u32 limbs) over a lazily-`$__malloc`'d scratch region held in the `$__d4s` module
+  global, then ECMAScript `Number.prototype.toString` formatting (fixed vs scientific both
+  directions; sign/zero/±Inf/NaN). **100% byte-exact with V8**, incl. subnormals, max double, and
+  large magnitudes the OLD formatter (×1e15 + shortening loop) either mis-rounded at ~15 sig-figs
+  or TRAPPED on (`i64.trunc_f64_s` overflow) with no scientific notation. Do NOT revert to ×1e15.
+  `pointPos == k` (the Dragon4 decimal exponent), which drives the fixed/scientific branch. Bignum
+  helpers `$__bz/$__bset64/$__bmul_u32/$__bshl/$__bcmp/$__badd/$__bsub` must stay ≥48 limbs (covers
+  the full f64 range with margin). Regression: `66_Dragon4Formatting`.
 - **Type-erasure casts** `expr as unknown as T` / `expr as unknown` are stripped up front in
   `emitExpr` (before the ` as ` handler) so the inner operand keeps its real type. Without it,
   `buf as unknown as i32` cast the i32 ptr i32→f64 (mapType("unknown")→f64) → `return[0] expected
