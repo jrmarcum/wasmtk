@@ -1,1 +1,32 @@
 CLAUDE.md
+
+# ── Generated test build artifacts (do NOT track) ─────────────────────────────
+# The .wasm/.wat/.wit in tests/wasm_wasi/ that pair 1:1 with a .ts are BUILD OUTPUTS —
+# the test runner regenerates them from the .ts sources on every run (see
+# cmem/testing.md). Committing them pushed the folder past GitHub's 1,000-file/dir
+# display limit and bloated the repo. Input fixtures (imported modules, .wat-runner
+# sources, prebuilt rust/zig outputs) are re-included with '!' below — when adding a
+# NEW input fixture (a .wasm/.wat/.wit with no same-named .ts), add a '!' line for it.
+tests/wasm_wasi/*.wasm
+tests/wasm_wasi/*.wat
+tests/wasm_wasi/*.wit
+!tests/wasm_wasi/18_symbol_table.wasm
+!tests/wasm_wasi/18_symbol_table.wat
+!tests/wasm_wasi/1_fib-rs-opt.wasm
+!tests/wasm_wasi/1_fib-rs-opt.wat
+!tests/wasm_wasi/1_fib-rs-test.wasm
+!tests/wasm_wasi/1_fib-rs.wasm
+!tests/wasm_wasi/1_fib-rs.wat
+!tests/wasm_wasi/1_fib-test.wasm
+!tests/wasm_wasi/1_fib-zig-opt.wasm
+!tests/wasm_wasi/1_fib-zig-opt.wat
+!tests/wasm_wasi/1_fib-zig.wasm
+!tests/wasm_wasi/1_fizzbuzz_wat.wasm
+!tests/wasm_wasi/1_fizzbuzz_wat.wat
+!tests/wasm_wasi/1_helloWorld_wat.wasm
+!tests/wasm_wasi/1_helloWorld_wat.wat
+!tests/wasm_wasi/1_helloworld.wasm
+!tests/wasm_wasi/1_helloworld.wat
+!tests/wasm_wasi/1_print.wasm
+!tests/wasm_wasi/1_print.wat
+!tests/wasm_wasi/39_JstyperMixed.wasm.roundtrip.wat

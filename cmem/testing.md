@@ -119,6 +119,15 @@ Manual verify command is in the file header.
 ## Conventions
 
 - **File naming:** `NN_Label.ext` (phase number first) so listings sort by phase.
+- **Generated artifacts are NOT tracked (2026-07-01):** the `.wasm`/`.wat`/`.wit` in
+  `tests/wasm_wasi/` that pair 1:1 with a `.ts` are BUILD OUTPUTS (the runner regenerates them from
+  the `.ts` on every run) and are `.gitignore`d — committing them had pushed the folder past
+  GitHub's **1,000-file-per-directory** display cap (was 1,380 files → now ~402 tracked) and bloated
+  the repo/pack (the `geometric-repack` errors). **When adding a NEW input fixture** (a `.wasm`/
+  `.wat`/`.wit` with NO same-named `.ts` — e.g. an imported module like `18_symbol_table.wasm`, a
+  `.wat`-runner source, or a prebuilt rust/zig output), add a `!tests/wasm_wasi/<name>` un-ignore
+  line to `.gitignore`, else it won't be tracked and the test breaks on a fresh clone. A fresh
+  clone has only the `.ts` + ~21 fixtures; the first suite run regenerates all outputs.
 - **`@expect-fail: compile|run-ts|run-wasm`** in the first 10 lines → failure counts as PASS.
 - **`@test-pipeline` + `@step <subcmd> <args…>`** (comment header) → run custom wasmtk sub-commands
   instead of the standard compile/run-ts/run-wasm flow; paths resolve relative to the test file.
