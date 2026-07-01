@@ -612,15 +612,25 @@
     f64.const 0x1.0p+0 (;=1;)
     f64.sub)
   (func $mathlib_sin (param f64) (result f64)
-    (local f64) (local f64)
-    local.get 0
-    f64.const 0x1.921fb54442d18p+2 (;=6.283185307179586;)
+    (local f64) (local f64) (local f64)
     local.get 0
     f64.const 0x1.45f306dc9c883p-3 (;=0.15915494309189535;)
     f64.mul
     f64.const 0x1.0p-1 (;=0.5;)
     f64.add
     f64.floor
+    local.set 3
+    local.get 0
+    local.get 3
+    f64.const 0x1.921fb4p+2 (;=6.283185005187988;)
+    f64.mul
+    f64.sub
+    local.get 3
+    f64.const 0x1.4442d18p-22 (;=3.0199159795074593e-7;)
+    f64.mul
+    f64.sub
+    local.get 3
+    f64.const 0x1.1a62633145c07p-52 (;=2.4492935982947064e-16;)
     f64.mul
     f64.sub
     local.set 0
@@ -689,17 +699,27 @@
     local.get 2
     f64.mul)
   (func $mathlib_cos (param f64) (result f64)
-    (local f64) (local f64) (local i32)
+    (local f64) (local f64) (local i32) (local f64)
     i32.const 1
     local.set 3
-    local.get 0
-    f64.const 0x1.921fb54442d18p+2 (;=6.283185307179586;)
     local.get 0
     f64.const 0x1.45f306dc9c883p-3 (;=0.15915494309189535;)
     f64.mul
     f64.const 0x1.0p-1 (;=0.5;)
     f64.add
     f64.floor
+    local.set 4
+    local.get 0
+    local.get 4
+    f64.const 0x1.921fb4p+2 (;=6.283185005187988;)
+    f64.mul
+    f64.sub
+    local.get 4
+    f64.const 0x1.4442d18p-22 (;=3.0199159795074593e-7;)
+    f64.mul
+    f64.sub
+    local.get 4
+    f64.const 0x1.1a62633145c07p-52 (;=2.4492935982947064e-16;)
     f64.mul
     f64.sub
     local.set 0

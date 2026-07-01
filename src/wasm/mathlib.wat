@@ -34,12 +34,17 @@
   (func $sin (export "sin") (param $x f64) (result f64)
     (local $x2 f64)
     (local $t f64)
-    ;; Reduce to [-pi, pi]
-    (local.set $x (f64.sub (local.get $x)
-      (f64.mul (f64.const 6.283185307179586)
-        (f64.floor (f64.add
-          (f64.mul (local.get $x) (f64.const 0.15915494309189535))
-          (f64.const 0.5))))))
+    (local $k f64)
+    ;; Reduce to [-pi, pi] via a 3-term Cody-Waite split of 2*pi. Splitting 2*pi into
+    ;; HI (low mantissa bits zeroed, so k*HI is EXACT for |k| < 2^30) + LO1 + LO2 keeps the
+    ;; high-order cancellation exact, so large arguments (e.g. sin(5e8)) no longer lose ~7 sig figs.
+    (local.set $k (f64.floor (f64.add
+      (f64.mul (local.get $x) (f64.const 0.15915494309189535))
+      (f64.const 0.5))))
+    (local.set $x (f64.sub (f64.sub (f64.sub (local.get $x)
+      (f64.mul (local.get $k) (f64.const 6.283185005187988)))
+      (f64.mul (local.get $k) (f64.const 3.0199159795074593e-7)))
+      (f64.mul (local.get $k) (f64.const 2.4492935982947064e-16))))
     ;; Reduce to [-pi/2, pi/2]
     (if (f64.gt (local.get $x) (f64.const 1.5707963267948966))
       (then (local.set $x (f64.sub (f64.const 3.141592653589793) (local.get $x)))))
@@ -62,13 +67,17 @@
     (local $x2 f64)
     (local $t f64)
     (local $sign i32)
+    (local $k f64)
     (local.set $sign (i32.const 1))
-    ;; Reduce to [-pi, pi]
-    (local.set $x (f64.sub (local.get $x)
-      (f64.mul (f64.const 6.283185307179586)
-        (f64.floor (f64.add
-          (f64.mul (local.get $x) (f64.const 0.15915494309189535))
-          (f64.const 0.5))))))
+    ;; Reduce to [-pi, pi] via a 3-term Cody-Waite split of 2*pi (see $sin for the rationale) so
+    ;; large arguments keep full accuracy instead of losing ~7 sig figs to the single-constant subtract.
+    (local.set $k (f64.floor (f64.add
+      (f64.mul (local.get $x) (f64.const 0.15915494309189535))
+      (f64.const 0.5))))
+    (local.set $x (f64.sub (f64.sub (f64.sub (local.get $x)
+      (f64.mul (local.get $k) (f64.const 6.283185005187988)))
+      (f64.mul (local.get $k) (f64.const 3.0199159795074593e-7)))
+      (f64.mul (local.get $k) (f64.const 2.4492935982947064e-16))))
     ;; Map to [-pi/2, pi/2], flip sign if in quadrant 2 or 3
     (if (f64.gt (local.get $x) (f64.const 1.5707963267948966))
       (then
