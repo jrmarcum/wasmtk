@@ -441,63 +441,74 @@
       (br $lp)))
     (call $__cr (local.get $sh) (local.get $sl) (local.get $k)))
 
-  ;; ── Math.log (natural log) — mantissa/exponent decomposition + atanh series ──
-  (func $log (export "log") (param $x f64) (result f64)
-    (local $bits i64)
-    (local $e i64)
-    (local $m f64)
-    (local $s f64)
-    (local $s2 f64)
-    (local $t f64)
-    ;; Handle x <= 0
-    (if (f64.le (local.get $x) (f64.const 0.0))
-      (then (return
-        (if (result f64) (f64.eq (local.get $x) (f64.const 0.0))
-          (then (f64.div (f64.const -1.0) (f64.const 0.0)))
-          (else (f64.div (f64.const  0.0) (f64.const 0.0)))))))
-    ;; Handle +Inf
-    (if (f64.gt (local.get $x) (f64.const 1.7976931348623157e308))
-      (then (return (local.get $x))))
-    ;; Decompose into e and m in [1, 2)
-    (local.set $bits (i64.reinterpret_f64 (local.get $x)))
-    (local.set $e
-      (i64.sub
-        (i64.shr_u (i64.and (local.get $bits) (i64.const 0x7FF0000000000000)) (i64.const 52))
-        (i64.const 1023)))
-    (local.set $m
-      (f64.reinterpret_i64
-        (i64.or (i64.and (local.get $bits) (i64.const 0x000FFFFFFFFFFFFF)) (i64.const 0x3FF0000000000000))))
-    ;; Normalize m to [1, sqrt(2)] for better convergence
-    (if (f64.gt (local.get $m) (f64.const 1.4142135623730951))
+  ;; __logdd(x) -> dd natural log; assumes x finite > 0 (x==1 yields (0,0))
+  (func $__logdd (param $x f64) (result f64 f64)
+    (local $b i64) (local $exp i32) (local $e i32) (local $m f64)
+    (local $nh f64) (local $nl f64) (local $dh f64) (local $dl f64) (local $sh f64) (local $sl f64)
+    (local $s2h f64) (local $s2l f64) (local $th f64) (local $tl f64) (local $ph f64) (local $pl f64)
+    (local $k i32) (local $lmh f64) (local $lml f64) (local $elh f64) (local $ell f64)
+    (local.set $b (i64.reinterpret_f64 (local.get $x)))
+    (local.set $exp (i32.wrap_i64 (i64.and (i64.shr_u (local.get $b) (i64.const 52)) (i64.const 0x7ff))))
+    (if (i32.eqz (local.get $exp))
       (then
-        (local.set $m (f64.mul (local.get $m) (f64.const 0.5)))
-        (local.set $e (i64.add (local.get $e) (i64.const 1)))))
-    ;; s = (m-1)/(m+1),  ln(m) = 2*s*(1 + s²/3 + s⁴/5 + ... + s^14/15)
-    (local.set $s
-      (f64.div (f64.sub (local.get $m) (f64.const 1.0)) (f64.add (local.get $m) (f64.const 1.0))))
-    (local.set $s2 (f64.mul (local.get $s) (local.get $s)))
-    ;; Horner from 1/15 down to 1/1
-    (local.set $t (f64.const 6.666666666666667e-2))
-    (local.set $t (f64.add (f64.const 7.692307692307692e-2) (f64.mul (local.get $s2) (local.get $t))))
-    (local.set $t (f64.add (f64.const 9.090909090909091e-2) (f64.mul (local.get $s2) (local.get $t))))
-    (local.set $t (f64.add (f64.const 1.1111111111111111e-1) (f64.mul (local.get $s2) (local.get $t))))
-    (local.set $t (f64.add (f64.const 1.4285714285714285e-1) (f64.mul (local.get $s2) (local.get $t))))
-    (local.set $t (f64.add (f64.const 2.0e-1)               (f64.mul (local.get $s2) (local.get $t))))
-    (local.set $t (f64.add (f64.const 3.3333333333333333e-1) (f64.mul (local.get $s2) (local.get $t))))
-    (local.set $t (f64.add (f64.const 1.0)                  (f64.mul (local.get $s2) (local.get $t))))
-    ;; log(x) = e*ln2 + 2*s*poly
-    (f64.add
-      (f64.mul (f64.convert_i64_s (local.get $e)) (f64.const 6.931471805599453e-1))
-      (f64.mul (f64.const 2.0) (f64.mul (local.get $s) (local.get $t))))
-  )
-
-  ;; ── Math.log2 / Math.log10 ───────────────────────────────────────────────────
+        (local.set $x (f64.mul (local.get $x) (f64.const 0x1p54)))
+        (local.set $b (i64.reinterpret_f64 (local.get $x)))
+        (local.set $exp (i32.wrap_i64 (i64.and (i64.shr_u (local.get $b) (i64.const 52)) (i64.const 0x7ff))))
+        (local.set $e (i32.sub (i32.sub (local.get $exp) (i32.const 1023)) (i32.const 54))))
+      (else (local.set $e (i32.sub (local.get $exp) (i32.const 1023)))))
+    (local.set $m (f64.reinterpret_i64 (i64.or (i64.and (local.get $b) (i64.const 0x800fffffffffffff)) (i64.const 0x3ff0000000000000))))
+    (if (f64.ge (local.get $m) (f64.const 1.4142135623730951))
+      (then (local.set $m (f64.mul (local.get $m) (f64.const 0.5))) (local.set $e (i32.add (local.get $e) (i32.const 1)))))
+    (call $__ts (local.get $m) (f64.const -1)) (local.set $nl) (local.set $nh)
+    (call $__ts (local.get $m) (f64.const 1)) (local.set $dl) (local.set $dh)
+    (call $__dddiv (local.get $nh) (local.get $nl) (local.get $dh) (local.get $dl)) (local.set $sl) (local.set $sh)
+    (call $__ddm (local.get $sh) (local.get $sl) (local.get $sh) (local.get $sl)) (local.set $s2l) (local.set $s2h)
+    (local.set $th (f64.const 1)) (local.set $tl (f64.const 0))
+    (local.set $ph (f64.const 1)) (local.set $pl (f64.const 0))   ;; sum accumulator
+    (local.set $k (i32.const 1))
+    (block $done (loop $lp
+      (br_if $done (i32.gt_u (local.get $k) (i32.const 18)))
+      (call $__ddm (local.get $th) (local.get $tl) (local.get $s2h) (local.get $s2l)) (local.set $tl) (local.set $th)
+      (call $__ddri (f64.convert_i32_s (i32.add (i32.mul (i32.const 2) (local.get $k)) (i32.const 1)))) (local.set $lml) (local.set $lmh)
+      (call $__ddm (local.get $th) (local.get $tl) (local.get $lmh) (local.get $lml)) (local.set $lml) (local.set $lmh)
+      (call $__dda (local.get $ph) (local.get $pl) (local.get $lmh) (local.get $lml)) (local.set $pl) (local.set $ph)
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (br $lp)))
+    ;; logm = ddm(ddmd(s,2), sum)
+    (call $__ddmd (local.get $sh) (local.get $sl) (f64.const 2)) (local.set $lml) (local.set $lmh)
+    (call $__ddm (local.get $lmh) (local.get $lml) (local.get $ph) (local.get $pl)) (local.set $lml) (local.set $lmh)
+    ;; el2 = ddmd([LN2H,LN2L], e)
+    (call $__ddmd (f64.const 0.6931471805599453) (f64.const 2.3190468138462996e-17) (f64.convert_i32_s (local.get $e))) (local.set $ell) (local.set $elh)
+    (call $__dda (local.get $elh) (local.get $ell) (local.get $lmh) (local.get $lml)))
+  ;; ── Math.log ─────────────────────────────────────────────────────────────────
+  (func $log (export "log") (param $x f64) (result f64)
+    (local $rh f64) (local $rl f64)
+    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))
+    (if (f64.lt (local.get $x) (f64.const 0)) (then (return (f64.sub (local.get $x) (local.get $x)))))
+    (if (f64.eq (local.get $x) (f64.const 0)) (then (return (f64.const -inf))))
+    (if (f64.eq (local.get $x) (f64.const inf)) (then (return (f64.const inf))))
+    (call $__logdd (local.get $x)) (local.set $rl) (local.set $rh)
+    (f64.add (local.get $rh) (local.get $rl)))
+  ;; ── Math.log2 = log(x) * (1/ln2) in dd ───────────────────────────────────────
   (func $log2 (export "log2") (param $x f64) (result f64)
-    (f64.mul (call $log (local.get $x)) (f64.const 1.4426950408889634))
-  )
+    (local $rh f64) (local $rl f64)
+    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))
+    (if (f64.lt (local.get $x) (f64.const 0)) (then (return (f64.sub (local.get $x) (local.get $x)))))
+    (if (f64.eq (local.get $x) (f64.const 0)) (then (return (f64.const -inf))))
+    (if (f64.eq (local.get $x) (f64.const inf)) (then (return (f64.const inf))))
+    (call $__logdd (local.get $x)) (local.set $rl) (local.set $rh)
+    (call $__ddm (local.get $rh) (local.get $rl) (f64.const 1.4426950408889634) (f64.const 2.0355273740931033e-17)) (local.set $rl) (local.set $rh)
+    (f64.add (local.get $rh) (local.get $rl)))
+  ;; ── Math.log10 = log(x) * (1/ln10) in dd ─────────────────────────────────────
   (func $log10 (export "log10") (param $x f64) (result f64)
-    (f64.mul (call $log (local.get $x)) (f64.const 4.342944819032518e-1))
-  )
+    (local $rh f64) (local $rl f64)
+    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))
+    (if (f64.lt (local.get $x) (f64.const 0)) (then (return (f64.sub (local.get $x) (local.get $x)))))
+    (if (f64.eq (local.get $x) (f64.const 0)) (then (return (f64.const -inf))))
+    (if (f64.eq (local.get $x) (f64.const inf)) (then (return (f64.const inf))))
+    (call $__logdd (local.get $x)) (local.set $rl) (local.set $rh)
+    (call $__ddm (local.get $rh) (local.get $rl) (f64.const 0.4342944819032518) (f64.const 1.098319650216765e-17)) (local.set $rl) (local.set $rh)
+    (f64.add (local.get $rh) (local.get $rl)))
 
   ;; ── Math.cbrt — exp(log(x)/3) initial guess + 3 Newton steps ────────────────
   (func $cbrt (export "cbrt") (param $x f64) (result f64)
