@@ -471,6 +471,49 @@
       (br $lp)))
     (call $__cr (local.get $sh) (local.get $sl) (local.get $k)))
 
+  ;; __expS(x, extra) -> (hi,lo)   dd e^x * 2^extra  (extra folds a post-scale in to dodge overflow)
+  ;; assumes x finite + moderate (caller guards NaN/inf and the overflow/underflow edges); result normal/inf.
+  (func $__expS (param $x f64) (param $extra i32) (result f64 f64)
+    (local $k i32) (local $kf f64) (local $klh f64) (local $kll f64) (local $rh f64) (local $rl f64)
+    (local $th f64) (local $tl f64) (local $sh f64) (local $sl f64) (local $ch f64) (local $cl f64) (local $n i32)
+    (local.set $kf (f64.nearest (f64.mul (local.get $x) (f64.const 1.4426950408889634))))
+    (local.set $k (i32.trunc_f64_s (local.get $kf)))
+    (call $__ddmd (f64.const 0.6931471805599453) (f64.const 2.3190468138462996e-17) (local.get $kf)) (local.set $kll) (local.set $klh)
+    (call $__dda (local.get $x) (f64.const 0) (f64.neg (local.get $klh)) (f64.neg (local.get $kll))) (local.set $rl) (local.set $rh)
+    (local.set $th (f64.const 1)) (local.set $tl (f64.const 0))
+    (local.set $sh (f64.const 1)) (local.set $sl (f64.const 0))
+    (local.set $n (i32.const 1))
+    (block $done (loop $lp
+      (br_if $done (i32.gt_u (local.get $n) (i32.const 22)))
+      (call $__ddm (local.get $th) (local.get $tl) (local.get $rh) (local.get $rl)) (local.set $tl) (local.set $th)
+      (call $__ddri (f64.convert_i32_s (local.get $n))) (local.set $cl) (local.set $ch)
+      (call $__ddm (local.get $th) (local.get $tl) (local.get $ch) (local.get $cl)) (local.set $tl) (local.set $th)
+      (call $__dda (local.get $sh) (local.get $sl) (local.get $th) (local.get $tl)) (local.set $sl) (local.set $sh)
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (br $lp)))
+    (call $__scalbn (local.get $sh) (i32.add (local.get $k) (local.get $extra)))
+    (call $__scalbn (local.get $sl) (i32.add (local.get $k) (local.get $extra))))
+
+  ;; __expm1dd(x) -> (hi,lo)   dd (e^x - 1);  Taylor for |x|<0.5 (avoids E-1 cancellation), else E-1
+  (func $__expm1dd (param $x f64) (result f64 f64)
+    (local $th f64) (local $tl f64) (local $sh f64) (local $sl f64) (local $ch f64) (local $cl f64) (local $n i32)
+    (if (f64.lt (f64.abs (local.get $x)) (f64.const 0.5))
+      (then
+        (local.set $th (f64.const 1)) (local.set $tl (f64.const 0))
+        (local.set $sh (f64.const 0)) (local.set $sl (f64.const 0))
+        (local.set $n (i32.const 1))
+        (block $done (loop $lp
+          (br_if $done (i32.gt_u (local.get $n) (i32.const 25)))
+          (call $__ddm (local.get $th) (local.get $tl) (local.get $x) (f64.const 0)) (local.set $tl) (local.set $th)
+          (call $__ddri (f64.convert_i32_s (local.get $n))) (local.set $cl) (local.set $ch)
+          (call $__ddm (local.get $th) (local.get $tl) (local.get $ch) (local.get $cl)) (local.set $tl) (local.set $th)
+          (call $__dda (local.get $sh) (local.get $sl) (local.get $th) (local.get $tl)) (local.set $sl) (local.set $sh)
+          (local.set $n (i32.add (local.get $n) (i32.const 1)))
+          (br $lp)))
+        (return (local.get $sh) (local.get $sl))))
+    (call $__expS (local.get $x) (i32.const 0)) (local.set $sl) (local.set $sh)
+    (call $__dda (local.get $sh) (local.get $sl) (f64.const -1) (f64.const 0)))
+
   ;; __logdd(x) -> dd natural log; assumes x finite > 0 (x==1 yields (0,0))
   (func $__logdd (param $x f64) (result f64 f64)
     (local $b i64) (local $exp i32) (local $e i32) (local $m f64)
@@ -586,23 +629,56 @@
     (local.set $y (call $__cr (local.get $rh) (local.get $rl) (local.get $q)))
     (if (result f64) (local.get $sign) (then (f64.neg (local.get $y))) (else (local.get $y))))
   ;; ── Math.sinh / cosh / tanh ──────────────────────────────────────────────────
+  ;; ── Math.sinh — correctly-rounded: (e^a - e^-a)/2 in dd; e^a/2 split for large a ─
   (func $sinh (export "sinh") (param $x f64) (result f64)
-    (local $ep f64)
-    (local.set $ep (call $exp (local.get $x)))
-    (f64.mul (f64.const 0.5) (f64.sub (local.get $ep) (f64.div (f64.const 1.0) (local.get $ep))))
-  )
+    (local $a f64) (local $val f64)
+    (local $Eh f64) (local $El f64) (local $Eih f64) (local $Eil f64) (local $rh f64) (local $rl f64)
+    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))
+    (if (f64.eq (f64.abs (local.get $x)) (f64.const inf)) (then (return (local.get $x))))
+    (if (f64.eq (local.get $x) (f64.const 0)) (then (return (local.get $x))))
+    (local.set $a (f64.abs (local.get $x)))
+    (if (f64.lt (local.get $a) (f64.const 7.450580596923828e-9)) (then (return (local.get $x))))  ;; 2^-27: sinh(x)≈x
+    (if (f64.gt (local.get $a) (f64.const 300))
+      (then (call $__expS (local.get $a) (i32.const -1)) (local.set $rl) (local.set $rh))            ;; e^a/2 (e^-a negligible)
+      (else
+        (call $__expS (local.get $a) (i32.const 0)) (local.set $El) (local.set $Eh)                  ;; E = e^a
+        (call $__dddiv (f64.const 1) (f64.const 0) (local.get $Eh) (local.get $El)) (local.set $Eil) (local.set $Eih)  ;; 1/E
+        (call $__dda (local.get $Eh) (local.get $El) (f64.neg (local.get $Eih)) (f64.neg (local.get $Eil))) (local.set $rl) (local.set $rh)  ;; E - 1/E
+        (call $__ddmd (local.get $rh) (local.get $rl) (f64.const 0.5)) (local.set $rl) (local.set $rh)))
+    (local.set $val (call $__cr (local.get $rh) (local.get $rl) (i32.const 0)))
+    (f64.copysign (local.get $val) (local.get $x)))
+
+  ;; ── Math.cosh — correctly-rounded: (e^a + e^-a)/2 in dd; e^a/2 split for large a ─
   (func $cosh (export "cosh") (param $x f64) (result f64)
-    (local $ep f64)
-    (local.set $ep (call $exp (local.get $x)))
-    (f64.mul (f64.const 0.5) (f64.add (local.get $ep) (f64.div (f64.const 1.0) (local.get $ep))))
-  )
+    (local $a f64) (local $Eh f64) (local $El f64) (local $Eih f64) (local $Eil f64) (local $rh f64) (local $rl f64)
+    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))
+    (if (f64.eq (f64.abs (local.get $x)) (f64.const inf)) (then (return (f64.const inf))))
+    (local.set $a (f64.abs (local.get $x)))
+    (if (f64.gt (local.get $a) (f64.const 300))
+      (then (call $__expS (local.get $a) (i32.const -1)) (local.set $rl) (local.set $rh))
+      (else
+        (call $__expS (local.get $a) (i32.const 0)) (local.set $El) (local.set $Eh)
+        (call $__dddiv (f64.const 1) (f64.const 0) (local.get $Eh) (local.get $El)) (local.set $Eil) (local.set $Eih)
+        (call $__dda (local.get $Eh) (local.get $El) (local.get $Eih) (local.get $Eil)) (local.set $rl) (local.set $rh)  ;; E + 1/E
+        (call $__ddmd (local.get $rh) (local.get $rl) (f64.const 0.5)) (local.set $rl) (local.set $rh)))
+    (call $__cr (local.get $rh) (local.get $rl) (i32.const 0)))
+
+  ;; ── Math.tanh — correctly-rounded: expm1(2a)/(expm1(2a)+2) in dd; ±1 for |x|≥22 ─
   (func $tanh (export "tanh") (param $x f64) (result f64)
-    (local $e2x f64)
-    (local.set $e2x (call $exp (f64.mul (f64.const 2.0) (local.get $x))))
-    (f64.div
-      (f64.sub (local.get $e2x) (f64.const 1.0))
-      (f64.add (local.get $e2x) (f64.const 1.0)))
-  )
+    (local $a f64) (local $val f64) (local $emh f64) (local $eml f64) (local $rh f64) (local $rl f64)
+    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))
+    (if (f64.eq (local.get $x) (f64.const 0)) (then (return (local.get $x))))
+    (if (f64.eq (f64.abs (local.get $x)) (f64.const inf)) (then (return (f64.copysign (f64.const 1) (local.get $x)))))
+    (local.set $a (f64.abs (local.get $x)))
+    (if (f64.lt (local.get $a) (f64.const 7.450580596923828e-9)) (then (return (local.get $x))))
+    (if (f64.ge (local.get $a) (f64.const 22))
+      (then (local.set $val (f64.const 1)))
+      (else
+        (call $__expm1dd (f64.mul (f64.const 2) (local.get $a))) (local.set $eml) (local.set $emh)  ;; em = e^2a - 1
+        (call $__dda (local.get $emh) (local.get $eml) (f64.const 2) (f64.const 0)) (local.set $rl) (local.set $rh)  ;; em + 2
+        (call $__dddiv (local.get $emh) (local.get $eml) (local.get $rh) (local.get $rl)) (local.set $rl) (local.set $rh)  ;; em/(em+2)
+        (local.set $val (call $__cr (local.get $rh) (local.get $rl) (i32.const 0)))))
+    (f64.copysign (local.get $val) (local.get $x)))
 
   ;; ── Math.asinh / acosh / atanh ───────────────────────────────────────────────
   (func $asinh (export "asinh") (param $x f64) (result f64)
@@ -622,24 +698,16 @@
         (call $log (f64.sub (f64.const 1.0) (local.get $x)))))
   )
 
-  ;; ── Math.expm1 — Taylor series for |x|<1, exp(x)-1 otherwise ────────────────
+  ;; ── Math.expm1 — correctly-rounded: dd (e^x - 1) via $__expm1dd + crRound ────
   (func $expm1 (export "expm1") (param $x f64) (result f64)
-    (local $ax f64)
-    (local $t f64)
-    (local.set $ax (f64.abs (local.get $x)))
-    (if (f64.lt (local.get $ax) (f64.const 2.220446049250313e-16)) (then (return (local.get $x))))
-    (if (f64.ge (local.get $ax) (f64.const 1.0))
-      (then (return (f64.sub (call $exp (local.get $x)) (f64.const 1.0)))))
-    ;; Horner for x*(1 + x/2! + x²/3! + ... + x^7/8!) from innermost
-    (local.set $t (f64.const 1.984126984126984e-4))
-    (local.set $t (f64.add (f64.const 1.388888888888889e-3)  (f64.mul (local.get $x) (local.get $t))))
-    (local.set $t (f64.add (f64.const 8.333333333333333e-3)  (f64.mul (local.get $x) (local.get $t))))
-    (local.set $t (f64.add (f64.const 4.1666666666666664e-2) (f64.mul (local.get $x) (local.get $t))))
-    (local.set $t (f64.add (f64.const 1.6666666666666666e-1) (f64.mul (local.get $x) (local.get $t))))
-    (local.set $t (f64.add (f64.const 5.0e-1)               (f64.mul (local.get $x) (local.get $t))))
-    (local.set $t (f64.add (f64.const 1.0)                  (f64.mul (local.get $x) (local.get $t))))
-    (f64.mul (local.get $x) (local.get $t))
-  )
+    (local $rh f64) (local $rl f64)
+    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))
+    (if (f64.eq (local.get $x) (f64.const inf)) (then (return (f64.const inf))))
+    (if (f64.eq (local.get $x) (f64.const -inf)) (then (return (f64.const -1))))
+    (if (f64.lt (f64.abs (local.get $x)) (f64.const 5.551115123125783e-17)) (then (return (local.get $x))))  ;; 2^-54
+    (if (f64.ge (local.get $x) (f64.const 709.782712893384)) (then (return (f64.const inf))))
+    (call $__expm1dd (local.get $x)) (local.set $rl) (local.set $rh)
+    (call $__cr (local.get $rh) (local.get $rl) (i32.const 0)))
 
   ;; ── Math.log1p — accurate log(1+x) for small x ───────────────────────────────
   (func $log1p (export "log1p") (param $x f64) (result f64)

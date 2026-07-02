@@ -185,3 +185,62 @@ export function atan2Oracle(y: number, x: number): number {
   if (x < 0) R = (y >= 0) ? R + PI : R - PI;
   return roundScaled(R, -Number(P));
 }
+
+// sinh/cosh/tanh + expm1 CR oracles: e^x as a scaled BigInt (mant*2^exp), combine, round.
+function expBig(x: number): { m: bigint; e: number } {
+  const xs = toBig(x); const k = (xs * 2n + (xs >= 0n ? LN2 : -LN2)) / (2n * LN2); const r = xs - k * LN2;
+  let term = SCALE, sum = SCALE; for (let n = 1n; n < 120n; n++) { term = (term * r) >> P; term = term / n; sum += term; if (term < 2n && term > -2n) break; }
+  return { m: sum, e: Number(k) - Number(P) };
+}
+function alignExp(a: { m: bigint; e: number }, b: { m: bigint; e: number }): [bigint, bigint, number] {
+  const emin = Math.min(a.e, b.e); return [a.m << BigInt(a.e - emin), b.m << BigInt(b.e - emin), emin];
+}
+export function sinhOracle(x: number): number {
+  if (x !== x || !isFinite(x)) return x; if (x === 0) return x;
+  const [M1, M2, emin] = alignExp(expBig(x), expBig(-x)); return roundScaled(M1 - M2, emin - 1);
+}
+export function coshOracle(x: number): number {
+  if (x !== x) return NaN; if (!isFinite(x)) return Infinity; if (x === 0) return 1;
+  const [M1, M2, emin] = alignExp(expBig(x), expBig(-x)); return roundScaled(M1 + M2, emin - 1);
+}
+export function tanhOracle(x: number): number {
+  if (x !== x) return NaN; if (x === 0) return x; if (x === Infinity) return 1; if (x === -Infinity) return -1;
+  const [M1, M2] = alignExp(expBig(x), expBig(-x)); return roundScaled(((M1 - M2) << P) / (M1 + M2), -Number(P));
+}
+export function expm1Oracle(x: number): number {
+  if (x !== x) return NaN; if (x === Infinity) return Infinity; if (x === -Infinity) return -1; if (x === 0) return x;
+  const { m, e } = expBig(x); const eP = e + Number(P);
+  return roundScaled((eP >= 0 ? (m << BigInt(eP)) : (m >> BigInt(-eP))) - SCALE, -Number(P));
+}
+
+// asinh/acosh/atanh + log1p CR oracles: ln of a scaled BigInt via decompose + atanh-series.
+function isqrtBig2(n: bigint): bigint { if (n < 2n) return n; let x = n, y = (x + 1n) >> 1n; while (y < x) { x = y; y = (x + n / x) >> 1n; } return x; }
+const sqrtFx2 = (v: bigint) => isqrtBig2(v << P);
+function atanh2s(s: bigint): bigint { const s2 = (s * s) >> P; let t = s, sum = s; for (let k = 1n; k < 300n; k++) { t = (t * s2) >> P; const a = t / (2n * k + 1n); sum += a; if (a < 2n && a > -2n) break; } return sum * 2n; }
+function lnScaled(V: bigint): bigint { // ln(V*2^-P)*2^P
+  const bl = V.toString(2).length; const sh = Number(P) - (bl - 1);
+  let m = sh >= 0 ? (V << BigInt(sh)) : (V >> BigInt(-sh)); let e = bl - 1 - Number(P);
+  if (m >= SQRT2) { m >>= 1n; e += 1; }
+  return BigInt(e) * LN2 + atanh2s(((m - SCALE) * SCALE) / (m + SCALE));
+}
+export function asinhOracle(x: number): number {
+  if (x !== x || !isFinite(x)) return x; if (x === 0) return x;
+  const neg = x < 0, a = Math.abs(x); if (a < 7.450580596923828e-9) return x;
+  const A = toBig(a); const val = roundScaled(lnScaled(A + sqrtFx2(((A * A) >> P) + SCALE)), -Number(P));
+  return neg ? -val : val;
+}
+export function acoshOracle(x: number): number {
+  if (x !== x) return NaN; if (x < 1) return NaN; if (x === 1) return 0; if (x === Infinity) return Infinity;
+  const A = toBig(x); return roundScaled(lnScaled(A + sqrtFx2(((A * A) >> P) - SCALE)), -Number(P));
+}
+export function atanhOracle(x: number): number {
+  if (x !== x) return NaN; const ax = Math.abs(x);
+  if (ax > 1) return NaN; if (x === 1) return Infinity; if (x === -1) return -Infinity; if (x === 0) return x;
+  if (ax < 7.450580596923828e-9) return x;
+  const X = toBig(x); return roundScaled(lnScaled(((SCALE + X) << P) / (SCALE - X)), -Number(P) - 1);
+}
+export function log1pOracle(x: number): number {
+  if (x !== x) return NaN; if (x < -1) return NaN; if (x === -1) return -Infinity; if (x === Infinity) return Infinity; if (x === 0) return x;
+  if (Math.abs(x) < 5.551115123125783e-17) return x;
+  return roundScaled(lnScaled(SCALE + toBig(x)), -Number(P));
+}

@@ -21,18 +21,29 @@ full pipeline: wat2wasm + wasmmerge + Binaryen `-Oz`):
 | `log` `log2` `log10` | `b72afa88f3e` | 1239/1239 (`log2` of powers → exact ints; `1e±300`) |
 | `cbrt` | `8f0c5f77a5b` | 515/515 (subnormals, negatives, `1e±300`) |
 | `atan` | `e0abf54d5b3` | 1528/1528 e2e (dd vs oracle 0/400k; boundaries 1, tan(pi/8), 1e±300) |
-| `asin` `acos` `atan2` | (this commit) | e2e asin 0/915, acos 0/915, atan2 0/908; dd vs oracle 0/300k each |
+| `asin` `acos` `atan2` | `76cdb889028` | e2e asin 0/915, acos 0/915, atan2 0/908; dd vs oracle 0/300k each |
+| `sinh` `cosh` `tanh` `expm1` | (this commit) | e2e sinh/cosh/tanh 0/718, expm1 0/711; dd vs oracle 0/300k each |
 
 Full numbered suite stays **green** (375/375; regression test `67_TrigCorrectlyRounded`). The 38_Math*
 tests use `Math.round`-tolerance so they're robust; only a few tests byte-compare raw trig and those
-use CR==V8 args. All `atan`/`atan2`/`asin`/`acos` test sites use `Math.round(...)` tolerance → robust.
+use CR==V8 args. All CR-swept fns' test sites use `Math.round(...)` tolerance → robust.
 
-**REMAINING (still old ~1e-11 minimax, NOT yet CR):** `expm1`, `log1p`, `pow` (`**`), `sinh`, `cosh`,
-`tanh`, `asinh`, `acosh`, `atanh`. (`sinh`/`cosh`/`tanh`/`expm1` dd refs already validated 0/300k — WAT
-port pending.)
+**REMAINING (still old ~1e-11 minimax, NOT yet CR):** `log1p`, `pow` (`**`), `asinh`, `acosh`, `atanh`.
+(`asinh`/`acosh`/`atanh`/`log1p` dd refs already validated 0/300k — WAT port pending; all four + their
+oracles are in `scripts/math_cr_oracle.ts`.)
 
-**Planned next order:** hyperbolics `sinh`/`cosh`/`tanh` + `expm1` (share dd `exp`/`expm1` helpers) →
-`asinh`/`acosh`/`atanh` + `log1p` (share dd `log`-of-dd) → `pow` (hardest).
+**Planned next order:** `asinh`/`acosh`/`atanh` + `log1p` (share dd `log`-of-dd `$__logddx`) → `pow` (hardest).
+
+## New dd machinery (added with sinh/cosh/tanh/expm1)
+
+- **`$__expS(x, extra) -> (hi,lo)`** — dd `e^x · 2^extra`; the `extra` post-scale folds a `÷2` into the
+  exponent so `e^a/2` never overflows the twoProduct intermediate (dd ops break within factor ~1.3e8 of MAX).
+- **`$__expm1dd(x) -> (hi,lo)`** — dd `e^x − 1`; Taylor `Σ xⁿ/n!` for `|x|<0.5` (dodges the E−1 cancellation),
+  else `$__expS − 1`.
+- **sinh/cosh** = `(E ∓ 1/E)/2` in dd for `|x| ≤ 300`; for `|x| > 300` the `e^-a` term is 0 to CR → just
+  `$__expS(a,-1)` = `e^a/2` (overflow-safe up to the true ±inf at ~710.5). copysign for sinh's sign.
+- **tanh** = `expm1(2a)/(expm1(2a)+2)` in dd (dodges cancellation); `±1` for `|x| ≥ 22` (`1−tanh < 2^-63`). copysign.
+- **expm1** = `crRound($__expm1dd(x))`; `x` for `|x|<2^-54`, `−1` for `x=−∞`, `+∞` for `x≥709.78`.
 
 ## New reusable dd machinery (added with asin/acos/atan2)
 
