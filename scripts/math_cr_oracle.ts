@@ -143,3 +143,45 @@ export function atanOracle(x: number): number {
   if (comp && mid) R = PI4 - R; else if (comp) R = PI2 - R; else if (mid) R = PI4 + R;
   const val = roundScaled(R, -Number(P)); return neg ? -val : val;
 }
+
+// asin/acos/atan2 correctly-rounded oracles (fixed-point): reduce to atan of a scaled value.
+function isqrtBig(n: bigint): bigint { if (n < 2n) return n; let x = n, y = (x + 1n) >> 1n; while (y < x) { x = y; y = (x + n / x) >> 1n; } return x; }
+const sqrtFx = (v: bigint) => isqrtBig(v << P); // sqrt(v/2^P) * 2^P
+function atanFxSigned(A: bigint): bigint { // scaled atan of a scaled value (any sign/magnitude)
+  const neg = A < 0n; if (neg) A = -A; let comp = false, mid = false;
+  if (A > SCALE) { A = (SCALE * SCALE) / A; comp = true; }
+  if (A > TANPI8) { A = ((A - SCALE) * SCALE) / (A + SCALE); mid = true; }
+  let R = atanSeries(A);
+  if (comp && mid) R = PI4 - R; else if (comp) R = PI2 - R; else if (mid) R = PI4 + R;
+  return neg ? -R : R;
+}
+export function asinOracle(x: number): number {
+  if (x !== x) return NaN; if (Math.abs(x) > 1) return NaN;
+  if (x === 1) return Math.PI / 2; if (x === -1) return -Math.PI / 2; if (x === 0) return x;
+  const neg = x < 0, A = toBig(Math.abs(x));
+  const t = (A << P) / sqrtFx(SCALE - ((A * A) >> P)); // (a/sqrt(1-a^2))*2^P
+  const val = roundScaled(atanFxSigned(t), -Number(P)); return neg ? -val : val;
+}
+export function acosOracle(x: number): number {
+  if (x !== x) return NaN; if (Math.abs(x) > 1) return NaN;
+  if (x === 1) return 0; if (x === -1) return roundScaled(PI, -Number(P));
+  const X = toBig(x);
+  const R = atanFxSigned(sqrtFx(((SCALE - X) << P) / (SCALE + X))); // 2*atan(sqrt((1-x)/(1+x)))
+  return roundScaled(2n * R, -Number(P));
+}
+export function atan2Oracle(y: number, x: number): number {
+  if (x !== x || y !== y) return NaN;
+  const piCR = roundScaled(PI, -Number(P)), pi2 = Math.PI / 2;
+  if (!isFinite(x) || !isFinite(y)) {
+    if (!isFinite(x) && !isFinite(y)) { const a = x > 0 ? roundScaled(PI4, -Number(P)) : roundScaled(3n * PI4, -Number(P)); return y > 0 ? a : -a; }
+    if (!isFinite(y)) return y > 0 ? pi2 : -pi2;
+    return x > 0 ? (y < 0 || Object.is(y, -0) ? -0 : 0) : (y < 0 || Object.is(y, -0) ? -piCR : piCR);
+  }
+  const yneg = y < 0 || Object.is(y, -0);
+  if (x === 0 && y === 0) return (1 / x > 0) ? y : (yneg ? -piCR : piCR);
+  if (y === 0) return (1 / x > 0) ? (yneg ? -0 : 0) : (yneg ? -piCR : piCR);
+  if (x === 0) return yneg ? -pi2 : pi2;
+  let R = atanFxSigned((toBig(y) << P) / toBig(x));
+  if (x < 0) R = (y >= 0) ? R + PI : R - PI;
+  return roundScaled(R, -Number(P));
+}

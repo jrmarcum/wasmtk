@@ -20,19 +20,30 @@ full pipeline: wat2wasm + wasmmerge + Binaryen `-Oz`):
 | `exp` | `bd69b201409` | 518/518 (subnormal→`exp(-745)`, overflow→`exp(709)`) |
 | `log` `log2` `log10` | `b72afa88f3e` | 1239/1239 (`log2` of powers → exact ints; `1e±300`) |
 | `cbrt` | `8f0c5f77a5b` | 515/515 (subnormals, negatives, `1e±300`) |
-| `atan` | (this commit) | 1528/1528 e2e (dd vs oracle 0/400k; boundaries 1, tan(pi/8), 1e±300) |
+| `atan` | `e0abf54d5b3` | 1528/1528 e2e (dd vs oracle 0/400k; boundaries 1, tan(pi/8), 1e±300) |
+| `asin` `acos` `atan2` | (this commit) | e2e asin 0/915, acos 0/915, atan2 0/908; dd vs oracle 0/300k each |
 
 Full numbered suite stays **green** (375/375; regression test `67_TrigCorrectlyRounded`). The 38_Math*
 tests use `Math.round`-tolerance so they're robust; only a few tests byte-compare raw trig and those
-use CR==V8 args. All 3 `atan`/`atan2` test sites use `Math.round(...)` tolerance → robust to the CR change.
+use CR==V8 args. All `atan`/`atan2`/`asin`/`acos` test sites use `Math.round(...)` tolerance → robust.
 
-**REMAINING (still old ~1e-11 minimax, NOT yet CR):** `expm1`, `log1p`, `pow` (`**`), `asin`, `acos`,
-`atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`. NOTE: `asin`/`acos`/`atan2` now call the new
-CR `atan` internally but their OWN reductions (e.g. `asin`=`atan(a/√(1−a²))`) are still plain-double, so
-they are NOT yet CR — they just got more accurate. To make them CR, do the reduction in dd.
+**REMAINING (still old ~1e-11 minimax, NOT yet CR):** `expm1`, `log1p`, `pow` (`**`), `sinh`, `cosh`,
+`tanh`, `asinh`, `acosh`, `atanh`. (`sinh`/`cosh`/`tanh`/`expm1` dd refs already validated 0/300k — WAT
+port pending.)
 
-**Planned next order:** `asin`/`acos` (reduce in dd, feed the dd atan) + `atan2` (dd `y/x` + dd quadrant
-add) → hyperbolics `sinh`/`cosh`/`tanh`
+**Planned next order:** hyperbolics `sinh`/`cosh`/`tanh` + `expm1` (share dd `exp`/`expm1` helpers) →
+`asinh`/`acosh`/`atanh` + `log1p` (share dd `log`-of-dd) → `pow` (hardest).
+
+## New reusable dd machinery (added with asin/acos/atan2)
+
+- **`$__ddsqrt(ah,al) -> (hi,lo)`** — QD one-step Newton sqrt (`x=1/√ah; ax=ah·x; ax + (a−ax²)·x/2`), ~106 bits.
+- **`$__atandd(zh,zl) -> (hi,lo)`** — the atan CORE as a dd→dd function (reduction + dd Taylor + pi combine,
+  signed). `$atan` = `crRound($__atandd(x,0))`. `asin`/`acos`/`atan2` feed it a dd argument.
+- **asin** = `atan(a/√(1−a²))` all in dd (a=|x|, 1−a² in dd, `$__ddsqrt`, `$__dddiv`, `$__atandd`), crRound + sign.
+- **acos** = `2·atan(√((1−x)/(1+x)))` — one dd formula accurate across the whole (−1,1) (x=1→0, x=−1→π).
+- **atan2** = `atan(y/x)` with y/x in dd, then ± dd π quadrant shift; full IEEE ±0/±∞ special cases via `copysign`.
+- Oracles (`asinOracle`/`acosOracle`/`atan2Oracle`) added to `scripts/math_cr_oracle.ts` (fixed-point
+  `isqrtBig`/`sqrtFx` + `atanFxSigned`).
 (need an internal dd `exp` returning `(hi,lo)` BEFORE the final scale) → `asinh`/`acosh`/`atanh`
 (via `log`) → `expm1`/`log1p` (range-split near 0) → `pow` (hardest: high-precision `y·log x` +
 many special cases; may need triple-double or accept ≤1 ULP with documented note).

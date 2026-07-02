@@ -248,40 +248,37 @@
         (f64.add (local.get $th) (local.get $tl)))))
 
   ;; ── Math.atan — two-stage range reduction + fdlibm aT[0..10] minimax poly ─────
-  ;; ── Math.atan — correctly-rounded: two-stage dd reduction + dd Taylor + crRound ─
-  ;; z=|x|; comp: z>1 → 1/z (atan = pi/2 - .);  mid: z>tan(pi/8) → (z-1)/(z+1) (atan = pi/4 + .)
-  ;; all reductions + the odd-reciprocal series done in double-double so the result is CR.
-  (func $atan (export "atan") (param $x f64) (result f64)
+  ;; ddSqrt((ah,al)) -> (hi,lo)   one-step Newton (QD), ~106 bits
+  (func $__ddsqrt (param $ah f64) (param $al f64) (result f64 f64)
+    (local $x f64) (local $ax f64) (local $sh f64) (local $sl f64) (local $dh f64) (local $dl f64) (local $e f64)
+    (if (f64.le (local.get $ah) (f64.const 0)) (then (return (f64.const 0) (f64.const 0))))
+    (local.set $x (f64.div (f64.const 1.0) (f64.sqrt (local.get $ah))))
+    (local.set $ax (f64.mul (local.get $ah) (local.get $x)))
+    (call $__ddm (local.get $ax) (f64.const 0) (local.get $ax) (f64.const 0)) (local.set $sl) (local.set $sh)
+    (call $__dda (local.get $ah) (local.get $al) (f64.neg (local.get $sh)) (f64.neg (local.get $sl))) (local.set $dl) (local.set $dh)
+    (local.set $e (f64.mul (f64.mul (local.get $dh) (local.get $x)) (f64.const 0.5)))
+    (call $__ts (local.get $ax) (local.get $e)))
+
+  ;; __atandd((zh,zl)) -> (rh,rl)   signed dd atan of a dd argument (reduction + dd Taylor + pi combine)
+  ;; z=|z|; comp: z>1 → 1/z (atan = pi/2 - .);  mid: z>tan(pi/8) → (z-1)/(z+1) (atan = pi/4 + .)
+  (func $__atandd (param $zh f64) (param $zl f64) (result f64 f64)
     (local $neg i32) (local $comp i32) (local $mid i32) (local $k i32)
-    (local $zh f64) (local $zl f64) (local $z2h f64) (local $z2l f64)
-    (local $th f64) (local $tl f64) (local $sh f64) (local $sl f64)
+    (local $z2h f64) (local $z2l f64) (local $th f64) (local $tl f64) (local $sh f64) (local $sl f64)
     (local $ch f64) (local $cl f64) (local $ph f64) (local $pl f64)
     (local $nh f64) (local $nl f64) (local $dh f64) (local $dl f64)
-    (local $r f64)
-    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))
-    (if (f64.eq (local.get $x) (f64.const inf)) (then (return (f64.const 1.5707963267948966))))
-    (if (f64.eq (local.get $x) (f64.const -inf)) (then (return (f64.const -1.5707963267948966))))
-    (if (f64.eq (local.get $x) (f64.const 0)) (then (return (local.get $x))))
-    ;; z = |x|
-    (local.set $zh (local.get $x))
-    (if (f64.lt (local.get $x) (f64.const 0))
-      (then (local.set $neg (i32.const 1)) (local.set $zh (f64.neg (local.get $x)))))
-    (local.set $zl (f64.const 0))
-    ;; Stage 1: complement reduction for z > 1  → z = 1/z (dd)
+    (if (f64.lt (local.get $zh) (f64.const 0))
+      (then (local.set $neg (i32.const 1)) (local.set $zh (f64.neg (local.get $zh))) (local.set $zl (f64.neg (local.get $zl)))))
     (if (f64.gt (local.get $zh) (f64.const 1.0))
       (then
         (call $__dddiv (f64.const 1) (f64.const 0) (local.get $zh) (local.get $zl)) (local.set $zl) (local.set $zh)
         (local.set $comp (i32.const 1))))
-    ;; Stage 2: mid-range reduction for z > tan(pi/8)  → z = (z-1)/(z+1) (dd)
     (if (f64.gt (local.get $zh) (f64.const 0.4142135623730951))
       (then
         (call $__dda (local.get $zh) (local.get $zl) (f64.const -1) (f64.const 0)) (local.set $nl) (local.set $nh)
         (call $__dda (local.get $zh) (local.get $zl) (f64.const 1) (f64.const 0)) (local.set $dl) (local.set $dh)
         (call $__dddiv (local.get $nh) (local.get $nl) (local.get $dh) (local.get $dl)) (local.set $zl) (local.set $zh)
         (local.set $mid (i32.const 1))))
-    ;; z2 = z*z (dd)
     (call $__ddm (local.get $zh) (local.get $zl) (local.get $zh) (local.get $zl)) (local.set $z2l) (local.set $z2h)
-    ;; series: sum = z - z^3/3 + z^5/5 - ... (dd; /(2k+1) via dd reciprocal)
     (local.set $th (local.get $zh)) (local.set $tl (local.get $zl))   ;; term = z^(2k+1)
     (local.set $sh (local.get $zh)) (local.set $sl (local.get $zl))   ;; sum
     (local.set $k (i32.const 1))
@@ -295,69 +292,104 @@
       (call $__dda (local.get $sh) (local.get $sl) (local.get $ph) (local.get $pl)) (local.set $sl) (local.set $sh)
       (local.set $k (i32.add (local.get $k) (i32.const 1)))
       (br $lp)))
-    ;; combine with pi/4 or pi/2 in dd
     (if (i32.and (local.get $comp) (local.get $mid))
       (then (call $__dda (f64.const 0.7853981633974483) (f64.const 3.061616997868383e-17) (f64.neg (local.get $sh)) (f64.neg (local.get $sl))) (local.set $sl) (local.set $sh))
       (else (if (local.get $comp)
         (then (call $__dda (f64.const 1.5707963267948966) (f64.const 6.123233995736766e-17) (f64.neg (local.get $sh)) (f64.neg (local.get $sl))) (local.set $sl) (local.set $sh))
         (else (if (local.get $mid)
           (then (call $__dda (f64.const 0.7853981633974483) (f64.const 3.061616997868383e-17) (local.get $sh) (local.get $sl)) (local.set $sl) (local.set $sh)))))))
-    ;; correctly round (sum)*2^0
-    (local.set $r (call $__cr (local.get $sh) (local.get $sl) (i32.const 0)))
+    (if (local.get $neg)
+      (then (local.set $sh (f64.neg (local.get $sh))) (local.set $sl (f64.neg (local.get $sl)))))
+    (local.get $sh) (local.get $sl))
+
+  ;; ── Math.atan — correctly-rounded: dd atan core + crRound ────────────────────
+  (func $atan (export "atan") (param $x f64) (result f64)
+    (local $rh f64) (local $rl f64)
+    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))
+    (if (f64.eq (local.get $x) (f64.const inf)) (then (return (f64.const 1.5707963267948966))))
+    (if (f64.eq (local.get $x) (f64.const -inf)) (then (return (f64.const -1.5707963267948966))))
+    (if (f64.eq (local.get $x) (f64.const 0)) (then (return (local.get $x))))
+    (call $__atandd (local.get $x) (f64.const 0)) (local.set $rl) (local.set $rh)
+    (call $__cr (local.get $rh) (local.get $rl) (i32.const 0)))
+
+  ;; ── Math.atan2(y, x) — correctly-rounded: dd atan(y/x) + dd quadrant shift ────
+  (func $atan2 (export "atan2") (param $y f64) (param $x f64) (result f64)
+    (local $ysneg i32) (local $rh f64) (local $rl f64)
+    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))
+    (if (f64.ne (local.get $y) (local.get $y)) (then (return (local.get $y))))
+    (local.set $ysneg (f64.lt (f64.copysign (f64.const 1) (local.get $y)) (f64.const 0)))
+    ;; both infinite: x>0 → ±pi/4, x<0 → ±3pi/4
+    (if (i32.and (f64.eq (f64.abs (local.get $x)) (f64.const inf)) (f64.eq (f64.abs (local.get $y)) (f64.const inf)))
+      (then (return (f64.copysign
+        (select (f64.const 2.356194490192345) (f64.const 0.7853981633974483) (f64.lt (local.get $x) (f64.const 0)))
+        (local.get $y)))))
+    ;; y infinite (x finite): ±pi/2
+    (if (f64.eq (f64.abs (local.get $y)) (f64.const inf))
+      (then (return (f64.copysign (f64.const 1.5707963267948966) (local.get $y)))))
+    ;; x infinite (y finite): x>0 → ±0 ; x<0 → ±pi
+    (if (f64.eq (f64.abs (local.get $x)) (f64.const inf))
+      (then (return (f64.copysign
+        (select (f64.const 3.141592653589793) (f64.const 0) (f64.lt (local.get $x) (f64.const 0)))
+        (local.get $y)))))
+    ;; x == 0
+    (if (f64.eq (local.get $x) (f64.const 0))
+      (then
+        (if (f64.ne (local.get $y) (f64.const 0))
+          (then (return (f64.copysign (f64.const 1.5707963267948966) (local.get $y)))))
+        ;; y == 0: x=+0 → ±0 ; x=-0 → ±pi
+        (if (f64.lt (f64.copysign (f64.const 1) (local.get $x)) (f64.const 0))
+          (then (return (f64.copysign (f64.const 3.141592653589793) (local.get $y)))))
+        (return (f64.copysign (f64.const 0) (local.get $y)))))
+    ;; y == 0 (x finite nonzero): x>0 → ±0 ; x<0 → ±pi
+    (if (f64.eq (local.get $y) (f64.const 0))
+      (then
+        (if (f64.gt (local.get $x) (f64.const 0)) (then (return (f64.copysign (f64.const 0) (local.get $y)))))
+        (return (f64.copysign (f64.const 3.141592653589793) (local.get $y)))))
+    ;; general finite nonzero: r = atan(y/x), with y/x computed in dd for full accuracy
+    (call $__dddiv (local.get $y) (f64.const 0) (local.get $x) (f64.const 0)) (local.set $rl) (local.set $rh)
+    (call $__atandd (local.get $rh) (local.get $rl)) (local.set $rl) (local.set $rh)
+    (if (f64.lt (local.get $x) (f64.const 0))
+      (then (if (f64.ge (local.get $y) (f64.const 0))
+        (then (call $__dda (local.get $rh) (local.get $rl) (f64.const 3.141592653589793) (f64.const 1.2246467991473532e-16)) (local.set $rl) (local.set $rh))
+        (else (call $__dda (local.get $rh) (local.get $rl) (f64.const -3.141592653589793) (f64.const -1.2246467991473532e-16)) (local.set $rl) (local.set $rh)))))
+    (call $__cr (local.get $rh) (local.get $rl) (i32.const 0)))
+
+  ;; ── Math.asin — correctly-rounded: atan(x/sqrt(1-x^2)) all in dd ─────────────
+  (func $asin (export "asin") (param $x f64) (result f64)
+    (local $neg i32) (local $a f64) (local $r f64)
+    (local $a2h f64) (local $a2l f64) (local $omh f64) (local $oml f64)
+    (local $sh f64) (local $sl f64) (local $th f64) (local $tl f64) (local $rh f64) (local $rl f64)
+    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))
+    (if (f64.gt (f64.abs (local.get $x)) (f64.const 1.0)) (then (return (f64.const nan))))
+    (if (f64.eq (local.get $x) (f64.const 1.0)) (then (return (f64.const 1.5707963267948966))))
+    (if (f64.eq (local.get $x) (f64.const -1.0)) (then (return (f64.const -1.5707963267948966))))
+    (if (f64.eq (local.get $x) (f64.const 0)) (then (return (local.get $x))))
+    (local.set $a (local.get $x))
+    (if (f64.lt (local.get $x) (f64.const 0))
+      (then (local.set $neg (i32.const 1)) (local.set $a (f64.neg (local.get $x)))))
+    (call $__ddm (local.get $a) (f64.const 0) (local.get $a) (f64.const 0)) (local.set $a2l) (local.set $a2h)
+    (call $__dda (f64.const 1) (f64.const 0) (f64.neg (local.get $a2h)) (f64.neg (local.get $a2l))) (local.set $oml) (local.set $omh)
+    (call $__ddsqrt (local.get $omh) (local.get $oml)) (local.set $sl) (local.set $sh)
+    (call $__dddiv (local.get $a) (f64.const 0) (local.get $sh) (local.get $sl)) (local.set $tl) (local.set $th)
+    (call $__atandd (local.get $th) (local.get $tl)) (local.set $rl) (local.set $rh)
+    (local.set $r (call $__cr (local.get $rh) (local.get $rl) (i32.const 0)))
     (if (result f64) (local.get $neg) (then (f64.neg (local.get $r))) (else (local.get $r))))
 
-  ;; ── Math.atan2(y, x) ─────────────────────────────────────────────────────────
-  (func $atan2 (export "atan2") (param $y f64) (param $x f64) (result f64)
-    (local $r f64)
-    ;; Special case: x = 0
-    (if (f64.eq (local.get $x) (f64.const 0.0))
-      (then
-        (if (f64.gt (local.get $y) (f64.const 0.0))
-          (then (return (f64.const 1.5707963267948966))))
-        (if (f64.lt (local.get $y) (f64.const 0.0))
-          (then (return (f64.const -1.5707963267948966))))
-        (return (f64.const 0.0))))
-    (local.set $r (call $atan (f64.div (local.get $y) (local.get $x))))
-    ;; Adjust for x < 0 quadrants
-    (if (f64.lt (local.get $x) (f64.const 0.0))
-      (then
-        (if (f64.ge (local.get $y) (f64.const 0.0))
-          (then (local.set $r (f64.add (local.get $r) (f64.const 3.141592653589793))))
-          (else (local.set $r (f64.sub (local.get $r) (f64.const 3.141592653589793)))))))
-    (local.get $r)
-  )
-
-  ;; ── Math.asin — atan(x/sqrt(1-x²)) for |x|<=0.7, complement otherwise ───────
-  (func $asin (export "asin") (param $x f64) (result f64)
-    (local $neg i32)
-    (local $a f64)
-    (local $r f64)
-    (local.set $neg (i32.const 0))
-    (local.set $a (local.get $x))
-    (if (f64.lt (local.get $x) (f64.const 0.0))
-      (then
-        (local.set $neg (i32.const 1))
-        (local.set $a (f64.neg (local.get $x)))))
-    (if (f64.le (local.get $a) (f64.const 0.7))
-      (then
-        (local.set $r (call $atan
-          (f64.div (local.get $a)
-            (f64.sqrt (f64.sub (f64.const 1.0) (f64.mul (local.get $a) (local.get $a))))))))
-      (else
-        (local.set $r (f64.sub (f64.const 1.5707963267948966)
-          (f64.mul (f64.const 2.0)
-            (call $asin
-              (f64.sqrt (f64.mul (f64.const 0.5)
-                (f64.sub (f64.const 1.0) (local.get $a))))))))))
-    (if (i32.eq (local.get $neg) (i32.const 1))
-      (then (local.set $r (f64.neg (local.get $r)))))
-    (local.get $r)
-  )
-
-  ;; ── Math.acos = pi/2 - asin(x) ───────────────────────────────────────────────
+  ;; ── Math.acos — correctly-rounded: 2*atan(sqrt((1-x)/(1+x))) all in dd ────────
   (func $acos (export "acos") (param $x f64) (result f64)
-    (f64.sub (f64.const 1.5707963267948966) (call $asin (local.get $x)))
-  )
+    (local $numh f64) (local $numl f64) (local $denh f64) (local $denl f64)
+    (local $rh f64) (local $rl f64) (local $sh f64) (local $sl f64) (local $ah f64) (local $al f64)
+    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))
+    (if (f64.gt (f64.abs (local.get $x)) (f64.const 1.0)) (then (return (f64.const nan))))
+    (if (f64.eq (local.get $x) (f64.const 1.0)) (then (return (f64.const 0))))
+    (if (f64.eq (local.get $x) (f64.const -1.0)) (then (return (f64.const 3.141592653589793))))
+    (call $__dda (f64.const 1) (f64.const 0) (f64.neg (local.get $x)) (f64.const 0)) (local.set $numl) (local.set $numh)
+    (call $__dda (f64.const 1) (f64.const 0) (local.get $x) (f64.const 0)) (local.set $denl) (local.set $denh)
+    (call $__dddiv (local.get $numh) (local.get $numl) (local.get $denh) (local.get $denl)) (local.set $rl) (local.set $rh)
+    (call $__ddsqrt (local.get $rh) (local.get $rl)) (local.set $sl) (local.set $sh)
+    (call $__atandd (local.get $sh) (local.get $sl)) (local.set $al) (local.set $ah)
+    (call $__ddmd (local.get $ah) (local.get $al) (f64.const 2)) (local.set $rl) (local.set $rh)
+    (call $__cr (local.get $rh) (local.get $rl) (i32.const 0)))
 
   ;; scalbn(x, n) = x * 2^n, correctly rounded (musl-style, safe for subnormal/overflow)
   (func $__scalbn (param $x f64) (param $n i32) (result f64)
