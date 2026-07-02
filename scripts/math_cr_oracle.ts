@@ -122,3 +122,24 @@ function scCos(r: bigint): bigint { const r2 = (r * r) >> P; let t = SCALE, s = 
 export const sinOracle = (x: number) => !isFinite(x) ? NaN : roundScaled(scSin(trigReduce(x)), -Number(P));
 export const cosOracle = (x: number) => !isFinite(x) ? NaN : roundScaled(scCos(trigReduce(x)), -Number(P));
 export const tanOracle = (x: number) => !isFinite(x) ? NaN : roundScaled((scSin(trigReduce(x)) * SCALE) / scCos(trigReduce(x)), -Number(P));
+
+// atan: two-stage reduction (complement 1/z, mid (z-1)/(z+1)) into |z|<=tan(pi/8), then series.
+const PI4 = PI / 4n, PI2 = PI / 2n, TANPI8 = SQRT2 - SCALE;
+function atanSeries(A: bigint): bigint {
+  const A2 = (A * A) >> P; let term = A, sum = A;
+  for (let k = 1n; k < 400n; k++) { term = (term * A2) >> P; const add = (k % 2n === 1n ? -term : term) / (2n * k + 1n); sum += add; if (add < 2n && add > -2n) break; }
+  return sum;
+}
+export function atanOracle(x: number): number {
+  if (x !== x) return NaN;
+  if (x === Infinity) return Math.PI / 2; if (x === -Infinity) return -Math.PI / 2;
+  if (x === 0) return x;
+  if (Math.abs(x) < 7.450580596923828e-9) return x; // 2^-27: atan(x)===x; toBig would underflow
+  const neg = x < 0; let A = toBig(x); if (A < 0n) A = -A;
+  let comp = false, mid = false;
+  if (A > SCALE) { A = (SCALE * SCALE) / A; comp = true; }
+  if (A > TANPI8) { A = ((A - SCALE) * SCALE) / (A + SCALE); mid = true; }
+  let R = atanSeries(A);
+  if (comp && mid) R = PI4 - R; else if (comp) R = PI2 - R; else if (mid) R = PI4 + R;
+  const val = roundScaled(R, -Number(P)); return neg ? -val : val;
+}

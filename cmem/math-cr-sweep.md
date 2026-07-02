@@ -9,7 +9,7 @@ Chosen over "match V8 bit-for-bit" because modern V8 delegates `Math.sin/cos` to
 `shared::sin/cos`, which are themselves only *faithfully*-rounded (~99.76% CR) and a moving,
 version-pinned target.
 
-## Status (2026-07-01)
+## Status (2026-07-02)
 
 **DONE — correctly-rounded + committed** (each validated bit-for-bit vs a BigInt oracle THROUGH the
 full pipeline: wat2wasm + wasmmerge + Binaryen `-Oz`):
@@ -20,15 +20,19 @@ full pipeline: wat2wasm + wasmmerge + Binaryen `-Oz`):
 | `exp` | `bd69b201409` | 518/518 (subnormal→`exp(-745)`, overflow→`exp(709)`) |
 | `log` `log2` `log10` | `b72afa88f3e` | 1239/1239 (`log2` of powers → exact ints; `1e±300`) |
 | `cbrt` | `8f0c5f77a5b` | 515/515 (subnormals, negatives, `1e±300`) |
+| `atan` | (this commit) | 1528/1528 e2e (dd vs oracle 0/400k; boundaries 1, tan(pi/8), 1e±300) |
 
 Full numbered suite stays **green** (375/375; regression test `67_TrigCorrectlyRounded`). The 38_Math*
 tests use `Math.round`-tolerance so they're robust; only a few tests byte-compare raw trig and those
-use CR==V8 args.
+use CR==V8 args. All 3 `atan`/`atan2` test sites use `Math.round(...)` tolerance → robust to the CR change.
 
 **REMAINING (still old ~1e-11 minimax, NOT yet CR):** `expm1`, `log1p`, `pow` (`**`), `asin`, `acos`,
-`atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`.
+`atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`. NOTE: `asin`/`acos`/`atan2` now call the new
+CR `atan` internally but their OWN reductions (e.g. `asin`=`atan(a/√(1−a²))`) are still plain-double, so
+they are NOT yet CR — they just got more accurate. To make them CR, do the reduction in dd.
 
-**Planned next order:** `atan` (unlocks `asin`/`acos`/`atan2`) → hyperbolics `sinh`/`cosh`/`tanh`
+**Planned next order:** `asin`/`acos` (reduce in dd, feed the dd atan) + `atan2` (dd `y/x` + dd quadrant
+add) → hyperbolics `sinh`/`cosh`/`tanh`
 (need an internal dd `exp` returning `(hi,lo)` BEFORE the final scale) → `asinh`/`acosh`/`atanh`
 (via `log`) → `expm1`/`log1p` (range-split near 0) → `pow` (hardest: high-precision `y·log x` +
 many special cases; may need triple-double or accept ≤1 ULP with documented note).
@@ -99,6 +103,14 @@ many special cases; may need triple-double or accept ≤1 ULP with documented no
   dd consts `[1.4426950408889634, 2.0355273740931033e-17]`, `[0.4342944819032518, 1.098319650216765e-17]`.
 - **cbrt:** decompose `|x|=m·2^e`, `e=3q+s` (`s∈{0,1,2}`), `v=m·2^s∈[1,8)`; 7 double-Newton
   `y=(2y+v/y²)/3` from `y=1.5`; ONE dd Newton `y−(y³−v)/(3y²)`; `$__cr(y_dd, q)`; reapply sign.
+- **atan:** `z=|x|`; **all in dd**: comp `z>1 → z=1/z` (`$__dddiv`, atan=π/2−·); mid
+  `z>tan(π/8)=0.4142135623730951 → z=(z−1)/(z+1)` (atan=π/4+·) → `|z|≤tan(π/8)`. dd Taylor
+  `Σ(−1)ᵏ z^(2k+1)/(2k+1)` with the odd divisor via `$__ddri` (NOT `ddMulD(t,1/n)` — the rounded
+  `1/3,1/5,…` cost ~0.2% CR); fixed 50 iters (worst-case |z|≈0.414 needs ~45). Combine with dd
+  π/4=`[0.7853981633974483, 3.061616997868383e-17]` / π/2=`[1.5707963267948966, 6.123233995736766e-17]`,
+  then `$__cr(sum, 0)`, reapply sign. Special: NaN→x, ±∞→±π/2, ±0→x. Oracle: `atan(x)===x` for
+  `|x|<2^-27` (else `toBig` underflows). Oracle differs from V8 `Math.atan` ~2.5% (V8 atan less
+  accurately rounded than its sin) — INTENDED.
 
 ## Regen + test commands
 
