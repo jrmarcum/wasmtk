@@ -553,6 +553,12 @@
     ;; el2 = ddmd([LN2H,LN2L], e)
     (call $__ddmd (f64.const 0.6931471805599453) (f64.const 2.3190468138462996e-17) (f64.convert_i32_s (local.get $e))) (local.set $ell) (local.set $elh)
     (call $__dda (local.get $elh) (local.get $ell) (local.get $lmh) (local.get $lml)))
+
+  ;; __logddx((ah,al)) -> (hi,lo)   ln of a dd argument = logdd(ah) + al/ah  ((al/ah)^2/2 ~ 2^-107 negligible)
+  (func $__logddx (param $ah f64) (param $al f64) (result f64 f64)
+    (local $lh f64) (local $ll f64)
+    (call $__logdd (local.get $ah)) (local.set $ll) (local.set $lh)
+    (call $__dda (local.get $lh) (local.get $ll) (f64.div (local.get $al) (local.get $ah)) (f64.const 0)))
   ;; ── Math.log ─────────────────────────────────────────────────────────────────
   (func $log (export "log") (param $x f64) (result f64)
     (local $rh f64) (local $rl f64)
@@ -680,23 +686,61 @@
         (local.set $val (call $__cr (local.get $rh) (local.get $rl) (i32.const 0)))))
     (f64.copysign (local.get $val) (local.get $x)))
 
-  ;; ── Math.asinh / acosh / atanh ───────────────────────────────────────────────
+  ;; ── Math.asinh — correctly-rounded: log(a+sqrt(a^2+1)) in dd; log(a)+ln2 for huge a ─
   (func $asinh (export "asinh") (param $x f64) (result f64)
-    (call $log
-      (f64.add (local.get $x)
-        (f64.sqrt (f64.add (f64.mul (local.get $x) (local.get $x)) (f64.const 1.0)))))
-  )
+    (local $a f64) (local $val f64)
+    (local $th f64) (local $tl f64) (local $argh f64) (local $argl f64) (local $rh f64) (local $rl f64)
+    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))
+    (if (f64.eq (f64.abs (local.get $x)) (f64.const inf)) (then (return (local.get $x))))
+    (if (f64.eq (local.get $x) (f64.const 0)) (then (return (local.get $x))))
+    (local.set $a (f64.abs (local.get $x)))
+    (if (f64.lt (local.get $a) (f64.const 7.450580596923828e-9)) (then (return (local.get $x))))  ;; asinh(x)≈x
+    (if (f64.gt (local.get $a) (f64.const 1e150))
+      (then  ;; a+sqrt(a^2+1) ≈ 2a → log(a)+ln2
+        (call $__logdd (local.get $a)) (local.set $rl) (local.set $rh)
+        (call $__dda (local.get $rh) (local.get $rl) (f64.const 0.6931471805599453) (f64.const 2.3190468138462996e-17)) (local.set $rl) (local.set $rh))
+      (else
+        (call $__ddm (local.get $a) (f64.const 0) (local.get $a) (f64.const 0)) (local.set $tl) (local.set $th)  ;; a^2
+        (call $__dda (local.get $th) (local.get $tl) (f64.const 1) (f64.const 0)) (local.set $tl) (local.set $th)  ;; a^2+1
+        (call $__ddsqrt (local.get $th) (local.get $tl)) (local.set $tl) (local.set $th)  ;; sqrt(a^2+1)
+        (call $__dda (local.get $a) (f64.const 0) (local.get $th) (local.get $tl)) (local.set $argl) (local.set $argh)  ;; a+sqrt
+        (call $__logddx (local.get $argh) (local.get $argl)) (local.set $rl) (local.set $rh)))
+    (local.set $val (call $__cr (local.get $rh) (local.get $rl) (i32.const 0)))
+    (f64.copysign (local.get $val) (local.get $x)))
+
+  ;; ── Math.acosh — correctly-rounded: log(x+sqrt(x^2-1)) in dd; log(x)+ln2 for huge x ─
   (func $acosh (export "acosh") (param $x f64) (result f64)
-    (call $log
-      (f64.add (local.get $x)
-        (f64.sqrt (f64.sub (f64.mul (local.get $x) (local.get $x)) (f64.const 1.0)))))
-  )
+    (local $th f64) (local $tl f64) (local $argh f64) (local $argl f64) (local $rh f64) (local $rl f64)
+    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))
+    (if (f64.lt (local.get $x) (f64.const 1.0)) (then (return (f64.const nan))))
+    (if (f64.eq (local.get $x) (f64.const 1.0)) (then (return (f64.const 0))))
+    (if (f64.eq (local.get $x) (f64.const inf)) (then (return (f64.const inf))))
+    (if (f64.gt (local.get $x) (f64.const 1e150))
+      (then
+        (call $__logdd (local.get $x)) (local.set $rl) (local.set $rh)
+        (call $__dda (local.get $rh) (local.get $rl) (f64.const 0.6931471805599453) (f64.const 2.3190468138462996e-17)) (local.set $rl) (local.set $rh))
+      (else
+        (call $__ddm (local.get $x) (f64.const 0) (local.get $x) (f64.const 0)) (local.set $tl) (local.set $th)  ;; x^2
+        (call $__dda (local.get $th) (local.get $tl) (f64.const -1) (f64.const 0)) (local.set $tl) (local.set $th)  ;; x^2-1
+        (call $__ddsqrt (local.get $th) (local.get $tl)) (local.set $tl) (local.set $th)  ;; sqrt(x^2-1)
+        (call $__dda (local.get $x) (f64.const 0) (local.get $th) (local.get $tl)) (local.set $argl) (local.set $argh)  ;; x+sqrt
+        (call $__logddx (local.get $argh) (local.get $argl)) (local.set $rl) (local.set $rh)))
+    (call $__cr (local.get $rh) (local.get $rl) (i32.const 0)))
+
+  ;; ── Math.atanh — correctly-rounded: 0.5*log((1+x)/(1-x)) in dd ───────────────
   (func $atanh (export "atanh") (param $x f64) (result f64)
-    (f64.mul (f64.const 0.5)
-      (f64.sub
-        (call $log (f64.add (f64.const 1.0) (local.get $x)))
-        (call $log (f64.sub (f64.const 1.0) (local.get $x)))))
-  )
+    (local $numh f64) (local $numl f64) (local $denh f64) (local $denl f64) (local $rh f64) (local $rl f64)
+    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))
+    (if (f64.gt (f64.abs (local.get $x)) (f64.const 1.0)) (then (return (f64.const nan))))
+    (if (f64.eq (local.get $x) (f64.const 1.0)) (then (return (f64.const inf))))
+    (if (f64.eq (local.get $x) (f64.const -1.0)) (then (return (f64.const -inf))))
+    (if (f64.lt (f64.abs (local.get $x)) (f64.const 7.450580596923828e-9)) (then (return (local.get $x))))
+    (call $__dda (f64.const 1) (f64.const 0) (local.get $x) (f64.const 0)) (local.set $numl) (local.set $numh)  ;; 1+x
+    (call $__dda (f64.const 1) (f64.const 0) (f64.neg (local.get $x)) (f64.const 0)) (local.set $denl) (local.set $denh)  ;; 1-x
+    (call $__dddiv (local.get $numh) (local.get $numl) (local.get $denh) (local.get $denl)) (local.set $rl) (local.set $rh)  ;; (1+x)/(1-x)
+    (call $__logddx (local.get $rh) (local.get $rl)) (local.set $rl) (local.set $rh)
+    (call $__ddmd (local.get $rh) (local.get $rl) (f64.const 0.5)) (local.set $rl) (local.set $rh)
+    (call $__cr (local.get $rh) (local.get $rl) (i32.const 0)))
 
   ;; ── Math.expm1 — correctly-rounded: dd (e^x - 1) via $__expm1dd + crRound ────
   (func $expm1 (export "expm1") (param $x f64) (result f64)
@@ -709,10 +753,15 @@
     (call $__expm1dd (local.get $x)) (local.set $rl) (local.set $rh)
     (call $__cr (local.get $rh) (local.get $rl) (i32.const 0)))
 
-  ;; ── Math.log1p — accurate log(1+x) for small x ───────────────────────────────
+  ;; ── Math.log1p — correctly-rounded: log of the dd (1+x) via $__logddx ────────
   (func $log1p (export "log1p") (param $x f64) (result f64)
-    (if (f64.lt (f64.abs (local.get $x)) (f64.const 2.220446049250313e-16))
-      (then (return (local.get $x))))
-    (call $log (f64.add (f64.const 1.0) (local.get $x)))
-  )
+    (local $vh f64) (local $vl f64) (local $rh f64) (local $rl f64)
+    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))
+    (if (f64.lt (local.get $x) (f64.const -1.0)) (then (return (f64.const nan))))
+    (if (f64.eq (local.get $x) (f64.const -1.0)) (then (return (f64.const -inf))))
+    (if (f64.eq (local.get $x) (f64.const inf)) (then (return (f64.const inf))))
+    (if (f64.lt (f64.abs (local.get $x)) (f64.const 5.551115123125783e-17)) (then (return (local.get $x))))  ;; 2^-54
+    (call $__ts (f64.const 1) (local.get $x)) (local.set $vl) (local.set $vh)  ;; 1+x exact dd
+    (call $__logddx (local.get $vh) (local.get $vl)) (local.set $rl) (local.set $rh)
+    (call $__cr (local.get $rh) (local.get $rl) (i32.const 0)))
 )

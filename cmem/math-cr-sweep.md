@@ -22,17 +22,28 @@ full pipeline: wat2wasm + wasmmerge + Binaryen `-Oz`):
 | `cbrt` | `8f0c5f77a5b` | 515/515 (subnormals, negatives, `1e±300`) |
 | `atan` | `e0abf54d5b3` | 1528/1528 e2e (dd vs oracle 0/400k; boundaries 1, tan(pi/8), 1e±300) |
 | `asin` `acos` `atan2` | `76cdb889028` | e2e asin 0/915, acos 0/915, atan2 0/908; dd vs oracle 0/300k each |
-| `sinh` `cosh` `tanh` `expm1` | (this commit) | e2e sinh/cosh/tanh 0/718, expm1 0/711; dd vs oracle 0/300k each |
+| `sinh` `cosh` `tanh` `expm1` | `63df7ce26dd` | e2e sinh/cosh/tanh 0/718, expm1 0/711; dd vs oracle 0/300k each |
+| `asinh` `acosh` `atanh` `log1p` | (this commit) | e2e asinh 0/510, acosh 0/508, atanh 0/507, log1p 0/508; dd vs oracle 0/300k each |
 
 Full numbered suite stays **green** (375/375; regression test `67_TrigCorrectlyRounded`). The 38_Math*
 tests use `Math.round`-tolerance so they're robust; only a few tests byte-compare raw trig and those
 use CR==V8 args. All CR-swept fns' test sites use `Math.round(...)` tolerance → robust.
 
-**REMAINING (still old ~1e-11 minimax, NOT yet CR):** `log1p`, `pow` (`**`), `asinh`, `acosh`, `atanh`.
-(`asinh`/`acosh`/`atanh`/`log1p` dd refs already validated 0/300k — WAT port pending; all four + their
-oracles are in `scripts/math_cr_oracle.ts`.)
+**REMAINING:** `pow` (`**`) — the last one. NOT in mathlib (an inline `$__math_pow` in `wasic.ts`, integer-
+exponent + sqrt only). A **dd** `x^y = exp(y·log|x|)` is validated **0/400000 CR** (incl. exact integer
+powers 2³=8, 2¹⁰=1024, 4^0.5=2, and the subnormal/overflow bands 0/200k) — see `scripts/_pow_proto.ts`.
+Plan: add `$pow` to mathlib (+ `$__expddx` exp-of-dd helper + `$__oddint`; `$__cr(sum,k)` finish rounds
+subnormal/overflow correctly), route wasic `**`/`Math.pow`/`**=` + `console_log.ts` pow to `$mathlib_pow`
+and set `needsMathLib`, delete the inline `$__math_pow`, and add `pow` to the two console prescan regexes.
 
-**Planned next order:** `asinh`/`acosh`/`atanh` + `log1p` (share dd `log`-of-dd `$__logddx`) → `pow` (hardest).
+## New dd machinery (added with asinh/acosh/atanh/log1p)
+
+- **`$__logddx(ah,al) -> (hi,lo)`** — ln of a dd argument = `logdd(ah) + al/ah` (the `(al/ah)²/2` term
+  ~2^-107 is negligible). The building block for all log-composite functions.
+- **asinh** = `log(a+√(a²+1))` in dd; `log(a)+ln2` for `a>1e150` (avoids `a²` overflow). copysign.
+- **acosh** = `log(x+√(x²−1))` in dd (x≥1); `log(x)+ln2` for `x>1e150`. x<1→NaN, x=1→0.
+- **atanh** = `0.5·log((1+x)/(1−x))` in dd; `x` for `|x|<2^-27`; ±1→±∞, |x|>1→NaN.
+- **log1p** = `log` of the **exact** dd `1+x` (`twoSum(1,x)`); `x` for `|x|<2^-54`; x<−1→NaN, x=−1→−∞.
 
 ## New dd machinery (added with sinh/cosh/tanh/expm1)
 
