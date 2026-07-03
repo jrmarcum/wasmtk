@@ -30,3 +30,24 @@ tests/wasm_wasi/*.wit
 !tests/wasm_wasi/1_print.wasm
 !tests/wasm_wasi/1_print.wat
 !tests/wasm_wasi/39_JstyperMixed.wasm.roundtrip.wat
+
+# ── Generated bundle / bindgen / dync build outputs (do NOT track) ────────────
+# Same rationale as tests/wasm_wasi/ above: the @test-pipeline (tests/wasi_tests.ts),
+# bindgen_tests.ts, and the dync conformance gate recompile these .wasm/.wat/.wit
+# from their .ts sources on every run. Source .ts (…_lib_modc.ts, …_wasic.ts,
+# main_*.ts, fixtures) stay tracked.
+# NOT ignored (they are INPUT fixtures that tests READ, not regenerate):
+#   tests/wasm_mod/**      (mod_tests iterates the prebuilt .wasm)
+#   tests/wasm_wast/**     (hand-authored WAT samples / Art-of-WebAssembly book)
+#   tests/hybrid_fixtures/** (no test regenerates them — kept as example fixtures)
+# The canonical validation fixtures (src/wasm/mathlib.wasm, caps_bytes) live under
+# src/ and remain tracked + current.
+tests/wasm_wasi_bundle/**/*.wasm
+tests/wasm_wasi_bundle/**/*.wat
+tests/wasm_wasi_bundle/**/*.wit
+tests/bindgen_fixtures/*.wasm
+tests/bindgen_fixtures/*.wat
+tests/bindgen_fixtures/*.wit
+tests/wasm_wasi_dync/*.wasm
+tests/wasm_wasi_dync/*.wat
+tests/wasm_wasi_dync/*.wit

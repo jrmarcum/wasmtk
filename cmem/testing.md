@@ -128,6 +128,18 @@ Manual verify command is in the file header.
   `.wat`-runner source, or a prebuilt rust/zig output), add a `!tests/wasm_wasi/<name>` un-ignore
   line to `.gitignore`, else it won't be tracked and the test breaks on a fresh clone. A fresh
   clone has only the `.ts` + ~21 fixtures; the first suite run regenerates all outputs.
+- **Extended 2026-07-02 to the bundle / bindgen / dync outputs:** `tests/wasm_wasi_bundle/**`,
+  `tests/bindgen_fixtures/*`, `tests/wasm_wasi_dync/*` `.wasm`/`.wat`/`.wit` are ALSO `.gitignore`d —
+  the `@test-pipeline` (modc→wasic→run steps), `bindgen_tests.ts` (`modc fixture -n …`), and the dync
+  gate recompile them from their `.ts` every run. **Verified by clean regeneration** (deleted all 214,
+  re-ran the suites → 375/375 + bindgen 131/131) so nothing among them was a silent INPUT. INPUT
+  fixtures that tests READ are deliberately still tracked: `tests/wasm_mod/**` (mod_tests iterates the
+  prebuilt `.wasm`), `tests/wasm_wast/**` (hand-authored WAT / Art-of-WebAssembly samples), and
+  `tests/hybrid_fixtures/**` (no test regenerates them). **These outputs double as cross-runtime
+  validation fixtures** — always regenerate with a green suite before validating another wasm runtime
+  against them, so you compare against current-compiler output (a stale committed binary would be a
+  false positive). The canonical math fixtures (`src/wasm/mathlib.wasm` + `.wat`, `caps_bytes.ts`) stay
+  tracked under `src/` and are the primary CR-math validation targets.
 - **`@expect-fail: compile|run-ts|run-wasm`** in the first 10 lines → failure counts as PASS.
 - **`@test-pipeline` + `@step <subcmd> <args…>`** (comment header) → run custom wasmtk sub-commands
   instead of the standard compile/run-ts/run-wasm flow; paths resolve relative to the test file.
