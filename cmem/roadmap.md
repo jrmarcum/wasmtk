@@ -1,5 +1,35 @@
 # Roadmap, phase status & vision
 
+## Working-tree status (2026-07-02) — committed to `main`, not yet version-bumped/published
+
+Four landed changes since v1.11.1 (all committed; suite stays **375/375**, bindgen 131/131, jstyper 73/73):
+
+1. **mathlib correctly-rounded sweep — COMPLETE.** Every `mathlib` elementary function is now IEEE-754
+   correctly-rounded via double-double: `sin/cos/tan`, `exp`, `log/log2/log10`, `cbrt`, `atan`,
+   `asin/acos/atan2`, `sinh/cosh/tanh/expm1`, `asinh/acosh/atanh/log1p`, and **`pow`** (moved into mathlib
+   as a full `exp(y·log|x|)` CR impl, routed from `Math.pow`/`**`). Each validated bit-for-bit vs an
+   independent BigInt oracle through the full pipeline. See [math-cr-sweep.md](math-cr-sweep.md). (`pow`
+   surfaced the constraint that a **mergeable capability lib must not use a mathlib-routed `Math.*`** —
+   dynrt's `Math.pow` was made self-contained; see [compiler-bugs.md](compiler-bugs.md).)
+2. **`.wast` spec-script runner + `wasmtk wast`** (`src/wast.ts`, gate `tests/wast_tests.ts`). Runs the
+   official WASM spec conformance testsuite (in-repo at `tests/module/wasm_wast/testsuite-main/`); 12178
+   curated core assertions pass clean. Surfaced **2 real wabt-ts backend bugs** (br_if/br_table with a
+   branch value; over-precise hex-float truncation) — report at `scripts/wabt-ts-bug-report.md`. **PENDING
+   wabt-ts FIX (owner will notify):** once fixed, re-run `wasmtk wast`, remove workarounds, and fold the
+   now-passing files (`const`, `local_get`, `labels`, `conversions`, `func`, `float_exprs`) into the gate.
+   See [architecture.md](architecture.md) `wast` row + [testing.md](testing.md).
+3. **Test folders reorganized into 3 by runtime-consumption model** (2026-07-02): `tests/wasi/` (runnable
+   WASI programs: `wasm_wasi`, `wasm_wasi_dync`, `wasm_wasi_bundle`), `tests/module/` (invokeable modules:
+   `wasm_mod`, `bindgen_fixtures`, `wasm_wast`), `tests/hybrid/` (`hybrid_fixtures`). `jstyper_fixtures`/
+   `go_fixtures` stay as producer inputs. All 8 runners + `gen_caps_bytes` + `.gitignore` + docs rewired;
+   original dir names kept as siblings so the `18*` `../wasm_wasi_bundle/…` @step paths still resolve.
+4. **Generated build outputs untracked** (`.gitignore` extended to `tests/wasi/wasm_wasi_bundle/**`,
+   `tests/module/bindgen_fixtures/*`, `tests/wasi/wasm_wasi_dync/*` — same policy as `tests/wasi/wasm_wasi/`).
+   Verified by a clean regeneration (deleted all outputs → suites rebuilt them → 375/375). These outputs +
+   `src/wasm/mathlib.wasm` double as **cross-runtime validation fixtures**: always regenerate with a green
+   suite before validating another wasm runtime so you compare against current-compiler output. See
+   [testing.md](testing.md).
+
 ## Release status (2026-06-30)
 
 **Version 1.11.1 is PUBLISHED to JSR** (`@jrmarcum/wasmtk@1.11.1` is `latest`). **1.11.1 COMPLETES the
