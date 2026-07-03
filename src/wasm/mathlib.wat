@@ -764,4 +764,70 @@
     (call $__ts (f64.const 1) (local.get $x)) (local.set $vl) (local.set $vh)  ;; 1+x exact dd
     (call $__logddx (local.get $vh) (local.get $vl)) (local.set $rl) (local.set $rh)
     (call $__cr (local.get $rh) (local.get $rl) (i32.const 0)))
+
+  ;; __oddint(y) -> i32   1 if y is an odd integer, else 0  (NaN/inf → 0)
+  (func $__oddint (param $y f64) (result i32)
+    (i32.and
+      (f64.eq (f64.floor (local.get $y)) (local.get $y))
+      (f64.ne (f64.mul (f64.floor (f64.mul (local.get $y) (f64.const 0.5))) (f64.const 2)) (local.get $y))))
+
+  ;; __expddx(th,tl) -> (sum_hi, sum_lo, k)   dd Taylor of e^r, r=(th+tl)-k*ln2, k=round(th/ln2);
+  ;; caller finishes with $__cr(sum_hi, sum_lo, k) so overflow/subnormal round correctly.
+  (func $__expddx (param $th f64) (param $tl f64) (result f64 f64 i32)
+    (local $k i32) (local $kf f64) (local $klh f64) (local $kll f64) (local $rh f64) (local $rl f64)
+    (local $ph f64) (local $pl f64) (local $sh f64) (local $sl f64) (local $ch f64) (local $cl f64) (local $n i32)
+    (local.set $kf (f64.nearest (f64.mul (local.get $th) (f64.const 1.4426950408889634))))
+    (local.set $k (i32.trunc_f64_s (local.get $kf)))
+    (call $__ddmd (f64.const 0.6931471805599453) (f64.const 2.3190468138462996e-17) (local.get $kf)) (local.set $kll) (local.set $klh)
+    (call $__dda (local.get $th) (local.get $tl) (f64.neg (local.get $klh)) (f64.neg (local.get $kll))) (local.set $rl) (local.set $rh)
+    (local.set $ph (f64.const 1)) (local.set $pl (f64.const 0))
+    (local.set $sh (f64.const 1)) (local.set $sl (f64.const 0))
+    (local.set $n (i32.const 1))
+    (block $done (loop $lp
+      (br_if $done (i32.gt_u (local.get $n) (i32.const 25)))
+      (call $__ddm (local.get $ph) (local.get $pl) (local.get $rh) (local.get $rl)) (local.set $pl) (local.set $ph)
+      (call $__ddri (f64.convert_i32_s (local.get $n))) (local.set $cl) (local.set $ch)
+      (call $__ddm (local.get $ph) (local.get $pl) (local.get $ch) (local.get $cl)) (local.set $pl) (local.set $ph)
+      (call $__dda (local.get $sh) (local.get $sl) (local.get $ph) (local.get $pl)) (local.set $sl) (local.set $sh)
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (br $lp)))
+    (local.get $sh) (local.get $sl) (local.get $k))
+
+  ;; ── Math.pow(x,y) — correctly-rounded: |x|^y = exp(y*log|x|) in dd + IEEE special cases ─
+  (func $pow (export "pow") (param $x f64) (param $y f64) (result f64)
+    (local $sign i32) (local $ax f64) (local $r f64)
+    (local $lh f64) (local $ll f64) (local $th f64) (local $tl f64) (local $sh f64) (local $sl f64) (local $k i32)
+    (if (f64.eq (local.get $y) (f64.const 0)) (then (return (f64.const 1))))          ;; y==0 → 1 (incl x=NaN)
+    (if (f64.eq (local.get $x) (f64.const 1)) (then (return (f64.const 1))))          ;; x==1 → 1 (incl y=NaN)
+    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))        ;; NaN
+    (if (f64.ne (local.get $y) (local.get $y)) (then (return (local.get $y))))        ;; NaN
+    (if (f64.eq (local.get $y) (f64.const 1)) (then (return (local.get $x))))          ;; y==1 → x
+    (if (f64.eq (local.get $x) (f64.const 0))                                          ;; x==±0
+      (then
+        (if (f64.lt (local.get $y) (f64.const 0))
+          (then (return (select (f64.copysign (f64.const inf) (local.get $x)) (f64.const inf) (call $__oddint (local.get $y))))))
+        (return (select (local.get $x) (f64.const 0) (call $__oddint (local.get $y))))))
+    (local.set $ax (f64.abs (local.get $x)))
+    (if (f64.eq (f64.abs (local.get $y)) (f64.const inf))                             ;; y==±inf
+      (then
+        (if (f64.eq (local.get $ax) (f64.const 1.0)) (then (return (f64.const 1))))
+        (return (select (f64.const inf) (f64.const 0)
+          (i32.eq (f64.gt (local.get $ax) (f64.const 1.0)) (f64.gt (local.get $y) (f64.const 0)))))))
+    (if (f64.eq (local.get $ax) (f64.const inf))                                       ;; x==±inf
+      (then
+        (local.set $sign (i32.and (f64.lt (local.get $x) (f64.const 0)) (call $__oddint (local.get $y))))
+        (if (f64.gt (local.get $y) (f64.const 0))
+          (then (return (select (f64.const -inf) (f64.const inf) (local.get $sign)))))
+        (return (select (f64.const -0) (f64.const 0) (local.get $sign)))))
+    (local.set $sign (i32.const 0))
+    (if (f64.lt (local.get $x) (f64.const 0))                                          ;; x<0: y must be integer
+      (then
+        (if (f64.ne (f64.floor (local.get $y)) (local.get $y)) (then (return (f64.const nan))))
+        (local.set $sign (call $__oddint (local.get $y)))))
+    ;; main: exp(y*log|x|)
+    (call $__logdd (local.get $ax)) (local.set $ll) (local.set $lh)
+    (call $__ddmd (local.get $lh) (local.get $ll) (local.get $y)) (local.set $tl) (local.set $th)
+    (call $__expddx (local.get $th) (local.get $tl)) (local.set $k) (local.set $sl) (local.set $sh)
+    (local.set $r (call $__cr (local.get $sh) (local.get $sl) (local.get $k)))
+    (if (result f64) (local.get $sign) (then (f64.neg (local.get $r))) (else (local.get $r))))
 )

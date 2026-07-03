@@ -1749,7 +1749,22 @@ function dynMathMethod(name: string, args: i32): i32 {
   let y: f64 = 0;
   if (argc > 1) y = dynToNumber(dynArrGet(args, 1));
   if (strEq(name, "pow") === 1) {
-    const r: f64 = Math.pow(x, y);
+    // Self-contained pow: dynrt is a MERGEABLE capability library, so it must NOT pull in the
+    // mathlib merge that `Math.pow` now triggers (a mathlib-in-a-remerged-lib nest traps at runtime).
+    // Integer exponents via a multiply loop; 0.5/-0.5 via the inline `Math.sqrt` (f64.sqrt, no mathlib).
+    // Matches dynrt's historical pow support (integer + sqrt); general fractional exponents are out of scope.
+    let r: f64 = 1.0;
+    if (y === 0.5) {
+      r = Math.sqrt(x);
+    } else if (y === -0.5) {
+      r = 1.0 / Math.sqrt(x);
+    } else {
+      let n: i32 = (y as i32);
+      while (n > 0) {
+        r = r * x;
+        n = n - 1;
+      }
+    }
     return dynNumber(r);
   }
   return dynUndefined();

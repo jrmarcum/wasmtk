@@ -1,5 +1,10 @@
 # mathlib correctly-rounded sweep — status + resume guide
 
+> **✅ SWEEP COMPLETE (2026-07-02).** Every `mathlib` elementary function is now IEEE-754
+> correctly-rounded via double-double: `sin cos tan`, `exp`, `log log2 log10`, `cbrt`, `atan`,
+> `asin acos atan2`, `sinh cosh tanh expm1`, `asinh acosh atanh log1p`, and **`pow`**. Each was
+> validated bit-for-bit vs an independent BigInt oracle through the full pipeline. Suite 375/375.
+
 **Goal (owner, 2026-07-01):** make every `mathlib` (`src/wasm/mathlib.wat`) elementary function
 return the **IEEE-754 correctly-rounded** result — the unique, platform/version/language-independent
 value every correct libm agrees on. This gives maximum accuracy AND maximum cross-language
@@ -23,18 +28,41 @@ full pipeline: wat2wasm + wasmmerge + Binaryen `-Oz`):
 | `atan` | `e0abf54d5b3` | 1528/1528 e2e (dd vs oracle 0/400k; boundaries 1, tan(pi/8), 1e±300) |
 | `asin` `acos` `atan2` | `76cdb889028` | e2e asin 0/915, acos 0/915, atan2 0/908; dd vs oracle 0/300k each |
 | `sinh` `cosh` `tanh` `expm1` | `63df7ce26dd` | e2e sinh/cosh/tanh 0/718, expm1 0/711; dd vs oracle 0/300k each |
-| `asinh` `acosh` `atanh` `log1p` | (this commit) | e2e asinh 0/510, acosh 0/508, atanh 0/507, log1p 0/508; dd vs oracle 0/300k each |
+| `asinh` `acosh` `atanh` `log1p` | `11a9da1d4d7` | e2e asinh 0/510, acosh 0/508, atanh 0/507, log1p 0/508; dd vs oracle 0/300k each |
+| `pow` (`**`) | (this commit) | e2e 0/1418 (exact ints 2³=8, 2¹⁰=1024, 4^0.5=2, neg base, ±0/±∞); dd vs oracle 0/400k + subnormal/overflow bands 0/200k |
 
-Full numbered suite stays **green** (375/375; regression test `67_TrigCorrectlyRounded`). The 38_Math*
-tests use `Math.round`-tolerance so they're robust; only a few tests byte-compare raw trig and those
-use CR==V8 args. All CR-swept fns' test sites use `Math.round(...)` tolerance → robust.
+**SWEEP COMPLETE.** Full numbered suite stays **green** (375/375; regression test `67_TrigCorrectlyRounded`).
+The 38_Math* tests use `Math.round`-tolerance so they're robust; only a few tests byte-compare raw trig
+and those use CR==V8 args. All CR-swept fns' test sites use `Math.round(...)` tolerance → robust.
 
-**REMAINING:** `pow` (`**`) — the last one. NOT in mathlib (an inline `$__math_pow` in `wasic.ts`, integer-
-exponent + sqrt only). A **dd** `x^y = exp(y·log|x|)` is validated **0/400000 CR** (incl. exact integer
-powers 2³=8, 2¹⁰=1024, 4^0.5=2, and the subnormal/overflow bands 0/200k) — see `scripts/_pow_proto.ts`.
-Plan: add `$pow` to mathlib (+ `$__expddx` exp-of-dd helper + `$__oddint`; `$__cr(sum,k)` finish rounds
-subnormal/overflow correctly), route wasic `**`/`Math.pow`/`**=` + `console_log.ts` pow to `$mathlib_pow`
-and set `needsMathLib`, delete the inline `$__math_pow`, and add `pow` to the two console prescan regexes.
+## pow — the last one (moved into mathlib + routed from wasic)
+
+Before this, `pow`/`**`/`Math.pow` used an inline `$__math_pow` in `wasic.ts` that only did positive-integer
+exponents + `0.5` sqrt (non-integer exps truncated, negative exps returned 1 — buggy). Now:
+
+- **`$pow(x,y)` in mathlib** = `sign · exp(y·log|x|)` all in dd, with the full IEEE-754 special-case ladder
+  (`y=0→1` even NaN, `x=1→1`, NaN prop, `y=1→x`, `x=±0`, `y=±∞`, `x=±∞`, `x<0` requires integer `y`).
+- **`$__expddx(th,tl) -> (sum_hi, sum_lo, k)`** — exp of a dd argument returning the UNSCALED dd sum + `k`;
+  the caller finishes with `$__cr(sum_hi, sum_lo, k)` so overflow→∞ and subnormal results round correctly
+  (validated 0/200k across the subnormal/overflow bands — a plain scaled-dd finish would lose the tail there).
+- **`$__oddint(y) -> i32`** — 1 iff `y` is an odd integer (NaN/∞→0), for the negative-base sign + `x=±0` rules.
+- **Routing (wasic.ts + console_log.ts):** `Math.pow` / `**` / `**=` / console.log-pow all emit
+  `(call $mathlib_pow …)` and set `needsMathLib`; `pow` added to the two console-prescan `needsMathLib`
+  regexes; the inline `$__math_pow` deleted. Programs using `**` now merge mathlib (like any `Math.*`).
+- dd suffices for CR pow (the classic hardest case): the error budget is `|y·log|x||·2^-106 ≈ 2^-96`
+  even near overflow — far below the 2^-53 CR threshold; exact integer powers land exactly.
+
+**⚠️ Constraint surfaced by routing pow → mathlib (important):** a **mergeable capability library**
+(a modc lib that `wasmmerge` re-merges into a driver — e.g. `dynrt`, Set/Map/Date/JSON/RegExp) must NOT
+use any `Math.*` that routes to mathlib (`pow`, `sin`/`cos`/…, `exp`, `log`, …), because that pulls the
+whole mathlib into the library, and **mathlib-nested-inside-a-re-merged-library traps at runtime**
+(`memory access out of bounds` — allocator/global relocation on the double merge). `dynrt` was the only
+capability lib using such a function: its interpreter's `Math.pow` (`dynrt_lib_modc.ts`). Fixed by making
+dynrt's pow **self-contained** (integer-exponent multiply loop + `Math.sqrt`, which is inline `f64.sqrt` and
+needs no mathlib) — matching dynrt's historical integer+sqrt pow support (regen `caps_bytes.ts` after).
+Inline `Math.*` (`floor`/`ceil`/`round`/`trunc`/`abs`/`sqrt`/`sign`/`min`/`max`, the `F64_UNARY`/i32 set)
+are fine in mergeable libs — only the mathlib-routed ones are the hazard. (The general fix — making a
+nested mathlib merge idempotent in `wasmmerge` — is deferred; self-containment is the cheap correct path.)
 
 ## New dd machinery (added with asinh/acosh/atanh/log1p)
 

@@ -244,3 +244,23 @@ export function log1pOracle(x: number): number {
   if (Math.abs(x) < 5.551115123125783e-17) return x;
   return roundScaled(lnScaled(SCALE + toBig(x)), -Number(P));
 }
+
+// pow(x,y) CR oracle: |x|^y = exp(y*ln|x|), all in fixed point; full IEEE special cases.
+function expFromScaled(A: bigint): number { // correctly-round e^(A*2^-P)
+  const k = (A * 2n + (A >= 0n ? LN2 : -LN2)) / (2n * LN2); const r = A - k * LN2;
+  let term = SCALE, sum = SCALE; for (let n = 1n; n < 200n; n++) { term = (term * r) >> P; term = term / n; sum += term; if (term < 2n && term > -2n) break; }
+  return roundScaled(sum, Number(k) - Number(P));
+}
+const isOddInt = (y: number) => Number.isInteger(y) && Math.abs(y % 2) === 1;
+export function powOracle(x: number, y: number): number {
+  if (y === 0) return 1; if (x === 1) return 1;
+  if (x !== x || y !== y) return NaN; if (y === 1) return x;
+  if (x === 0) { if (y < 0) return isOddInt(y) ? (1 / x < 0 ? -Infinity : Infinity) : Infinity; return isOddInt(y) ? x : 0; }
+  const ax = Math.abs(x);
+  if (!isFinite(y)) { if (ax === 1) return 1; return (ax > 1) === (y > 0) ? Infinity : 0; }
+  if (!isFinite(x)) { const neg = x < 0 && isOddInt(y); if (y > 0) return neg ? -Infinity : Infinity; return neg ? -0 : 0; }
+  let sign = 1;
+  if (x < 0) { if (!Number.isInteger(y)) return NaN; if (isOddInt(y)) sign = -1; }
+  const r = expFromScaled((toBig(y) * lnScaled(toBig(ax))) >> P);
+  return sign < 0 ? -r : r;
+}

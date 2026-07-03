@@ -8589,10 +8589,10 @@ class WasicTranspiler {
           return `(${F64_UNARY[mathFn]} ${this.emitExpr(args[0] ?? "0", locals, "f64")})`;
         }
 
-        // Math.pow — iterative WAT helper
+        // Math.pow — correctly-rounded mathlib pow (Phase 38 / CR sweep)
         if (mathFn === "pow") {
-          this.mathHelpers.add("math_pow");
-          return `(call $__math_pow ${this.emitExpr(args[0] ?? "0", locals, "f64")} ${
+          this.needsMathLib38 = true;
+          return `(call $mathlib_pow ${this.emitExpr(args[0] ?? "0", locals, "f64")} ${
             this.emitExpr(args[1] ?? "0", locals, "f64")
           })`;
         }
@@ -9200,10 +9200,10 @@ class WasicTranspiler {
     {
       const powIdx = this.findDepth0LTR(expr, "**");
       if (powIdx !== -1) {
-        this.mathHelpers.add("math_pow");
+        this.needsMathLib38 = true;
         const lhs = expr.slice(0, powIdx).trim();
         const rhs = expr.slice(powIdx + 2).trim();
-        return `(call $__math_pow ${this.emitExpr(lhs, locals, "f64")} ${
+        return `(call $mathlib_pow ${this.emitExpr(lhs, locals, "f64")} ${
           this.emitExpr(rhs, locals, "f64")
         })`;
       }
@@ -10957,8 +10957,8 @@ class WasicTranspiler {
       const eaRhs = expAssignMatch[2].trim();
       const isGlobal = !locals.has(eaVar) && this.moduleGlobals.has(eaVar);
       const getWat = isGlobal ? `(global.get $${eaVar})` : `(local.get $${eaVar})`;
-      this.mathHelpers.add("math_pow");
-      const powWat = `(call $__math_pow ${getWat} ${this.emitExpr(eaRhs, locals, "f64")})`;
+      this.needsMathLib38 = true;
+      const powWat = `(call $mathlib_pow ${getWat} ${this.emitExpr(eaRhs, locals, "f64")})`;
       return isGlobal ? `(global.set $${eaVar} ${powWat})` : `(local.set $${eaVar} ${powWat})`;
     }
 
@@ -11947,9 +11947,8 @@ class WasicTranspiler {
       // Pre-register any Math helpers used inside console.log args so they are
       // emitted even when the call only appears inside console.log (not in emitExpr).
       if (logMatch[1].includes("Math.")) {
-        this.mathHelpers.add("math_pow");
         if (
-          /Math\.(?:sin|cos|tan|asin|acos|atan|log|log2|log10|exp|cbrt|sinh|cosh|tanh|asinh|acosh|atanh|expm1|log1p|random)/
+          /Math\.(?:pow|sin|cos|tan|asin|acos|atan2|atan|log|log2|log10|exp|cbrt|sinh|cosh|tanh|asinh|acosh|atanh|expm1|log1p|random)/
             .test(logMatch[1])
         ) {
           this.needsMathLib38 = true;
@@ -12324,9 +12323,8 @@ class WasicTranspiler {
         return undefined;
       };
       if (errMatch[2].includes("Math.")) {
-        this.mathHelpers.add("math_pow");
         if (
-          /Math\.(?:sin|cos|tan|asin|acos|atan|log|log2|log10|exp|cbrt|sinh|cosh|tanh|asinh|acosh|atanh|expm1|log1p|random)/
+          /Math\.(?:pow|sin|cos|tan|asin|acos|atan2|atan|log|log2|log10|exp|cbrt|sinh|cosh|tanh|asinh|acosh|atanh|expm1|log1p|random)/
             .test(errMatch[2])
         ) {
           this.needsMathLib38 = true;
@@ -14523,9 +14521,10 @@ class WasicTranspiler {
   }
 
   private emitMathHelpers(): string {
-    // All four helpers are always emitted together — Binaryen -Oz dead-strips unused functions,
+    // These i32 helpers are always emitted together — Binaryen -Oz dead-strips unused functions,
     // so there is no binary-size cost. This avoids having to track which helpers are used
     // across the console_log.ts boundary (where mathHelpers cannot be mutated).
+    // (Math.pow / ** route to the correctly-rounded $mathlib_pow, not an inline helper.)
     return [
       `  ;; Math.abs for i32
   (func $__i32_abs (param $x i32) (result i32)
@@ -14542,26 +14541,6 @@ class WasicTranspiler {
       `  ;; Math.max for i32
   (func $__i32_max (param $a i32) (param $b i32) (result i32)
     (select (local.get $a) (local.get $b) (i32.gt_s (local.get $a) (local.get $b)))
-  )`,
-      `  ;; Math.pow — iterative for integer exponents; sqrt special case for exp=0.5
-  (func $__math_pow (param $base f64) (param $exp f64) (result f64)
-    (local $result f64)
-    (local $n i32)
-    (if (f64.eq (local.get $exp) (f64.const 0.5))
-      (then (return (f64.sqrt (local.get $base)))))
-    (if (f64.eq (local.get $exp) (f64.const -0.5))
-      (then (return (f64.div (f64.const 1) (f64.sqrt (local.get $base))))))
-    (local.set $result (f64.const 1))
-    (local.set $n (i32.trunc_f64_s (local.get $exp)))
-    (block $done
-      (loop $loop
-        (br_if $done (i32.le_s (local.get $n) (i32.const 0)))
-        (local.set $result (f64.mul (local.get $result) (local.get $base)))
-        (local.set $n (i32.sub (local.get $n) (i32.const 1)))
-        (br $loop)
-      )
-    )
-    (local.get $result)
   )`,
     ].join("\n\n");
   }

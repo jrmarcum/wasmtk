@@ -2010,7 +2010,7 @@ function exprToWat(
       if (fn === "ceil") return `(f64.ceil ${arg0})`;
       if (fn === "trunc") return `(f64.trunc ${arg0})`;
       if (fn === "round") return `(f64.floor (f64.add ${arg0} (f64.const 0.5)))`;
-      if (fn === "pow") return `(call $__math_pow ${arg0} ${arg1})`;
+      if (fn === "pow") return `(call $mathlib_pow ${arg0} ${arg1})`;
       if (fn === "sign") {
         return `(if (result f64) (f64.eq ${arg0} (f64.const 0)) (then (f64.const 0)) (else (f64.copysign (f64.const 1) ${arg0})))`;
       }
