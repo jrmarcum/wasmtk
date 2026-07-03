@@ -1,32 +1,37 @@
 # Compiler bug log
 
-## wabt-ts BACKEND bugs surfaced by the new `.wast` spec runner (2026-07-02) — NOT wasmtk-side
+## wabt-ts BACKEND bugs surfaced by the `.wast` spec runner — NOT wasmtk-side
 
-The new `wasmtk wast` conformance runner (`src/wast.ts`, gate `tests/wast_tests.ts`) runs the official
-WebAssembly spec `.wast` testsuite through the pluggable WABT backend + host V8. Across ~14,400
-core-suite assertions it is **~13,200 pass / 34 fail / 1217 skip**; the 34 execution failures are all
-**genuine `jsr:@jrmarcum/wabt-ts` (the active backend) bugs**, confirmed by isolating each and comparing
-V8 (spec-compliant) output to wabt-ts's assembled bytes. They do NOT affect the wasmtk suite (375/375)
-because wasic doesn't emit these exact shapes. They need fixing in the **wabt-ts** repo (a separate
-project the owner owns). A ready-to-send bug report/prompt for that team is in
-`scripts/wabt-ts-bug-report.md` (written 2026-07-02).
+The `wasmtk wast` conformance runner (`src/wast.ts`, gate `tests/wast_tests.ts`) runs the official
+WebAssembly spec `.wast` testsuite through the pluggable WABT backend + host V8. Each isolated execution
+failure is a genuine `jsr:@jrmarcum/wabt-ts` (active backend) bug (V8 is spec-compliant; fed wabt-ts's
+bytes it yields the wrong result). None affect the wasmtk suite (375/375) — wasic doesn't emit these
+shapes. Report/prompt for the wabt-ts team: `scripts/wabt-ts-bug-report.md`.
 
-1. **`br_if` with a branch value drops the value, yields the condition.** For a block with a result
-   type, `(block $l (result i32) (br_if $l (local.get 0) (i32.const 1)))` returns **1** (the condition)
-   instead of **9** (`local.get 0`). Reproduced in BOTH folded and unfolded forms → an **encoder**
-   bug in how `br_if`'s value operand is emitted. Surfaced by `local_get.wast`, `labels.wast`,
-   `func.wast`, `conversions.wast`.
-2. **Over-precise hex-float consts truncated instead of round-to-nearest-even.** `(f32.const
-   0x1.00000100000000001p-50)` (68-bit mantissa) assembles to bits `0x26800000` (rounded down) but the
-   spec value is `0x26800001` (round-to-nearest-even, since the input sits just above the midpoint).
-   The float-literal **parser** doesn't carry a sticky bit when the mantissa exceeds target precision.
-   22 failures in `const.wast` (f32 + f64, incl. near-`FLT_MAX`/`DBL_MAX`).
-3. **Branch stack-arity mis-encoding** (`nop.wast` etc.): V8 rejects wabt-ts output with "expected 1
-   elements on the stack for branch, found 0" → whole module fails to compile (its assertions skip).
-   Likely the same family as #1 (branch value handling).
+**On wabt-ts 1.3.4 (2026-07-02): 2 of the original 3 findings are FIXED; 1 remains.**
 
-The `.wast` runner counts validation-assertion toolchain leniency (`assert_invalid`/`assert_malformed`
-that wabt+V8 fails to reject) as **skips**, not failures.
+- ✅ **FIXED — `br_if`/`br_table` with a branch value.** Was: dropped the value / yielded the condition,
+  or emitted bytes V8 rejected ("expected 1 elements on the stack for branch"). `labels`/`block`/`nop`/
+  `local_get`/`func` now run clean and are in the gate.
+- ✅ **FIXED — over-precise HEX float consts** (`0x1.00000100000000001p-50` → now correctly `0x26800001`,
+  was truncated to `0x26800000`).
+- ❌ **OPEN — Bug C: decimal `f32.const` is DOUBLE-ROUNDED (decimal→f64→f32) instead of single-rounded.**
+  `(f32.const +8.8817847263968443574e-16)` → wabt-ts `0x26800000`, spec-correct `0x26800001`; and
+  `+8.8817857851880284252e-16` → wabt-ts `0x26800002`, spec `0x26800001`. Both should single-round to
+  `0x1.000002p-50`. **4 failures** in `const.wast` (f32 decimal-boundary cases; f64 decimal consts are
+  fine — only the narrower f32 target exposes the double-round). `const.wast` is the only core file kept
+  out of the gate; add it once wabt-ts fixes this. (V8's `Math.fround(Number(s))` reproduces the same
+  wrong answers because that idiom also double-rounds — the spec `.wast` value is the oracle, not V8.)
+
+**Two RUNNER improvements made while re-validating on 1.3.4 (real correctness, not workarounds):**
+(1) a **void** export returns `undefined` → treat as `[]` (was `[undefined]`, length-1, mismatching a
+0-result `assert_return` — this was the bulk of the "new" `nop`/`func` fails once the br_if fix let those
+modules compile); (2) an argument that is a **NaN with a specific payload** (`nan:0x…`) is **skipped** —
+a non-canonical NaN payload can't survive the JS number boundary (V8 canonicalizes it), so
+`reinterpret`-of-NaN-payload tests are untestable via a JS host, not a bug.
+
+The runner also counts validation-assertion toolchain leniency (`assert_invalid`/`assert_malformed` that
+wabt+V8 fails to reject) as **skips**, not failures.
 
 ---
 

@@ -1,94 +1,73 @@
 # Bug report / prompt for the `wabt-ts` team
 
-**Context.** wasmtk added a `.wast` spec-script runner (`wasmtk wast`) that assembles each `(module …)`
-with the pluggable WABT backend (currently `jsr:@jrmarcum/wabt-ts@^1.3.1/compat`) and executes the
-official WebAssembly spec testsuite's assertions on the host V8 engine. Across ~14,400 core-suite
-assertions the result is ~13,200 pass / 34 fail. **Every one of the 34 failures was isolated to a
-`wabt-ts` assembly bug** (V8 is spec-compliant; feeding it `wabt-ts`'s bytes yields the wrong result).
-Two distinct root causes. Both reproduce in tiny standalone modules.
+**Status (updated 2026-07-02, wabt-ts 1.3.4):** the two bugs first reported below are **FIXED** in
+1.3.4 — thank you. Re-running the full WASM spec testsuite through `wasmtk wast` on 1.3.4, only **one**
+distinct wabt-ts bug remains (**Bug C**, decimal→f32 double-rounding), plus items that are not wabt-ts
+issues (JS-boundary NaN-payload args). Details below.
 
-Reproduce with Deno (uses the same backend wasmtk resolves):
+**Context.** wasmtk's `wasmtk wast` runner assembles each `(module …)` with `jsr:@jrmarcum/wabt-ts/compat`
+and runs the official WebAssembly spec testsuite's assertions on host V8. Every isolated execution
+failure is a wabt-ts assembly bug (V8 is spec-compliant; fed wabt-ts's bytes it yields the wrong result).
 
 ```ts
-import wabt from "jsr:@jrmarcum/wabt-ts@^1.3.1/compat"; // or the version under test
+import wabt from "jsr:@jrmarcum/wabt-ts@^1.3.4/compat";
 const w = await wabt();
 const dv = new DataView(new ArrayBuffer(8));
-const f32bits = (x: number) => (dv.setFloat32(0, x), dv.getUint32(0).toString(16).padStart(8, "0"));
-async function run(wat: string, arg?: number) {
-  const p = w.parseWat("x", wat, { enable_all: true });
+const f32bits = (x: number) => "0x" + (dv.setFloat32(0, x), dv.getUint32(0)).toString(16).padStart(8, "0");
+async function f32const(lit: string) {
+  const p = w.parseWat("x", `(module (func (export "f") (result f32) (f32.const ${lit})))`, { enable_all: true });
   const { instance } = await WebAssembly.instantiate(new Uint8Array(p.toBinary({}).buffer), {});
-  return (instance.exports as any).f(arg);
+  return f32bits((instance.exports as any).f());
 }
 ```
 
 ---
 
-## Bug A — `br_if` / `br_table` with a branch VALUE are mis-encoded
+## Bug C — decimal `f32.const` is DOUBLE-ROUNDED (decimal→f64→f32) instead of single-rounded
 
-When a block has a result type and a **conditional** branch (`br_if` / `br_table`) carries a value to
-that label, wabt-ts emits wrong bytecode. Plain unconditional `br` with a value is fine — only the
-conditional branches are affected. Two visible symptoms depending on whether code follows the branch:
+A decimal float literal in an `f32.const` must be rounded **once**, directly from the decimal value to the
+nearest f32 (round-to-nearest-even). wabt-ts appears to round decimal→f64 first and then f64→f32, which
+gives a different result for values crafted to sit at an f32 rounding boundary (the spec testsuite's
+`const.wast` has these on purpose):
 
-**A1 — no code after the branch → returns the CONDITION instead of the branched VALUE.**
-
-```wat
-(module (func (export "f") (param i32) (result i32)
-  (block $l (result i32) (br_if $l (local.get 0) (i32.const 1)))))
 ```
-`f(9)` → **1** (the `i32.const 1` condition).  Spec/V8-correct: **9** (`local.get 0`).
-Reproduces identically in unfolded form (`local.get 0; i32.const 1; br_if $l`), so it is an **encoder**
-bug, not a folded-expression parsing bug — the branch's value operand is dropped and the condition is
-left as the block result.
-
-**A2 — code after the branch → V8 REJECTS the module (invalid stack).**
-
-```wat
-(module (func (export "f") (param i32) (result i32)
-  (block $l (result i32) (br_if $l (local.get 0) (i32.const 1)) (i32.const -1))))
+f32const("+8.8817847263968443574e-16")  →  0x26800000   (spec-correct: 0x26800001)
+f32const("+8.8817857851880284252e-16")  →  0x26800002   (spec-correct: 0x26800001)
 ```
-→ `WebAssembly.instantiate(): Compiling function #0 failed: expected 1 elements on the stack for
-branch, found 0`. Same for `br_table $l $l (local.get 0) (i32.const 0)` in that position.
 
-**Expected:** for `br_if`/`br_table` targeting a block/loop with an N-result label, the N value operands
-must be emitted *below* the index/condition operand and left on the stack for the branch (exactly as for
-unconditional `br`). **Likely fix site:** the operand-ordering / stack-typing for `br_if` and `br_table`
-in the encoder (compare against the working `br` path).
+Both spec-correct answers are `0x1.000002p-50` = `0x26800001`. The first input is exactly at the midpoint
+between `0x1.000000p-50` and `0x1.000001p-50` at f64 precision but rounds **up** to `0x1.000002p-50` under
+correct single decimal→f32 rounding; wabt-ts truncates to `0x1.000000`. (Note V8's `Math.fround(Number(s))`
+reproduces the *same wrong* answers — because that JS idiom also double-rounds — so V8 can't be used as the
+oracle here; the spec `.wast` expected value is the oracle.)
 
-**Spec-suite files that surface this:** `local_get.wast`, `labels.wast`, `func.wast`, `conversions.wast`,
-plus many "module failed to compile" skips (`nop.wast` #32, etc. — the A2 form).
+**Fix site:** the decimal float-literal parser for f32 consts — it needs to round decimal→f32 directly
+(single rounding with a sticky bit over the full decimal expansion), not via an intermediate f64.
+**4 failures** in `const.wast` (the `f32` decimal-boundary cases). (The analogous f64 decimal consts are
+correct — only the narrower f32 target exposes the double-round.)
 
 ---
 
-## Bug B — over-precise hex-float literals are TRUNCATED, not round-to-nearest-even
+## Not wabt-ts bugs (for the record)
 
-A float const whose hex mantissa has more bits than the target type must be rounded to nearest, ties to
-even (with a sticky bit over the discarded low bits). wabt-ts appears to truncate.
+- **NaN-payload arguments.** Spec tests like `(assert_return (invoke "i32.reinterpret_f32" (f32.const
+  nan:0x200000)) …)` pass a NaN with a *specific* payload as an argument. Through the JS API a NaN can't
+  carry a non-canonical payload (V8 canonicalizes it crossing the number boundary), so these are untestable
+  via a JS host — the wasmtk runner **skips** them. Not a wabt-ts issue.
+- **`assert_invalid` / `assert_malformed` leniency** (e.g. `i32.const 4294967296` out of range, `1__000`
+  double underscore) — validator-strictness gaps, counted as skips. Lower priority; only relevant if you
+  want `wabt-ts` to be a strict validator.
 
-```wat
-(module (func (export "f") (result f32) (f32.const +0x1.00000100000000001p-50)))
-```
-The literal = `(1 + 2^-24 + 2^-68) · 2^-50`. `2^-24` is exactly half an f32 ULP at this exponent, and the
-extra `2^-68` pushes it just **above** the midpoint, so it must round **up**.
+## Already FIXED in 1.3.4 (were the original two bugs in this report)
 
-- wabt-ts assembles f32 bits **`0x26800000`** (= `0x1.000000p-50`, rounded down / truncated).
-- Spec/V8-correct: **`0x26800001`** (= `0x1.000002p-50`).
-
-**Expected:** round-to-nearest-even using a sticky bit across all mantissa bits beyond the target
-precision (23 bits for f32, 52 for f64). **Likely fix site:** the hex-float literal parser
-(`parseHexFloat…`) — it drops bits past the target width instead of accumulating a round/sticky decision.
-(This is adjacent to the earlier "hex-float parsed as 0" bug fixed in 1.3.1, but a distinct rounding
-issue.) **22 failures** in `const.wast` across f32 and f64, including values near `FLT_MAX`/`DBL_MAX`.
-
----
-
-## Not bugs (for completeness)
-
-`assert_invalid` / `assert_malformed` cases where wabt-ts accepts a spec-invalid/malformed module (e.g.
-`i32.const 4294967296` out of range, `1__000` double-underscore) are validator-strictness gaps, not
-execution bugs; the wasmtk runner counts them as *skips*, not failures. They're lower priority but are
-also real conformance gaps if you want `wabt-ts` to be a strict validator.
+- **`br_if` / `br_table` with a branch value** — previously dropped the value / yielded the condition, or
+  produced bytes V8 rejected ("expected 1 elements on the stack for branch"). ✅ Fixed — `labels.wast`,
+  `block.wast`, `nop.wast`, `local_get.wast`, `func.wast` now run clean.
+- **Over-precise HEX float consts** (`0x1.00000100000000001p-50`) truncated instead of round-to-nearest-even.
+  ✅ Fixed — the hex-float path now rounds correctly.
 
 ## How to see the full picture
 
-From the wasmtk repo: `wasmtk wast tests/module/wasm_wast/testsuite-main` (add `--verbose` for detail),
-or the curated clean regression gate `deno run --allow-read --allow-net tests/wast_tests.ts`.
+From the wasmtk repo: `wasmtk wast tests/module/wasm_wast/testsuite-main` (add `--verbose`), or the curated
+gate `deno run --allow-read --allow-net tests/wast_tests.ts` (40 core files, 12134 execution assertions,
+0 fail — `const.wast` excluded pending Bug C).

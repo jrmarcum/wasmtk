@@ -37,22 +37,33 @@ const FILES = [
   "load",
   "store",
   "float_misc",
+  "float_exprs",
   "forward",
   "fac",
   "stack",
   "return",
   "select",
   "global",
+  "local_get",
   "local_set",
   "local_tee",
+  "block",
   "loop",
+  "br",
+  "br_if",
+  "br_table",
+  "labels",
   "call",
   "call_indirect",
+  "conversions",
+  "func",
   "switch",
   "unreachable",
   "unwind",
   "nop",
 ];
+// NOTE: `const.wast` is intentionally excluded — its 4 remaining failures are a genuine wabt-ts
+// decimal→f32 double-rounding bug (see scripts/wabt-ts-bug-report.md, Bug C). Add it once fixed.
 
 const green = (s: string) => `\x1b[32m${s}\x1b[39m`;
 const red = (s: string) => `\x1b[31m${s}\x1b[39m`;

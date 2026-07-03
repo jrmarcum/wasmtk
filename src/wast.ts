@@ -471,12 +471,17 @@ export async function runWast(
     for (let k = idx; k < action.list.length; k++) {
       const a = action.list[k];
       if (!isList(a) || !constType(a)) throw new Error("__skip__: unsupported arg type");
+      // A NaN with a specific (non-canonical) payload cannot be passed through the JS number
+      // boundary — V8 canonicalizes it — so any test that depends on the payload surviving the
+      // call is untestable via the JS API (not a toolchain bug). Skip it.
+      if (/nan:0x/.test(a.list[1] as string)) throw new Error("__skip__: NaN payload arg cannot cross the JS boundary");
       args.push(constToJs(a));
     }
     const fn = ex[field] as (...a: unknown[]) => unknown;
     if (typeof fn !== "function") throw new Error(`export '${field}' is not a function`);
     const r = fn(...args);
-    return Array.isArray(r) ? r : [r];
+    // void export → undefined → []; multi-value → array; single → [scalar].
+    return r === undefined ? [] : (Array.isArray(r) ? r : [r]);
   }
 
   const anyUnsupportedResult = (nodes: Sexp[]) => nodes.some((x) => !isList(x) || !constType(x));

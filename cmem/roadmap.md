@@ -13,10 +13,13 @@ Four landed changes since v1.11.1 (all committed; suite stays **375/375**, bindg
    dynrt's `Math.pow` was made self-contained; see [compiler-bugs.md](compiler-bugs.md).)
 2. **`.wast` spec-script runner + `wasmtk wast`** (`src/wast.ts`, gate `tests/wast_tests.ts`). Runs the
    official WASM spec conformance testsuite (in-repo at `tests/module/wasm_wast/testsuite-main/`); 12178
-   curated core assertions pass clean. Surfaced **2 real wabt-ts backend bugs** (br_if/br_table with a
-   branch value; over-precise hex-float truncation) — report at `scripts/wabt-ts-bug-report.md`. **PENDING
-   wabt-ts FIX (owner will notify):** once fixed, re-run `wasmtk wast`, remove workarounds, and fold the
-   now-passing files (`const`, `local_get`, `labels`, `conversions`, `func`, `float_exprs`) into the gate.
+   curated core assertions pass clean. Surfaced **3 real wabt-ts backend bugs**. **wabt-ts 1.3.4
+   (2026-07-02) FIXED 2 of them** (br_if/br_table with a branch value; over-precise hex-float truncation)
+   — the gate expanded 31→40 files (now incl. br/br_if/br_table/labels/block/nop/local_get/conversions/
+   func/float_exprs), 12134 assertions, 0 fail. **1 remains (Bug C):** decimal `f32.const` double-rounded
+   (decimal→f64→f32) instead of single-rounded — 4 `const.wast` fails, `const.wast` kept out of the gate
+   pending the fix. Also made 2 runner correctness fixes while re-validating (void export → `[]`;
+   NaN-payload arg skipped — can't cross the JS boundary). Report: `scripts/wabt-ts-bug-report.md`.
    See [architecture.md](architecture.md) `wast` row + [testing.md](testing.md).
 3. **Test folders reorganized into 3 by runtime-consumption model** (2026-07-02): `tests/wasi/` (runnable
    WASI programs: `wasm_wasi`, `wasm_wasi_dync`, `wasm_wasi_bundle`), `tests/module/` (invokeable modules:
