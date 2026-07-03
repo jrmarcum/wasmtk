@@ -1,8 +1,9 @@
 # Roadmap, phase status & vision
 
-## Working-tree status (2026-07-02) — committed to `main`, not yet version-bumped/published
+## Release status (2026-07-02) — v1.11.2
 
-Four landed changes since v1.11.1 (all committed; suite stays **375/375**, bindgen 131/131, jstyper 73/73):
+**v1.11.2 released to JSR.** Four landed changes since v1.11.1, on a bumped backend (**wabt-ts 1.3.5** +
+binaryen-ts 1.3.5). Suite **375/375**, bindgen 131/131, jstyper 73/73, wast gate 41 files/12444/0 fail:
 
 1. **mathlib correctly-rounded sweep — COMPLETE.** Every `mathlib` elementary function is now IEEE-754
    correctly-rounded via double-double: `sin/cos/tan`, `exp`, `log/log2/log10`, `cbrt`, `atan`,
@@ -13,14 +14,13 @@ Four landed changes since v1.11.1 (all committed; suite stays **375/375**, bindg
    dynrt's `Math.pow` was made self-contained; see [compiler-bugs.md](compiler-bugs.md).)
 2. **`.wast` spec-script runner + `wasmtk wast`** (`src/wast.ts`, gate `tests/wast_tests.ts`). Runs the
    official WASM spec conformance testsuite (in-repo at `tests/module/wasm_wast/testsuite-main/`); 12178
-   curated core assertions pass clean. Surfaced **3 real wabt-ts backend bugs**. **wabt-ts 1.3.4
-   (2026-07-02) FIXED 2 of them** (br_if/br_table with a branch value; over-precise hex-float truncation)
-   — the gate expanded 31→40 files (now incl. br/br_if/br_table/labels/block/nop/local_get/conversions/
-   func/float_exprs), 12134 assertions, 0 fail. **1 remains (Bug C):** decimal `f32.const` double-rounded
-   (decimal→f64→f32) instead of single-rounded — 4 `const.wast` fails, `const.wast` kept out of the gate
-   pending the fix. Also made 2 runner correctness fixes while re-validating (void export → `[]`;
-   NaN-payload arg skipped — can't cross the JS boundary). Report: `scripts/wabt-ts-bug-report.md`.
-   See [architecture.md](architecture.md) `wast` row + [testing.md](testing.md).
+   curated core assertions pass clean. Surfaced **3 real wabt-ts backend bugs — ALL FIXED across wabt-ts
+   1.3.4 + 1.3.5 (2026-07-02):** br_if/br_table with a branch value (1.3.4), over-precise hex-float
+   truncation (1.3.4), decimal→f32 double-rounding (Bug C, 1.3.5). The gate grew 31→40→41 files (now incl.
+   br/br_if/br_table/labels/block/nop/local_get/conversions/func/float_exprs/**const**), **12444
+   assertions, 0 fail**; suite 375/375 on 1.3.5. Also made 2 runner correctness fixes while re-validating
+   (void export → `[]`; NaN-payload arg skipped — can't cross the JS boundary). Report (resolved):
+   `scripts/wabt-ts-bug-report.md`. See [architecture.md](architecture.md) `wast` row + [testing.md](testing.md).
 3. **Test folders reorganized into 3 by runtime-consumption model** (2026-07-02): `tests/wasi/` (runnable
    WASI programs: `wasm_wasi`, `wasm_wasi_dync`, `wasm_wasi_bundle`), `tests/module/` (invokeable modules:
    `wasm_mod`, `bindgen_fixtures`, `wasm_wast`), `tests/hybrid/` (`hybrid_fixtures`). `jstyper_fixtures`/

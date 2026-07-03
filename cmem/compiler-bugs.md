@@ -8,20 +8,19 @@ failure is a genuine `jsr:@jrmarcum/wabt-ts` (active backend) bug (V8 is spec-co
 bytes it yields the wrong result). None affect the wasmtk suite (375/375) — wasic doesn't emit these
 shapes. Report/prompt for the wabt-ts team: `scripts/wabt-ts-bug-report.md`.
 
-**On wabt-ts 1.3.4 (2026-07-02): 2 of the original 3 findings are FIXED; 1 remains.**
+**✅ ALL 3 findings FIXED across wabt-ts 1.3.4 + 1.3.5 (2026-07-02). The whole core spec suite runs clean
+(gate: 41 files, 12444 exec assertions, 0 fail; suite 375/375 on 1.3.5).**
 
-- ✅ **FIXED — `br_if`/`br_table` with a branch value.** Was: dropped the value / yielded the condition,
-  or emitted bytes V8 rejected ("expected 1 elements on the stack for branch"). `labels`/`block`/`nop`/
-  `local_get`/`func` now run clean and are in the gate.
-- ✅ **FIXED — over-precise HEX float consts** (`0x1.00000100000000001p-50` → now correctly `0x26800001`,
-  was truncated to `0x26800000`).
-- ❌ **OPEN — Bug C: decimal `f32.const` is DOUBLE-ROUNDED (decimal→f64→f32) instead of single-rounded.**
-  `(f32.const +8.8817847263968443574e-16)` → wabt-ts `0x26800000`, spec-correct `0x26800001`; and
-  `+8.8817857851880284252e-16` → wabt-ts `0x26800002`, spec `0x26800001`. Both should single-round to
-  `0x1.000002p-50`. **4 failures** in `const.wast` (f32 decimal-boundary cases; f64 decimal consts are
-  fine — only the narrower f32 target exposes the double-round). `const.wast` is the only core file kept
-  out of the gate; add it once wabt-ts fixes this. (V8's `Math.fround(Number(s))` reproduces the same
-  wrong answers because that idiom also double-rounds — the spec `.wast` value is the oracle, not V8.)
+- ✅ **FIXED 1.3.4 — `br_if`/`br_table` with a branch value.** Was: dropped the value / yielded the
+  condition, or emitted bytes V8 rejected ("expected 1 elements on the stack for branch").
+- ✅ **FIXED 1.3.4 — over-precise HEX float consts** (`0x1.00000100000000001p-50` → `0x26800001`, was
+  truncated to `0x26800000`).
+- ✅ **FIXED 1.3.5 — Bug C: decimal `f32.const` double-rounding.** Was: `(f32.const
+  +8.8817847263968443574e-16)` → `0x26800000` and `+8.8817857851880284252e-16` → `0x26800002`; now both
+  correctly single-round decimal→f32 to `0x1.000002p-50` = `0x26800001`. `const.wast` is now in the gate.
+  (wabt-ts 1.3.5 added exact single-rounding `decimalToBits`; f64 consts stay on `parseFloat`. Note: the
+  runner's expected-value oracle parses the `.wast` hex literal `0x1.000002p-50` directly to bits — it is
+  NOT hardcoded/V8-derived — so it computes the same `0x26800001` by exact hex-float decode and agrees.)
 
 **Two RUNNER improvements made while re-validating on 1.3.4 (real correctness, not workarounds):**
 (1) a **void** export returns `undefined` → treat as `[]` (was `[undefined]`, length-1, mismatching a

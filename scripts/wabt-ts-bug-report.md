@@ -1,9 +1,22 @@
 # Bug report / prompt for the `wabt-ts` team
 
-**Status (updated 2026-07-02, wabt-ts 1.3.4):** the two bugs first reported below are **FIXED** in
-1.3.4 — thank you. Re-running the full WASM spec testsuite through `wasmtk wast` on 1.3.4, only **one**
-distinct wabt-ts bug remains (**Bug C**, decimal→f32 double-rounding), plus items that are not wabt-ts
-issues (JS-boundary NaN-payload args). Details below.
+## ✅ ALL THREE FINDINGS RESOLVED (wabt-ts 1.3.4 + 1.3.5, 2026-07-02) — thank you
+
+Running the full official WASM spec `.wast` testsuite through `wasmtk wast` on **1.3.5**, every core
+execution assertion passes (gate: 41 files, 12444 assertions, 0 fail). The three distinct wabt-ts bugs
+this exercise surfaced are all fixed:
+
+- **A (1.3.4)** — `br_if` / `br_table` with a branch value.
+- **B (1.3.4)** — over-precise HEX float consts rounded to nearest-even.
+- **C (1.3.5)** — decimal `f32.const` single-rounded (was double-rounded decimal→f64→f32).
+
+The historical detail below is kept for the record. Remaining non-wabt-ts items (JS-boundary NaN payload
+args; `assert_invalid`/`assert_malformed` validator leniency) are the runner's skips, not bugs.
+
+---
+
+**History (updated 2026-07-02, wabt-ts 1.3.4):** the two bugs first reported below were fixed in 1.3.4;
+one remained (**Bug C**, decimal→f32 double-rounding) — now fixed in 1.3.5.
 
 **Context.** wasmtk's `wasmtk wast` runner assembles each `(module …)` with `jsr:@jrmarcum/wabt-ts/compat`
 and runs the official WebAssembly spec testsuite's assertions on host V8. Every isolated execution

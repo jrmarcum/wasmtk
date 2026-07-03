@@ -61,9 +61,8 @@ const FILES = [
   "unreachable",
   "unwind",
   "nop",
+  "const",
 ];
-// NOTE: `const.wast` is intentionally excluded — its 4 remaining failures are a genuine wabt-ts
-// decimal→f32 double-rounding bug (see scripts/wabt-ts-bug-report.md, Bug C). Add it once fixed.
 
 const green = (s: string) => `\x1b[32m${s}\x1b[39m`;
 const red = (s: string) => `\x1b[31m${s}\x1b[39m`;
