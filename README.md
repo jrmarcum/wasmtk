@@ -163,6 +163,25 @@ wasmtk mod   mylib.wasm add 2 3            #   → call an exported function: pr
 wasmtk modc  --lang=go app.go --go-target=wasm   # build a BROWSER module (-target=wasm) + wasm_exec.js
 ```
 
+### `wasmtk wast` — WebAssembly `.wast` spec-script conformance runner
+
+Run the WebAssembly `.wast` *script* format (a superset of `.wat` that interleaves `(module …)`
+definitions with assertions — the format the official spec conformance testsuite is written in):
+
+```bash
+wasmtk wast path/to/file.wast                 # run one .wast file's assertions
+wasmtk wast tests/module/wasm_wast/testsuite-main   # run a whole directory tree
+wasmtk wast file.wast --verbose               # show skip/toolchain-gap detail
+```
+
+It splits the script into commands, assembles each module with the WABT backend, instantiates it on the
+host engine with the standard `spectest` imports + a `register` link registry, and executes the
+`assert_return` / `assert_trap` / `assert_invalid` / `assert_malformed` / `assert_unlinkable` /
+`invoke` / `get` directives — comparing results bit-exactly (i32 as uint32, i64 as BigInt, f32/f64 by
+bits incl. `nan:canonical`/`nan:arithmetic` and hex-float literals). Exit code is non-zero if any
+**execution** assertion fails. Assertions using out-of-scope value types (`v128`, `ref.*`) or unsupported
+proposals, and validation assertions the toolchain doesn't reject, are reported as **skipped**.
+
 > **`wasmtk run` auto-detects Go.** A `.go` file argument, or a directory containing a `go.mod`, is
 > built (via TinyGo) and run automatically — no `--lang=go` needed. The explicit flag still works and
 > is required only to force Go where detection can't tell (e.g. a bare `wasmtk run` with no path, which

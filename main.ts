@@ -93,7 +93,7 @@ async function main(): Promise<void> {
       n: "name",
       o: "name",
     },
-    boolean: ["version", "help", "dts-only", "dry-run", "auto"],
+    boolean: ["version", "help", "dts-only", "dry-run", "auto", "verbose"],
     string: [
       "name",
       "on-conflict",
@@ -155,6 +155,7 @@ Usage:
   wasmtk info <file>                      Show callable WASM functions in .wasm or .wat library/module
   wasmtk wasm2js <file.wasm>              Convert .wasm -> .js based script
   wasmtk convert <file>                   Convert .wasm -> .wat and .wat -> .wasm
+  wasmtk wast <file.wast|dir> [--verbose]  Run WebAssembly .wast spec-script assertions (conformance)
   wasmtk tsbundle <file.ts>               Bundle a .ts project to a single .ts file (inlines all imports)
   wasmtk wasmbundle <a.wasm> [b.wasm...]  Bundle multiple .wasm files into a single library
   wasmtk jstyper <file.js>               Convert .js + .d.ts to typed .ts for wasic compilation
@@ -362,6 +363,17 @@ Options:
     case "convert":
       await convertFile(target, outPath);
       break;
+    case "wast": {
+      // Run the WebAssembly `.wast` spec-script assertions (a file or a directory tree).
+      if (!target) {
+        console.error("❌ wasmtk wast: expected a .wast file or directory");
+        Deno.exit(1);
+      }
+      const { wastCli } = await import("./src/wast.ts");
+      const code = await wastCli(target, { verbose: args.verbose as boolean | undefined });
+      Deno.exit(code);
+      break;
+    }
     case "tsbundle":
       await bundleTs(target, outPath ?? target.replace(/\.ts$/, ".bundled.ts"));
       break;

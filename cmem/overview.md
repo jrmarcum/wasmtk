@@ -20,6 +20,7 @@ wasmtk/
 │   ├── wasmbundle.ts    # CLI bundler for combining multiple .wasm files
 │   ├── modc.ts          # Library-mode compilation (no _start, no WASI)
 │   ├── bindgen.ts       # TS host binding generator from .wit (Phase 50)
+│   ├── wast.ts          # `.wast` spec-script runner: parse + assemble + run assertions (`wasmtk wast`)
 │   ├── hybrid.ts        # // @wasm-annotated split compiler
 │   ├── gowasic.ts       # Go producer (--lang=go): init/modc/run via TinyGo/std; modc→wasm library, run auto-detects Go (2026-06-06, upd. 2026-06-07)
 │   ├── zigwasic.ts      # Zig producer (--lang=zig): init/modc/run via `zig`; modc→freestanding lib, run→wasm32-wasi (2026-06-07)
@@ -41,7 +42,7 @@ wasmtk/
     ├── module/               # ── WASM MODULES (exports invoked from a wasm runtime) ──
     │   ├── wasm_mod/          #   Prebuilt module fixtures (mod_tests reads them)
     │   ├── bindgen_fixtures/  #   modc libraries + generated bindings (bindgen_tests)
-    │   └── wasm_wast/         #   Hand-authored WAT samples / Art-of-WebAssembly book
+    │   └── wasm_wast/         #   WAT samples + the official WASM spec `.wast` testsuite (`wasmtk wast`)
     ├── hybrid/               # ── HYBRID (wasm core initiated from a JS/TS program) ──
     │   └── hybrid_fixtures/   #   `wasmtk hybrid` split-compile fixtures
     ├── jstyper_fixtures/      # jstyper .js→.ts producer inputs (not one of the 3 categories)

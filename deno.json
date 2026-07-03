@@ -16,6 +16,7 @@
     "./jstyper": "./src/jstyper.ts",
     "./bindgen": "./src/bindgen.ts",
     "./hybrid": "./src/hybrid.ts",
+    "./wast": "./src/wast.ts",
     "./gowasic": "./src/gowasic.ts",
     "./zigwasic": "./src/zigwasic.ts",
     "./rustwasic": "./src/rustwasic.ts"

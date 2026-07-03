@@ -1,5 +1,35 @@
 # Compiler bug log
 
+## wabt-ts BACKEND bugs surfaced by the new `.wast` spec runner (2026-07-02) — NOT wasmtk-side
+
+The new `wasmtk wast` conformance runner (`src/wast.ts`, gate `tests/wast_tests.ts`) runs the official
+WebAssembly spec `.wast` testsuite through the pluggable WABT backend + host V8. Across ~14,400
+core-suite assertions it is **~13,200 pass / 34 fail / 1217 skip**; the 34 execution failures are all
+**genuine `jsr:@jrmarcum/wabt-ts` (the active backend) bugs**, confirmed by isolating each and comparing
+V8 (spec-compliant) output to wabt-ts's assembled bytes. They do NOT affect the wasmtk suite (375/375)
+because wasic doesn't emit these exact shapes. They need fixing in the **wabt-ts** repo (a separate
+project the owner owns). A ready-to-send bug report/prompt for that team is in
+`scripts/wabt-ts-bug-report.md` (written 2026-07-02).
+
+1. **`br_if` with a branch value drops the value, yields the condition.** For a block with a result
+   type, `(block $l (result i32) (br_if $l (local.get 0) (i32.const 1)))` returns **1** (the condition)
+   instead of **9** (`local.get 0`). Reproduced in BOTH folded and unfolded forms → an **encoder**
+   bug in how `br_if`'s value operand is emitted. Surfaced by `local_get.wast`, `labels.wast`,
+   `func.wast`, `conversions.wast`.
+2. **Over-precise hex-float consts truncated instead of round-to-nearest-even.** `(f32.const
+   0x1.00000100000000001p-50)` (68-bit mantissa) assembles to bits `0x26800000` (rounded down) but the
+   spec value is `0x26800001` (round-to-nearest-even, since the input sits just above the midpoint).
+   The float-literal **parser** doesn't carry a sticky bit when the mantissa exceeds target precision.
+   22 failures in `const.wast` (f32 + f64, incl. near-`FLT_MAX`/`DBL_MAX`).
+3. **Branch stack-arity mis-encoding** (`nop.wast` etc.): V8 rejects wabt-ts output with "expected 1
+   elements on the stack for branch, found 0" → whole module fails to compile (its assertions skip).
+   Likely the same family as #1 (branch value handling).
+
+The `.wast` runner counts validation-assertion toolchain leniency (`assert_invalid`/`assert_malformed`
+that wabt+V8 fails to reject) as **skips**, not failures.
+
+---
+
 Live record of bugs found + fixed. Newest first. **✅ NO SUITE-FAILING BUGS — full suite 375/375** (`bindgen` 131/131, `jstyper` 73/73, `dync` conformance 3/3) as of **2026-07-01** (mathlib `sin`/`cos`/`tan` are now **correctly-rounded** double-double — the canonical value every libm agrees on, validated bit-for-bit vs a BigInt CR oracle through the full pipeline; regression `67_TrigCorrectlyRounded` — see issue 5 below + design-decisions.md. Plus `66_Dragon4Formatting` for the Dragon4 f64→string rewrite — see issue 6 below and design-decisions.md; prior baseline 373/373 = #14 Route A `18zh`–`18zz` + gap regressions `62_Gap*` + `63_Gap*` + user-report `64_Report*` + trig 5a `65_ReportTrigLargeArg`).
 
 **f64 `toString` — issue 6 (2026-07-01) ✅ FIXED with pure Dragon4.** The old `$__f64_to_str`

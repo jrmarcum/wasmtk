@@ -45,6 +45,7 @@ once omitted `--allow-ffi`; fixed 2026-06-08 by deferring to `deno task install`
 | `jstyper_tests.ts` | **73 / 73** |
 | `dync_conformance_tests.ts` (#14 2h Javy-parity gate) | **3 / 3** — for each fixture in `tests/wasi/wasm_wasi_dync/` (demo1/2/3), `wasmtk dync`→`.wasm`→`run` stdout must byte-match a `deno run` JS baseline. Proves the OWN dynamic runtime is a drop-in `javyc` replacement (no Javy/QuickJS). Caught the `Math.min`/`max` 2-arg bug (now variadic). Out of scope: interactive `prompt` + ESM import/export of other modules. |
 | Capability pipelines `18c`–`18g` (Set/Map/Date/JSON/RegExp) + `18h` (virtual `wasmtk:` imports) | **6 / 6** |
+| `wast_tests.ts` (`.wast` spec-runner regression gate, 2026-07-02) | **31 files, 12178 exec assertions pass / 0 fail** — a curated set of the official WASM spec `.wast` testsuite run clean through `wasmtk wast` (wabt assemble → host V8). Non-gate files (`const`/`local_get`/`labels`/`conversions`/`func`) surface real **wabt-ts** bugs (br_if-with-value encoding; over-precise hex-float truncation) — see compiler-bugs.md + `scripts/wabt-ts-bug-report.md`. Run `deno run --allow-read --allow-net tests/wast_tests.ts`; run `wasmtk wast tests/module/wasm_wast/testsuite-main` for the whole suite. |
 
 The 7 previously-failing tests were fixed 2026-06-02: `5e_MixedSignatures`, `19_NestedDiscriminantUnions`,
 `19_VariantMaximumMemoryAlignment` (value-fallthru codegen, fixed in wasic); `38_MathExpLog`,
