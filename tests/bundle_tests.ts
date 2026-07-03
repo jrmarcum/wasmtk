@@ -14,7 +14,7 @@
  * Usage:
  *   deno run --allow-read --allow-run bundle_tests.ts [folder]
  *
- * Defaults to tests/wasm_wasi_bundle/ relative to this script's location.
+ * Defaults to tests/wasi/wasm_wasi_bundle/ relative to this script's location.
  */
 
 // deno-lint-ignore no-import-prefix
@@ -26,7 +26,7 @@ import {
   blue, bold, cyan, dim, green, magenta, red, yellow,
 
 // deno-lint-ignore no-import-prefix
-} from "jsr:@std/fmt/colors@1.0.25";
+} from "jsr:@std/fmt@1.0.1/colors";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuration
@@ -34,7 +34,7 @@ import {
 
 const WASMTK_BIN = "wasmtk";
 const scriptDir = import.meta.dirname ?? Deno.cwd();
-const targetDir = Deno.args[0] ?? join(scriptDir, "wasm_wasi_bundle");
+const targetDir = Deno.args[0] ?? join(scriptDir, "wasi", "wasm_wasi_bundle");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Step runner (mirrors wasi_tests.ts)

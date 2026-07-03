@@ -24,7 +24,7 @@ on `wabt-ts@^1.3.2/compat` + `binaryen-ts@^1.3.5/compat`. Date surfaced+fixed tw
 (§7b); JSON four more (§7c); RegExp surfaced a merge bug (OOB-`charCodeAt` in a non-short-circuit
 `&&`) that is now **fixed (2026-06-02)** by making wasic short-circuit `&&`/`||` — the library
 workaround was removed — §7d. **All 7 long-standing test failures
-fixed 2026-06-02** → full `tests/wasm_wasi` **278/278** (now **309/309** as of 2026-06-15):
+fixed 2026-06-02** → full `tests/wasi/wasm_wasi` **278/278** (now **309/309** as of 2026-06-15):
 value-fallthru codegen in wasic (`5e`,
 `19×2`) + wabt-ts 1.3.1 hex-float-literal fix (`38×4` mathlib) — see cmem/compiler-bugs.md.
 **Brief §7-#4 (tree-shake) ✅, #6 (hybrid `--auto` routing) ✅, #7 (kernel-scope: build own runtime)
@@ -97,7 +97,7 @@ redirected to main module's $__malloc / $__heap_ptr.`
 This single change converts `wasmbundle` from a packaging tool into a real on-demand
 stdlib linker.
 
-**Regression test:** `tests/wasm_wasi/18b_SharedHeapTwoLibraries.ts` — `@test-pipeline`
+**Regression test:** `tests/wasi/wasm_wasi/18b_SharedHeapTwoLibraries.ts` — `@test-pipeline`
 running `modc lib_a_modc.ts` + `modc lib_b_modc.ts` + `wasic main_wasic.ts` + `run`.
 Both libraries allocate via `.push()` (which calls the wasic `$__dynarr_push_i32`
 helper, which calls `$__malloc`); main asserts both libraries return the expected
@@ -187,39 +187,39 @@ this change makes the former a scope decision rather than a technical blocker.
    `wabt-ts/compat 1.2.9` + `binaryen-ts/compat 1.3.1` with the unification pass active.
 3. **Author** Tier-1 capability libraries as `modc` modules: JSON, Date (UTC/offset
    first), Map, Set; plus a RegExp leaf module.
-   - ✅ **`Set<i32>` shipped 2026-05-30** — `tests/wasm_wasi_bundle/set_bundle/set_lib_modc.ts`
+   - ✅ **`Set<i32>` shipped 2026-05-30** — `tests/wasi/wasm_wasi_bundle/set_bundle/set_lib_modc.ts`
      (open-addressing hash table; handle = i32 ptr to a 4-slot `Int32Array` header
      `[count, cap, keysPtr, usedPtr]` + two `Int32Array(cap)` bucket arrays; linear probing
      on `key & (cap-1)`; ×2 grow + rehash at load factor 0.5; exports
      `setNew`/`setAdd`/`setHas`/`setSize`). Shared-heap driver `main_wasic.ts` +
-     `@test-pipeline` `tests/wasm_wasi/18c_SetCapabilityLibrary.ts` (PASS). Required two
+     `@test-pipeline` `tests/wasi/wasm_wasi/18c_SetCapabilityLibrary.ts` (PASS). Required two
      wasic-side fixes: TypedArray-view-over-pointer **writes** (`const v: Int32Array = ptr
      as unknown as Int32Array; v[i] = x`) and imported-function signature resolution from
      inline `(param …)` headers in `wasmmerge`. A pre-existing modc bug (string-returning
      library functions imported an unused `fd_write`) was fixed alongside (bindgen
      99/103 → 103/103).
    - ✅ **`Map<i32,i32>` shipped 2026-05-30** —
-     `tests/wasm_wasi_bundle/map_bundle/map_lib_modc.ts`. Reuses the Set hash core (same
+     `tests/wasi/wasm_wasi_bundle/map_bundle/map_lib_modc.ts`. Reuses the Set hash core (same
      linear probing + ×2 grow/rehash) and adds a parallel values array; handle = i32 ptr to
      a 5-slot `Int32Array` header `[count, cap, keysPtr, valsPtr, usedPtr]` + three
      `Int32Array(cap)` bucket arrays. Exports `mapNew`/`mapSet`/`mapGet`/`mapHas`/`mapSize`;
      `mapSet` updates in place on an existing key (count stable), `mapGet` takes a caller
      `fallback` for absent keys. Shared-heap driver `main_wasic.ts` + `@test-pipeline`
-     `tests/wasm_wasi/18d_MapCapabilityLibrary.ts` (PASS). Required no new compiler fixes —
+     `tests/wasi/wasm_wasi/18d_MapCapabilityLibrary.ts` (PASS). Required no new compiler fixes —
      built entirely on the wasic features the Set capability established (TypedArray view
      over pointer, type-erasure casts, inline-param import signature resolution).
    - ✅ **`Date` shipped 2026-05-30** (first *leaf* capability) —
-     `tests/wasm_wasi_bundle/date_bundle/date_lib_modc.ts`. Pure UTC integer calendar math,
+     `tests/wasi/wasm_wasi_bundle/date_bundle/date_lib_modc.ts`. Pure UTC integer calendar math,
      no heap allocation and no mutable state (allocator unification is a no-op here), so the
      merge is a straight function splice — the "leaf capability merged when used" path from
      §5. Uses Howard Hinnant's exact-integer civil↔days algorithms (valid across the whole
      proleptic Gregorian calendar, incl. pre-epoch / negative day counts). Exports
      `isLeapYear`, `daysInMonth`, `daysFromCivil`, `weekdayFromDays`, `yearFromDays`,
      `monthFromDays`, `dayFromDays`. Self-checking driver `main_wasic.ts` + `@test-pipeline`
-     `tests/wasm_wasi/18e_DateCapabilityLibrary.ts` (PASS). Surfaced + fixed two merge-path
+     `tests/wasi/wasm_wasi/18e_DateCapabilityLibrary.ts` (PASS). Surfaced + fixed two merge-path
      compiler bugs — see §7b.
    - ✅ **`JSON` shipped 2026-05-31** (parse + navigate; first capability with *string* input
-     across the merge) — `tests/wasm_wasi_bundle/json_bundle/json_lib_modc.ts`. Shared-heap:
+     across the merge) — `tests/wasi/wasm_wasi_bundle/json_bundle/json_lib_modc.ts`. Shared-heap:
      a wasic program (no native JSON) gains `JSON.parse` + navigation by merging this lib; the
      value tree lives on the driver's heap. Each handle = base ptr of a 4-slot `Int32Array`
      node `[tag, a, b, c]` (tag 0=null 1=bool 2=number(int) 3=string 4=array 5=object);
@@ -227,17 +227,17 @@ this change makes the former a scope decision rather than a technical blocker.
      values are decoded into `Uint8Array` buffers. Recursive-descent parser with a module-level
      cursor. Exports `jsonParse`/`jsonType`/`jsonInt`/`jsonBool`/`jsonArrayLen`/`jsonArrayGet`/
      `jsonObjectLen`/`jsonStrLen`/`jsonStrCharAt`/`jsonStrEq`/`jsonGet`/`jsonHas`. Self-checking
-     driver `main_wasic.ts` + `@test-pipeline` `tests/wasm_wasi/18f_JsonCapabilityLibrary.ts`
+     driver `main_wasic.ts` + `@test-pipeline` `tests/wasi/wasm_wasi/18f_JsonCapabilityLibrary.ts`
      (PASS). v1 scope: null/bool/integer-number/string/array/object + basic escapes; floats and
      `\uXXXX` are the v2 gap. **Surfaced + fixed four compiler bugs — see §7c.**
    - ✅ **`RegExp` shipped 2026-05-31** (fifth/final Tier-1; leaf) —
-     `tests/wasm_wasi_bundle/regex_bundle/regex_lib_modc.ts`. A classic Kernighan/Pike recursive
+     `tests/wasi/wasm_wasi_bundle/regex_bundle/regex_lib_modc.ts`. A classic Kernighan/Pike recursive
      backtracking matcher, index-based over two `(string, index)` pairs threaded through the
      recursion (no heap; straight function splice). Exports `reTest(p,t)` / `reSearch(p,t)` (start
      index, sets `reEnd()`) / `reEnd()`. v1: literals, `.`, classes `[...]` (ranges, negation,
      `\d \w \s`), escapes `\d \w \s \D \W \S \n \t \r`, quantifiers `* + ?` (greedy + backtrack),
      anchors `^ $`; v2 gap: `|`, groups/captures, `{n,m}`, lazy, backreferences. Self-checking
-     driver + `@test-pipeline` `tests/wasm_wasi/18g_RegexCapabilityLibrary.ts` (PASS). **Surfaced a
+     driver + `@test-pipeline` `tests/wasi/wasm_wasi/18g_RegexCapabilityLibrary.ts` (PASS). **Surfaced a
      merge bug, now FIXED (2026-06-02)** (OOB `charCodeAt` in a non-short-circuit `&&` loop condition
      mis-encoded by the splice; correct standalone, traps merged) — fixed by making wasic
      short-circuit `&&`/`||`; the library workaround was removed and 18g still passes merged. See §7d.
@@ -281,7 +281,7 @@ intermediate target `unknown` reached `mapType("unknown")`, which falls through 
 **Fix:** strip pure type-erasure casts (`as unknown` / `as any`) up front in
 `emitExpr`, reducing `expr as unknown as T` → `expr as T` and `expr as unknown` →
 `expr`. The now-simple inner operand lets the normal single-cast path infer the
-correct source type. Regression test: `tests/wasm_wasi/22_DoubleCastErasure.ts`
+correct source type. Regression test: `tests/wasi/wasm_wasi/22_DoubleCastErasure.ts`
 (i32 + f64 double-cast, `as any` variant, bare `as unknown`; zero TS↔WASM delta).
 The Tier-1 stdlib libraries can now use pointer-typed `as unknown as i32` returns
 directly.
@@ -292,7 +292,7 @@ The `Date` capability is the first merged library whose functions are dense
 **integer arithmetic over large constants** (719468, 146097, 365, 153, …). That
 shape exposed two latent bugs in the merge pipeline that the bitwise/small-constant
 Set/Map libraries never tripped. Both are fixed; the Date pipeline
-(`18e_DateCapabilityLibrary.ts`) passes and the full `tests/wasm_wasi` suite is
+(`18e_DateCapabilityLibrary.ts`) passes and the full `tests/wasi/wasm_wasi` suite is
 **268/275** with the same 7 pre-existing wasic-codegen failures and **no
 regressions** (historical snapshot — those 7 were all fixed 2026-06-02; suite is now 309/309).
 
@@ -331,7 +331,7 @@ regressions** (historical snapshot — those 7 were all fixed 2026-06-02; suite 
 JSON is the first capability to take **string input across the merge boundary** (Set/Map are
 i32-only; Date is a pure-integer leaf) and the first to build a **dynamic tagged value tree**.
 That exercised four code paths the earlier capabilities never hit. All four are fixed; the
-JSON pipeline (`18f_JsonCapabilityLibrary.ts`) passes and the full `tests/wasm_wasi` suite is
+JSON pipeline (`18f_JsonCapabilityLibrary.ts`) passes and the full `tests/wasi/wasm_wasi` suite is
 **269/276** — same 7 pre-existing wasic-codegen failures, no regressions — plus `bindgen`
 103/103 and `jstyper` 73/73 (historical snapshot — those 7 were all fixed 2026-06-02; suite is now
 309/309 as of 2026-06-15, bindgen 104/104). (Detailed in cmem/capabilities.md (JSON).)

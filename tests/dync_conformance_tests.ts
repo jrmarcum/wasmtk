@@ -1,7 +1,7 @@
 /**
  * dync_conformance_tests.ts — the #14 Route A 2h "Javy-parity" conformance gate.
  *
- * For every `.ts` fixture in `tests/wasm_wasi_dync/`, this runner proves the OWN dynamic runtime
+ * For every `.ts` fixture in `tests/wasi/wasm_wasi_dync/`, this runner proves the OWN dynamic runtime
  * (`wasmtk dync` → wasmtk:dynrt interpreter, the `javyc` replacement) produces byte-identical stdout
  * to a true JavaScript baseline (`deno run` of the same source). Three steps per fixture:
  *
@@ -25,7 +25,7 @@ import { join, parse } from "jsr:@std/path";
 import { bold, cyan, dim, green, magenta, red, yellow } from "jsr:@std/fmt/colors";
 
 const WASMTK_BIN = "wasmtk";
-const targetDir = Deno.args[0] ?? join(import.meta.dirname ?? Deno.cwd(), "wasm_wasi_dync");
+const targetDir = Deno.args[0] ?? join(import.meta.dirname ?? Deno.cwd(), "wasi", "wasm_wasi_dync");
 
 async function capture(cmd: string, args: string[]): Promise<{ ok: boolean; out: string }> {
   try {

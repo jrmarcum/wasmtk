@@ -89,7 +89,7 @@ high-value subset.
   `\` escapes) so a `;`/`{`/`}` inside a string is never a false statement boundary; and
   `expandInlineBraceChain` must re-emit trailing statements after the brace chain as siblings rather
   than dropping them. Multi-line bodies (single statement per line) are unaffected. Regression:
-  `tests/wasm_wasi/48_SingleLineBraceIf.ts` (`// deno-fmt-ignore-file` keeps the single-line forms).
+  `tests/wasi/wasm_wasi/48_SingleLineBraceIf.ts` (`// deno-fmt-ignore-file` keeps the single-line forms).
 - **Greedy single-call handlers** (`charCodeAt`/`startsWith`/`endsWith`/`split`/`.slice` family, plus
   `indexOf`/`includes`/`at`/`charAt`/`replace`/`padStart`/`repeat`/`fromCharCode`/string-char-subscript/
   `isNaN` — extended 2026-06-08) must guard their greedy `(.+)` arg with `parenDepthNeverNegative(arg)`

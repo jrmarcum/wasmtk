@@ -99,7 +99,7 @@ capabilities — `Set<i32>` + `Map<i32,i32>` + `JSON` shared-heap libraries + th
 under npm:wabt + npm:binaryen: 446/446 tests passing (2026-05-25; 270 wasic +
 Go-by-Example + 103 bindgen + 73 jstyper). **Under the current dual JSR /compat
 stack (`jsr:@jrmarcum/wabt-ts@^1.3.2/compat` +
-`jsr:@jrmarcum/binaryen-ts@^1.3.5/compat`):** the full `tests/wasm_wasi`
+`jsr:@jrmarcum/binaryen-ts@^1.3.5/compat`):** the full `tests/wasi/wasm_wasi`
 suite is **309/309** (`core_` 33/33), jstyper 73/73, and **bindgen 104/104** (Phase 53, 2026-06-15,
 added `Number.parseInt`/`parseFloat` + multi-level interface inheritance; the ABI return side was
 forward-aligned to callee-allocated + `cabi_post`, bindgen 103→104; pre-publish hardening
@@ -488,7 +488,7 @@ post-relocation static data.*
 - ✅ `src/wasmbundle.ts` — when any sub-merge dropped an allocator, the master
   WAT synthesizes a shared `$__heap_ptr` global and `$__malloc` function pair
   and recomputes pages.
-- ✅ Regression test `tests/wasm_wasi/18b_SharedHeapTwoLibraries.ts` — two
+- ✅ Regression test `tests/wasi/wasm_wasi/18b_SharedHeapTwoLibraries.ts` — two
   modc-compiled libraries both allocate via `.push()`; main asserts both
   return the expected length; PASSING.
 - ✅ Runtime notice on each unified merge:
@@ -512,7 +512,7 @@ library shares ONE live heap with the `wasic` program that imports it. Date is t
 first **leaf** capability — pure value-in/value-out with no heap, so the merge is a
 straight function splice.*
 
-- ✅ `tests/wasm_wasi_bundle/set_bundle/set_lib_modc.ts` — `Set<i32>` open-addressing
+- ✅ `tests/wasi/wasm_wasi_bundle/set_bundle/set_lib_modc.ts` — `Set<i32>` open-addressing
   hash table. Handle = i32 pointer to a 4-slot `Int32Array` header
   `[count, cap, keysPtr, usedPtr]`; two `Int32Array(cap)` bucket arrays; linear
   probing on `key & (cap-1)`; ×2 grow + rehash at load factor 0.5 (handle stays
@@ -536,7 +536,7 @@ straight function splice.*
 - ✅ Fixed a pre-existing modc bug: string-**returning** library functions imported
   an unused `wasi_snapshot_preview1.fd_write` (the bindgen loader can't supply it).
   `allocString` no longer sets `hasConsoleLog`. `bindgen_tests.ts` 99/103 → 103/103.
-- ✅ `tests/wasm_wasi_bundle/map_bundle/map_lib_modc.ts` — `Map<i32,i32>` reuses the
+- ✅ `tests/wasi/wasm_wasi_bundle/map_bundle/map_lib_modc.ts` — `Map<i32,i32>` reuses the
   Set hash core (linear probing + ×2 grow/rehash) and adds a parallel values array.
   Handle = i32 pointer to a 5-slot `Int32Array` header
   `[count, cap, keysPtr, valsPtr, usedPtr]` over three `Int32Array(cap)` bucket arrays.
@@ -545,7 +545,7 @@ straight function splice.*
   fallback for absent keys; key→value association survives rehash. Self-checking
   `@test-pipeline` `18d_MapCapabilityLibrary.ts` (PASSING). **No new compiler fixes
   required** — built entirely on the wasic features the Set capability established.
-- ✅ `tests/wasm_wasi_bundle/date_bundle/date_lib_modc.ts` — `Date` UTC integer
+- ✅ `tests/wasi/wasm_wasi_bundle/date_bundle/date_lib_modc.ts` — `Date` UTC integer
   calendar math (first leaf capability). Howard Hinnant's exact-integer civil↔days
   algorithms, valid across the whole proleptic Gregorian calendar incl. pre-epoch /
   negative day counts. Exports `isLeapYear`, `daysInMonth`, `daysFromCivil`,
@@ -557,7 +557,7 @@ straight function splice.*
   scoping relocation to the merged module's own `(data …)` address extent; (2)
   binaryen-ts/compat's optimizer miscompiled the doubly-merged module — **fixed upstream
   in binaryen-ts/compat 1.3.2** (the temporary skip-Binaryen-on-merge workaround was
-  removed once 1.3.2 landed). Full `tests/wasm_wasi` suite: **268/275** (7 pre-existing
+  removed once 1.3.2 landed). Full `tests/wasi/wasm_wasi` suite: **268/275** (7 pre-existing
   failures, no regressions).
 
 All five Tier-1 capabilities (Set/Map/Date/JSON/RegExp) are shipped.

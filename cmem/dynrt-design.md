@@ -40,9 +40,9 @@ Delivered exactly like the Tier-1 caps: a shared-heap `modc` library + a self-ch
 an `@test-pipeline`. After the Phase 18 merge + Stage 0.6 allocator unification, the library's
 `$__malloc` resolves to the driver's bump cursor, so boxed values live on the ONE shared heap.
 
-- Library: `tests/wasm_wasi_bundle/dynrt_bundle/dynrt_lib_modc.ts`
-- Driver:  `tests/wasm_wasi_bundle/dynrt_bundle/main_wasic.ts`
-- Pipeline test: `tests/wasm_wasi/18j_DynRuntimeValueModel.ts` (modc → wasic → run). **PASS.**
+- Library: `tests/wasi/wasm_wasi_bundle/dynrt_bundle/dynrt_lib_modc.ts`
+- Driver:  `tests/wasi/wasm_wasi_bundle/dynrt_bundle/main_wasic.ts`
+- Pipeline test: `tests/wasi/wasm_wasi/18j_DynRuntimeValueModel.ts` (modc → wasic → run). **PASS.**
 
 **Boxed value** = i32 handle = base ptr of a 4-slot `Int32Array` node `[tag, a, b, c]`:
 
@@ -87,11 +87,11 @@ tree-shake, brief §7-#4). Wiring (one line each, the resolver in `tsbundler.ts`
 - `scripts/gen_caps_bytes.ts` — added `{ id: "dynrt", dir: "dynrt_bundle", base: "dynrt_lib_modc" }`
   to the `CAPS` list; regenerated `src/wasm/caps_bytes.ts` (dynrt = 4470 bytes embedded). No resolver
   change: `tsbundler.ts` slices `wasmtk:<id>` and looks it up in `CAPABILITIES` generically.
-- Driver `tests/wasm_wasi_bundle/dynrt_vcap_bundle/main_wasic.ts` imports from `wasmtk:dynrt`;
-  pipeline test `tests/wasm_wasi/18k_DynRuntimeVirtualImport.ts` (wasic → run). **PASS.**
+- Driver `tests/wasi/wasm_wasi_bundle/dynrt_vcap_bundle/main_wasic.ts` imports from `wasmtk:dynrt`;
+  pipeline test `tests/wasi/wasm_wasi/18k_DynRuntimeVirtualImport.ts` (wasic → run). **PASS.**
 
 **To regenerate after editing the dynrt library:** `wasmtk modc
-tests/wasm_wasi_bundle/dynrt_bundle/dynrt_lib_modc.ts` → then `deno run --allow-read --allow-write
+tests/wasi/wasm_wasi_bundle/dynrt_bundle/dynrt_lib_modc.ts` → then `deno run --allow-read --allow-write
 scripts/gen_caps_bytes.ts` → then `deno task install` (so the installed binary carries the new bytes).
 
 Deferred from 1b (not blocking): a hashmap-backed property map and f64-aware `dynToNumber(string)`.
@@ -125,9 +125,9 @@ already existed. All are exports of the dynrt library; a program importing only 
 gets them dead-stripped by Binaryen (reachable only from `dynEval`).
 
 - Lives in the same library (`dynrt_lib_modc.ts`); `wasmtk:dynrt` now also exposes `dynEval` (caps
-  bytes regenerated → 7773 bytes). Driver `tests/wasm_wasi_bundle/dynrt_eval_bundle/main_wasic.ts`
+  bytes regenerated → 7773 bytes). Driver `tests/wasi/wasm_wasi_bundle/dynrt_eval_bundle/main_wasic.ts`
   (explicit-fixture pipeline, imports `../dynrt_bundle/dynrt_lib_modc.wasm`); pipeline test
-  `tests/wasm_wasi/18l_DynRuntimeEval.ts`. **PASS** (precedence/parens/unary/f64/comparisons/logical/
+  `tests/wasi/wasm_wasi/18l_DynRuntimeEval.ts`. **PASS** (precedence/parens/unary/f64/comparisons/logical/
   ternary/string-concat). **No new compiler gaps** — the lib compiled clean on the first try.
 
 **2a gaps (→ 2b+):** variables / an environment (identifier resolution), member/property access,
@@ -158,8 +158,8 @@ So 2b ships the read/navigation layer; **calls + function values (tag 7) + real 
 together in 2c** where short-circuit becomes real and observable.
 
 - Same library; `wasmtk:dynrt` regenerated → 8674 bytes. Driver
-  `tests/wasm_wasi_bundle/dynrt_eval_bundle/main_env.ts` (builds `{x,y,name,pt:{a,b},arr:[…]}`);
-  pipeline test `tests/wasm_wasi/18m_DynRuntimeEvalEnv.ts`. **PASS** on the first run — **no new
+  `tests/wasi/wasm_wasi_bundle/dynrt_eval_bundle/main_env.ts` (builds `{x,y,name,pt:{a,b},arr:[…]}`);
+  pipeline test `tests/wasi/wasm_wasi/18m_DynRuntimeEvalEnv.ts`. **PASS** on the first run — **no new
   compiler gaps** (env lookup, `.prop`/`["key"]`/`[i]`, computed index, `.length`, guarded
   `undefined.x`, variables in ternaries).
 
@@ -192,8 +192,8 @@ pure ops run regardless (harmless). `inc()` (the one side-effecting built-in) + 
 inside call args), `inc() + inc()` → 2.
 
 - Same library; `wasmtk:dynrt` regenerated → 9664 bytes. Driver
-  `tests/wasm_wasi_bundle/dynrt_eval_bundle/main_calls.ts`; pipeline test
-  `tests/wasm_wasi/18n_DynRuntimeCalls.ts`. **PASS.** Surfaced one wasic gap (i32 global / typed-array
+  `tests/wasi/wasm_wasi_bundle/dynrt_eval_bundle/main_calls.ts`; pipeline test
+  `tests/wasi/wasm_wasi/18n_DynRuntimeCalls.ts`. **PASS.** Surfaced one wasic gap (i32 global / typed-array
   element as an f64 call-arg skips the `f64.convert` — bind to a local first; see compiler-gaps below)
   and one driver-side gap (a module-level `const env = <call>` isn't visible inside nested driver
   functions — thread it as a param, as the env/calls drivers do).
@@ -225,8 +225,8 @@ the 2c short-circuit machinery to advance the cursor while executing nothing. `r
 `evalReturned`, which stops sequencing (and ends a loop). A 100M-iteration safety cap guards runaway
 loops.
 
-**Proven** (`tests/wasm_wasi_bundle/dynrt_eval_bundle/main_run.ts`, pipeline test
-`tests/wasm_wasi/18o_DynRuntimeStatements.ts`, `wasmtk:dynrt` → 11140 bytes): real programs — `x = x*2`
+**Proven** (`tests/wasi/wasm_wasi_bundle/dynrt_eval_bundle/main_run.ts`, pipeline test
+`tests/wasi/wasm_wasi/18o_DynRuntimeStatements.ts`, `wasmtk:dynrt` → 11140 bytes): real programs — `x = x*2`
 chains, `if/else` (incl. no-else + early `return`), `while` sum/factorial/**fibonacci(10)=55**, nested
 loops, conditional accumulation, `return` out of a loop, and built-in calls inside statements. **PASS.**
 
@@ -257,8 +257,8 @@ correctly. This works because the source string `s` is a **parameter** (each sou
 call stack) — only the globals need save/restore. Nested/recursive calls each get their own saved
 locals.
 
-**Proven** (`tests/wasm_wasi_bundle/dynrt_eval_bundle/main_func.ts`, pipeline test
-`tests/wasm_wasi/18p_DynRuntimeFunctions.ts`, `wasmtk:dynrt` → 12185 bytes): in-source decls + calls,
+**Proven** (`tests/wasi/wasm_wasi_bundle/dynrt_eval_bundle/main_func.ts`, pipeline test
+`tests/wasi/wasm_wasi/18p_DynRuntimeFunctions.ts`, `wasmtk:dynrt` → 12185 bytes): in-source decls + calls,
 **recursion (factorial, fibonacci)**, **closure over an outer `let`**, mutually-calling functions, a
 function with its own locals + loop, functions calling built-ins, and **`new Function`** built from
 strings then called through eval. **PASS.** No new compiler gaps.
@@ -344,7 +344,7 @@ collectively as "14.3"):
   `: any` usage. New dynrt export **`dynStrBytes`** (raw byte ptr, for any→string unboxing). Proven:
   box/unbox round-trip (`dynNumber`→`dynNumberValue`), `eval` of a string → `any`, `any` string +
   introspection, `any` params/returns (= i32 handle) through a function. Driver
-  `tests/wasm_wasi_bundle/dynrt_any_bundle/main_wasic.ts`. (`dynMember`/`dynIndexValue` are NOT yet in
+  `tests/wasi/wasm_wasi_bundle/dynrt_any_bundle/main_wasic.ts`. (`dynMember`/`dynIndexValue` are NOT yet in
   the injected import set — they become dynrt exports in 3.3.)
   **3.1-sugar ✅ SHIPPED 2026-06-22** (extends `18q`): **implicit boxing of LITERAL initialisers** —
   a transpile source pre-pass rewrites `const x: any = <number|string|template|bool literal>;` →
@@ -399,7 +399,7 @@ collectively as "14.3"):
   bug:** `compileLibTs` (modc) didn't handle EMBEDDED virtual-capability `entry.bytes`/`entry.witText`
   the way `compileWasiTs` does — so the auto-merged `wasmtk:dynrt` failed in the modc core compile
   ("Cannot read imported WASM wasmtk:dynrt"); fixed to mirror `compileWasiTs`. Verified end-to-end:
-  fixture `tests/hybrid_fixtures/dynamic_hybrid.ts` (`evalScaled(n: f64): f64` with an `eval`+`any`
+  fixture `tests/hybrid/hybrid_fixtures/dynamic_hybrid.ts` (`evalScaled(n: f64): f64` with an `eval`+`any`
   body) routes to WASM → runner prints `evalScaled(8)=50`; `dynamic_fallback_hybrid.ts` (uncompilable
   dynamic body) falls back to host (warning) while the static fn still routes → `plus1(41)=42`; the
   existing `math_hybrid` is unchanged. This realizes the §6 intent — `hybrid --auto`'s dynamic target
@@ -435,7 +435,7 @@ Closes the 3.4 gap: a function with an **`any` param or return** can now be call
    `dynTypeof`: 3→`dynNumberValue`, 4→read `dynStrBytes`+`dynStrLen`+`TextDecoder`, 2→`dynToBool`,
    0→`undefined`, else→opaque handle). `any` params → `_box(arg)`; `any` returns → `_unbox(call)`.
 
-**Verified end-to-end** (`tests/wasm_wasi_bundle/anysig_bundle/`: `anysig_lib.ts` modc lib +
+**Verified end-to-end** (`tests/wasi/wasm_wasi_bundle/anysig_bundle/`: `anysig_lib.ts` modc lib +
 `host.ts`): `identity(42|'hi'|true)` round-trips all three types; `addOne(41)=42` (any-param unbox +
 result box); `typeName(42|'x'|true)` → `"number"|"string"|"boolean"` (runtime tag dispatch + string
 return); `exclaim('wow')='wow!'` (string concat on an any).
@@ -471,7 +471,7 @@ the core failed) to move only the FAILING ones (`src/hybrid.ts` `runHybrid`):
   (a static fn depends on a moved dynamic) → coarsen again; if nothing routable remains → host-only
   runner. So it's strictly ≥ the 3.4 behavior.
 
-**Verified** (`tests/hybrid_fixtures/dynamic_partial_hybrid.ts`: one GOOD dynamic `goodDynamic`
+**Verified** (`tests/hybrid/hybrid_fixtures/dynamic_partial_hybrid.ts`: one GOOD dynamic `goodDynamic`
 [`eval`+`any`, compiles] + one BAD `badDynamic` [undefined call] + a static `plus1`): only
 `badDynamic` is moved to host (warning: "1 dynamic function(s) … : badDynamic"); `goodDynamic` +
 `plus1` stay in the WASM core; runner prints `goodDynamic(8)=50` / `plus1(41)=42`. The single-bad
@@ -494,7 +494,7 @@ by `ceil(deficit / 64KiB)` pages when the bump pointer runs past the allocated p
 fixed ~2-page limit (that capped deep recursion / long dynamic loops) to WASM's multi-GiB memory
 limit. It does NOT free — a truly unbounded loop still exhausts eventually (that's P2–P5) — but it
 fixes the immediate symptom: `fib(10)` (≈177 interpreter calls) used to overflow; **`fib(15)` (≈1973
-calls) now runs** (`tests/wasm_wasi_bundle/dynrt_eval_bundle/main_gc.ts`).
+calls) now runs** (`tests/wasi/wasm_wasi_bundle/dynrt_eval_bundle/main_gc.ts`).
 **CRITICAL gotcha:** auto-grow is emitted **only in executable (WASI) modules**, NOT modc libraries.
 A merged library's `$__malloc` is dropped + replaced by the host's during wasmmerge allocator
 unification, AND the `memory.grow`/`memory.size` opcodes defeat `detectBumpAllocator` (so the lib's
@@ -514,7 +514,7 @@ is dropped + replaced by the host's, and the free-list loads/stores/loop would d
 `$__free` yet (the GC sweep will, in P5). Tested directly via three new wasic intrinsics added for the
 GC + its tests: **`__malloc(size)` / `__free(ptr, size)` / `__heapPtr()`** (emitExpr + emitStatement
 handlers → `call $__malloc` / `call $__free` / `global.get $__heap_ptr`). Test
-(`tests/wasm_wasi_bundle/gc_bundle/freelist.ts`) self-checks (trap-on-failure): a freed 64-byte block
+(`tests/wasi/wasm_wasi_bundle/gc_bundle/freelist.ts`) self-checks (trap-on-failure): a freed 64-byte block
 is reused by a later `__malloc(64)` (same ptr, bump cursor unchanged) and by a smaller `__malloc(32)`;
 a fresh `__malloc(48)` with an empty list bumps (ptr advances). **Edit gotcha:** the malloc template
 shared one `parts.push(\`…\`)` with `$cabi_realloc`; splitting malloc into a mode if/else left
@@ -1182,11 +1182,11 @@ the #13/#14 cadence; each ships a `18*` test, output-diff green):**
    statement collector mis-count depth and split on inner `;` — see compiler-bugs.md); base64's alphabet
    has no `{}`/`;`/`"`/newline, so the payload is opaque to the scanner. (c) **the conformance gate** —
    `tests/dync_conformance_tests.ts` output-diffs `wasmtk dync`→wasm against a `deno run` JS baseline
-   over `tests/wasm_wasi_dync/demo1..3` (closures/class/array-methods/loops; JSON/Map/Set/string/Math/
+   over `tests/wasi/wasm_wasi_dync/demo1..3` (closures/class/array-methods/loops; JSON/Map/Set/string/Math/
    try-catch; recursion/generators/destructuring/spread/templates) — **3/3 byte-exact**. Also fixed a
    real interpreter bug the gate caught: `Math.min`/`max` were 2-arg only (`dynMathMethod` now variadic).
    (d) **deletion** — removed `src/javyc.ts`, the `case "javyc"`, `deno.json` `./javyc`,
-   `tests/wasi_javy_tests.ts` + `tests/wasm_wasi_javy/`, and all the Javy download/detect/convert code in
+   `tests/wasi_javy_tests.ts` + `tests/wasi/wasm_wasi_javy/`, and all the Javy download/detect/convert code in
    `utils.ts` (`ensureJavy`/`detectJavyProvider`/`findSourceAlongside` + the convert-path QuickJS
    handling). **No external Javy/QuickJS dependency remains.** Suite 360/360 (+`18zz`), bindgen 131/131,
    jstyper 73/73. **Out of scope (documented):** interactive `prompt` (no host stdin in the interpreter)

@@ -3,8 +3,8 @@
 // `wasmtk:<cap>` import resolution + feature-level tree-shake (stdlib-bundling brief §7-#4).
 //
 // Each capability's authoritative source is its modc fixture under
-// tests/wasm_wasi_bundle/<cap>_bundle/<cap>_lib_modc.ts. Recompile those via
-//   wasmtk modc tests/wasm_wasi_bundle/<cap>_bundle/<cap>_lib_modc.ts
+// tests/wasi/wasm_wasi_bundle/<cap>_bundle/<cap>_lib_modc.ts. Recompile those via
+//   wasmtk modc tests/wasi/wasm_wasi_bundle/<cap>_bundle/<cap>_lib_modc.ts
 // (or run scripts/build_caps.ts) before regenerating, so the embedded bytes match
 // the current compiler.
 //
@@ -29,8 +29,8 @@ const CAPS: { id: string; dir: string; base: string }[] = [
 
 const parts: string[] = [];
 for (const cap of CAPS) {
-  const wasmPath = join(root, "tests", "wasm_wasi_bundle", cap.dir, `${cap.base}.wasm`);
-  const witPath = join(root, "tests", "wasm_wasi_bundle", cap.dir, `${cap.base}.wit`);
+  const wasmPath = join(root, "tests", "wasi", "wasm_wasi_bundle", cap.dir, `${cap.base}.wasm`);
+  const witPath = join(root, "tests", "wasi", "wasm_wasi_bundle", cap.dir, `${cap.base}.wit`);
   const bytes = await Deno.readFile(wasmPath);
   const wit = await Deno.readTextFile(witPath);
   const hex = Array.from(bytes).map((b) => "0x" + b.toString(16).padStart(2, "0")).join(", ");

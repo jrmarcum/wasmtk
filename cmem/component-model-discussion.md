@@ -38,7 +38,7 @@ and the "TypeScript as a DLL" vision in [vision.md](vision.md).
 ### Recommended refinement to #2 (not yet accepted)
 
 Keeping `--lang` *literally required for every language* collides with the established reality:
-`wasmtk wasic foo.ts` is **flagless TS today**, and the entire `tests/wasm_wasi` suite (287
+`wasmtk wasic foo.ts` is **flagless TS today**, and the entire `tests/wasi/wasm_wasi` suite (287
 tests), every `@test-pipeline`/`@step` annotation, the published 1.6.x CLI, and the docs all call
 wasic/modc flagless. Proposed resolution — **`--lang` accepted everywhere, defaults to `ts`,
 required only when the extension is non-TS**; a non-TS file with no flag errors early with a

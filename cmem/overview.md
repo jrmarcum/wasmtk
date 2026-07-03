@@ -34,9 +34,23 @@ wasmtk/
     ├── wasi_tests.ts          # Full suite runner (optional 2nd arg = basename regex filter)
     ├── bindgen_tests.ts       # bindgen unit + integration tests
     ├── jstyper_tests.ts       # jstyper unit tests
-    ├── wasm_wasi/             # All .ts phase tests + Go-by-Example tests (one file per feature)
-    └── wasm_wasi_bundle/      # Multi-module merge fixtures (set/map/date/json/regex bundles, etc.)
+    ├── wasi/                  # ── WASI PROGRAMS (runnable standalone by a wasm runtime) ──
+    │   ├── wasm_wasi/         #   All .ts phase tests + Go-by-Example tests (one per feature)
+    │   ├── wasm_wasi_dync/    #   dync full-file dynamic-compile fixtures
+    │   └── wasm_wasi_bundle/  #   Multi-module merge pipelines (set/map/date/json/regex/dynrt bundles)
+    ├── module/               # ── WASM MODULES (exports invoked from a wasm runtime) ──
+    │   ├── wasm_mod/          #   Prebuilt module fixtures (mod_tests reads them)
+    │   ├── bindgen_fixtures/  #   modc libraries + generated bindings (bindgen_tests)
+    │   └── wasm_wast/         #   Hand-authored WAT samples / Art-of-WebAssembly book
+    ├── hybrid/               # ── HYBRID (wasm core initiated from a JS/TS program) ──
+    │   └── hybrid_fixtures/   #   `wasmtk hybrid` split-compile fixtures
+    ├── jstyper_fixtures/      # jstyper .js→.ts producer inputs (not one of the 3 categories)
+    └── go_fixtures/           # Go producer inputs (not one of the 3 categories)
 ```
+
+The three top-level test folders mirror the three ways a wasm runtime consumes a wasmtk output:
+**wasi/** = runnable WASI programs (have `_start`), **module/** = libraries whose exports are
+invoked, **hybrid/** = a wasm core that needs a JS/TS runner. (2026-07-02 reorg.)
 
 ## Key source files
 

@@ -27,7 +27,7 @@ import { blue, bold, cyan, dim, green, magenta, red, yellow } from "jsr:@std/fmt
 // ─────────────────────────────────────────────────────────────────────────────
 
 const WASMTK_BIN = "wasmtk";
-const targetDir = Deno.args[0] ?? join(import.meta.dirname ?? Deno.cwd(), "wasm_wasi");
+const targetDir = Deno.args[0] ?? join(import.meta.dirname ?? Deno.cwd(), "wasi", "wasm_wasi");
 // Optional second arg: regex filter applied to file basenames (e.g. "^01_" for phase 1)
 const fileFilter = Deno.args[1] ? new RegExp(Deno.args[1]) : null;
 

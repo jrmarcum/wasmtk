@@ -13,7 +13,7 @@ import { join, toFileUrl } from "jsr:@std/path";
 import { bold, cyan, green, magenta, red, yellow } from "jsr:@std/fmt/colors";
 import { generateBindings, parseWit } from "../src/bindgen.ts";
 
-const FIXTURES = join(import.meta.dirname!, "bindgen_fixtures");
+const FIXTURES = join(import.meta.dirname!, "module", "bindgen_fixtures");
 const WASMTK_BIN = "wasmtk";
 
 // ── Assertion harness ────────────────────────────────────────────────────────

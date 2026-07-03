@@ -15,8 +15,8 @@ wasmtk's own runtime via `wasmtk dync` / `: any` / `eval`, also no external engi
 All five share one `@test-pipeline` shape: `modc lib` → `wasic driver` (imports the `.wasm`) →
 `run`. The driver is **self-checking**: on any wrong result it reads far out of bounds → WASM
 trap → nonzero exit, so a passing `run` proves semantics (a wasic uncaught `throw` exits 0 and
-can't fail a pipeline). Fixtures in `tests/wasm_wasi_bundle/<name>_bundle/`; pipeline tests
-`tests/wasm_wasi/18c–18g`.
+can't fail a pipeline). Fixtures in `tests/wasi/wasm_wasi_bundle/<name>_bundle/`; pipeline tests
+`tests/wasi/wasm_wasi/18c–18g`.
 
 ## Status (all shipped, 2026-05-30 / 05-31)
 
@@ -52,7 +52,7 @@ imports get merged. Unknown ids throw a clear error listing the available caps.
 **Wiring:** `WasmImportEntry` gained optional `bytes?`/`witText?` (tsbundler.ts). `compileWasiTs`
 (wasic.ts) uses `entry.bytes ?? readFile(filePath)` and `parseWitLogicalSigs(entry.witText, …)` when
 embedded (the `.wit` overlay is what makes JSON's string params callable across the merge). Test:
-`tests/wasm_wasi/18h_VirtualCapabilityImports.ts` (+ driver `tests/wasm_wasi_bundle/vcap_bundle/`)
+`tests/wasi/wasm_wasi/18h_VirtualCapabilityImports.ts` (+ driver `tests/wasi/wasm_wasi_bundle/vcap_bundle/`)
 imports all 5 via `wasmtk:` and self-checks over the shared heap. The explicit `./lib.wasm` import
 path (18c–18g) is unchanged. Caps remain v1 (integer Set/Map/JSON, etc.) — see scope notes below.
 

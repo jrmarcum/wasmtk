@@ -27,7 +27,7 @@ remaining common ES6 surface — `instanceof` (walks the instance `__proto__` ch
 prototype), object spread `{ ...o }` + call spread `f(...args)`, array/object destructuring (`const
 [a, , c] = …` incl. holes/missing, `const { x, y: z } = …` incl. rename), and class expressions (`const C
 = class {…}`, anonymous + `extends`; `runClassDecl` refactored into a shared `buildClass` helper) (`18zy`).
-Both increments are purely interpreter-side (no wasic compiler change). At the 1.11.0 tag: `tests/wasm_wasi`
+Both increments are purely interpreter-side (no wasic compiler change). At the 1.11.0 tag: `tests/wasi/wasm_wasi`
 suite **359/359**, bindgen 131/131, jstyper 73/73. With 2e.11 the dynrt interpreter's ES6 syntactic surface
 was essentially complete (2h — the removal — followed in 1.11.1).
 
@@ -41,7 +41,7 @@ parse+stringify (`18zt` — JSON ⊂ the interpreter's literal grammar, so parse
 generators (`function*`/`yield` via eager collection; `.next()`/`for…of`; finite generators — `18zw`).
 The stdlib bridges (Array/String/Object/Math/JSON/Map/Set/RegExp) are all implemented natively in the
 value model — NOT the i32-handle capability libs (those are i32-keyed; dynrt collections hold arbitrary
-boxed values). At the 1.10.9 tag: `tests/wasm_wasi` suite **357/357**, bindgen 131/131, jstyper 73/73. JSR
+boxed values). At the 1.10.9 tag: `tests/wasi/wasm_wasi` suite **357/357**, bindgen 131/131, jstyper 73/73. JSR
 score 100% (provenance `true`, docs clean — keep `deno doc --lint` clean to hold it).
 
 **Version 1.10.8** (2026-06-26) was a big OOP batch (five increments): **2e.7a** per-iteration `let`,
@@ -354,7 +354,7 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     builds a synth-`__settled_<T>` struct array of `{status,value,reason}` — test `61_AsyncAllSettled`);
     13.5 = **lift the `hybrid` async exclusion** (`src/hybrid.ts`) — route async fns into the wasic core
     via an internal `f__impl` + a sync unwrapping wrapper `f` (`return await f__impl`), validated by
-    `tests/hybrid_fixtures/async_hybrid.ts`. **#13 async track is now COMPLETE** (entire v1 Promise API
+    `tests/hybrid/hybrid_fixtures/async_hybrid.ts`. **#13 async track is now COMPLETE** (entire v1 Promise API
     surface + hybrid integration). Full detail in [async-design.md](async-design.md).
 14. **Own dynamic runtime** (§7-#7) — boxed values + property map + interpreter for the irreducible
     kernel (`eval`/`new Function`, pervasive `any`, open-prototype mutation). Gated behind Phase 51
@@ -364,7 +364,7 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     duplication — reuses wasic's allocator/strings/arrays/num-fmt), extract a shared `rtcore` + go
     hand-WAT only at the interpreter increment; **runtime-only first** (no wasic `any` yet).
     **Increment 1 — value + object model — SHIPPED 2026-06-22** as a shared-heap `modc` capability
-    (`tests/wasm_wasi_bundle/dynrt_bundle/` + pipeline test `18j`): boxed value = 4-slot `Int32Array`
+    (`tests/wasi/wasm_wasi_bundle/dynrt_bundle/` + pipeline test `18j`): boxed value = 4-slot `Int32Array`
     node `[tag,a,b,c]` (undefined/null/bool/number-as-f64/string/array/object), self-managed
     `Int32Array` growable lists for containers, ~23 exports incl. `dynTypeof`/`dynStrictEq`
     (`===`)/`dynAdd` (`+`). Surfaced 3 wasic gaps (worked around in the lib, logged in
@@ -442,16 +442,16 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     tracks `any` sigs (`FuncParam.isAny`/`FuncDef.isAnyResult`; any-params added to `anyVars`),
     `generateWit` emits an `any` WIT marker, the core exports the dynrt box/unbox helpers
     (`injectDynrtMarshalExports`, both compile paths), and bindgen generates `_box`/`_unbox`. Verified
-    end-to-end (`tests/wasm_wasi_bundle/anysig_bundle/`); bindgen 104/104. **Follow-up — hybrid
+    end-to-end (`tests/wasi/wasm_wasi_bundle/anysig_bundle/`); bindgen 104/104. **Follow-up — hybrid
     fallback refinement — SHIPPED 2026-06-22**: per-function fallback (was all-or-nothing) — on
     core-compile failure, probe each dynamic fn against the static context and move ONLY the failing
     ones to host (`parseHybridFile` `excludeFns` + `probeCompiles` to a cleaned-up `_probe.*` module);
-    safety ladders preserved. Verified `tests/hybrid_fixtures/dynamic_partial_hybrid.ts`. **Follow-up —
+    safety ladders preserved. Verified `tests/hybrid/hybrid_fixtures/dynamic_partial_hybrid.ts`. **Follow-up —
     objects/arrays as `any` STRUCTURAL marshalling — SHIPPED 2026-06-22**: objects/arrays now cross the
     host boundary as real, recursively-converted JS objects/arrays (was opaque handles) — dynrt gained
     `dynObjKeyPtr`/`dynObjKeyLen`/`dynObjValAt`, the marshal-export + tsbundler auto-import lists gained
     the container accessors, and bindgen `_box`/`_unbox` recurse on the raw `dynTag` (5=array/6=object).
-    Verified `tests/wasm_wasi_bundle/anysig_bundle/` (`makePoint`→`{x,y}`, `triple`→`[…]`,
+    Verified `tests/wasi/wasm_wasi_bundle/anysig_bundle/` (`makePoint`→`{x,y}`, `triple`→`[…]`,
     `sumArr([…])`→sum, `getX({…})`→field). **#14 memory/GC track — building a full mark-sweep GC in
     TESTED PARTS (owner 2026-06-22; the hard part is root-finding → an explicit shadow-stack in the
     mark phase). Part 1 — auto-grow `$__malloc` — SHIPPED 2026-06-22** (test `18r`): `memory.grow` by

@@ -1,53 +1,53 @@
 CLAUDE.md
 
 # ── Generated test build artifacts (do NOT track) ─────────────────────────────
-# The .wasm/.wat/.wit in tests/wasm_wasi/ that pair 1:1 with a .ts are BUILD OUTPUTS —
+# The .wasm/.wat/.wit in tests/wasi/wasm_wasi/ that pair 1:1 with a .ts are BUILD OUTPUTS —
 # the test runner regenerates them from the .ts sources on every run (see
 # cmem/testing.md). Committing them pushed the folder past GitHub's 1,000-file/dir
 # display limit and bloated the repo. Input fixtures (imported modules, .wat-runner
 # sources, prebuilt rust/zig outputs) are re-included with '!' below — when adding a
 # NEW input fixture (a .wasm/.wat/.wit with no same-named .ts), add a '!' line for it.
-tests/wasm_wasi/*.wasm
-tests/wasm_wasi/*.wat
-tests/wasm_wasi/*.wit
-!tests/wasm_wasi/18_symbol_table.wasm
-!tests/wasm_wasi/18_symbol_table.wat
-!tests/wasm_wasi/1_fib-rs-opt.wasm
-!tests/wasm_wasi/1_fib-rs-opt.wat
-!tests/wasm_wasi/1_fib-rs-test.wasm
-!tests/wasm_wasi/1_fib-rs.wasm
-!tests/wasm_wasi/1_fib-rs.wat
-!tests/wasm_wasi/1_fib-test.wasm
-!tests/wasm_wasi/1_fib-zig-opt.wasm
-!tests/wasm_wasi/1_fib-zig-opt.wat
-!tests/wasm_wasi/1_fib-zig.wasm
-!tests/wasm_wasi/1_fizzbuzz_wat.wasm
-!tests/wasm_wasi/1_fizzbuzz_wat.wat
-!tests/wasm_wasi/1_helloWorld_wat.wasm
-!tests/wasm_wasi/1_helloWorld_wat.wat
-!tests/wasm_wasi/1_helloworld.wasm
-!tests/wasm_wasi/1_helloworld.wat
-!tests/wasm_wasi/1_print.wasm
-!tests/wasm_wasi/1_print.wat
-!tests/wasm_wasi/39_JstyperMixed.wasm.roundtrip.wat
+tests/wasi/wasm_wasi/*.wasm
+tests/wasi/wasm_wasi/*.wat
+tests/wasi/wasm_wasi/*.wit
+!tests/wasi/wasm_wasi/18_symbol_table.wasm
+!tests/wasi/wasm_wasi/18_symbol_table.wat
+!tests/wasi/wasm_wasi/1_fib-rs-opt.wasm
+!tests/wasi/wasm_wasi/1_fib-rs-opt.wat
+!tests/wasi/wasm_wasi/1_fib-rs-test.wasm
+!tests/wasi/wasm_wasi/1_fib-rs.wasm
+!tests/wasi/wasm_wasi/1_fib-rs.wat
+!tests/wasi/wasm_wasi/1_fib-test.wasm
+!tests/wasi/wasm_wasi/1_fib-zig-opt.wasm
+!tests/wasi/wasm_wasi/1_fib-zig-opt.wat
+!tests/wasi/wasm_wasi/1_fib-zig.wasm
+!tests/wasi/wasm_wasi/1_fizzbuzz_wat.wasm
+!tests/wasi/wasm_wasi/1_fizzbuzz_wat.wat
+!tests/wasi/wasm_wasi/1_helloWorld_wat.wasm
+!tests/wasi/wasm_wasi/1_helloWorld_wat.wat
+!tests/wasi/wasm_wasi/1_helloworld.wasm
+!tests/wasi/wasm_wasi/1_helloworld.wat
+!tests/wasi/wasm_wasi/1_print.wasm
+!tests/wasi/wasm_wasi/1_print.wat
+!tests/wasi/wasm_wasi/39_JstyperMixed.wasm.roundtrip.wat
 
 # ── Generated bundle / bindgen / dync build outputs (do NOT track) ────────────
-# Same rationale as tests/wasm_wasi/ above: the @test-pipeline (tests/wasi_tests.ts),
+# Same rationale as tests/wasi/wasm_wasi/ above: the @test-pipeline (tests/wasi_tests.ts),
 # bindgen_tests.ts, and the dync conformance gate recompile these .wasm/.wat/.wit
 # from their .ts sources on every run. Source .ts (…_lib_modc.ts, …_wasic.ts,
 # main_*.ts, fixtures) stay tracked.
 # NOT ignored (they are INPUT fixtures that tests READ, not regenerate):
-#   tests/wasm_mod/**      (mod_tests iterates the prebuilt .wasm)
-#   tests/wasm_wast/**     (hand-authored WAT samples / Art-of-WebAssembly book)
-#   tests/hybrid_fixtures/** (no test regenerates them — kept as example fixtures)
+#   tests/module/wasm_mod/**   (mod_tests iterates the prebuilt .wasm)
+#   tests/module/wasm_wast/**  (hand-authored WAT samples / Art-of-WebAssembly book)
+#   tests/hybrid/hybrid_fixtures/** (no test regenerates them — kept as example fixtures)
 # The canonical validation fixtures (src/wasm/mathlib.wasm, caps_bytes) live under
 # src/ and remain tracked + current.
-tests/wasm_wasi_bundle/**/*.wasm
-tests/wasm_wasi_bundle/**/*.wat
-tests/wasm_wasi_bundle/**/*.wit
-tests/bindgen_fixtures/*.wasm
-tests/bindgen_fixtures/*.wat
-tests/bindgen_fixtures/*.wit
-tests/wasm_wasi_dync/*.wasm
-tests/wasm_wasi_dync/*.wat
-tests/wasm_wasi_dync/*.wit
+tests/wasi/wasm_wasi_bundle/**/*.wasm
+tests/wasi/wasm_wasi_bundle/**/*.wat
+tests/wasi/wasm_wasi_bundle/**/*.wit
+tests/module/bindgen_fixtures/*.wasm
+tests/module/bindgen_fixtures/*.wat
+tests/module/bindgen_fixtures/*.wit
+tests/wasi/wasm_wasi_dync/*.wasm
+tests/wasi/wasm_wasi_dync/*.wat
+tests/wasi/wasm_wasi_dync/*.wit

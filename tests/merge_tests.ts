@@ -24,7 +24,7 @@
  * Usage:
  *   deno run --allow-read --allow-run merge_tests.ts [folder]
  *
- * Defaults to tests/wasm_wasi_bundle/ relative to this script's location.
+ * Defaults to tests/wasi/wasm_wasi_bundle/ relative to this script's location.
  */
 
 import { join, basename } from "jsr:@std/path";
@@ -39,7 +39,7 @@ import {
 
 const WASMTK_BIN = "wasmtk";
 const scriptDir  = import.meta.dirname ?? Deno.cwd();
-const targetDir  = Deno.args[0] ?? join(scriptDir, "wasm_wasi_bundle");
+const targetDir  = Deno.args[0] ?? join(scriptDir, "wasi", "wasm_wasi_bundle");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Step runner

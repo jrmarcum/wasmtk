@@ -2,8 +2,8 @@
 
 **Status: roadmap track #13 — Promise/async — COMPLETE (2026-06-15).** All sub-phases 13.1a + 13.2 +
 13.3a + 13.3b + 13.1b + 13.4 (all + allSettled) + 13.5 (hybrid async lift) implemented. Brief §5 / §7-#5.
-Suite **317/317** (the async surface is the `tests/wasm_wasi/54_*…61_*` tests; 13.5 is validated by the
-`tests/hybrid_fixtures/async_hybrid.ts` fixture, run manually). The entire v1 Promise API surface ships:
+Suite **317/317** (the async surface is the `tests/wasi/wasm_wasi/54_*…61_*` tests; 13.5 is validated by the
+`tests/hybrid/hybrid_fixtures/async_hybrid.ts` fixture, run manually). The entire v1 Promise API surface ships:
 async/await + Promise.resolve/reject + then/catch/finally + all/allSettled, standalone WASI. README can
 now document the async surface (was held until feature-complete).
 
@@ -18,7 +18,7 @@ wasic's eager model the body settles synchronously, so the wrapper returns a rea
 bindgen path. `Promise<void>` wrappers just invoke the impl. `analyzeSignature` now parses `Promise<T>`
 (routable when `T` is wasic/void; `promiseInner` exposed); the async-skip is gone (an async fn WITHOUT a
 `Promise<T>` annotation stays non-routable — the wrapper can't determine the return type). Fixture
-`tests/hybrid_fixtures/async_hybrid.ts` (value i32/f64 + a void async + intra-module `await` chain) →
+`tests/hybrid/hybrid_fixtures/async_hybrid.ts` (value i32/f64 + a void async + intra-module `await` chain) →
 runner output == original ts-run (`process(4): 50`, `scale(2.0): 5`); non-async fixtures unaffected.
 **Limit:** the awaited graph must be intra-module (no host I/O — an async fn that awaits a host call still
 belongs in the TS runner).
@@ -140,9 +140,9 @@ dynamic runtime, the deferred P2 container, finishing #12 loaders (stub ports). 
 ## STATUS — async track complete (2026-06-15)
 
 **State:** 13.1a + 13.2 + 13.3a + 13.3b + 13.1b + 13.4 (all + allSettled) + 13.5 (hybrid lift) all done —
-**the entire #13 async track is complete.** Full `tests/wasm_wasi` suite **317/317**, output-verified,
+**the entire #13 async track is complete.** Full `tests/wasi/wasm_wasi` suite **317/317**, output-verified,
 zero regressions; bindgen 104/104, jstyper 73/73. Tests: `54_AsyncBasic` … `61_AsyncAllSettled` (compiler
-surface) + `tests/hybrid_fixtures/async_hybrid.ts` (13.5, manual). Compiler code in `src/wasic.ts`; 13.5
+surface) + `tests/hybrid/hybrid_fixtures/async_hybrid.ts` (13.5, manual). Compiler code in `src/wasic.ts`; 13.5
 in `src/hybrid.ts`. Load-bearing invariants in [design-decisions.md](design-decisions.md) → "Async /
 Promise (#13)".
 
@@ -178,7 +178,7 @@ machinery would unblock capturing reject callbacks (and string-param capturing c
   then `export PATH="$HOME/.deno/bin:$PATH"`.
 - Fast inner-loop (no reinstall needed): `deno run --allow-read --allow-write --allow-run --allow-env main.ts wasic <f.ts>` then `… main.ts run <f.wasm>`.
 - ALWAYS output-diff ts-run vs wasm-run (`deno run <f.ts>` vs the wasm). Full suite: `deno run -A tests/wasi_tests.ts` (capture to a file — don't `| tail`, it truncates; ~3–5 min; runs in background here).
-- Filter one phase: `… tests/wasi_tests.ts tests/wasm_wasi "^5[4-7]_"`.
+- Filter one phase: `… tests/wasi_tests.ts tests/wasi/wasm_wasi "^5[4-7]_"`.
 
 **After 13.3b:** 13.4 `Promise.all`/`allSettled` (i32/f64 element types v1); 13.1b promise-var inner-type
 tracking + capturing-closure callbacks; 13.5 lift the `hybrid` async exclusion (`src/hybrid.ts` ~line
@@ -482,11 +482,11 @@ can `await` at module scope.
 | **13.3a** ✅ | `Promise.reject` + rejection→exception (`await` rejected → `throw`, caught by `try/catch`) + async-body-throw (free, eager model) | ✅ `56_AsyncReject.ts` |
 | **13.3b** ✅ | `.catch`/`.finally` rejection *reactions* (string reasons, dual-path trampoline) + `.then(onF,onR)` | ✅ `57_AsyncCatch.ts` (`.catch` recover + fulfilled-passthrough, `.finally` passthrough, `.then(dbl).catch(recover)` chain) |
 | **13.4** ✅ | `Promise.all` + `Promise.allSettled` (i32/f64 element types v1, array-literal arg) | ✅ `60_AsyncAll` (i32/f64/mixed sources/first-rejection) + `61_AsyncAllSettled` (mixed fulfil/reject, status/value/reason struct array) |
-| **13.5** ✅ | Lift the `hybrid` async exclusion — route async fns into the wasic core via an internal `f__impl` + a sync unwrapping wrapper (`src/hybrid.ts`) | ✅ `tests/hybrid_fixtures/async_hybrid.ts` (value i32/f64 + void async + intra-module await chain; runner == ts-run) |
+| **13.5** ✅ | Lift the `hybrid` async exclusion — route async fns into the wasic core via an internal `f__impl` + a sync unwrapping wrapper (`src/hybrid.ts`) | ✅ `tests/hybrid/hybrid_fixtures/async_hybrid.ts` (value i32/f64 + void async + intra-module await chain; runner == ts-run) |
 
 **Test discipline (project rule):** the runner judges by per-step **exit code**, but a broad codegen
 change can be green-but-wrong — **output-diff ts-run vs wasm-run** for every async test
-(`testing.md` / the Phase-51.3 process note). Add a `tests/wasm_wasi/NN_*.ts` per sub-phase.
+(`testing.md` / the Phase-51.3 process note). Add a `tests/wasi/wasm_wasi/NN_*.ts` per sub-phase.
 
 ---
 

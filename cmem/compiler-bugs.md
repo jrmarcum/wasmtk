@@ -86,7 +86,7 @@ visible).
 
 ## FIXED — `deno fmt` wrapped a deeply-indented ternary that modc can't parse (process bug, 2026-06-26)
 
-Found building #14 2e.7: the dynrt lib (`tests/wasm_wasi_bundle/dynrt_bundle/dynrt_lib_modc.ts`) is
+Found building #14 2e.7: the dynrt lib (`tests/wasi/wasm_wasi_bundle/dynrt_bundle/dynrt_lib_modc.ts`) is
 compiled by **`modc`**, whose body-line joiner does NOT handle a multi-line (wrapped) ternary. Three
 deeply-indented ternaries in the 2e.4 member/index-assign path (16-space indent, >100 cols) — e.g.
 `const cur: i32 = isDot === 1 ? dynMember(container, segKey) : dynIndexValue(container, segIdx);` — were
@@ -241,7 +241,7 @@ element compares with `f64.eq`; **3/5.3** the `push`/`unshift`/`push_string` gro
 `select(8, cap<<1, cap==0)` so a capacity-0 array grows to 8. The library workarounds are left in place
 (still correct). Original notes below.
 
-Surfaced building `tests/wasm_wasi_bundle/dynrt_bundle/dynrt_lib_modc.ts` (boxed-value runtime +
+Surfaced building `tests/wasi/wasm_wasi_bundle/dynrt_bundle/dynrt_lib_modc.ts` (boxed-value runtime +
 expression evaluator in the wasic subset). All four were worked around IN the library; full design +
 context in [dynrt-design.md](dynrt-design.md). None failed the suite.
 
@@ -808,7 +808,7 @@ already handles (`expandInlineBraceChain` for the brace case, `fixTerminalFallth
 void-if). The earlier repros now pass: `if (c) { return 1; } else { return -1; }` → `1 / -1`,
 `if (c) { return 1; } return 2;` → `1 / 2`, plus else-if chains, brace-less inline-if + trailing
 return, non-if-first single-line bodies, and string-literal `;`/`{`/`}` guards. Regression test:
-`tests/wasm_wasi/48_SingleLineBraceIf.ts` (carries `// deno-fmt-ignore-file` so `deno fmt` can't
+`tests/wasi/wasm_wasi/48_SingleLineBraceIf.ts` (carries `// deno-fmt-ignore-file` so `deno fmt` can't
 expand the single-physical-line forms under test). Validated: `wasm_wasi` **279/279**, `bindgen`
 **103/103**, `jstyper` **73/73** (wabt-ts 1.3.2 + binaryen-ts 1.3.3), zero regressions.
 
@@ -820,7 +820,7 @@ that `expandInlineBraceChain` alone fixed this was inaccurate; `cmem/` is author
 ## FIXED — the 7 long-standing test failures (2026-06-02)
 
 All 7 of the previously-"known pre-existing" failures are now fixed; as of 2026-06-02 the full
-`tests/wasm_wasi` was **278/278** (the 7 fixes brought it to 277/277; the new `18h` virtual-
+`tests/wasi/wasm_wasi` was **278/278** (the 7 fixes brought it to 277/277; the new `18h` virtual-
 capability test added the 278th). (By 2026-06-03 it was **279/279** — the single-line-brace
 `if` fix added `48_SingleLineBraceIf`; the live count is at the top of this file — **309/309**.)
 They were two unrelated root causes:
@@ -893,7 +893,7 @@ the scan; only emission changed. Matches JavaScript semantics (RHS skipped once 
 which is independently more correct. High blast radius (every `&&`/`||` site) — validated with the
 three full suites above, zero regressions.
 
-**Workaround removed:** `tests/wasm_wasi_bundle/regex_bundle/regex_lib_modc.ts` was rewritten to the
+**Workaround removed:** `tests/wasi/wasm_wasi_bundle/regex_bundle/regex_lib_modc.ts` was rewritten to the
 natural form — `atomAt` now returns `ti < t.length && atomMatches(p, pi, t.charCodeAt(ti)) === 1`,
 and `matchStar`'s consume loop puts `ti + count < t.length && atomMatches(p, atomPi,
 t.charCodeAt(ti + count)) === 1` **directly in the `while` `br_if`** (the exact original trap shape).
@@ -950,7 +950,7 @@ the top of this file.
 
 ## Regenerated `.wat`/`.wasm` artifact churn
 
-Running the suite overwrites many committed `tests/wasm_wasi/*.wat`/`*.wasm` from passing tests
+Running the suite overwrites many committed `tests/wasi/wasm_wasi/*.wat`/`*.wasm` from passing tests
 (cumulative compiler drift, not behavior changes — outputs are identical). One incidental cosmetic
 change: `6a_json.wat` now emits an explicit "not yet supported" stub for an already-broken
 string-accumulation-in-a-loop helper (was a silent partial compile; the test passes either way).

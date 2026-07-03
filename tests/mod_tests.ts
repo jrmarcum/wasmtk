@@ -28,7 +28,7 @@ import { join, parse } from "jsr:@std/path@1.0.2";
 import { exists } from "jsr:@std/fs@1.0.1";
 import {
   blue, bold, cyan, dim, green, magenta, red, yellow,
-} from "jsr:@std/fmt/colors@1.0.1";
+} from "jsr:@std/fmt@1.0.1/colors";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -245,7 +245,7 @@ async function processModule(
 
 async function main() {
   const targetDir =
-    Deno.args[0] ?? join(import.meta.dirname ?? ".", "wasm_mod");
+    Deno.args[0] ?? join(import.meta.dirname ?? ".", "module", "wasm_mod");
 
   let resolvedPath: string;
   try {
