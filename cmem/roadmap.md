@@ -354,8 +354,16 @@ jstyper 73/73). Tests `52_VoidExpr` / `52_ChainedAssignment` / `52_InOperator` /
     `dart:ffi`→wasmtime later). **SPEC §10 loader
     capabilities (`_initialize` call + minimal WASI-P1 shim) IMPLEMENTED in `-js` 2026-06-15** (suite
     24→26; lets I/O-using `modc`
-    libraries load in a host with no native WASI) — propagation to `-rs`/`-py`/`-jvm`/`-dart` pending.
-    Orthogonal / ungated.
+    libraries load in a host with no native WASI). **Propagated to `-rs`/`-jvm`/`-py` 2026-07-05**
+    (each +2 §10 tests, both green): `-rs` (`cc8a5f7`) hand-rolls a `func_wrap` `wasi_snapshot_preview1`
+    shim on `Linker<()>` (keeps `Store<()>`, no `wasmtime-wasi` dep) + `_initialize` via
+    `get_typed_func::<(),()>`; `-jvm` (`1e1ecb8`) uses `chicory-wasi` `WasiPreview1`
+    (`toHostFunctions()` merged with the env functions into one `ImportValues`) +
+    `_initialize` via `instance.export("_initialize").apply()`; `-py` (`a51c8da`) uses
+    wasmtime-py's built-in WASI (`linker.define_wasi()` + `WasiConfig().inherit_stdout/stderr` on the
+    `Store`, WASI namespaces skipped in the no-op stub loop) + `_initialize`. Only `-dart` remains
+    (deferred with its native backend). The other native ports (`-go` wazero, `-zig`/`-c` wasmtime C
+    API, `-dotnet` Wasmtime) already carry built-in WASI. Orthogonal / ungated.
     **CI note:** these repos' org allows only `jrmarcum`-owned Actions → publish workflows MUST be
     `run:`-only (third-party `uses:` → `startup_failure`).
 13. **#5 Promise/async — ✅ COMPLETE 2026-06-15 (13.1a–13.5; suite 317/317).** Eager microtask runtime
@@ -575,7 +583,7 @@ build order starts at 2e.1 control flow (full sequence in dynrt-design.md). The 
 component type — a terminal wrap; **deferred WAITING FOR BROWSER-NATIVE WASI P2 / Component Model
 support** — until browsers load components natively, P1-core stays the browser-compatible artifact and a
 P2 wrap buys browser consumers nothing); **#12 loaders COMPLETE 2026-06-24 — all 10 ports published**
-(only the optional SPEC §10 loader-cap propagation may remain); **Go bindgen** string/aggregate host marshalling (needs
+(SPEC §10 loader-cap propagation now done for `-rs`/`-jvm`/`-py` 2026-07-05 — only `-dart` deferred); **Go bindgen** string/aggregate host marshalling (needs
 ABI forward-alignment), the **asyncify pass in binaryen-ts** (unblocks goroutine Go without external
 `wasm-opt`), and the optional field-reshaping **utility-types** batch (Pick/Omit/Record/…).
 
@@ -656,5 +664,6 @@ vcpkg / zigistry / VPM / pkg.go.dev / NuGet). **#13 async COMPLETE + PUBLISHED a
 v1.8.0 (2026-06-22; suite 317/317). #14 own dynamic runtime COMPLETE + PUBLISHED (v1.9.0 + Phase 2 in
 v1.10.0).** Remaining: the deferred P2 container (browser-native WASI P2 gating), Go bindgen
 aggregate marshalling, the binaryen-ts asyncify pass, the optional utility-types batch, and the
-in-progress **Route A (javyc retirement — dynrt language/stdlib growth, 2e/2f)**; optional #12 polish =
-SPEC §10 loader-cap propagation. Full analysis in CLAUDE.md § "TypeScript Feature Gap Analysis".
+in-progress **Route A (javyc retirement — dynrt language/stdlib growth, 2e/2f)**. Optional #12 polish
+(SPEC §10 loader-cap propagation) is now DONE for `-rs`/`-jvm`/`-py` (2026-07-05); only `-dart` remains,
+deferred with its native backend. Full analysis in CLAUDE.md § "TypeScript Feature Gap Analysis".
