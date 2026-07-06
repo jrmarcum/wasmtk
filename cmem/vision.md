@@ -201,17 +201,23 @@ preferred for native because it's the de-facto reference runtime, has full built
 Component Model runtime — and (owner, 2026-06-15) "wasmtime is faster" than the pure-Go interpreter
 alternative (wazero), so even `-go` uses **wasmtime-go** (CGO + native lib) rather than wazero.
 
-| Port(s) | Engine | WASI source |
+**SPEC §10 producer-model loader caps (`_initialize` call + minimal WASI-P1 shim) are COMPLETE in ALL
+10 ports as of 2026-07-05** — see the ✅ WASI-source column. `-rs` deviated from the originally-planned
+`wasmtime-wasi`/`WasiP1Ctx` approach: to avoid changing `Store<()>` → `Store<WasiP1Ctx>` (and pulling
+in `wasmtime-wasi`), it hand-rolls a `func_wrap` shim on the existing `Store<()>` instead — same
+minimal-invasiveness reasoning as the web ports, just for a different constraint.
+
+| Port(s) | Engine | WASI source (§10.2) |
 | --- | --- | --- |
-| `-rs` | wasmtime crate | `wasmtime-wasi` (`WasiP1Ctx`; needs `Store<WasiP1Ctx>`) |
-| `-py` | wasmtime-py | `linker.define_wasi(WasiConfig())` |
-| `-go` | **decided: wasmtime-go** (over wazero — speed); **shipped: wazero** (pure-Go, no cgo — `c7d9bb0`) — swap to wasmtime-go is a future change | wazero built-in (as shipped) |
-| `-c`/`-cpp`, **Zig** | wasmtime C API (Zig via `@cImport`, cleanest) | wasmtime built-in |
-| `-dotnet` | Wasmtime NuGet | wasmtime built-in |
+| `-rs` | wasmtime crate | **hand-rolled `func_wrap` shim on `Store<()>`** (no `wasmtime-wasi` dep — chosen for minimal invasiveness; `cc8a5f7`) ✅ |
+| `-py` | wasmtime-py | `linker.define_wasi()` + `WasiConfig().inherit_stdout/stderr` on the `Store` (`a51c8da`) ✅ |
+| `-go` | **decided: wasmtime-go** (over wazero — speed); **shipped: wazero** (pure-Go, no cgo — `c7d9bb0`) — swap to wasmtime-go is a future change | wazero built-in (`wasi_snapshot_preview1.Instantiate`) ✅ |
+| `-c`/`-cpp`, **Zig** | wasmtime C API (Zig via `@cImport`, cleanest) | wasmtime built-in (`wasi_config_new` + `wasmtime_context_set_wasi`) ✅ |
+| `-dotnet` | Wasmtime NuGet | wasmtime built-in (`DefineWasi` + `SetWasiConfiguration`) ✅ |
 | `-js` | host `WebAssembly` (Deno/Node/browser) | hand-rolled shim (`wasi.js`) ✅ |
-| `-dart` **web** | browser `WebAssembly` (js_interop) | hand-rolled shim |
+| `-dart` **web** | browser `WebAssembly` (js_interop) | hand-rolled shim (`lib/src/wasi.dart`, from Dart closures via `.toJS`; `985039f`) ✅ |
 | `-dart` **native** *(future 2nd backend)* | wasmtime C API via `dart:ffi` | wasmtime built-in |
-| `-jvm` | **Chicory** (no wasmtime JVM embedding) | `chicory-wasi` |
+| `-jvm` | **Chicory** (no wasmtime JVM embedding) | `chicory-wasi` (`WasiPreview1` → `toHostFunctions()`; `1e1ecb8`) ✅ |
 
 **Outliers are intentional:** JS and Dart-web can't reach wasmtime (browser/JS host) → host
 `WebAssembly` + hand-roll; the JVM has no official wasmtime embedding → pure-Java Chicory + `chicory-wasi`.
@@ -235,7 +241,8 @@ NOTE: Dart-web *could* instead interop-call the published `-js` loader directly,
 dependency and only works on web — so the native-Dart web impl we built is preferred; FFI/wasmtime is
 native-only (`dart:ffi` is unavailable on the web). **`dart:ffi`→wasmtime native backend + `libwasmtime`
 distribution (bundled per-platform binaries / native-assets) is a tracked FUTURE track**, not part of
-the §10 propagation.
+the §10 propagation (which is now COMPLETE for the web backend — the native backend will inherit
+wasmtime's built-in WASI when it ships).
 
 ### Per-language publishing / versioning (owner guidance 2026-06-15)
 
