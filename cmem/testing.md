@@ -36,7 +36,7 @@ installed launcher prompts interactively (`Deno requests ffi access … [y/n/A]`
 invocation, which stalls the whole test run. (Regression history: a documented reinstall command here
 once omitted `--allow-ffi`; fixed 2026-06-08 by deferring to `deno task install`.)
 
-## Current pass counts (2026-07-08, wabt-ts 1.3.5 + binaryen-ts 1.3.9)
+## Current pass counts (2026-07-08, wabt-ts 1.3.5 + binaryen-ts 1.4.0)
 
 | Suite | Result |
 | --- | --- |
