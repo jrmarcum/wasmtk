@@ -171,8 +171,9 @@ world math-50 {
   ok("no ModuleImports (no imports)", !ts.includes("ModuleImports"));
   ok("no _writeStr (no string params)", !ts.includes("_writeStr"));
   ok("no _readStr (no string return)", !ts.includes("_readStr"));
-  // WASM export names are camelCase (original TS names), not kebab→snake
-  contains("add wasm call", ts, `exp["add"]`);
+  // WASM export names are camelCase (original TS names), not kebab→snake; the loader
+  // resolves them via _ex(...) (tolerates the lossy kebab↔camel round-trip).
+  contains("add wasm call", ts, `_ex("add")`);
   // SPEC §10 — the generated loader always ships a minimal WASI-P1 shim (so a
   // WASI-importing library, e.g. a TinyGo reactor, instantiates) and calls
   // `_initialize`. Present even for a pure-numeric module (unused imports are
@@ -221,7 +222,7 @@ world strings-50 {
   // Canonical return convention: the callee allocates the return area, so the host no longer
   // allocates an 8-byte area; instead it reads the returned pointer and calls cabi_post_<name>.
   ok("no host-side return-area alloc", !ts.includes(`_cabi_realloc(0, 0, 4, 8)`));
-  contains("cabi_post called for greet", ts, `exp["cabi_post_greet"]`);
+  contains("cabi_post called for greet", ts, `_ex("cabi_post_greet")`);
   contains("DataView used for string return", ts, "DataView");
   contains("TextEncoder used", ts, "TextEncoder");
   contains("TextDecoder used", ts, "TextDecoder");
@@ -333,6 +334,60 @@ console.log(m.square(5));
   ok("add(3,4) = 7", lines[0]?.trim() === "7");
   ok("multiply(2.5,4.0) = 10", lines[1]?.trim() === "10");
   ok("square(5) = 25", lines[2]?.trim() === "25");
+}
+
+// ── 9b. Integration: capital-heavy export names resolve via the _ex kebab fallback ──
+
+async function testIntegrationKebab() {
+  console.log(yellow(bold("\n── Integration: kebabcase_50 (readID/toHTML) resolve via _ex fallback")));
+
+  const fixtureSrc = join(FIXTURES, "kebabcase_50.ts");
+  const fixtureWasm = join(FIXTURES, "kebabcase_50.wasm");
+  const fixtureWit = join(FIXTURES, "kebabcase_50.wit");
+  const fixtureBinding = join(FIXTURES, "kebabcase_50.bindings.ts");
+  const hostRunner = join(FIXTURES, "kebabcase_50_host.ts");
+
+  const compileResult = await run(WASMTK_BIN, ["modc", fixtureSrc, "-n", fixtureWasm]);
+  ok("modc compile succeeded", compileResult.success);
+  if (!compileResult.success) {
+    console.log(red("    stderr: " + compileResult.stderr.slice(0, 300)));
+    return;
+  }
+
+  let witSrc = "";
+  try {
+    witSrc = await Deno.readTextFile(fixtureWit);
+  } catch { /**/ }
+  // WIT lowercases to kebab; the wasm export keeps the original camelCase.
+  ok(".wit has export read-id", witSrc.includes("export read-id:"));
+  ok(".wit has export to-html", witSrc.includes("export to-html:"));
+
+  const ts = generateBindings(witSrc);
+  await Deno.writeTextFile(fixtureBinding, ts);
+  // The loader must resolve capital-heavy names via _ex(...), not a bare exp[...].
+  ok("loader uses _ex resolver", ts.includes("const _ex = (n: string)"));
+
+  const bindingUrl = toFileUrl(fixtureBinding).href;
+  const wasmUrl = toFileUrl(fixtureWasm).href;
+  const hostSrc = `
+import { loadModule } from "${bindingUrl}";
+const wasmBytes = await Deno.readFile(new URL("${wasmUrl}"));
+const m = await loadModule(wasmBytes);
+// Binding methods use the WIT-derived camelCase (readId/toHtml); _ex() bridges
+// them to the original-cased wasm exports readID/toHTML at call time.
+console.log(m.readId(41));
+console.log(m.toHtml(21));
+`;
+  await Deno.writeTextFile(hostRunner, hostSrc);
+  const hostResult = await run("deno", ["run", "--allow-read", hostRunner]);
+  ok("host runner succeeded", hostResult.success);
+  if (!hostResult.success) {
+    // Before the _ex fix this failed with `exp["readId"] is not a function`.
+    console.log(red("    stderr: " + hostResult.stderr.slice(0, 300)));
+  }
+  const lines = hostResult.stdout.trim().split("\n");
+  ok("readID(41) = 42 (resolved via kebab fallback)", lines[0]?.trim() === "42");
+  ok("toHTML(21) = 42 (resolved via kebab fallback)", lines[1]?.trim() === "42");
 }
 
 // ── 10. Integration: bool fixture ────────────────────────────────────────────
@@ -659,6 +714,7 @@ testGenBindingsAnyFunction();
 
 // Integration tests (async — require wasmtk binary)
 await testIntegrationMath();
+await testIntegrationKebab();
 await testIntegrationBool();
 await testIntegrationStrings();
 await testIntegrationImports();

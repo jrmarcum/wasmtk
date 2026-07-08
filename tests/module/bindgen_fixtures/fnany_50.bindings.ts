@@ -59,6 +59,17 @@ export async function loadModule(
   }
   const { instance } = await WebAssembly.instantiate(raw, importObj);
   const exp = instance.exports as Record<string, unknown>;
+  const _kebab = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/_/g, "-").toLowerCase();
+  const _exCache: Record<string, unknown> = {};
+  const _ex = (n: string): unknown => {
+    if (n in _exCache) return _exCache[n];
+    let f = exp[n];
+    if (f === undefined) {
+      const kn = _kebab(n);
+      for (const k of Object.keys(exp)) { if (_kebab(k) === kn) { f = exp[k]; break; } }
+    }
+    return (_exCache[n] = f);
+  };
   _wasiMem = exp["memory"] as WebAssembly.Memory | undefined;
   (exp["_initialize"] as (() => void) | undefined)?.();
   const _mem = exp["memory"] as WebAssembly.Memory;
@@ -164,6 +175,6 @@ export async function loadModule(
     return _box(_f(..._js));
   };
   return {
-    getDoubler(): any { return _unbox((exp["getDoubler"] as (...a: unknown[]) => unknown)() as number); },
+    getDoubler(): any { return _unbox((_ex("getDoubler") as (...a: unknown[]) => unknown)() as number); },
   };
 }

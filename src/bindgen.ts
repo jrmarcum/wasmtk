@@ -330,6 +330,25 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
 
   lines.push(`  const { instance } = await WebAssembly.instantiate(raw, importObj);`);
   lines.push(`  const exp = instance.exports as Record<string, unknown>;`);
+  if (exportedFns.length > 0) {
+    // Resolve an export by name, tolerating the lossy WIT kebab<->camel round-trip:
+    // the WIT export is `parse-html` but the wasm export is the original camelCase
+    // `parseHTML`, and `kebabToCamel("parse-html")` = "parseHtml" != "parseHTML".
+    // Fall back to matching any actual export key whose kebab form is equal.
+    lines.push(
+      `  const _kebab = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/_/g, "-").toLowerCase();`,
+    );
+    lines.push(`  const _exCache: Record<string, unknown> = {};`);
+    lines.push(`  const _ex = (n: string): unknown => {`);
+    lines.push(`    if (n in _exCache) return _exCache[n];`);
+    lines.push(`    let f = exp[n];`);
+    lines.push(`    if (f === undefined) {`);
+    lines.push(`      const kn = _kebab(n);`);
+    lines.push(`      for (const k of Object.keys(exp)) { if (_kebab(k) === kn) { f = exp[k]; break; } }`);
+    lines.push(`    }`);
+    lines.push(`    return (_exCache[n] = f);`);
+    lines.push(`  };`);
+  }
   // Wire the WASI shim's memory, then run the reactor initializer (SPEC §10.1)
   // once before any other export (no-op if the module has neither).
   lines.push(`  _wasiMem = exp["memory"] as WebAssembly.Memory | undefined;`);
@@ -490,10 +509,12 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
   // Return object
   lines.push(`  return {`);
   for (const fn of exportedFns) {
-    // WASM export name = original camelCase TypeScript name; reconstruct via kebabToCamel
+    // WASM export name = original camelCase TypeScript name; reconstruct via kebabToCamel.
+    // `_ex(...)` resolves it at load time, tolerating the lossy kebab<->camel round-trip
+    // for capital-heavy names (parseHTML/readJSON) that kebabToCamel can't recover.
     const wasmName = kebabToCamel(fn.name);
     const paramStr = fn.params.map((p) => `${p.name}: ${witTypeToTs(p.type)}`).join(", ");
-    const wasm = `(exp["${wasmName}"] as (...a: unknown[]) => unknown)`;
+    const wasm = `(_ex("${wasmName}") as (...a: unknown[]) => unknown)`;
 
     // Build WASM call args
     const callArgs = fn.params.map((p) => {
@@ -515,7 +536,7 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
       lines.push(
         `      const _s = new TextDecoder().decode(new Uint8Array(_mem.buffer, _v.getInt32(_r, true), _v.getInt32(_r + 4, true)));`,
       );
-      lines.push(`      (exp["cabi_post_${wasmName}"] as ((p: number) => void))(_r);`);
+      lines.push(`      (_ex("cabi_post_${wasmName}") as ((p: number) => void))(_r);`);
       lines.push(`      return _s;`);
       lines.push(`    },`);
     } else if (fn.result === "bool") {

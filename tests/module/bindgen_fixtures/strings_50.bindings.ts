@@ -55,6 +55,17 @@ export async function loadModule(
   }
   const { instance } = await WebAssembly.instantiate(raw, importObj);
   const exp = instance.exports as Record<string, unknown>;
+  const _kebab = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/_/g, "-").toLowerCase();
+  const _exCache: Record<string, unknown> = {};
+  const _ex = (n: string): unknown => {
+    if (n in _exCache) return _exCache[n];
+    let f = exp[n];
+    if (f === undefined) {
+      const kn = _kebab(n);
+      for (const k of Object.keys(exp)) { if (_kebab(k) === kn) { f = exp[k]; break; } }
+    }
+    return (_exCache[n] = f);
+  };
   _wasiMem = exp["memory"] as WebAssembly.Memory | undefined;
   (exp["_initialize"] as (() => void) | undefined)?.();
   const _mem = exp["memory"] as WebAssembly.Memory;
@@ -67,19 +78,19 @@ export async function loadModule(
   }
   return {
     greet(name: string): string {
-      const _r = (exp["greet"] as (...a: unknown[]) => unknown)(..._writeStr(name)) as number;
+      const _r = (_ex("greet") as (...a: unknown[]) => unknown)(..._writeStr(name)) as number;
       const _v = new DataView(_mem.buffer);
       const _s = new TextDecoder().decode(new Uint8Array(_mem.buffer, _v.getInt32(_r, true), _v.getInt32(_r + 4, true)));
-      (exp["cabi_post_greet"] as ((p: number) => void))(_r);
+      (_ex("cabi_post_greet") as ((p: number) => void))(_r);
       return _s;
     },
     shout(msg: string): string {
-      const _r = (exp["shout"] as (...a: unknown[]) => unknown)(..._writeStr(msg)) as number;
+      const _r = (_ex("shout") as (...a: unknown[]) => unknown)(..._writeStr(msg)) as number;
       const _v = new DataView(_mem.buffer);
       const _s = new TextDecoder().decode(new Uint8Array(_mem.buffer, _v.getInt32(_r, true), _v.getInt32(_r + 4, true)));
-      (exp["cabi_post_shout"] as ((p: number) => void))(_r);
+      (_ex("cabi_post_shout") as ((p: number) => void))(_r);
       return _s;
     },
-    strLen(s: string): number { return (exp["strLen"] as (...a: unknown[]) => unknown)(..._writeStr(s)) as number; },
+    strLen(s: string): number { return (_ex("strLen") as (...a: unknown[]) => unknown)(..._writeStr(s)) as number; },
   };
 }

@@ -515,10 +515,6 @@ function firstCodeArrowIdx(line: string): number {
 }
 
 /** Converts a WIT kebab-case name back to the original camelCase export name. */
-function kebabToCamel(s: string): string {
-  return s.replace(/-([a-z0-9])/g, (_m, c: string) => c.toUpperCase());
-}
-
 /** Inverse of watTypeToWit: maps a WIT value type back to the WatType used by wasic. */
 function witTypeToWat(t: string): WatType {
   switch (t) {
@@ -560,7 +556,6 @@ function parseWitLogicalSigs(
   const re = /export\s+([\w-]+)\s*:\s*func\s*\(([^)]*)\)(?:\s*->\s*([\w-]+))?\s*;/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(witSrc)) !== null) {
-    const exportName = kebabToCamel(m[1]);
     const rawParams = m[2].trim();
     const params: WatType[] = rawParams
       ? rawParams.split(",").map((p) => {
@@ -569,7 +564,11 @@ function parseWitLogicalSigs(
       })
       : [];
     const result: WatType | null = m[3] ? witTypeToWat(m[3].trim()) : null;
-    out.set(`${prefix}_${exportName}`, { params, result });
+    // Key by the kebab-normalized full name. `m[1]` is the WIT kebab export name and
+    // `toKebabCase(actualExportName)` reproduces it exactly, so `applyWitSig` matches
+    // without a lossy kebab→camel round-trip (which drops capital-heavy names like
+    // parseHTML/readJSON — `kebabToCamel("parse-html")` = "parseHtml" ≠ "parseHTML").
+    out.set(toKebabCase(`${prefix}_${m[1]}`), { params, result });
   }
   return out;
 }
@@ -603,7 +602,7 @@ function applyWitSig(
   ef: ExternalFuncDef,
   sigs: Map<string, { params: WatType[]; result: WatType | null }>,
 ): void {
-  const sig = sigs.get(ef.name);
+  const sig = sigs.get(toKebabCase(ef.name));
   if (!sig) return;
   // ExternalFuncDef.params is typed WasmWatType[] (numeric-only) but deliberately carries the
   // logical "string"/"bool" types via cast — the transpiler constructor re-casts to WatType.
