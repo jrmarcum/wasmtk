@@ -249,10 +249,21 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
   lines.push(`      _wasiView().setBigInt64(timePtr, BigInt(Date.now()) * 1000000n, true); return 0;`);
   lines.push(`    },`);
   lines.push(`    proc_exit(code: number): number { throw new Error("wasm proc_exit(" + code + ")"); },`);
+  // Report zero environment/args so a module that queries sizes reads a valid
+  // 0 rather than whatever garbage was in the out-param memory (the bare Proxy
+  // no-op below would leave those pointers untouched).
+  lines.push(`    environ_sizes_get(countPtr: number, bufSizePtr: number): number {`);
+  lines.push(`      const v = _wasiView(); v.setInt32(countPtr, 0, true); v.setInt32(bufSizePtr, 0, true); return 0;`);
+  lines.push(`    },`);
+  lines.push(`    args_sizes_get(countPtr: number, bufSizePtr: number): number {`);
+  lines.push(`      const v = _wasiView(); v.setInt32(countPtr, 0, true); v.setInt32(bufSizePtr, 0, true); return 0;`);
+  lines.push(`    },`);
   lines.push(`  } as Record<string, (...a: number[]) => number>;`);
   // A Proxy answers any WASI function not in the subset with a success no-op,
   // so unlisted imports (fd_close, environ_get, …) don't fail instantiation.
-  lines.push(`  const _wasi = new Proxy(_wasiBase, { get: (t, k: string) => k in t ? t[k] : () => 0 });`);
+  // Use an own-property check (not `k in t`) so a WASI name that happens to
+  // collide with an Object.prototype member still resolves to the no-op stub.
+  lines.push(`  const _wasi = new Proxy(_wasiBase, { get: (t, k: string) => Object.prototype.hasOwnProperty.call(t, k) ? t[k] : () => 0 });`);
   lines.push(``);
 
   // Import object

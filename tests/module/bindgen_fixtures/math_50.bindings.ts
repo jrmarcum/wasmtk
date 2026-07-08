@@ -35,8 +35,14 @@ export async function loadModule(
       _wasiView().setBigInt64(timePtr, BigInt(Date.now()) * 1000000n, true); return 0;
     },
     proc_exit(code: number): number { throw new Error("wasm proc_exit(" + code + ")"); },
+    environ_sizes_get(countPtr: number, bufSizePtr: number): number {
+      const v = _wasiView(); v.setInt32(countPtr, 0, true); v.setInt32(bufSizePtr, 0, true); return 0;
+    },
+    args_sizes_get(countPtr: number, bufSizePtr: number): number {
+      const v = _wasiView(); v.setInt32(countPtr, 0, true); v.setInt32(bufSizePtr, 0, true); return 0;
+    },
   } as Record<string, (...a: number[]) => number>;
-  const _wasi = new Proxy(_wasiBase, { get: (t, k: string) => k in t ? t[k] : () => 0 });
+  const _wasi = new Proxy(_wasiBase, { get: (t, k: string) => Object.prototype.hasOwnProperty.call(t, k) ? t[k] : () => 0 });
 
   const importObj: Record<string, Record<string, unknown>> = { wasi_snapshot_preview1: _wasi };
   let raw: ArrayBuffer;
