@@ -160,8 +160,17 @@ wasmtk run   --lang=go                      # force Go for the current dir (e.g.
 wasmtk run   --lang=go --go-runtime=std    # standard Go toolchain instead of TinyGo
 wasmtk modc  --lang=go mylib.go            # build a WASI reactor LIBRARY (callable; default)
 wasmtk mod   mylib.wasm add 2 3            #   → call an exported function: prints 5
+wasmtk bindgen mylib.wit                   #   → typed TS host bindings (numbers, bools, strings)
 wasmtk modc  --lang=go app.go --go-target=wasm   # build a BROWSER module (-target=wasm) + wasm_exec.js
 ```
+
+A Go library can be consumed from a TypeScript host via `bindgen` just like a wasic library: Go
+strings are UTF-8 `(ptr, len)` — the Canonical ABI representation — so a TinyGo reactor that follows
+the canonical string convention (a `//go:linkname cabi_realloc` wrapper + `(ptr,len)` params +
+callee-allocated `cabi_post`-freed returns) is marshalled by the same, language-agnostic `bindgen`. The
+generated loader supplies a minimal WASI shim and calls `_initialize`, so a TinyGo module (whose
+runtime imports `wasi_snapshot_preview1`) instantiates with no host changes. See
+`tests/go_fixtures/strlib/` for a worked string library.
 
 ### `wasmtk wast` — WebAssembly `.wast` spec-script conformance runner
 

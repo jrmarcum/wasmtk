@@ -603,10 +603,38 @@ to a `.output()` call (use `"piped"` and decode). (2) `rt.remove` is single-arg 
 Bun) — use `Deno.remove(dir, {recursive:true})` for the temp shim dir. Subprocess env is built as
 `{ ...rt.env.toObject(), WASMOPT/GOOS/GOARCH }` so PATH is preserved.
 
-**Deferred (as of v1; updated 2026-06-07):** Go string/slice/aggregate **bindgen** host marshalling
-(still deferred — needs ABI forward-alignment; Go's string/slice layout ≠ Canonical ABI). ~~reactor
-`modc --lang=go`~~ — **DONE 2026-06-07** (`modc --lang=go` now builds the `//go:wasmexport` reactor
-library by default). Browser `syscall/js` — shipped behind `--go-target=wasm`.
+**Go string/aggregate bindgen — ✅ SHIPPED 2026-07-08.** The old "Go's string/slice layout ≠
+Canonical ABI" deferral was a **mischaracterization** (see the ABI-canonicity investigation below):
+Go strings are UTF-8 `(ptr,len)` — exactly the Canonical ABI representation — so a TinyGo reactor
+library exporting the canonical string convention is consumable by `wasmtk bindgen` with **zero
+Go-specific host code**; the existing language-agnostic bindgen marshals it byte-for-byte the same as
+a wasic module. Verified end-to-end (`tests/go_bindgen_tests.ts`, TinyGo-gated: `greet`/`strLen`
+round-trip incl. UTF-8). Fixture: `tests/go_fixtures/strlib/` (`strlib.go` + `strlib.wit`). ~~reactor
+`modc --lang=go`~~ — **DONE 2026-06-07**. Browser `syscall/js` — shipped behind `--go-target=wasm`.
+
+**ABI-canonicity investigation + verdict (2026-07-08).** Question (owner-gated): can Go
+string/aggregate marshalling work WITHOUT making wasmtk's ABI non-canonical vs wasmtime? **Verdict:
+YES — fully canonical**, proven by construction with a TinyGo 0.41.1 probe:
+- Go strings = UTF-8 `(ptr,len)` = canonical string lowering. A TinyGo `-buildmode=c-shared` reactor
+  exports `malloc`/`realloc`/`free` + `memory` + `_initialize`.
+- A **one-line `//go:linkname cabi_realloc` wrapper** over `malloc` gives the exact canonical allocator
+  signature `(i32,i32,i32,i32)->i32`. String params cross as `(ptr,len)` via `cabi_realloc`; a returned
+  string is the callee-allocated **i32 ptr → `[dataPtr,len]` pair + `cabi_post_<name>`** — identical
+  wire format to wasic's `$fn__cabi` shim. All proven end-to-end (`greet("World")=="Hello, World!"`).
+- **What differs from wasic is authoring, not the ABI:** TinyGo's `//go:wasmexport` is numeric-only, so
+  the canonical string glue (`cabi_realloc`, ptr/len exports, `cabi_post`) is written by hand in Go
+  (see `strlib.go`'s `goStr`/`retStr`/`freeRet` helper block) rather than compiler-generated. Not a
+  canonicity violation — a code-ergonomics gap. A wasmtk-provided Go helper package could hide it later.
+
+**The ONE host-side gap (fixed 2026-07-08) — SPEC §10 in the bindgen loader.** bindgen's generated
+loader used `importObj = {}`, so it couldn't instantiate a module that imports `wasi_snapshot_preview1`
+(a TinyGo runtime needs `random_get`; a `modc` lib that `console.log`s needs `fd_write`), nor did it
+call `_initialize`. Fixed in `src/bindgen.ts` `genLoadModule`: **always** attach a minimal WASI-P1
+shim (`fd_write`→console, `random_get`, `clock_time_get`, `proc_exit`, Proxy no-op fallback for the
+rest — unused import namespaces are ignored by `WebAssembly.instantiate`, so pure-compute modules are
+unaffected) + call `_initialize` (SPEC §10.1/§10.2, the same capability propagated to the loader
+ports). Additive: `bindgen` 131→135 (4 new §10 codegen assertions), `dync` 3/3, no regression. This
+also lets any wasic `modc` library that uses `console.log` be driven via bindgen.
 
 ### Architectural fit (producer → optimize → host stays ours)
 

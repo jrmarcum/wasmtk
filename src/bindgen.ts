@@ -218,6 +218,43 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
     lines.push(`  let _hostPrintImpl: (ptr: number, len: number) => void = () => {};`);
   }
 
+  // SPEC §10.2 — a minimal WASI Preview 1 shim, always provided so that
+  // WASI-importing library modules instantiate: a TinyGo `//go:wasmexport`
+  // reactor library imports `wasi_snapshot_preview1` (at least `random_get`),
+  // and a `wasmtk modc` library that calls `console.log` imports `fd_write`.
+  // Unused import namespaces are ignored by `WebAssembly.instantiate`, so a
+  // pure-compute module is unaffected. Memory is read/written through
+  // `_wasiMem`, set to the module's exported memory after instantiation.
+  lines.push(`  let _wasiMem: WebAssembly.Memory | undefined;`);
+  lines.push(`  const _wasiView = () => new DataView((_wasiMem as WebAssembly.Memory).buffer);`);
+  lines.push(`  const _wasiU8 = () => new Uint8Array((_wasiMem as WebAssembly.Memory).buffer);`);
+  lines.push(`  const _wasiBase = {`);
+  lines.push(`    fd_write(fd: number, iovs: number, iovsLen: number, nwritten: number): number {`);
+  lines.push(`      const v = _wasiView(), mem = _wasiU8();`);
+  lines.push(`      let written = 0, text = "";`);
+  lines.push(`      for (let i = 0; i < iovsLen; i++) {`);
+  lines.push(`        const p = v.getInt32(iovs + i * 8, true), l = v.getInt32(iovs + i * 8 + 4, true);`);
+  lines.push(`        text += new TextDecoder().decode(mem.subarray(p, p + l)); written += l;`);
+  lines.push(`      }`);
+  lines.push(`      const out = text.replace(/\\n$/, "");`);
+  lines.push(`      if (fd === 2) console.error(out); else console.log(out);`);
+  lines.push(`      v.setInt32(nwritten, written, true); return 0;`);
+  lines.push(`    },`);
+  lines.push(`    random_get(buf: number, len: number): number {`);
+  lines.push(`      const mem = _wasiU8();`);
+  lines.push(`      for (let i = 0; i < len; i++) mem[buf + i] = (Math.random() * 256) | 0;`);
+  lines.push(`      return 0;`);
+  lines.push(`    },`);
+  lines.push(`    clock_time_get(_id: number, _prec: number, timePtr: number): number {`);
+  lines.push(`      _wasiView().setBigInt64(timePtr, BigInt(Date.now()) * 1000000n, true); return 0;`);
+  lines.push(`    },`);
+  lines.push(`    proc_exit(code: number): number { throw new Error("wasm proc_exit(" + code + ")"); },`);
+  lines.push(`  } as Record<string, (...a: number[]) => number>;`);
+  // A Proxy answers any WASI function not in the subset with a success no-op,
+  // so unlisted imports (fd_close, environ_get, …) don't fail instantiation.
+  lines.push(`  const _wasi = new Proxy(_wasiBase, { get: (t, k: string) => k in t ? t[k] : () => 0 });`);
+  lines.push(``);
+
   // Import object
   if (hasImports || needsAnyMarshal) {
     lines.push(`  const env: Record<string, unknown> = {};`);
@@ -246,9 +283,9 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
         `  env["__host_print"] = (ptr: number, len: number) => _hostPrintImpl(ptr, len);`,
       );
     }
-    lines.push(`  const importObj = { env };`);
+    lines.push(`  const importObj = { env, wasi_snapshot_preview1: _wasi };`);
   } else {
-    lines.push(`  const importObj: Record<string, Record<string, unknown>> = {};`);
+    lines.push(`  const importObj: Record<string, Record<string, unknown>> = { wasi_snapshot_preview1: _wasi };`);
   }
 
   // Load raw bytes
@@ -282,6 +319,10 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
 
   lines.push(`  const { instance } = await WebAssembly.instantiate(raw, importObj);`);
   lines.push(`  const exp = instance.exports as Record<string, unknown>;`);
+  // Wire the WASI shim's memory, then run the reactor initializer (SPEC §10.1)
+  // once before any other export (no-op if the module has neither).
+  lines.push(`  _wasiMem = exp["memory"] as WebAssembly.Memory | undefined;`);
+  lines.push(`  (exp["_initialize"] as (() => void) | undefined)?.();`);
 
   if (needsMemory) {
     lines.push(`  const _mem = exp["memory"] as WebAssembly.Memory;`);

@@ -173,6 +173,14 @@ world math-50 {
   ok("no _readStr (no string return)", !ts.includes("_readStr"));
   // WASM export names are camelCase (original TS names), not kebab→snake
   contains("add wasm call", ts, `exp["add"]`);
+  // SPEC §10 — the generated loader always ships a minimal WASI-P1 shim (so a
+  // WASI-importing library, e.g. a TinyGo reactor, instantiates) and calls
+  // `_initialize`. Present even for a pure-numeric module (unused imports are
+  // ignored by WebAssembly.instantiate).
+  contains("§10.2 WASI shim in importObj", ts, "wasi_snapshot_preview1: _wasi");
+  contains("§10.2 shim has fd_write", ts, "fd_write(");
+  contains("§10.2 shim has random_get", ts, "random_get(");
+  contains("§10.1 calls _initialize", ts, `exp["_initialize"]`);
 }
 
 // ── 6. generateBindings — bool conversions ───────────────────────────────────

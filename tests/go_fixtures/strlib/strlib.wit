@@ -1,0 +1,6 @@
+package local:strlib;
+
+world strlib {
+  export greet: func(name: string) -> string;
+  export str-len: func(s: string) -> s32;
+}

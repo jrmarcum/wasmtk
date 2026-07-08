@@ -18,10 +18,37 @@ export async function loadModule(
   source: string | URL | BufferSource,
   imports?: ModuleImports,
 ): Promise<ModuleExports> {
+  let _wasiMem: WebAssembly.Memory | undefined;
+  const _wasiView = () => new DataView((_wasiMem as WebAssembly.Memory).buffer);
+  const _wasiU8 = () => new Uint8Array((_wasiMem as WebAssembly.Memory).buffer);
+  const _wasiBase = {
+    fd_write(fd: number, iovs: number, iovsLen: number, nwritten: number): number {
+      const v = _wasiView(), mem = _wasiU8();
+      let written = 0, text = "";
+      for (let i = 0; i < iovsLen; i++) {
+        const p = v.getInt32(iovs + i * 8, true), l = v.getInt32(iovs + i * 8 + 4, true);
+        text += new TextDecoder().decode(mem.subarray(p, p + l)); written += l;
+      }
+      const out = text.replace(/\n$/, "");
+      if (fd === 2) console.error(out); else console.log(out);
+      v.setInt32(nwritten, written, true); return 0;
+    },
+    random_get(buf: number, len: number): number {
+      const mem = _wasiU8();
+      for (let i = 0; i < len; i++) mem[buf + i] = (Math.random() * 256) | 0;
+      return 0;
+    },
+    clock_time_get(_id: number, _prec: number, timePtr: number): number {
+      _wasiView().setBigInt64(timePtr, BigInt(Date.now()) * 1000000n, true); return 0;
+    },
+    proc_exit(code: number): number { throw new Error("wasm proc_exit(" + code + ")"); },
+  } as Record<string, (...a: number[]) => number>;
+  const _wasi = new Proxy(_wasiBase, { get: (t, k: string) => k in t ? t[k] : () => 0 });
+
   const env: Record<string, unknown> = {};
   env["env_mul"] = (_a0, _a1: number) => (imports?.env?.envMul?.(_a0, _a1) ?? 0);
   env["env_add"] = (_a0, _a1: number) => (imports?.env?.envAdd?.(_a0, _a1) ?? 0);
-  const importObj = { env };
+  const importObj = { env, wasi_snapshot_preview1: _wasi };
   let raw: ArrayBuffer;
   if (source instanceof ArrayBuffer) {
     raw = source;
@@ -32,6 +59,8 @@ export async function loadModule(
   }
   const { instance } = await WebAssembly.instantiate(raw, importObj);
   const exp = instance.exports as Record<string, unknown>;
+  _wasiMem = exp["memory"] as WebAssembly.Memory | undefined;
+  (exp["_initialize"] as (() => void) | undefined)?.();
   return {
     scale(x: number, factor: number): number { return (exp["scale"] as (...a: unknown[]) => unknown)(x, factor) as number; },
     combine(a: number, b: number): number { return (exp["combine"] as (...a: unknown[]) => unknown)(a, b) as number; },
