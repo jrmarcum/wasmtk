@@ -23,9 +23,17 @@ in `deno.json`; no source change needed.
 | Specifier | npm (legacy) | JSR (jrmarcum ecosystem) |
 | --- | --- | --- |
 | `"wabt"` | `npm:wabt@^1.0.36` | `jsr:@jrmarcum/wabt-ts@^1.3.5/compat` |
-| `"binaryen"` | `npm:binaryen@^116.0.0` | `jsr:@jrmarcum/binaryen-ts@^1.3.5/compat` |
+| `"binaryen"` | `npm:binaryen@^116.0.0` | `jsr:@jrmarcum/binaryen-ts@^1.3.9/compat` |
 
-**Current (2026-07-02):** `wabt-ts@^1.3.5/compat` + `binaryen-ts@^1.3.5/compat`. **Stay ≥ wabt-ts 1.3.5** —
+**Current (2026-07-08):** `wabt-ts@^1.3.5/compat` + `binaryen-ts@^1.3.9/compat`. **binaryen-ts bumped
+1.3.5 → 1.3.9 on 2026-07-08** — 1.3.6 shipped the (opt-in) **Asyncify** + **Flatten** passes + a
+four-pass fail-loud audit sweep (20 correctness fixes, incl. the WAT-parser call/global type-inference
+root cause); 1.3.7–1.3.9 are identical-code re-publishes fixing a JSR provenance-recording issue.
+Verified clean end-to-end with wasmtk (wasi 375/375, bindgen 135, jstyper 73, mod 55, merge 1 — zero
+regressions; the new passes are opt-in and don't touch the `-Oz` path). **GOTCHA (Deno 2.9+ fresh-
+package cooldown):** a just-published (<24h) JSR version is refused by `deno install`/`deno cache` with
+"newer than the specified minimum dependency date" — pass `--minimum-dependency-age=0` to force it (or
+wait >24h). It self-resolves; no code issue. **Stay ≥ wabt-ts 1.3.5** —
 1.3.4 fixed the `.wast`-surfaced br_if/br_table-branch-value + over-precise hex-float bugs, and **1.3.5
 fixed decimal→f32 double-rounding** (exact single-rounding `decimalToBits`; the whole core spec suite now
 runs clean — gate 41 files / 12444 assertions / 0 fail; see [testing.md](testing.md)). The `/compat`
