@@ -1,34 +1,57 @@
 # Compiler bug log
 
-## Code-audit sweep (2026-07-08) — fixed, all suites green
+## Code-audit sweep (2026-07-08) — THREE fan-out passes, all fixed, all suites green
 
-A two-pass fan-out audit over the freshly-added asyncify port (binaryen-ts) + Go-bindgen /
-WIT-overlay / hybrid / bindgen surface (wasmtk). Correctness bugs found and FIXED:
+Three adversarial fan-out passes over the freshly-added asyncify port (binaryen-ts) + Go-bindgen /
+WIT-overlay / hybrid / bindgen surface (wasmtk), then over this session's own fix code. Final
+gates: binaryen-ts **401/401** · wasi **375/375** · bindgen **142** · go_bindgen **7/7** ·
+hybrid **8/8** (new `tests/hybrid_tests.ts`).
+
+**Correctness bugs found and FIXED:**
 
 - **binaryen-ts `walk.ts` — `call_indirect` children walked target-before-operands** (reversed
   eval order). wasm evaluates operands first, then the table index; since Flatten hoists preludes
   via `mapChildrenShallow`, a `call_indirect` (Go interface / func-value call shape) whose target
-  and operands interact was silently miscompiled. Fixed both `_mapChildren` and `_visitChildren`;
-  +IR regression asserting operand→target order.
+  and operands interact was silently miscompiled. Fixed `_mapChildren` + `_visitChildren`; +IR
+  regression asserting operand→target order.
 - **binaryen-ts `flatten.ts` — a non-last bare `unreachable` was dropped** (trivial with empty
-  prelude, hit neither block branch → the trap vanished, control fell through). Now kept as a
+  prelude, hit neither block branch → the trap vanished, control fell through). Kept as a
   statement; +structural regression.
 - **wasmtk WIT kebab↔camel round-trip is lossy** (`toKebabCase` lowercases: `parseHTML` →
   `parse-html` → `kebabToCamel` → `parseHtml` ≠ `parseHTML`), breaking export lookup for
   capital-heavy names (`parseHTML`/`readJSON`/`getID`) in BOTH the merge-import overlay (hard
   compile error) and bindgen (runtime `exp["parseHtml"] is not a function`). Fixed: overlay keys
-  through `toKebabCase` on both sides; bindgen loader resolves via an `_ex()` kebab fallback.
-  +e2e regression fixture `kebabcase_50` (readID/toHTML).
-- **wasmtk hybrid** — `findCloseBrace`/call-rewrite counted braces & matched names inside
-  strings/comments and rewrote object method-shorthand; multi-line imports spliced the loader
-  mid-statement. All now context-aware; +`tests/hybrid_tests.ts`.
+  through `toKebabCase` on both sides; bindgen loader resolves via an `_ex()` load-time kebab
+  fallback. +e2e regression fixture `kebabcase_50` (readID/toHTML).
+- **wasmtk hybrid scanners — not string/comment/regex-aware.** The `hybrid` call-rewriter/body-
+  extractor originally counted braces & matched names inside strings/comments (fixed pass 1: made
+  string/comment-aware), then a deeper pass found they still didn't recognize **regex literals** —
+  a regex in host code (`.replace(/["'{}]/, …)`, common) opened a phantom string that silently
+  disabled ALL downstream call rewrites (→ runtime `ReferenceError`) or truncated a `@wasm` body.
+  Also the session's context-aware rewrite had **regressed** call-rewriting inside template `${…}`
+  interpolations (the old blind regex happened to handle them). Final state: a shared
+  `skipLiteral` (string/comment/**regex** with regex-vs-division disambiguation) + `${…}`
+  interpolation recursion + multi-line-import injection fix. See design-decisions.md § "hybrid
+  call-rewriting / body-extraction MUST be context-aware". +8 hybrid tests.
 
-Robustness / fail-loud conversions (silent-wrong → hard error or honored behavior): asyncify now
-ensures a memory exists, honors `import-globals`, rejects multi-memory, accepts newline-split &
-legacy-alias option lists, and diagnoses bad list entries; `witTypeToWat`/`parseWitType` fail loud
-on unknown/aggregate WIT types; `parseWitFuncs` rejects multi-value returns; the gowasic wasm-opt
-shim is now runtime-agnostic (Deno/Bun/Node). Dead code removed (`hasIndirectCall`, hybrid
-`forceHost`). Commits: binaryen-ts `e616d8f`/`27a6f2f`/`0cc225b`, wasmtk `0e94a38`/`7531e34`/`07f1c94`.
+**Robustness / fail-loud conversions (silent-wrong → hard error or honored behavior):**
+asyncify now ensures a memory exists (upstream `ensureExists`), honors `import-globals` (imports
+the two globals; verified encode/instantiate), rejects multi-memory, accepts newline-split &
+legacy-alias (`blacklist`/`whitelist`/`relocatable`) option lists, and diagnoses bad list entries;
+`witTypeToWat`/`parseWitType` fail loud on unknown/aggregate WIT types (and the wasic merge catch
+now RE-THROWS a `wasic:` diagnostic instead of burying it as a "skipping" warning);
+`parseWitFuncs` rejects multi-value returns; bindgen guards the generated `cabi_post_<name>` call;
+the gowasic wasm-opt shim is now runtime-agnostic (Deno/Bun/Node) with a runtime-branched launcher.
+Dead code removed (`hasIndirectCall`, hybrid `forceHost`).
+
+**Known-latent, documented (not silent):** asyncify add/remove/only-list options key on internal
+function names, so real-symbol lists won't match a binary-parsed module (name section dropped) —
+lists work against ModuleBuilder/named-WAT modules; needs name-section retention when asyncify is
+wired to binary-parsed input. Nested-backtick-inside-`${…}` is the one residual hybrid template
+edge. Both documented inline.
+
+Commits: binaryen-ts `e616d8f`/`27a6f2f`/`0cc225b`/`c5bee62`, wasmtk `0e94a38`/`7531e34`/`07f1c94`/
+`ff69717`/`e75baa3`.
 
 ## wabt-ts BACKEND bugs surfaced by the `.wast` spec runner — NOT wasmtk-side
 

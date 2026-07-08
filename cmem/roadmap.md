@@ -670,3 +670,16 @@ aggregate marshalling~~ (✅ SHIPPED 2026-07-08 — canonical; SPEC §10 bindgen
 in-progress **Route A (javyc retirement — dynrt language/stdlib growth, 2e/2f)**. Optional #12 polish
 (SPEC §10 loader-cap propagation) is now COMPLETE across all 10 loader ports (2026-07-05). Full
 analysis in CLAUDE.md § "TypeScript Feature Gap Analysis".
+
+**Code-audit sweep 2026-07-08 (three fan-out passes, all suites green — binaryen-ts 401/401, wasi
+375/375, bindgen 142, go_bindgen 7/7, hybrid 8/8).** Alongside the Go-bindgen + backend-bump work,
+a comprehensive audit of the fresh asyncify/Go/WIT/hybrid/bindgen surface (and this session's own
+fixes) found + FIXED: a binaryen-ts `call_indirect` eval-order miscompile + a dropped-`unreachable`
+in Flatten; the lossy WIT kebab↔camel round-trip breaking capital-heavy exports (`parseHTML`) in
+both the merge overlay and bindgen; and the `hybrid` scanners not being regex/template-aware. Plus
+robustness/fail-loud conversions: asyncify now ensures-a-memory / honors `import-globals` / rejects
+multi-memory / accepts newline+legacy-alias lists; WIT types fail loud on unknown/aggregate; the
+gowasic wasm-opt shim is runtime-agnostic (Bun-safe). New `tests/hybrid_tests.ts` + `kebabcase_50`
+bindgen fixture + binaryen-ts asyncify option/memory tests. Details: compiler-bugs.md § "Code-audit
+sweep (2026-07-08)", design-decisions.md (hybrid/producer/WIT invariants), binaryen-ts
+`cmem/passes.md`.

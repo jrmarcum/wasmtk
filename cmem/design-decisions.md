@@ -168,6 +168,44 @@ high-value subset.
   callee-allocated pair-pointer + `cabi_post` form; older references to an "out-param shim" are
   stale. This is the canonical form and matches the Go `strlib` fixture and `strlib.go`.)
 
+## `hybrid` call-rewriting / body-extraction MUST be context-aware (2026-07-08)
+
+`src/hybrid.ts`'s three scanners — `findCloseBrace` (extract a `@wasm` body), `isMethodDefinition`
+(call vs `name(){` definition), and `rewriteWasmCalls` (`name(` → `lib.name(`) — process ARBITRARY
+user TypeScript, so they must NOT be naive brace-counters or lookbehind regexes. They share a
+`skipLiteral(src, i, prevSig, prevWord)` primitive that treats **strings, templates, `//`/block
+comments, AND regex literals** as opaque, with `regexCanPrecede()` disambiguating a regex `/…/`
+from division by the previous significant token (a value / keyword). Load-bearing rules:
+
+- A regex literal containing a quote/brace/paren (`/["'{}]/`, `/}{/`) must NOT flip string/brace/
+  paren state — else it silently disables all downstream rewrites (→ runtime `ReferenceError`) or
+  truncates a body. Do not revert to a scanner that only tracks `"`/`'`/`` ` ``/comments.
+- `rewriteWasmCalls` DESCENDS into template `${…}` interpolations (via `findInterpEnd` + recursion)
+  so a routed call inside `` `${add(x)}` `` is still rewritten. A blind opaque-template approach
+  regresses this (the pre-2026-07-08 naive regex rewrote it by accident).
+- `isMethodDefinition` is the guard that keeps an object method shorthand (`{ add(x){…} }`) from
+  being rewritten; it must skip strings/regex inside the arg list so a `)` there doesn't misparse.
+- Residual (documented, rare): a nested backtick inside a `${…}` interpolation. Regression tests
+  live in `tests/hybrid_tests.ts`.
+
+## Producer shims must be runtime-agnostic (`rt.*`, not `Deno.*`) (2026-07-08)
+
+`src/gowasic.ts`'s `SHIM_TS` (the passthrough wasm-opt shim TinyGo execs when no real `wasm-opt` is
+on PATH) runs as a standalone script under whatever `rt.execPath()` returns, so it detects its own
+runtime (`typeof Deno`/`typeof Bun`) and its launcher branches: Deno needs `run -A`, Bun execs the
+file directly (`-A` is a hard Bun parse error). All file I/O in gowasic proper goes through `rt.*`
+(added `rt.chmod` + recursive `rt.remove`), never `Deno.*` — same Bun-compat rule as the runner.
+
+## WIT type handling fails loud, not silent (2026-07-08)
+
+`witTypeToWat` (wasic overlay) and `parseWitType` (bindgen) cover all scalar int WIT types and
+THROW on unknown/aggregate types (`list<>`, `tuple<>`, record) rather than silently mapping to
+i32/s32; `parseWitFuncs` rejects multi-value/tuple returns. On the merge path, `readWitLogicalSigs`
+swallows ONLY file-absence (numeric-only lib → empty overlay); a parse/type error propagates, and
+the per-import merge `catch` RE-THROWS any `wasic:`-prefixed diagnostic instead of downgrading it to
+a "skipping" warning (which buried it, then failed later with a confusing "unknown function"). Only
+reachable via a hand-written `.wit` — wasic emits only the supported subset.
+
 ## Parallel-path discipline
 
 `console_log.ts` duplicates much of `wasic.ts`'s expression/arg emission (`parseSingleArg`,

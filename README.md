@@ -830,7 +830,7 @@ console.log(heavyCompute(1000));  // call site rewritten to lib.heavyCompute(100
 4. `bindgen` reads `_core.wit` → `_core.bindings.ts`
 5. Write `_runner.ts`: remaining TypeScript + `import { loadModule }` + `const lib = await loadModule(...)` + rewritten call sites
 
-**Async:** `async` functions returning `Promise<T>` are routed into the WASM core (the core wraps each in a synchronous unwrapping wrapper so the host gets a real value). The awaited graph must be self-contained / intra-module — an async function that awaits a host call still belongs in the TypeScript runner. **Other limitations:** Call-site rewriting is regex-based (not AST-based). Module-level shared mutable state does not cross the WASM boundary.
+**Async:** `async` functions returning `Promise<T>` are routed into the WASM core (the core wraps each in a synchronous unwrapping wrapper so the host gets a real value). The awaited graph must be self-contained / intra-module — an async function that awaits a host call still belongs in the TypeScript runner. **Other limitations:** Call-site rewriting uses a context-aware scanner (not a full AST parse): it correctly skips strings, comments, regex literals, member accesses (`obj.fn(`), and object method-shorthand definitions, and it rewrites calls inside template `${…}` interpolations — the one residual edge is a nested backtick inside an interpolation. Module-level shared mutable state does not cross the WASM boundary.
 
 ---
 
