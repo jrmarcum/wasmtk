@@ -69,13 +69,26 @@ async function realPath(path: string): Promise<string> {
   return Deno.realPath(path);
 }
 
-async function remove(path: string): Promise<void> {
+async function remove(path: string, opts?: { recursive?: boolean }): Promise<void> {
   if (isBun) {
-    const { unlink } = await import("node:fs/promises");
-    await unlink(path);
+    const fs = await import("node:fs/promises");
+    if (opts?.recursive) {
+      await fs.rm(path, { recursive: true, force: true });
+      return;
+    }
+    await fs.unlink(path);
     return;
   }
-  return Deno.remove(path);
+  return Deno.remove(path, opts);
+}
+
+async function chmod(path: string, mode: number): Promise<void> {
+  if (isBun) {
+    const { chmod: fsChmod } = await import("node:fs/promises");
+    await fsChmod(path, mode);
+    return;
+  }
+  return Deno.chmod(path, mode);
 }
 
 // ── Process ───────────────────────────────────────────────────────────────────
@@ -262,6 +275,7 @@ export const rt = {
   stat,
   realPath,
   remove,
+  chmod,
   exit: rtExit,
   build,
   env,

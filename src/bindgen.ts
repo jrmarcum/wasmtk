@@ -65,9 +65,16 @@ export interface BindgenOptions {
 
 function parseWitType(raw: string): WitType {
   switch (raw.trim()) {
+    case "s8":
+    case "u8":
+    case "s16":
+    case "u16":
     case "s32":
-      return "s32";
+    case "u32":
+    case "char":
+      return "s32"; // all marshal as a plain JS number
     case "s64":
+    case "u64":
       return "s64";
     case "f32":
       return "f32";
@@ -80,7 +87,14 @@ function parseWitType(raw: string): WitType {
     case "any":
       return "any"; // #14 follow-up: wasmtk-extension WIT type — JS value boxed via the dynrt runtime
     default:
-      return "s32";
+      // Fail loud rather than marshalling an unknown/aggregate type as s32 (a silent
+      // wrong binding). wasic emits only the subset above; anything else comes from a
+      // hand-written .wit. Aggregates (list<>, tuple<>, record) are not yet supported.
+      throw new Error(
+        `bindgen: unsupported WIT type '${raw.trim()}'. Supported: ` +
+          `s8/u8/s16/u16/s32/u32/s64/u64/char/f32/f64/bool/string/any. ` +
+          `Aggregate types (list<…>, tuple<…>, record) are not yet supported.`,
+      );
   }
 }
 
@@ -111,6 +125,20 @@ function parseWitParams(raw: string): WitParam[] {
 
 function parseWitFuncs(body: string, keyword: "import" | "export"): WitFunc[] {
   const funcs: WitFunc[] = [];
+  // Fail loud on multi-value / tuple returns (`func(…) -> (a: s32, b: s32)`): the
+  // single-return regex below simply wouldn't match such a line, silently dropping
+  // the function from the bindings (→ `undefined` at call time). wasic never emits
+  // these; this only guards a hand-written .wit.
+  const multiRe = new RegExp(
+    `\\b${keyword}\\s+([\\w-]+)\\s*:\\s*func\\s*\\([^)]*\\)\\s*->\\s*\\(`,
+    "g",
+  );
+  let mm: RegExpExecArray | null;
+  while ((mm = multiRe.exec(body)) !== null) {
+    throw new Error(
+      `bindgen: WIT ${keyword} '${mm[1]}' has a multi-value/tuple return, which is not yet supported.`,
+    );
+  }
   const re = new RegExp(
     `\\b${keyword}\\s+([\\w-]+)\\s*:\\s*func\\s*\\(([^)]*)\\)(?:\\s*->\\s*([\\w-]+))?\\s*;`,
     "g",

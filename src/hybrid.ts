@@ -124,12 +124,46 @@ export function analyzeSignature(
 
 // ── parser ───────────────────────────────────────────────────────────────────
 
-/** Walk forward from openLine until the opening brace's matching close brace. */
+/**
+ * Walk forward from openLine until the opening brace's matching close brace.
+ * String literals (`"`, `'`, `` ` ``) and comments (`//`, block) are treated as
+ * opaque so a brace inside them (e.g. a `"}"` in a string) doesn't skew the depth
+ * count and truncate the function. (Nested template literals — a backtick inside
+ * a `${…}` interpolation — are the one residual edge; they're rare in wasic-
+ * compilable bodies.)
+ */
 function findCloseBrace(lines: string[], openLine: number): number {
   let depth = 0;
   let seen = false;
+  let inBlockComment = false;
+  let strCh = ""; // "", '"', "'", or "`" when inside a string/template (opaque)
   for (let i = openLine; i < lines.length; i++) {
-    for (const ch of lines[i]) {
+    const line = lines[i];
+    for (let c = 0; c < line.length; c++) {
+      const ch = line[c];
+      const next = line[c + 1];
+      if (inBlockComment) {
+        if (ch === "*" && next === "/") {
+          inBlockComment = false;
+          c++;
+        }
+        continue;
+      }
+      if (strCh) {
+        if (ch === "\\") c++; // skip the escaped char
+        else if (ch === strCh) strCh = "";
+        continue;
+      }
+      if (ch === "/" && next === "/") break; // line comment: rest of line is opaque
+      if (ch === "/" && next === "*") {
+        inBlockComment = true;
+        c++;
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === "`") {
+        strCh = ch;
+        continue;
+      }
       if (ch === "{") {
         depth++;
         seen = true;
@@ -139,6 +173,125 @@ function findCloseBrace(lines: string[], openLine: number): number {
     }
   }
   return lines.length - 1;
+}
+
+/**
+ * True if the `(` at `openParen` begins a method/function parameter list whose
+ * closing `)` is immediately followed by `{` — i.e. a definition (`name(args) {`),
+ * not a call. Used so a routed function name reused as an object method shorthand
+ * (`{ add(x, y) { … } }`) is not rewritten into `{ lib.add(x, y) { … } }`.
+ * Skips string literals inside the argument list so a `)` in a string arg doesn't
+ * throw off the paren match.
+ */
+function isMethodDefinition(src: string, openParen: number): boolean {
+  let depth = 0;
+  let strCh = "";
+  let i = openParen;
+  for (; i < src.length; i++) {
+    const ch = src[i];
+    if (strCh) {
+      if (ch === "\\") i++;
+      else if (ch === strCh) strCh = "";
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") strCh = ch;
+    else if (ch === "(") depth++;
+    else if (ch === ")") {
+      if (--depth === 0) {
+        i++;
+        break;
+      }
+    }
+  }
+  while (i < src.length && /\s/.test(src[i])) i++;
+  return src[i] === "{";
+}
+
+/**
+ * Rewrite bare `name(` call sites to `lib.name(` for each routed function,
+ * skipping: string literals, comments, member accesses (`obj.name(`), word-prefix
+ * collisions (`myName(`), and object method-shorthand definitions (`{ name() {`).
+ * A lightweight context-aware scan — not a full AST parse — but it covers the
+ * cases a naive regex would corrupt (a routed name inside a template string or a
+ * comment, or reused as an object method name).
+ */
+function rewriteWasmCalls(src: string, names: Set<string>): string {
+  const isWord = (c: string | undefined) => c !== undefined && /[A-Za-z0-9_$]/.test(c);
+  let out = "";
+  let i = 0;
+  const n = src.length;
+  let inLineComment = false;
+  let inBlockComment = false;
+  let strCh = "";
+  while (i < n) {
+    const ch = src[i];
+    const next = src[i + 1];
+    if (inLineComment) {
+      out += ch;
+      if (ch === "\n") inLineComment = false;
+      i++;
+      continue;
+    }
+    if (inBlockComment) {
+      out += ch;
+      if (ch === "*" && next === "/") {
+        out += next;
+        i += 2;
+        inBlockComment = false;
+        continue;
+      }
+      i++;
+      continue;
+    }
+    if (strCh) {
+      out += ch;
+      if (ch === "\\" && next !== undefined) {
+        out += next;
+        i += 2;
+        continue;
+      }
+      if (ch === strCh) strCh = "";
+      i++;
+      continue;
+    }
+    if (ch === "/" && next === "/") {
+      inLineComment = true;
+      out += ch;
+      i++;
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      inBlockComment = true;
+      out += ch + next;
+      i += 2;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      strCh = ch;
+      out += ch;
+      i++;
+      continue;
+    }
+    // Code context: try to match an identifier at a word boundary that is not a
+    // member access (`.name`) or a word-prefix continuation.
+    if (isWord(ch) && !isWord(src[i - 1]) && src[i - 1] !== ".") {
+      let j = i;
+      while (j < n && isWord(src[j])) j++;
+      const ident = src.slice(i, j);
+      let k = j;
+      while (k < n && (src[k] === " " || src[k] === "\t")) k++;
+      if (names.has(ident) && src[k] === "(" && !isMethodDefinition(src, k)) {
+        out += "lib." + ident;
+      } else {
+        out += ident;
+      }
+      i = j;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
 }
 
 /**
@@ -308,16 +461,10 @@ export function generateRunner(
   bindingsRelPath: string,
   wasmRelPath: string,
 ): string {
-  // Rewrite call sites: funcName( → lib.funcName(
-  // Negative lookbehind blocks: method calls (obj.funcName), word prefixes (myFuncName),
-  // and string/comment contexts ("funcName(, 'funcName(, `funcName().
-  let patched = remainingSrc;
-  for (const name of wasmFuncNames) {
-    patched = patched.replace(
-      new RegExp(`(?<![."'\`\\w])${name}\\s*\\(`, "g"),
-      `lib.${name}(`,
-    );
-  }
+  // Rewrite call sites: funcName( → lib.funcName( via a context-aware scan that
+  // skips strings, comments, member accesses, word-prefix collisions, and object
+  // method-shorthand definitions (see rewriteWasmCalls).
+  const patched = rewriteWasmCalls(remainingSrc, new Set(wasmFuncNames));
 
   // Find where the LAST import statement ENDS, so we inject after it. A single-line
   // regex would match only the first line of a multi-line import (`import {\n …\n} from

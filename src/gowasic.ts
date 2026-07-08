@@ -105,28 +105,38 @@ async function isDirectory(path: string): Promise<boolean> {
 }
 
 /** The passthrough wasm-opt shim: answers `--version`, otherwise copies TinyGo's input wasm to its
- *  `-o`/`--output` target with NO optimization (binaryen-ts does the -Oz afterwards). */
-const SHIM_TS = String.raw`
-const args = Deno.args;
-if (args.includes("--version") || args.includes("-version")) {
+ *  `-o`/`--output` target with NO optimization (binaryen-ts does the -Oz afterwards).
+ *  Runtime-agnostic: runs under whichever runtime execs it (Deno, Bun, or Node). */
+const SHIM_TS = String.raw`// @ts-nocheck
+const _D = typeof Deno !== "undefined" ? Deno : undefined;
+const _argv = _D ? _D.args : (typeof process !== "undefined" ? process.argv.slice(2) : []);
+const _exit = (c) => { if (_D) _D.exit(c); else process.exit(c); };
+if (_argv.includes("--version") || _argv.includes("-version")) {
   console.log("wasm-opt version 116 (wasmtk binaryen-ts passthrough shim)");
-  Deno.exit(0);
+  _exit(0);
 }
 let out = "", input = "";
-for (let i = 0; i < args.length; i++) {
-  if (args[i] === "-o" || args[i] === "--output") { out = args[i + 1] ?? ""; i++; }
+for (let i = 0; i < _argv.length; i++) {
+  if (_argv[i] === "-o" || _argv[i] === "--output") { out = _argv[i + 1] ?? ""; i++; }
 }
-for (let i = 0; i < args.length; i++) {
-  const a = args[i];
+for (let i = 0; i < _argv.length; i++) {
+  const a = _argv[i];
   if (a === "-o" || a === "--output") { i++; continue; }
   if (a.startsWith("-")) continue;
   if (a !== out) input = a; // last non-flag, non-output positional = input
 }
 try {
-  await Deno.copyFile(input, out);
+  if (_D) {
+    await _D.copyFile(input, out);
+  } else if (typeof Bun !== "undefined") {
+    await Bun.write(out, Bun.file(input));
+  } else {
+    const fs = await import("node:fs/promises");
+    await fs.copyFile(input, out);
+  }
 } catch (e) {
   console.error("wasmtk wasm-opt shim: copy failed in=" + input + " out=" + out + " " + e);
-  Deno.exit(1);
+  _exit(1);
 }
 `;
 
@@ -138,23 +148,27 @@ async function writeWasmOptShim(
   await rt.mkdir(tmp, { recursive: true });
   const shimPath = join(tmp, "wasmopt_shim.ts");
   await rt.writeTextFile(shimPath, SHIM_TS);
-  const deno = rt.execPath(); // the deno (or bun) binary running wasmtk — no reliance on PATH
+  const bin = rt.execPath(); // the deno (or bun) binary running wasmtk — no reliance on PATH
+  // Deno needs `run -A` (subcommand + all-permissions); Bun executes a file directly
+  // with no permission flags. `-A` is a hard parse error under Bun, so branch on runtime.
+  const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
+  const runPrefix = isBun ? `"${bin}"` : `"${bin}" run -A`;
   let launcher: string;
   if (rt.build.os === "windows") {
     launcher = join(tmp, "wasm-opt.cmd");
-    await rt.writeTextFile(launcher, `@echo off\r\n"${deno}" run -A "${shimPath}" %*\r\n`);
+    await rt.writeTextFile(launcher, `@echo off\r\n${runPrefix} "${shimPath}" %*\r\n`);
   } else {
     launcher = join(tmp, "wasm-opt");
-    await rt.writeTextFile(launcher, `#!/bin/sh\nexec "${deno}" run -A "${shimPath}" "$@"\n`);
+    await rt.writeTextFile(launcher, `#!/bin/sh\nexec ${runPrefix} "${shimPath}" "$@"\n`);
     try {
-      await Deno.chmod(launcher, 0o755);
-    } catch { /* Bun / non-Deno: best effort */ }
+      await rt.chmod(launcher, 0o755);
+    } catch { /* best effort */ }
   }
   return {
     launcher,
     cleanup: async () => {
       try {
-        await Deno.remove(tmp, { recursive: true });
+        await rt.remove(tmp, { recursive: true });
       } catch { /* ignore */ }
     },
   };

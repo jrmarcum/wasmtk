@@ -514,12 +514,16 @@ function firstCodeArrowIdx(line: string): number {
   return -1;
 }
 
-/** Converts a WIT kebab-case name back to the original camelCase export name. */
 /** Inverse of watTypeToWit: maps a WIT value type back to the WatType used by wasic. */
 function witTypeToWat(t: string): WatType {
   switch (t) {
+    case "s8":
+    case "u8":
+    case "s16":
+    case "u16":
     case "s32":
     case "u32":
+    case "char":
       return "i32";
     case "s64":
     case "u64":
@@ -533,7 +537,15 @@ function witTypeToWat(t: string): WatType {
     case "string":
       return "string";
     default:
-      return "i32";
+      // Fail loud rather than silently marshalling an unknown/aggregate type as i32
+      // (which would produce wrong code with no diagnostic). Only reachable from a
+      // hand-written .wit alongside an imported .wasm — wasic itself emits only the
+      // subset above. Aggregates (list<>, tuple<>, record, …) are not yet supported.
+      throw new Error(
+        `wasic: unsupported WIT type '${t}' in an imported .wit signature. ` +
+          `Supported: s8/u8/s16/u16/s32/u32/s64/u64/char/f32/f64/bool/string. ` +
+          `Aggregate types (list<…>, tuple<…>, record) are not yet supported for merged .wasm imports.`,
+      );
   }
 }
 
@@ -583,12 +595,15 @@ async function readWitLogicalSigs(
   prefix: string,
 ): Promise<Map<string, { params: WatType[]; result: WatType | null }>> {
   const witPath = wasmFilePath.replace(/\.wasm$/, ".wit");
+  let witSrc: string;
   try {
-    const witSrc = await rt.readTextFile(witPath);
-    return parseWitLogicalSigs(witSrc, prefix);
+    witSrc = await rt.readTextFile(witPath);
   } catch {
+    // .wit absent — a numeric-only library; the overlay is a no-op. (Only file
+    // absence is swallowed here; a parse/unsupported-type error must propagate.)
     return new Map();
   }
+  return parseWitLogicalSigs(witSrc, prefix);
 }
 
 /**
@@ -19333,7 +19348,8 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
       for (const ef of preResult.exportedFuncs) applyWitSig(ef, logicalSigs);
       allExternalFuncs.push(...preResult.exportedFuncs);
     } catch (_err) {
-      console.warn(`  ⚠️  Cannot read imported WASM ${entry.filePath} — skipping`);
+      const reason = _err instanceof Error ? _err.message : String(_err);
+      console.warn(`  ⚠️  Cannot process imported WASM ${entry.filePath} — skipping (${reason})`);
     }
   }
 
@@ -19500,7 +19516,8 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
       for (const ef of preResult2.exportedFuncs) applyWitSig(ef, logicalSigs2);
       allExternalFuncs2.push(...preResult2.exportedFuncs);
     } catch (_err) {
-      console.warn(`  ⚠️  Cannot read imported WASM ${entry.filePath} — skipping`);
+      const reason = _err instanceof Error ? _err.message : String(_err);
+      console.warn(`  ⚠️  Cannot process imported WASM ${entry.filePath} — skipping (${reason})`);
     }
   }
 
