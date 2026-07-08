@@ -124,53 +124,181 @@ export function analyzeSignature(
 
 // ── parser ───────────────────────────────────────────────────────────────────
 
+// ── context-aware scanning primitives (shared by the hybrid scanners) ───────────
+// These recognise string, template, comment AND regex literals so that a brace,
+// quote, paren, or routed-call-looking token inside any of them never skews the
+// surrounding code scan. Not a full parser, but it covers the real corruption
+// cases (a regex `/["']/` in host code, a `}` in a string, `name(` in a comment).
+
+const _WORD = /[A-Za-z0-9_$]/;
+/** Keywords after which a `/` starts a regex, not a division (`return /re/`, etc.). */
+const REGEX_PRECEDING_KEYWORDS = new Set([
+  "return", "typeof", "case", "in", "of", "do", "else", "yield", "await",
+  "void", "delete", "instanceof", "new", "throw",
+]);
+
 /**
- * Walk forward from openLine until the opening brace's matching close brace.
- * String literals (`"`, `'`, `` ` ``) and comments (`//`, block) are treated as
- * opaque so a brace inside them (e.g. a `"}"` in a string) doesn't skew the depth
- * count and truncate the function. (Nested template literals — a backtick inside
- * a `${…}` interpolation — are the one residual edge; they're rare in wasic-
- * compilable bodies.)
+ * Decide whether a `/` in code context begins a regex literal (vs. division),
+ * from the previous significant code char and the identifier ending there.
+ * A value (word / `)` / `]` / `}` / string-close) means division — unless that
+ * value is a keyword that takes an expression.
+ */
+function regexCanPrecede(prevSig: string, prevWord: string): boolean {
+  if (prevSig === "") return true; // start of input
+  if (/[\w$)\]}"'`]/.test(prevSig)) return REGEX_PRECEDING_KEYWORDS.has(prevWord);
+  return true; // an operator / punctuation precedes → regex position
+}
+
+/**
+ * If `src[i]` starts an opaque literal in code context — a `"`/`'`/backtick
+ * string, a `//` or block comment, or a regex literal — return the index just
+ * PAST it. Otherwise return -1 (an ordinary code char, incl. a `/` that is
+ * division). `prevSig`/`prevWord` disambiguate a regex `/…/` from division.
+ * Templates are skipped opaquely here (interpolation handling, when needed, is
+ * done by the caller — only `rewriteWasmCalls` descends into `${…}`).
+ */
+function skipLiteral(src: string, i: number, prevSig: string, prevWord: string): number {
+  const ch = src[i];
+  const n = src.length;
+  if (ch === '"' || ch === "'" || ch === "`") {
+    let j = i + 1;
+    while (j < n) {
+      const c = src[j];
+      if (c === "\\") {
+        j += 2;
+        continue;
+      }
+      if (c === ch) return j + 1;
+      j++;
+    }
+    return n; // unterminated
+  }
+  if (ch === "/") {
+    const next = src[i + 1];
+    if (next === "/") {
+      let j = i + 2;
+      while (j < n && src[j] !== "\n") j++;
+      return j;
+    }
+    if (next === "*") {
+      let j = i + 2;
+      while (j < n && !(src[j] === "*" && src[j + 1] === "/")) j++;
+      return Math.min(j + 2, n);
+    }
+    if (regexCanPrecede(prevSig, prevWord)) {
+      let j = i + 1;
+      let inClass = false;
+      while (j < n) {
+        const c = src[j];
+        if (c === "\\") {
+          j += 2;
+          continue;
+        }
+        if (c === "\n") return -1; // regex can't span lines → it was division
+        if (c === "[") inClass = true;
+        else if (c === "]") inClass = false;
+        else if (c === "/" && !inClass) {
+          j++;
+          while (j < n && /[a-z]/i.test(src[j])) j++; // flags
+          return j;
+        }
+        j++;
+      }
+      return -1; // no closing `/` → treat as division
+    }
+  }
+  return -1;
+}
+
+/** After advancing past a literal at `src[i]`, the significant-char state it leaves. */
+function sigAfterLiteral(src: string, i: number): { prevSig: string; word: string } | null {
+  const first = src[i];
+  if (first === '"' || first === "'" || first === "`") return { prevSig: first, word: "" };
+  // regex (a `/` that is neither `//` nor `/*`) — its result is a value
+  if (first === "/" && src[i + 1] !== "/" && src[i + 1] !== "*") return { prevSig: "/", word: "" };
+  return null; // comment: significant-char state unchanged
+}
+
+/** Find the `}` that closes a `${` interpolation whose body starts at `start`. */
+function findInterpEnd(src: string, start: number): number {
+  let depth = 0;
+  let i = start;
+  const n = src.length;
+  let prevSig = "{"; // just after `${` → expression start (regex allowed)
+  let word = "";
+  while (i < n) {
+    const ch = src[i];
+    const skip = skipLiteral(src, i, prevSig, word);
+    if (skip >= 0) {
+      const s = sigAfterLiteral(src, i);
+      if (s) {
+        prevSig = s.prevSig;
+        word = s.word;
+      }
+      i = skip;
+      continue;
+    }
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      if (depth === 0) return i;
+      depth--;
+    }
+    if (_WORD.test(ch)) word += ch;
+    else if (!/\s/.test(ch)) word = "";
+    if (!/\s/.test(ch)) prevSig = ch;
+    i++;
+  }
+  return n;
+}
+
+/**
+ * Walk forward from `openLine` until the opening brace's matching close brace.
+ * Strings, templates, comments, and regex literals are opaque so a brace inside
+ * any of them doesn't skew the depth count. (A nested backtick inside a `${…}`
+ * interpolation is the one residual edge — rare in wasic-compilable bodies.)
  */
 function findCloseBrace(lines: string[], openLine: number): number {
+  const src = lines.slice(openLine).join("\n");
+  const n = src.length;
   let depth = 0;
   let seen = false;
-  let inBlockComment = false;
-  let strCh = ""; // "", '"', "'", or "`" when inside a string/template (opaque)
-  for (let i = openLine; i < lines.length; i++) {
-    const line = lines[i];
-    for (let c = 0; c < line.length; c++) {
-      const ch = line[c];
-      const next = line[c + 1];
-      if (inBlockComment) {
-        if (ch === "*" && next === "/") {
-          inBlockComment = false;
-          c++;
-        }
-        continue;
-      }
-      if (strCh) {
-        if (ch === "\\") c++; // skip the escaped char
-        else if (ch === strCh) strCh = "";
-        continue;
-      }
-      if (ch === "/" && next === "/") break; // line comment: rest of line is opaque
-      if (ch === "/" && next === "*") {
-        inBlockComment = true;
-        c++;
-        continue;
-      }
-      if (ch === '"' || ch === "'" || ch === "`") {
-        strCh = ch;
-        continue;
-      }
-      if (ch === "{") {
-        depth++;
-        seen = true;
-      } else if (ch === "}" && seen) {
-        if (--depth === 0) return i;
-      }
+  let line = openLine;
+  let prevSig = "";
+  let word = "";
+  let i = 0;
+  while (i < n) {
+    const ch = src[i];
+    if (ch === "\n") {
+      line++;
+      i++;
+      continue;
     }
+    const skip = skipLiteral(src, i, prevSig, word);
+    if (skip >= 0) {
+      for (let k = i; k < skip; k++) if (src[k] === "\n") line++;
+      const s = sigAfterLiteral(src, i);
+      if (s) {
+        prevSig = s.prevSig;
+        word = s.word;
+      }
+      i = skip;
+      continue;
+    }
+    if (ch === "{") {
+      depth++;
+      seen = true;
+      prevSig = ch;
+      word = "";
+    } else if (ch === "}") {
+      prevSig = ch;
+      word = "";
+      if (seen && --depth === 0) return line;
+    } else {
+      if (_WORD.test(ch)) word += ch;
+      else if (!/\s/.test(ch)) word = "";
+      if (!/\s/.test(ch)) prevSig = ch;
+    }
+    i++;
   }
   return lines.length - 1;
 }
@@ -179,116 +307,130 @@ function findCloseBrace(lines: string[], openLine: number): number {
  * True if the `(` at `openParen` begins a method/function parameter list whose
  * closing `)` is immediately followed by `{` — i.e. a definition (`name(args) {`),
  * not a call. Used so a routed function name reused as an object method shorthand
- * (`{ add(x, y) { … } }`) is not rewritten into `{ lib.add(x, y) { … } }`.
- * Skips string literals inside the argument list so a `)` in a string arg doesn't
- * throw off the paren match.
+ * (`{ add(x, y) { … } }`) is not rewritten. Skips strings/comments/regex inside
+ * the argument list so a `)` in any of them doesn't throw off the paren match.
  */
 function isMethodDefinition(src: string, openParen: number): boolean {
+  const n = src.length;
   let depth = 0;
-  let strCh = "";
   let i = openParen;
-  for (; i < src.length; i++) {
+  let prevSig = "";
+  let word = "";
+  while (i < n) {
     const ch = src[i];
-    if (strCh) {
-      if (ch === "\\") i++;
-      else if (ch === strCh) strCh = "";
+    const skip = skipLiteral(src, i, prevSig, word);
+    if (skip >= 0) {
+      const s = sigAfterLiteral(src, i);
+      if (s) {
+        prevSig = s.prevSig;
+        word = s.word;
+      }
+      i = skip;
       continue;
     }
-    if (ch === '"' || ch === "'" || ch === "`") strCh = ch;
-    else if (ch === "(") depth++;
-    else if (ch === ")") {
-      if (--depth === 0) {
-        i++;
-        break;
-      }
+    if (ch === "(") {
+      depth++;
+      prevSig = ch;
+      word = "";
+      i++;
+      continue;
     }
+    if (ch === ")") {
+      depth--;
+      prevSig = ch;
+      word = "";
+      i++;
+      if (depth === 0) break;
+      continue;
+    }
+    if (_WORD.test(ch)) word += ch;
+    else if (!/\s/.test(ch)) word = "";
+    if (!/\s/.test(ch)) prevSig = ch;
+    i++;
   }
-  while (i < src.length && /\s/.test(src[i])) i++;
+  while (i < n && /\s/.test(src[i])) i++;
   return src[i] === "{";
 }
 
 /**
  * Rewrite bare `name(` call sites to `lib.name(` for each routed function,
- * skipping: string literals, comments, member accesses (`obj.name(`), word-prefix
- * collisions (`myName(`), and object method-shorthand definitions (`{ name() {`).
- * A lightweight context-aware scan — not a full AST parse — but it covers the
- * cases a naive regex would corrupt (a routed name inside a template string or a
- * comment, or reused as an object method name).
+ * skipping strings, comments, regex literals, member accesses (`obj.name(`),
+ * word-prefix collisions (`myName(`), and object method-shorthand definitions
+ * (`{ name() {`). Template literals are copied verbatim EXCEPT their `${…}`
+ * interpolations, which are recursed into so a routed call inside an
+ * interpolation (`` `${add(x)}` ``) is still rewritten. Not a full AST parse, but
+ * it covers the cases a naive regex would corrupt or miss.
  */
 function rewriteWasmCalls(src: string, names: Set<string>): string {
-  const isWord = (c: string | undefined) => c !== undefined && /[A-Za-z0-9_$]/.test(c);
+  const isWord = (c: string | undefined) => c !== undefined && _WORD.test(c);
+  const n = src.length;
   let out = "";
   let i = 0;
-  const n = src.length;
-  let inLineComment = false;
-  let inBlockComment = false;
-  let strCh = "";
+  let prevSig = "";
+  let word = "";
   while (i < n) {
     const ch = src[i];
-    const next = src[i + 1];
-    if (inLineComment) {
+    // Template literal: emit text verbatim, recurse into ${...} interpolations.
+    if (ch === "`") {
       out += ch;
-      if (ch === "\n") inLineComment = false;
       i++;
-      continue;
-    }
-    if (inBlockComment) {
-      out += ch;
-      if (ch === "*" && next === "/") {
-        out += next;
-        i += 2;
-        inBlockComment = false;
-        continue;
+      while (i < n) {
+        const c = src[i];
+        if (c === "\\") {
+          out += c + (src[i + 1] ?? "");
+          i += 2;
+          continue;
+        }
+        if (c === "`") {
+          out += c;
+          i++;
+          break;
+        }
+        if (c === "$" && src[i + 1] === "{") {
+          const end = findInterpEnd(src, i + 2);
+          out += "${" + rewriteWasmCalls(src.slice(i + 2, end), names) + "}";
+          i = src[end] === "}" ? end + 1 : end;
+          continue;
+        }
+        out += c;
+        i++;
       }
-      i++;
+      prevSig = "`";
+      word = "";
       continue;
     }
-    if (strCh) {
-      out += ch;
-      if (ch === "\\" && next !== undefined) {
-        out += next;
-        i += 2;
-        continue;
+    const skip = skipLiteral(src, i, prevSig, word);
+    if (skip >= 0) {
+      out += src.slice(i, skip);
+      const s = sigAfterLiteral(src, i);
+      if (s) {
+        prevSig = s.prevSig;
+        word = s.word;
       }
-      if (ch === strCh) strCh = "";
-      i++;
+      i = skip;
       continue;
     }
-    if (ch === "/" && next === "/") {
-      inLineComment = true;
-      out += ch;
-      i++;
-      continue;
-    }
-    if (ch === "/" && next === "*") {
-      inBlockComment = true;
-      out += ch + next;
-      i += 2;
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === "`") {
-      strCh = ch;
-      out += ch;
-      i++;
-      continue;
-    }
-    // Code context: try to match an identifier at a word boundary that is not a
-    // member access (`.name`) or a word-prefix continuation.
+    // Code context: an identifier at a word boundary that is not a member access.
     if (isWord(ch) && !isWord(src[i - 1]) && src[i - 1] !== ".") {
       let j = i;
       while (j < n && isWord(src[j])) j++;
       const ident = src.slice(i, j);
       let k = j;
-      while (k < n && (src[k] === " " || src[k] === "\t")) k++;
+      while (k < n && /[ \t\r\n]/.test(src[k])) k++; // gap may include newlines
       if (names.has(ident) && src[k] === "(" && !isMethodDefinition(src, k)) {
         out += "lib." + ident;
       } else {
         out += ident;
       }
+      prevSig = ident[ident.length - 1];
+      word = ident;
       i = j;
       continue;
     }
     out += ch;
+    if (_WORD.test(ch)) word += ch;
+    else if (!/\s/.test(ch)) word = "";
+    if (!/\s/.test(ch)) prevSig = ch;
     i++;
   }
   return out;

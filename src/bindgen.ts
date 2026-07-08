@@ -564,7 +564,12 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
       lines.push(
         `      const _s = new TextDecoder().decode(new Uint8Array(_mem.buffer, _v.getInt32(_r, true), _v.getInt32(_r + 4, true)));`,
       );
-      lines.push(`      (_ex("cabi_post_${wasmName}") as ((p: number) => void))(_r);`);
+      // cabi_post frees the returned pair (wasic always pairs one with a string
+      // return). Guard the call so a hand-written .wit whose .wasm lacks it fails
+      // gracefully (leaks the bump-alloc'd buffer) instead of throwing an opaque
+      // "undefined is not a function".
+      lines.push(`      const _post = _ex("cabi_post_${wasmName}") as ((p: number) => void) | undefined;`);
+      lines.push(`      if (_post) _post(_r);`);
       lines.push(`      return _s;`);
       lines.push(`    },`);
     } else if (fn.result === "bool") {

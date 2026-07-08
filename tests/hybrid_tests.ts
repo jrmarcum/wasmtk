@@ -68,6 +68,45 @@ Deno.test("hybrid — call rewriting skips strings, comments, member access, and
 
 // ── generateRunner: multi-line import injection ─────────────────────────────────
 
+// ── regex-literal awareness ─────────────────────────────────────────────────────
+
+Deno.test("hybrid — a regex literal in host code does not disable downstream call rewrites", () => {
+  const remaining = [
+    'import { x } from "./x.ts";',
+    'const cleaned = s.replace(/["\'{}]/g, "");', // regex with quotes+braces
+    "const a = add(1, 2);", // must STILL be rewritten
+  ].join("\n");
+  const runner = generateRunner(remaining, ["add"], "./b.bindings.ts", "./m.wasm");
+  assert(runner.includes("const a = lib.add(1, 2);"), "rewrite disabled by a preceding regex literal");
+  assert(runner.includes(`s.replace(/["'{}]/g, "")`), "regex literal was altered");
+});
+
+Deno.test("hybrid — a routed name inside a regex literal is NOT rewritten", () => {
+  const remaining = "const re = /add(x)/; const a = add(1);";
+  const runner = generateRunner(remaining, ["add"], "./b.bindings.ts", "./m.wasm");
+  assert(runner.includes("const re = /add(x)/;"), "regex body was corrupted");
+  assert(runner.includes("const a = lib.add(1);"), "real call not rewritten");
+});
+
+Deno.test("hybrid — a routed call inside a template ${...} interpolation IS rewritten", () => {
+  const remaining = "const msg = `result=${add(2, 3)} done`;";
+  const runner = generateRunner(remaining, ["add"], "./b.bindings.ts", "./m.wasm");
+  assert(runner.includes("`result=${lib.add(2, 3)} done`"), "interpolated call not rewritten");
+});
+
+Deno.test("hybrid — a `}` inside a regex literal in a @wasm body does not truncate extraction", () => {
+  const src = [
+    "// @wasm",
+    "function f(x: i32): i32 {",
+    "  const re = /}{/;", // brace chars inside a regex
+    "  return x + 1;",
+    "}",
+  ].join("\n");
+  const r = parseHybridFile(src);
+  assertEquals(r.wasmFuncs.length, 1);
+  assert(r.wasmFuncs[0].text.includes("return x + 1;"), "body truncated at a regex brace");
+});
+
 Deno.test("hybrid — loadModule is injected after a multi-line import, not mid-statement", () => {
   const remaining = [
     "import {",

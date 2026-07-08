@@ -81,14 +81,16 @@ export async function loadModule(
       const _r = (_ex("greet") as (...a: unknown[]) => unknown)(..._writeStr(name)) as number;
       const _v = new DataView(_mem.buffer);
       const _s = new TextDecoder().decode(new Uint8Array(_mem.buffer, _v.getInt32(_r, true), _v.getInt32(_r + 4, true)));
-      (_ex("cabi_post_greet") as ((p: number) => void))(_r);
+      const _post = _ex("cabi_post_greet") as ((p: number) => void) | undefined;
+      if (_post) _post(_r);
       return _s;
     },
     shout(msg: string): string {
       const _r = (_ex("shout") as (...a: unknown[]) => unknown)(..._writeStr(msg)) as number;
       const _v = new DataView(_mem.buffer);
       const _s = new TextDecoder().decode(new Uint8Array(_mem.buffer, _v.getInt32(_r, true), _v.getInt32(_r + 4, true)));
-      (_ex("cabi_post_shout") as ((p: number) => void))(_r);
+      const _post = _ex("cabi_post_shout") as ((p: number) => void) | undefined;
+      if (_post) _post(_r);
       return _s;
     },
     strLen(s: string): number { return (_ex("strLen") as (...a: unknown[]) => unknown)(..._writeStr(s)) as number; },

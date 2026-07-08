@@ -19349,6 +19349,10 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
       allExternalFuncs.push(...preResult.exportedFuncs);
     } catch (_err) {
       const reason = _err instanceof Error ? _err.message : String(_err);
+      // A wasic diagnostic (e.g. an unsupported WIT type) is a hard error — do not
+      // downgrade it to a "skipping" warning, which would bury it and then fail
+      // later with a confusing "unknown function" at the call site.
+      if (_err instanceof Error && /^wasic:/.test(_err.message)) throw _err;
       console.warn(`  ⚠️  Cannot process imported WASM ${entry.filePath} — skipping (${reason})`);
     }
   }
@@ -19517,6 +19521,10 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
       allExternalFuncs2.push(...preResult2.exportedFuncs);
     } catch (_err) {
       const reason = _err instanceof Error ? _err.message : String(_err);
+      // A wasic diagnostic (e.g. an unsupported WIT type) is a hard error — do not
+      // downgrade it to a "skipping" warning, which would bury it and then fail
+      // later with a confusing "unknown function" at the call site.
+      if (_err instanceof Error && /^wasic:/.test(_err.message)) throw _err;
       console.warn(`  ⚠️  Cannot process imported WASM ${entry.filePath} — skipping (${reason})`);
     }
   }
