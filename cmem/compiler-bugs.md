@@ -1,5 +1,35 @@
 # Compiler bug log
 
+## Code-audit sweep (2026-07-08) — fixed, all suites green
+
+A two-pass fan-out audit over the freshly-added asyncify port (binaryen-ts) + Go-bindgen /
+WIT-overlay / hybrid / bindgen surface (wasmtk). Correctness bugs found and FIXED:
+
+- **binaryen-ts `walk.ts` — `call_indirect` children walked target-before-operands** (reversed
+  eval order). wasm evaluates operands first, then the table index; since Flatten hoists preludes
+  via `mapChildrenShallow`, a `call_indirect` (Go interface / func-value call shape) whose target
+  and operands interact was silently miscompiled. Fixed both `_mapChildren` and `_visitChildren`;
+  +IR regression asserting operand→target order.
+- **binaryen-ts `flatten.ts` — a non-last bare `unreachable` was dropped** (trivial with empty
+  prelude, hit neither block branch → the trap vanished, control fell through). Now kept as a
+  statement; +structural regression.
+- **wasmtk WIT kebab↔camel round-trip is lossy** (`toKebabCase` lowercases: `parseHTML` →
+  `parse-html` → `kebabToCamel` → `parseHtml` ≠ `parseHTML`), breaking export lookup for
+  capital-heavy names (`parseHTML`/`readJSON`/`getID`) in BOTH the merge-import overlay (hard
+  compile error) and bindgen (runtime `exp["parseHtml"] is not a function`). Fixed: overlay keys
+  through `toKebabCase` on both sides; bindgen loader resolves via an `_ex()` kebab fallback.
+  +e2e regression fixture `kebabcase_50` (readID/toHTML).
+- **wasmtk hybrid** — `findCloseBrace`/call-rewrite counted braces & matched names inside
+  strings/comments and rewrote object method-shorthand; multi-line imports spliced the loader
+  mid-statement. All now context-aware; +`tests/hybrid_tests.ts`.
+
+Robustness / fail-loud conversions (silent-wrong → hard error or honored behavior): asyncify now
+ensures a memory exists, honors `import-globals`, rejects multi-memory, accepts newline-split &
+legacy-alias option lists, and diagnoses bad list entries; `witTypeToWat`/`parseWitType` fail loud
+on unknown/aggregate WIT types; `parseWitFuncs` rejects multi-value returns; the gowasic wasm-opt
+shim is now runtime-agnostic (Deno/Bun/Node). Dead code removed (`hasIndirectCall`, hybrid
+`forceHost`). Commits: binaryen-ts `e616d8f`/`27a6f2f`/`0cc225b`, wasmtk `0e94a38`/`7531e34`/`07f1c94`.
+
 ## wabt-ts BACKEND bugs surfaced by the `.wast` spec runner — NOT wasmtk-side
 
 The `wasmtk wast` conformance runner (`src/wast.ts`, gate `tests/wast_tests.ts`) runs the official

@@ -156,8 +156,17 @@ high-value subset.
   exits cleanly (code 0). `throw` inside try/catch emits `(throw $__exn_tag ...)`, never `proc_exit`.
 - The `env` import object in the runner is a `Proxy` returning a no-op `()=>0` stub for any unknown
   key (so Phase-40 `declare const` external modules instantiate without a real host).
-- `cabi_realloc` is exported (not `__malloc`) when any export has a string param/return; string
-  returns use the `$fn__cabi` out-param shim. The `$__str_ret_*` globals are NOT exported.
+- `cabi_realloc` is exported (not `__malloc`) when any export has a string param/return. String
+  returns use a **callee-allocated pair-pointer** shim (`$fn__cabi`, `wasic.ts` ~19145): it
+  `cabi_realloc(0,0,4,8)`s an 8-byte area, calls the internal `$fn` (which sets the `$__str_ret_*`
+  globals), stores `[ptr,len]` into that area, and RETURNS the area pointer (i32). A paired no-op
+  `cabi_post_<name>` export lets the host release it after reading. `bindgen.ts` reads the returned
+  pointer (`getInt32(_r)` / `getInt32(_r+4)`) then calls `cabi_post_<name>` — it does NOT allocate a
+  return area host-side. The `$__str_ret_*` globals are NOT exported.
+  (Historical note: Stage 0 originally specified the *out-parameter* convention — caller allocates
+  the 8-byte area and passes it as a trailing `$__ret_area` arg. The ABI later moved to this
+  callee-allocated pair-pointer + `cabi_post` form; older references to an "out-param shim" are
+  stale. This is the canonical form and matches the Go `strlib` fixture and `strlib.go`.)
 
 ## Parallel-path discipline
 

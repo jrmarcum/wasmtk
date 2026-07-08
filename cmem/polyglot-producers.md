@@ -148,13 +148,13 @@ mostly free), defer only the third:
    - model resources as opaque i32 handle indices NOW (not raw pointers) so the later move to
      component resource tables is a representation swap, not a semantic one.
 
-2. **Boundary calling convention — param side already canonical; fix the RETURN side now.**
+2. **Boundary calling convention — param side already canonical; RETURN side ✅ DONE.**
    - Params: a `string` arg flattening to (ptr, len) is already canonical. ✓
-   - Returns (THE change): switch aggregate returns from the current caller-allocated out-param
-     (`greet(…, ret_area)` returns nothing) to the canonical **callee-allocated single i32 pointer
-     returned by the callee (allocated via `cabi_realloc`) + a `cabi_post_<name>` that frees it.**
-     Caller reads via the returned ptr, then calls post-return. Fully P1-legal — a calling
-     convention, not a component feature.
+   - Returns (THE change): **IMPLEMENTED** — aggregate/string returns now use the canonical
+     callee-allocated single i32 pointer (allocated via `cabi_realloc(0,0,4,8)`, returned by the
+     `$fn__cabi` shim) + a `cabi_post_<name>` that frees it; the host (`bindgen.ts`) reads via the
+     returned ptr then calls post-return. This replaced the earlier caller-allocated out-param
+     form. Fully P1-legal. See `design-decisions.md` § "Runner / ABI invariants".
    - `MAX_FLAT_RESULTS` = 1: scalar results stay direct. `str-len -> s32` keeps returning i32 with no
      pointer/post-return; only aggregate returns (greet/shout) move to the pointer convention.
    - Route EVERY boundary allocation through the already-exported `cabi_realloc` (right signature
@@ -171,8 +171,8 @@ P1-legal); defer only the container. Keep P1 WASI imports behind a thin seam so 
 **Honest cost:** the callee-allocated + `cabi_post_*` return path adds a post-return call per
 aggregate return and moves return-buffer ownership into the module; the caller-allocated out-param is
 simpler/faster in a pure host-glue world. Accepted: small runtime cost now to make future
-componentization mechanical. Also tighten the README/cmem "aligned with Canonical ABI" wording — true
-once (2) lands; today the return path is not aligned.
+componentization mechanical. Status: (2) has landed — the return path IS now Canonical-ABI-aligned
+(callee-allocated pointer + `cabi_post`); README/cmem wording updated accordingly.
 
 **Consumer caveat (why P2-producer stays deferred — the gating condition is BROWSER-NATIVE WASI P2 /
 Component Model support):** for JS-runtime targets (Node/Deno/Bun/**browser**) NONE load components
