@@ -668,20 +668,29 @@ So:
   correctly through external `wasm-opt --asyncify`, so it is NOT a program/TinyGo bug: it is a
   correctness bug in binaryen-ts's Asyncify pass for **re-entrant unwind/rewind** (nested suspension
   points). Corroborating symptom: the in-house module is **~3× larger** than external wasm-opt's
-  (56 KB vs 19 KB) — the pass over-instruments and saves too much per frame (the B4 "save only the
-  live local set" gap, here manifesting as a correctness failure, not just size). Flat concurrency
-  of any width is fine (worker-pool/waitgroup/pipeline all spawn many goroutines); only *nesting a
-  suspend inside a suspend* breaks. The `nested/` fixture is kept and run as a CONTROL through the
-  external-wasm-opt path (proving program validity) and excluded from the forced in-house list until
-  the pass is fixed. Tracked as the next binaryen-ts asyncify item (companion to B4).
-  **Diagnostic narrowing (2026-07-09):** bumping TinyGo's goroutine stack 8× (`-stack-size=256KB`)
-  did NOT fix it, and the trap is a raw `memory access out of bounds` (a bad load/store address), NOT
-  the asyncify overflow-check's `unreachable`. So it is **NOT** an asyncify-buffer overflow from the
-  over-saving — it is a genuine **re-entrant unwind/rewind miscompile** (a stale/garbage
-  `__asyncify_data` pointer or wrong save/restore offset when a suspend happens inside an
-  already-suspending frame). The B4 liveness-min saving would shrink frames but is decoupled from
-  this correctness bug. Fixing it is deep work in binaryen-ts's Asyncify pass (its own asyncify test
-  harness), not a wasmtk-side change.
+  (56 KB vs 19 KB). Flat concurrency of any width is fine (worker-pool/waitgroup/pipeline all spawn
+  many goroutines); only *nesting a suspend inside a suspend* breaks. The `nested/` fixture is kept
+  and run as a CONTROL through the external-wasm-opt path (proving program validity) and excluded
+  from the forced in-house list until the pass is fixed.
+
+  **ROOT-CAUSE narrowing (2026-07-09, extensive):** built a fast repro (TinyGo `-scheduler=asyncify`
+  + copy-shim → `nested_pre.wasm` with un-instrumented `asyncify.*` imports → binaryen-ts Asyncify
+  pass, no `-Oz`). Findings: (1) our pass instruments the **exact same 29 functions** as
+  `wasm-opt --asyncify` (analysis is correct — not over-instrumentation). (2) wasmtime backtrace: OOB
+  at **exactly linear-memory end** (`0x80000` in an `0x80000` memory) during a memory access in the
+  goroutine machinery — so the asyncify stack walks off the buffer. (3) `-stack-size=256KB` does NOT
+  help, but raising the module's **initial memory** (→256 pages) makes nested run correctly
+  (`nested-sum: 36`) — so it IS an asyncify-stack space problem, but of the MODULE's linear memory /
+  buffer, not the goroutine stack. (4) **B4 liveness-minimized saving landed in binaryen-ts** (commit
+  `967fbbb`): our frames are now **smaller than wasm-opt** (27 KB vs 29 KB) and per-frame saved bytes
+  MATCH wasm-opt — yet nested **still** OOBs identically, AND the pre-fix all-locals version crashed
+  identically. So it is **NOT the save-set size**: it's a **per-unwind/rewind-cycle asyncify-stack
+  over-use/leak** that accumulates only over nested's many cycles (flat = few cycles = no visible
+  drift; more memory = more room before it hits the end). Push/pop look LIFO-balanced by static
+  reading, so pinning it needs **runtime instrumentation** (log stackPos across cycles, ours vs
+  wasm-opt). This is a pre-existing binaryen-ts asyncify bug, decoupled from (and not fixed by) the
+  B4 liveness work. Full repro + notes in scratchpad `b4/`. See binaryen-ts `cmem/passes.md`
+  § "Liveness-minimized local saving … KNOWN GAP".
 - Earlier this path used `-scheduler=none` + `binaryenOptimize` (`-Oz` only) and errored on
   goroutine code (binaryen-ts lacked the asyncify pass). The pass was ported into binaryen-ts (see
   its `cmem/passes.md` § "In-wasm asyncify-import mode") and wired here — the roadmap "asyncify
