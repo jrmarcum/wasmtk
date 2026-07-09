@@ -31,10 +31,14 @@ type WabtModule = any;
 export type Sexp = string | SexpList;
 /** A list node carrying the source span `[start, end)` so `(module …)` raw text can be recovered. */
 export interface SexpList {
+  /** The child S-expressions of this list, in source order. */
   list: Sexp[];
+  /** Byte offset in the source where this list's opening `(` begins. */
   start: number;
+  /** Byte offset in the source one past this list's closing `)`. */
   end: number;
 }
+/** Type guard: `true` when `s` is a {@link SexpList} (a list) rather than an atom (string). */
 export const isList = (s: Sexp): s is SexpList => typeof s !== "string";
 
 /** Read all top-level S-expressions from `.wast` source. */
@@ -363,11 +367,17 @@ function spectestImports(): WebAssembly.ModuleImports {
 // Runner
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Tally of running one `.wast` file: per-command pass/fail/skip counts plus the failure messages. */
 export interface WastResult {
+  /** Path of the `.wast` file this result is for. */
   file: string;
+  /** Number of assertion commands that passed. */
   passed: number;
+  /** Number of assertion commands that failed. */
   failed: number;
+  /** Number of commands skipped (unsupported directive or unhandled command kind). */
   skipped: number;
+  /** Human-readable messages for each failed command (one entry per failure). */
   failures: string[];
 }
 
