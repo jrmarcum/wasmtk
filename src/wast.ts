@@ -1,4 +1,6 @@
 /**
+ * @module wasmtk/wast
+ *
  * wast.ts — a runner for the WebAssembly `.wast` *script* format (a superset of `.wat`).
  *
  * A `.wast` file is a sequence of top-level commands: `(module …)` definitions interleaved with
