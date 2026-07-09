@@ -57,3 +57,27 @@ export function binaryenOptimize(bytes: Uint8Array): { bytes: Uint8Array; optimi
     return { bytes, optimized: false };
   }
 }
+
+/**
+ * binaryen-ts Asyncify + `-Oz` over raw wasm bytes — the in-house replacement for
+ * `wasm-opt --asyncify -Oz`. Runs the Asyncify pass (which resolves TinyGo's
+ * in-wasm `asyncify.*` control imports), then `-Oz`. Used by the Go producer so
+ * goroutine code works with NO external binaryen. **Throws** on failure — an
+ * un-asyncified goroutine module has unresolved `asyncify.*` imports and would
+ * not instantiate, so the caller must surface a hard error rather than ship it.
+ * Requires binaryen-ts ≥ 1.4.1 (which added the in-wasm asyncify-import mode).
+ */
+export function binaryenAsyncify(bytes: Uint8Array): Uint8Array {
+  const m = lib.readBinary(bytes);
+  const feat = (lib as Record<string, unknown>)["Features"] as Record<string, number> | undefined;
+  if (typeof (m as Record<string, unknown>)["setFeatures"] === "function") {
+    (m as { setFeatures(n: number): void }).setFeatures(feat?.["All"] ?? 0x7FFFFFFF);
+  }
+  (m as { runPasses(p: string[]): void }).runPasses(["Asyncify"]);
+  lib.setShrinkLevel(2);
+  lib.setOptimizeLevel(2);
+  m.optimize();
+  const out: Uint8Array = m.emitBinary();
+  m.dispose();
+  return out;
+}

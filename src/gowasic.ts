@@ -30,7 +30,7 @@
 
 import { basename, dirname, join, resolve } from "@std/path";
 import { rt } from "./rt.ts";
-import { binaryenOptimize } from "./binaryen.ts";
+import { binaryenAsyncify } from "./binaryen.ts";
 
 /** Go backend toolchain: `tinygo` (default, small) or `std` (standard `go`, large — full runtime/GC). */
 export type GoRuntime = "tinygo" | "std";
@@ -237,7 +237,13 @@ async function buildWithTinyGo(
     ...buildModeArgs,
   ];
 
-  const haveRealWasmOpt = !!rt.env.get("WASMOPT") || await toolAvailable("wasm-opt", ["--version"]);
+  // `WASMTK_GO_BINARYEN_ASYNCIFY=1` forces the no-external-binaryen path (TinyGo
+  // asyncify scheduler + passthrough shim + binaryen-ts Asyncify+-Oz) even when a
+  // real `wasm-opt` is on PATH — used by the goroutine e2e and by users who want
+  // zero external binaryen. Otherwise a real `wasm-opt` (if present) is preferred.
+  const forceBinaryenAsyncify = rt.env.get("WASMTK_GO_BINARYEN_ASYNCIFY") === "1";
+  const haveRealWasmOpt = !forceBinaryenAsyncify &&
+    (!!rt.env.get("WASMOPT") || await toolAvailable("wasm-opt", ["--version"]));
 
   if (haveRealWasmOpt) {
     // Real wasm-opt → TinyGo does its full --asyncify -Oz pass (full goroutine support).
@@ -258,7 +264,11 @@ async function buildWithTinyGo(
     return await report(out, `tinygo:${reportLabel} (wasm-opt)`);
   }
 
-  // No real wasm-opt → passthrough shim + -scheduler=none (skip mandatory asyncify) + binaryen-ts -Oz.
+  // No real wasm-opt → build with TinyGo's asyncify scheduler + a passthrough
+  // wasm-opt shim (so TinyGo leaves the module un-instrumented, importing the
+  // `asyncify.*` control API), then run binaryen-ts's Asyncify (which resolves
+  // those imports) + `-Oz` ourselves. This supports GOROUTINES with no external
+  // binaryen (binaryen-ts ≥ 1.4.1's in-wasm asyncify-import mode).
   const shim = await writeWasmOptShim(baseDir);
   try {
     const r = await new rt.Command("tinygo", {
@@ -266,7 +276,7 @@ async function buildWithTinyGo(
         "build",
         "-p",
         "1",
-        "-scheduler=none",
+        "-scheduler=asyncify",
         "-no-debug",
         "-panic=trap",
         "-o",
@@ -282,26 +292,23 @@ async function buildWithTinyGo(
     }).output();
     if (!r.success) {
       const errText = decodeOut(r);
-      const goroutineIssue = /scheduler|goroutine|asyncify|channel/i.test(errText);
-      const grHint = goroutineIssue
-        ? "\n   This program appears to use goroutines/channels, which need TinyGo's asyncify " +
-          "transform (real `wasm-opt`). Install binaryen (e.g. `scoop install binaryen` / " +
-          "`brew install binaryen`) so wasm-opt is on PATH, then rebuild. (Roadmap: 'asyncify pass " +
-          "in binaryen-ts'.)"
-        : "";
-      const hint = goBuildHint(errText, target) + grHint;
-      console.error(`❌ wasmtk (go): TinyGo build failed:\n${errText}${hint}`);
+      console.error(
+        `❌ wasmtk (go): TinyGo build failed:\n${errText}${goBuildHint(errText, target)}`,
+      );
       return { success: false, error: "tinygo build failed" };
     }
   } finally {
     await shim.cleanup();
   }
+  // Resolve the asyncify.* imports + optimize via binaryen-ts. This MUST succeed —
+  // an un-asyncified module has unresolved `asyncify.*` imports and won't run.
   try {
-    const { bytes, optimized } = binaryenOptimize(await rt.readFile(out));
-    if (optimized) await rt.writeFile(out, bytes);
-    return await report(out, `tinygo:${reportLabel}${optimized ? " + binaryen-ts -Oz" : ""}`);
-  } catch {
-    return await report(out, `tinygo:${reportLabel}`);
+    await rt.writeFile(out, binaryenAsyncify(await rt.readFile(out)));
+    return await report(out, `tinygo:${reportLabel} + binaryen-ts asyncify+-Oz`);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`❌ wasmtk (go): binaryen-ts asyncify pass failed: ${msg}`);
+    return { success: false, error: "binaryen-ts asyncify failed" };
   }
 }
 

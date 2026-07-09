@@ -588,14 +588,22 @@ optimization — a passthrough that skips it leaves unresolved `asyncify` import
 So:
 
 - **Real `wasm-opt` present** (on PATH or `$WASMOPT`) → TinyGo uses it → full support incl. goroutines.
-- **Absent** → `gowasic` writes a **passthrough `wasm-opt` shim** (answers `--version`; copies input →
-  `-o` output, no opt; cross-platform `.cmd`/`.sh` launcher invoking `rt.execPath()` + a Deno shim) and
-  builds with **`-scheduler=none`** (which drops the asyncify request — wasm-opt call becomes just
-  `-Oz`), then runs **binaryen-ts `-Oz`** on the result. No external binaryen needed. Works for
-  goroutine-FREE code; goroutine code errors under `-scheduler=none` → clear "install binaryen" hint.
-- binaryen-ts has `-Oz` (`optimize()`) but **NOT the `asyncify` pass** (verified: `runPasses(["asyncify"])`
-  → "Unknown pass"). Porting asyncify into binaryen-ts (to cover goroutine Go with zero external deps)
-  is a large future item — see roadmap "asyncify pass in binaryen-ts".
+  (Skip this and force the in-house path with `WASMTK_GO_BINARYEN_ASYNCIFY=1`.)
+- **Absent** (or forced) → **GOROUTINES NOW WORK with no external binaryen (2026-07-08).** `gowasic`
+  writes a **passthrough `wasm-opt` shim** (answers `--version`; copies input → `-o` output, no opt;
+  cross-platform `.cmd`/`.sh` launcher + a runtime-agnostic Deno/Bun shim) and builds with
+  **`-scheduler=asyncify`** — so TinyGo emits the goroutine code that IMPORTS the in-wasm `asyncify.*`
+  control API and leaves it un-instrumented (the shim did nothing). Then `gowasic` runs
+  **`binaryenAsyncify` (`src/binaryen.ts`)** = binaryen-ts **Asyncify pass + `-Oz`**: the Asyncify pass
+  (binaryen-ts ≥ 1.4.1's in-wasm asyncify-import mode) removes those imports and wires the calls to the
+  synthesized control functions, then `-Oz` shrinks. Verified e2e (`tests/go_asyncify_tests.ts`,
+  TinyGo-gated): a `go worker(...)` + channel worker-pool → `sum: 30`. `binaryenAsyncify` **throws** on
+  failure (an un-asyncified module has unresolved `asyncify.*` imports and won't instantiate), so
+  `gowasic` reports a hard error rather than shipping a broken module.
+- Earlier this path used `-scheduler=none` + `binaryenOptimize` (`-Oz` only) and errored on goroutine
+  code (binaryen-ts lacked the asyncify pass). The pass was ported into binaryen-ts (see its
+  `cmem/passes.md` § "In-wasm asyncify-import mode") and wired here — the roadmap "asyncify pass" item
+  is COMPLETE.
 
 **Two `rt.Command` gotchas baked into `gowasic.ts`:** (1) `rt.Command.output()` always reads
 `result.stdout`/`stderr`, which **throws unless they are `"piped"`** — never pass `"null"`/`"inherit"`
