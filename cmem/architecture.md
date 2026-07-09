@@ -23,13 +23,20 @@ Both WABT and Binaryen are swappable **only** by editing the `"wabt"` / `"binary
 | Specifier    | npm (legacy)            | JSR (jrmarcum ecosystem)                  |
 | ------------ | ----------------------- | ----------------------------------------- |
 | `"wabt"`     | `npm:wabt@^1.0.36`      | `jsr:@jrmarcum/wabt-ts@^1.3.5/compat`     |
-| `"binaryen"` | `npm:binaryen@^116.0.0` | `jsr:@jrmarcum/binaryen-ts@^1.4.1/compat` |
+| `"binaryen"` | `npm:binaryen@^116.0.0` | `jsr:@jrmarcum/binaryen-ts@^1.4.3/compat` |
 
-**Current (2026-07-08):** `wabt-ts@^1.3.5/compat` + `binaryen-ts@^1.4.1/compat`. **binaryen-ts
-bumped 1.3.5 → 1.3.9 → 1.4.0 → 1.4.1 on 2026-07-08.** **1.4.1** added the **in-wasm asyncify-import
-mode** to the Asyncify pass — wasmtk's `--lang=go` now compiles **goroutine** code with zero
-external binaryen (`gowasic` builds `-scheduler=asyncify` + passthrough shim, then
-`binaryenAsyncify` = Asyncify+`-Oz`; `tests/go_asyncify_tests.ts` → `sum: 30`). Earlier: 1.3.6
+**Current (2026-07-09):** `wabt-ts@^1.3.5/compat` + `binaryen-ts@^1.4.3/compat`. **binaryen-ts
+bumped 1.3.5 → 1.3.9 → 1.4.0 → 1.4.1 (2026-07-08) → 1.4.3 (2026-07-09).** **1.4.1** added the
+**in-wasm asyncify-import mode** to the Asyncify pass — wasmtk's `--lang=go` now compiles
+**goroutine** code with zero external binaryen (`gowasic` builds `-scheduler=asyncify` + passthrough
+shim, then `binaryenAsyncify` = Asyncify+`-Oz`; `tests/go_asyncify_tests.ts`). **1.4.3** fixed the
+last goroutine blocker — a **binary-DECODER reorder bug (WT-2k)** that miscompiled TinyGo's goroutine
+trampoline (a value kept on the operand stack across a `global.set`, then restored, was reordered
+past the write → `global.set(global.get)` self-assign that corrupted the shadow stack →
+`memory access out of bounds` in NESTED goroutines); the decoder now spills such reordered values to
+a temp local. 1.4.2 also added liveness-minimized asyncify saving. **Nested goroutines now run
+in-house** (`go_asyncify_tests.ts` 12/12, incl. `nested-sum: 36`). (1.4.2 was cut but its JSR publish
+failed a type-check; the same content republished as 1.4.3.) Earlier: 1.3.6
 shipped the (opt-in) **Asyncify** + **Flatten** passes + a four-pass fail-loud audit sweep (20
 correctness fixes, incl. the WAT-parser call/global type-inference root cause); 1.3.7–1.3.9 were
 identical-code re-publishes fixing a JSR provenance-recording issue. **1.4.0 (published via

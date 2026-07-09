@@ -65,8 +65,14 @@
    terminal `wasm-tools component new` wrap when the time comes; today a P2 wrap buys browser
    consumers nothing (they'd `jco transpile` it back to core wasm anyway). See roadmap.md P2 row.
 
-## Published state (both repos clean as of 2026-07-08)
+## Published state (2026-07-09)
 
-- **binaryen-ts 1.4.1** (in-wasm asyncify-import mode) and **wasmtk 1.11.3** (goroutine wiring) are
-  live on JSR with provenance. Suites green: wasi 375/375, bindgen 142, go_bindgen 7/7, go_asyncify
-  3/3, binaryen-ts 403/403.
+- **binaryen-ts 1.4.3** is live on JSR with provenance (liveness-minimized asyncify saving + the
+  **WT-2k binary-decoder reorder fix** that made NESTED goroutines work — the true root cause of the
+  nested crash, NOT asyncify; 1.4.2 was cut but its publish failed a JSR type-check, re-shipped as
+  1.4.3). binaryen-ts suite **405/405**.
+- **wasmtk** working tree is committed on backend binaryen-ts 1.4.3 (pin `^1.4.3`), NOT yet cut as a
+  new version (still v1.11.3 on JSR — a v1.11.4 release with the nested fix + B-items is pending).
+  Suites green: wasi **375/375**, go_merge 7/7, go_bindgen 7/7, **go_asyncify 12/12** (incl. nested),
+  hybrid 10/10.
+- **B backlog:** B3/B4/B5 all DONE (2026-07-09); B6 deferred (no consumer); A-items all done.

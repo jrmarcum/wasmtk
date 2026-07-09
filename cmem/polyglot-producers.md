@@ -298,7 +298,7 @@ TinyGo `wasm-unknown` leaf. Companion guard in the producer: `gowasic.buildWithS
 always links the full runtime + allocator") so the impossible combo fails at build time, not
 merge time. Regression test: `tests/wasmmerge_guard_tests.ts` (Go-free unit test — hand-built
 `memory.grow` WAT is rejected with runtime guidance; an alloc-free leaf is not). Validated: wasi
-375/375, go_merge 7/7, go_bindgen 7/7, go_asyncify 3/3.
+375/375, go_merge 7/7, go_bindgen 7/7, go_asyncify 12/12 (as of 2026-07-09, binaryen-ts 1.4.3).
 
 ### Practical takeaway per language
 

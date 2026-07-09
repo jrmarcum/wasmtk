@@ -1,5 +1,35 @@
 # Roadmap, phase status & vision
 
+## Working tree (2026-07-09, post-v1.11.3 — pending release)
+
+Committed to git, not yet cut as a wasmtk version. On backend **wabt-ts 1.3.5 + binaryen-ts 1.4.3**.
+Regression gate green: wasi **375/375**, `go_merge` 7/7, `go_bindgen` 7/7, **`go_asyncify` 12/12**
+(now incl. `nested`), `hybrid` 10/10. The "B-items" backlog from `next-work.md` (B3/B4/B5) is done;
+B6 stays deferred (no consumer).
+
+1. **Nested goroutines now run in-house — the headline.** A goroutine that suspends *inside* another
+   suspending goroutine (`inner.Wait()`) used to trap `memory access out of bounds`. Root cause was
+   **NOT asyncify** — it was a **binaryen-ts binary-DECODER reorder bug (WT-2k, fixed in 1.4.3)**:
+   TinyGo's goroutine trampoline keeps the caller's `$__stack_pointer` (`global.get`) on the operand
+   stack across `global.set $sp; call…` then restores it; the decoder reordered that `global.get`
+   past the `global.set` → a `global.set(global.get)` self-assign that corrupted the shadow stack.
+   The decoder now spills such reordered values to a temp local. Found by bisecting the merged module
+   to `tinygo_launch` + a pure `readBinary→emitBinary` repro. **The earlier "memory-grow ordering"
+   theory was a red herring** (a runtime trace proved our asyncify matched `wasm-opt` byte-for-byte).
+   `nested/` re-enabled in the forced in-house list. binaryen-ts 1.4.2 also added **liveness-minimized
+   asyncify saving** (frames smaller than `wasm-opt`). See [polyglot-producers.md](polyglot-producers.md)
+   § "NESTED SUSPENSION — found then FIXED" + binaryen-ts `cmem/correctness.md` § "WT-2k".
+2. **B3 — broadened goroutine coverage.** `go_asyncify_tests.ts` is table-driven over the full
+   surface: worker-pool (`sum: 30`), `select`, `time.Sleep`, `WaitGroup`+`Mutex`, 3-stage pipeline,
+   nested — 12/12.
+3. **Standard-Go merge guard.** `wasmmerge` now rejects a `memory.grow`-carrying module (std-Go's
+   full runtime) at MODULE level, before the per-function `call_indirect` guard, with a clear
+   "STANDARD Go … build a MERGEABLE leaf with TinyGo `--go-target=wasm-unknown`" message; `gowasic`
+   rejects `--go-runtime=std --go-target=wasm-unknown`. Go-free regression `wasmmerge_guard_tests.ts`.
+4. **B5 — hybrid nested-backtick.** `skipLiteral` descends into `${…}` so a nested backtick template
+   no longer truncates a `@wasm` body or defeats call-rewriting.
+5. **Backend bumped** binaryen-ts 1.4.1 → 1.4.3; `deno.json` pins `^1.4.3`.
+
 ## Release status (2026-07-08) — v1.11.3
 
 **v1.11.3 released to JSR.** First publish since v1.11.2 (2026-07-03); on backend **wabt-ts 1.3.5 +
