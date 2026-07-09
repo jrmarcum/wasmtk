@@ -28,6 +28,18 @@ function useFlat(f: Flat): i32 {
   return f.width * f.height;
 }
 
+// Function-type utility types: ReturnType<F> / Parameters<F>.
+type Calc = (a: i32, b: f64) => f64;
+function combine(a: i32, b: f64): f64 {
+  return (a as f64) + b;
+}
+// ReturnType<F> inline as a return annotation.
+function makeVal(): ReturnType<typeof combine> {
+  return 3.5;
+}
+// Parameters<F> as a named tuple alias.
+type Args = Parameters<Calc>;
+
 function main(): void {
   const a: Partial<Point> = { x: 3.0, y: 4.0 };
   console.log("partial:", usePartial(a)); // 7
@@ -58,6 +70,17 @@ function main(): void {
   // Named alias from a utility type.
   const flatVal: Flat = { width: 4, height: 6 };
   console.log("flat:", useFlat(flatVal)); // 24
+
+  // ReturnType<F> inline as a variable annotation + as a return type.
+  const rt: ReturnType<typeof combine> = combine(2, 1.5);
+  console.log("returntype:", rt); // 3.5
+  console.log("make:", makeVal()); // 3.5
+
+  // Parameters<F> — named tuple alias + inline.
+  const args: Args = [7, 2.5];
+  console.log("parameters:", args[0], args[1]); // 7 2.5
+  const inlineArgs: Parameters<typeof combine> = [9, 1.0];
+  console.log("params-inline:", inlineArgs[0], inlineArgs[1]); // 9 1
 }
 
 main();

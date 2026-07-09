@@ -4586,6 +4586,51 @@ class WasicTranspiler {
     return src;
   }
 
+  /** Phase 51.4: function-type utility types — `ReturnType<F>` resolves to F's return type and
+   *  `Parameters<F>` to a tuple `[t1, t2, …]` of F's parameter types. `F` may be a named
+   *  function-type alias (`type Fn = (x: i32) => f64`), `typeof someFunction`, or an inline
+   *  `(x: i32) => f64`. Pure source transform run BEFORE parseStructs so the resolved type flows
+   *  through every parse pass (inline uses substitute the scalar/struct/tuple directly; a
+   *  `type X = Parameters<F>` alias becomes a `type X = [tuple]` handled by the Phase-23 tuple-alias
+   *  parser). LIMITATION: a `type X = ReturnType<F>` alias whose F returns a SCALAR must be written
+   *  inline (wasic has no scalar type aliases); struct/tuple returns work as aliases. Args with
+   *  nested generics (`<…>`) are left unresolved (same v1 limit as Pick/Omit/Record). */
+  private expandFnUtilityTypes(src: string): string {
+    // Collect function-type signatures from the raw source (params content + return-type text).
+    const fnSig = new Map<string, { params: string; ret: string }>();
+    for (
+      const m of src.matchAll(/(?:export\s+)?type\s+(\w+)\s*=\s*\(([^)]*)\)\s*=>\s*([^;{]+?)\s*;/g)
+    ) {
+      fnSig.set(m[1], { params: m[2], ret: m[3].trim() });
+    }
+    for (const m of src.matchAll(/\bfunction\s+(\w+)\s*\(([^)]*)\)\s*:\s*([^{;]+?)\s*\{/g)) {
+      if (!fnSig.has(m[1])) fnSig.set(m[1], { params: m[2], ret: m[3].trim() });
+    }
+    const tupleOf = (params: string): string => {
+      const types = splitTopLevelCommasStringAware(params)
+        .map((p) => {
+          const c = p.indexOf(":");
+          return (c >= 0 ? p.slice(c + 1) : p).trim();
+        })
+        .filter((t) => t.length > 0);
+      return `[${types.join(", ")}]`;
+    };
+    const sigOf = (arg: string): { params: string; ret: string } | null => {
+      arg = arg.trim();
+      const tm = arg.match(/^typeof\s+(\w+)$/);
+      if (tm) return fnSig.get(tm[1]) ?? null;
+      if (fnSig.has(arg)) return fnSig.get(arg)!;
+      const im = arg.match(/^\(([^)]*)\)\s*=>\s*(.+)$/); // inline (params) => Ret
+      if (im) return { params: im[1], ret: im[2].trim() };
+      return null;
+    };
+    return src.replace(/\b(ReturnType|Parameters)\s*<([^<>]*)>/g, (full, kind, arg) => {
+      const sig = sigOf(arg);
+      if (!sig) return full; // unresolved (unknown F / nested generics) — leave as-is, don't corrupt
+      return kind === "ReturnType" ? sig.ret : tupleOf(sig.params);
+    });
+  }
+
   /** Phase 51.4: build a synthetic StructDef for a `Pick`/`Omit`/`Record` utility type, or null if
    *  it can't be resolved statically (unknown base, or a `Record` with non-literal keys like
    *  `Record<string, V>`, which is a dynamic map — out of scope). Pick/Omit PRESERVE the base
@@ -18233,6 +18278,10 @@ class WasicTranspiler {
     // Phase 51.4: pass-through utility types (Partial/Readonly/Required/NonNullable) → inner type,
     // before parseStructs so the unwrapped type is seen everywhere (incl. interface field types).
     this.src = this.expandUtilityTypes(this.src);
+    // Phase 51.4: function-type utility types (ReturnType<F> / Parameters<F>) → the resolved type,
+    // also before parseStructs. Runs after expandUtilityTypes so a wrapped inner (e.g.
+    // `ReturnType<Partial<...>>` — rare) is already collapsed.
+    this.src = this.expandFnUtilityTypes(this.src);
     // #14.3.1: implicit boxing of LITERAL initialisers for `any` variables (typed value → boxed dynrt
     // handle). Conservative — only fires when the RHS is EXACTLY a number / string / template / bool
     // literal terminated by `;`, so compound RHS (`42 + 3`, a var, `eval(...)`, an already-`any`

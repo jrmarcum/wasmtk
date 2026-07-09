@@ -665,8 +665,10 @@ existing bindgen marshals TinyGo unchanged; the only fix was SPEC §10 in the bi
 pass's in-wasm asyncify-import mode shipped in binaryen-ts 1.4.1, and wasmtk's `--lang=go` now
 builds goroutine code with `-scheduler=asyncify` + a passthrough shim + `binaryenAsyncify`
 (binaryen-ts Asyncify+`-Oz`) → goroutines run with NO external binaryen;
-`tests/go_asyncify_tests.ts` `sum: 30`), and the optional field-reshaping **utility-types** batch
-(Pick/Omit/Record/…).
+`tests/go_asyncify_tests.ts` `sum: 30`), and the field-reshaping **utility-types** batch — ✅ **DONE
+2026-07-08** (`Partial`/`Readonly`/`Required`/`NonNullable`/`Pick`/`Omit`/`Record` shipped in Phase
+51.4; `ReturnType`/`Parameters` added via `expandFnUtilityTypes`; `Exclude`/`Extract` deferred — need
+string-literal-union types; `51_UtilityTypes.ts`).
 
 ## Congruent polyglot-producer goal + ABI posture (added 2026-06-03 — full detail in [polyglot-producers.md](polyglot-producers.md))
 
@@ -745,10 +747,11 @@ PUBLISHED to their registries** (JSR / crates.io / PyPI / Maven Central / pub.de
 / VPM / pkg.go.dev / NuGet). **#13 async COMPLETE + PUBLISHED as wasmtk v1.8.0 (2026-06-22; suite
 317/317). #14 own dynamic runtime COMPLETE + PUBLISHED (v1.9.0 + Phase 2 in v1.10.0).** Remaining:
 the deferred P2 container (browser-native WASI P2 gating); ~~Go bindgen aggregate marshalling~~ (✅
-SHIPPED 2026-07-08 — canonical; SPEC §10 bindgen-loader fix); the binaryen-ts asyncify pass (✅ THE
-PASS IS COMPLETE 2026-07-05; remaining = wasmtk-side --lang=go wiring + publish; detail in
-binaryen-ts `cmem/passes.md` § "Asyncify"), the optional utility-types batch, and the in-progress
-**Route A (javyc retirement — dynrt language/stdlib growth, 2e/2f)**. Optional #12 polish (SPEC §10
+SHIPPED 2026-07-08 — canonical; SPEC §10 bindgen-loader fix); ~~the binaryen-ts asyncify pass +
+--lang=go wiring~~ (✅ COMPLETE 2026-07-08 — in-wasm asyncify-import mode in binaryen-ts 1.4.1 +
+`gowasic` wiring → goroutine Go with no external binaryen; `tests/go_asyncify_tests.ts`); ~~the
+optional utility-types batch~~ (✅ DONE 2026-07-08 — core + `ReturnType`/`Parameters`;
+`Exclude`/`Extract` deferred); and the completed **Route A (javyc retirement — v1.11.1)**. Optional #12 polish (SPEC §10
 loader-cap propagation) is now COMPLETE across all 10 loader ports (2026-07-05). Full analysis in
 CLAUDE.md § "TypeScript Feature Gap Analysis".
 

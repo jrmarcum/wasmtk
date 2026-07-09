@@ -6,18 +6,21 @@
 
 ## Recommended next pickup
 
-- **A1 (utility-types)** — cleanest high-value task: self-contained, mirrors an existing pass, no
-  external deps / no publishing, directly expands what real TypeScript compiles.
 - **B3 (broaden goroutine coverage)** — small companion to lock down the just-shipped in-house
   asyncify (only one e2e today).
+- **A2 (Go mergeable-leaf)** — the remaining feature item.
 
 ## A. Feature work (optional, self-contained)
 
-1. **Utility-types batch** — `Pick` / `Omit` / `Record` / `Partial` / `Readonly` / `Exclude` /
-   `Extract` / `NonNullable` / `ReturnType` / `Parameters`. Compile-time SOURCE expansions, same
-   shape as the existing `expandConditionalTypes` pre-pass in `src/wasic.ts` (resolve at the source
-   level before parse passes). Medium effort, low risk, no new runtime. One test file per type + a
-   combined test.
+1. **Utility-types batch — ✅ DONE (2026-07-08).** The core (`Partial`/`Readonly`/`Required`/
+   `NonNullable` pass-through; `Pick`/`Omit`/`Record` synthetic structs) was already implemented
+   (Phase 51.4, `51_UtilityTypes.ts`). Added **`ReturnType<F>` / `Parameters<F>`** this session
+   (`expandFnUtilityTypes` in `src/wasic.ts`): F may be a named fn-type alias / `typeof fn` / inline
+   `(…) => R`; inline uses substitute the resolved scalar/struct/tuple, and a `type X = Parameters<F>`
+   alias becomes a `type X = [tuple]`. Test `51_UtilityTypes.ts` extended (returntype/parameters
+   cases). DEFERRED (low value in wasic's typed subset): `Exclude`/`Extract` (need first-class
+   string-literal-union types wasic lacks) and a `type X = ReturnType<F>` alias where F returns a
+   SCALAR (wasic has no scalar type aliases — write it inline).
 2. **Go "mergeable leaf"** — an alloc-free `wasm-unknown` Go library so Go output can be _merged_
    (not just reactor/bindgen-consumed), the way Zig + `FixedBufferAllocator` already merges. Go's
    runtime allocator corrupts on merge (currently guarded by a `memory.grow` merge guard). Niche —
