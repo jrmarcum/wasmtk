@@ -280,6 +280,26 @@ own producers never emit `memory.grow`, so no false positives; verified against 
 Full writeup + implementation: [compiler-bugs.md](compiler-bugs.md) "Merge guard #2". (Companion to
 the `call_indirect`-in-merge guard, 2026-06-05.)
 
+**Ordering fix + std-Go coverage — 2026-07-09.** The 2026-06-07 `memory.grow` check was
+*per-function* and ran AFTER the per-function `call_indirect` guard. **Standard Go exposed the
+gap**: a std-Go WASI reactor library (`go build -buildmode=c-shared` + `//go:wasmexport`, e.g.
+1.86 MB for a one-line `add`, `memory.grow:1`, 10 imports, **89 `call_indirect`s**) hit the
+`call_indirect` guard FIRST → the misleading "refactor the library to use only direct calls"
+message, a red herring for a full-runtime module (you can't refactor away Go's runtime). **Fix**:
+hoisted a **module-level** `memory.grow` guard to the very top of `mergeWasmWat` (before any
+per-function guard), so a runtime module always gets the correct "carries its own growing
+allocator / language runtime … STANDARD Go … build a MERGEABLE leaf with TinyGo
+`--go-target=wasm-unknown` / `FixedBufferAllocator` / keep standalone via WIT+bindgen" message.
+The per-function `memory.grow` guard (777) is now a backstop. **Std-Go answer, confirmed
+empirically:** there is NO std-Go build mode that drops the runtime — command OR c-shared library,
+`GOOS=wasip1` always links the full runtime + GC + `memory.grow`. The only mergeable Go is a
+TinyGo `wasm-unknown` leaf. Companion guard in the producer: `gowasic.buildWithStd` now rejects
+`--go-runtime=std --go-target=wasm-unknown` ("the mergeable leaf requires TinyGo — standard Go
+always links the full runtime + allocator") so the impossible combo fails at build time, not
+merge time. Regression test: `tests/wasmmerge_guard_tests.ts` (Go-free unit test — hand-built
+`memory.grow` WAT is rejected with runtime guidance; an alloc-free leaf is not). Validated: wasi
+375/375, go_merge 7/7, go_bindgen 7/7, go_asyncify 3/3.
+
 ### Practical takeaway per language
 
 - **Zig** — best merge fit. Leaf merges trivially; allocating code merges _iff_ it uses a static

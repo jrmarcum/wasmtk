@@ -384,6 +384,18 @@ async function buildWithStd(
     console.error(`❌ wasmtk (go): ${msg}`);
     return { success: false, error: msg };
   }
+  // The alloc-free MERGEABLE leaf (`--go-target=wasm-unknown`) is a TinyGo-only capability:
+  // standard Go has no freestanding target — it always links the full runtime + GC + allocator
+  // (a memory.grow module that wasmmerge rejects). Fail loud rather than silently building a
+  // full-runtime wasip1 module that isn't the mergeable leaf the flag promises.
+  if (target === "leaf") {
+    const msg =
+      "the alloc-free mergeable leaf (--go-target=wasm-unknown) requires TinyGo — standard Go " +
+      "(--go-runtime=std) always links the full runtime + allocator, which is NOT mergeable. " +
+      "Drop --go-runtime=std to build the leaf with TinyGo.";
+    console.error(`❌ wasmtk (go): ${msg}`);
+    return { success: false, error: msg };
+  }
   console.warn(
     "   ⚠️  --go-runtime=std uses the full Go runtime/GC — output is large (often several MB). " +
       "TinyGo (the default) produces far smaller modules.",

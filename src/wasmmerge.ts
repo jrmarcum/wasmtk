@@ -344,6 +344,33 @@ export function mergeWasmWat(
   const forms = extractForms(wat);
   const typeTable = parseTypeTable(forms);
 
+  // ── Foreign-runtime guard (module-level; fires BEFORE the per-function guards) ──
+  // A module that calls `memory.grow` carries its OWN growing allocator / full language
+  // runtime (standard Go's runtime + GC, Rust std/dlmalloc, Zig page_allocator). It does
+  // NOT share wasmtk's unified bump heap ($__malloc / $__heap_ptr), so merging it into the
+  // single shared linear memory would silently corrupt state once it allocates. Reject
+  // early with actionable guidance — this must beat the per-function `call_indirect` guard,
+  // whose "refactor to direct calls" advice is a red herring for a runtime module (e.g. a
+  // standard-Go binary has dozens of call_indirects, but the real blocker is the runtime/
+  // allocator, and it can't be refactored away). See cmem/polyglot-producers.md.
+  if (/\bmemory\.grow\b/.test(wat)) {
+    throw new Error(
+      `wasmmerge: '${prefix}' carries its own growing allocator / language runtime (it calls ` +
+        `memory.grow) and cannot be MERGED. Merged modules share ONE linear memory and one ` +
+        `allocator ($__malloc / $__heap_ptr), so its heap would overlap and silently corrupt ` +
+        `wasic's once it allocates.\n` +
+        `  This is the signature of a full-runtime WASI module — e.g. STANDARD Go (GOOS=wasip1, ` +
+        `\`--go-runtime=std\`) always links the whole Go runtime + GC.\n` +
+        `  Fix — produce an alloc-free, non-growing module instead, or don't merge:\n` +
+        `    • Go:   build a MERGEABLE leaf with TinyGo — \`wasmtk modc --lang=go ` +
+        `--go-target=wasm-unknown <path>\` (freestanding: no runtime/allocator, no memory.grow).\n` +
+        `    • Zig:  std.heap.FixedBufferAllocator over a static buffer (NOT page_allocator).\n` +
+        `    • Rust: a #[global_allocator] over a fixed static array (avoid std/dlmalloc/wee_alloc).\n` +
+        `  Or keep this module STANDALONE and call it via WIT/bindgen (an INSTANCE, not a merge) — ` +
+        `the right path for any heap-using foreign module.`,
+    );
+  }
+
   const notices: string[] = [];
   const wasiImportNames: string[] = [];
 
