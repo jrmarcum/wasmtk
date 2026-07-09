@@ -684,13 +684,22 @@ So:
   buffer, not the goroutine stack. (4) **B4 liveness-minimized saving landed in binaryen-ts** (commit
   `967fbbb`): our frames are now **smaller than wasm-opt** (27 KB vs 29 KB) and per-frame saved bytes
   MATCH wasm-opt — yet nested **still** OOBs identically, AND the pre-fix all-locals version crashed
-  identically. So it is **NOT the save-set size**: it's a **per-unwind/rewind-cycle asyncify-stack
-  over-use/leak** that accumulates only over nested's many cycles (flat = few cycles = no visible
-  drift; more memory = more room before it hits the end). Push/pop look LIFO-balanced by static
-  reading, so pinning it needs **runtime instrumentation** (log stackPos across cycles, ours vs
-  wasm-opt). This is a pre-existing binaryen-ts asyncify bug, decoupled from (and not fixed by) the
-  B4 liveness work. Full repro + notes in scratchpad `b4/`. See binaryen-ts `cmem/passes.md`
-  § "Liveness-minimized local saving … KNOWN GAP".
+  identically. **(5) CONCLUSIVE (runtime stackPos trace at every control-function call):** our
+  instrumentation behaves **IDENTICALLY to `wasm-opt --asyncify`** — same 13 concurrent goroutine
+  buffers at the same addresses, each buffer nowhere near full (used ≤116 B of a 64 KB buffer; ours
+  uses LESS than wasm-opt). So it is **NOT** an asyncify save/restore / leak bug at all. It's a
+  **memory-grow ORDERING** bug in the instrumented OUTPUT: nested spawns 13 concurrent goroutines,
+  TinyGo mallocs a ~64 KB asyncify buffer per goroutine (marching to ~14 pages), and ours ACCESSES a
+  freshly-allocated buffer at the current memory boundary **just before** TinyGo grows memory →
+  faults at exactly the current linear-memory end (0x80000 at 8 pages; `-stack-size=8KB` shrinks
+  buffers and the fault MOVES to 0x20000 at 2 pages — always the current end, at ANY buffer size).
+  `wasm-opt`'s output grows first, so it never faults; ours needs the whole working set
+  pre-allocated (≥15 pages initial fixes nested). `-Oz` doesn't change it. The root cause of the
+  grow-vs-access ordering flip is a further layer — a CALLER of the (uninstrumented, byte-identical)
+  `memory.grow` wrapper reorders vs wasm-opt; pinning needs instruction-level diffing. **Decoupled
+  from and not fixed by the B4 liveness work** (which is correct + committed, binaryen-ts `967fbbb`).
+  Full repro + trace harness in scratchpad `b4/`. See binaryen-ts `cmem/passes.md`
+  § "Liveness-minimized local saving … CONCLUSIVELY DIAGNOSED".
 - Earlier this path used `-scheduler=none` + `binaryenOptimize` (`-Oz` only) and errored on
   goroutine code (binaryen-ts lacked the asyncify pass). The pass was ported into binaryen-ts (see
   its `cmem/passes.md` § "In-wasm asyncify-import mode") and wired here — the roadmap "asyncify
