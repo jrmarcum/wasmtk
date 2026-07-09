@@ -67,12 +67,19 @@
 
 ## Published state (2026-07-09)
 
-- **binaryen-ts 1.4.3** is live on JSR with provenance (liveness-minimized asyncify saving + the
-  **WT-2k binary-decoder reorder fix** that made NESTED goroutines work — the true root cause of the
-  nested crash, NOT asyncify; 1.4.2 was cut but its publish failed a JSR type-check, re-shipped as
-  1.4.3). binaryen-ts suite **405/405**.
-- **wasmtk** working tree is committed on backend binaryen-ts 1.4.3 (pin `^1.4.3`), NOT yet cut as a
-  new version (still v1.11.3 on JSR — a v1.11.4 release with the nested fix + B-items is pending).
-  Suites green: wasi **375/375**, go_merge 7/7, go_bindgen 7/7, **go_asyncify 12/12** (incl. nested),
-  hybrid 10/10.
+- **binaryen-ts 1.4.3** is live on JSR (liveness-minimized asyncify saving + the **WT-2k
+  binary-decoder reorder fix** that made NESTED goroutines work — the true root cause of the nested
+  crash, NOT asyncify; 1.4.2 was cut but its publish failed a JSR type-check, re-shipped as 1.4.3).
+  binaryen-ts suite **405/405**.
+- **wasmtk 1.11.5** is live on JSR, **score 100** — ships the nested-goroutine fix + B3/B4/B5 + the
+  std-Go merge guard, on backend binaryen-ts 1.4.3 (pin `^1.4.3`). Suites green: wasi **375/375**,
+  go_merge 7/7, go_bindgen 7/7, **go_asyncify 12/12** (incl. nested), hybrid 10/10. (1.11.4 shipped
+  the nested fix but scored 94 — `src/wast.ts` lacked an `@module` tag so JSR's `allEntrypointsDocs`
+  was false; 1.11.5 added it → all 16 entrypoints have a module doc, `deno doc --lint` clean, score
+  back to 100.)
+- **KNOWN (not a regression): JSR provenance is absent** on wasmtk (`hasProvenance: false`, since
+  ≥1.11.3 — `rekorLogId` is null). The publish.yml IS set up for it (`id-token: write` + an
+  OIDC-availability check), so this is a GitHub **org/enterprise OIDC policy** blocking the token, an
+  infra setting — NOT a code fix. Doesn't drop the score below 100. `deno publish` auto-attaches
+  provenance once the org OIDC policy allows the Actions token.
 - **B backlog:** B3/B4/B5 all DONE (2026-07-09); B6 deferred (no consumer); A-items all done.

@@ -1,11 +1,14 @@
 # Roadmap, phase status & vision
 
-## Working tree (2026-07-09, post-v1.11.3 — pending release)
+## Release status (2026-07-09) — v1.11.5 (JSR score 100)
 
-Committed to git, not yet cut as a wasmtk version. On backend **wabt-ts 1.3.5 + binaryen-ts 1.4.3**.
+**v1.11.5 released to JSR** (score 100). On backend **wabt-ts 1.3.5 + binaryen-ts 1.4.3**.
 Regression gate green: wasi **375/375**, `go_merge` 7/7, `go_bindgen` 7/7, **`go_asyncify` 12/12**
 (now incl. `nested`), `hybrid` 10/10. The "B-items" backlog from `next-work.md` (B3/B4/B5) is done;
-B6 stays deferred (no consumer).
+B6 stays deferred (no consumer). (v1.11.4 shipped the same code but scored 94 — `src/wast.ts` lacked
+an `@module` tag so JSR's `allEntrypointsDocs` was false; v1.11.5 added it, restoring 100. JSR
+provenance is absent since ≥v1.11.3 — a GitHub org OIDC-policy infra issue, not a code fix; see
+next-work.md "Published state".)
 
 1. **Nested goroutines now run in-house — the headline.** A goroutine that suspends *inside* another
    suspending goroutine (`inner.Wait()`) used to trap `memory access out of bounds`. Root cause was
