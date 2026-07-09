@@ -653,10 +653,27 @@ So:
   **`binaryenAsyncify` (`src/binaryen.ts`)** = binaryen-ts **Asyncify pass + `-Oz`**: the Asyncify
   pass (binaryen-ts ≥ 1.4.1's in-wasm asyncify-import mode) removes those imports and wires the
   calls to the synthesized control functions, then `-Oz` shrinks. Verified e2e
-  (`tests/go_asyncify_tests.ts`, TinyGo-gated): a `go worker(...)` + channel worker-pool →
-  `sum: 30`. `binaryenAsyncify` **throws** on failure (an un-asyncified module has unresolved
-  `asyncify.*` imports and won't instantiate), so `gowasic` reports a hard error rather than
-  shipping a broken module.
+  (`tests/go_asyncify_tests.ts`, TinyGo-gated) — **B3 broadened the coverage 2026-07-09** to the
+  full goroutine surface: worker-pool (`sum: 30`), `select` over unbuffered channels
+  (`select-total: 300`), `time.Sleep` in a goroutine (`sleep-result: 42`),
+  `sync.WaitGroup`+`Mutex`+closure+defer (`wg-counter: 45`), and a 3-stage fan-out pipeline with
+  WaitGroup-driven channel close (`pipeline-total: 55`). `binaryenAsyncify` **throws** on failure
+  (an un-asyncified module has unresolved `asyncify.*` imports and won't instantiate), so `gowasic`
+  reports a hard error rather than shipping a broken module.
+
+  **KNOWN GAP (in-house asyncify only) — NESTED SUSPENSION miscompiles (found 2026-07-09, B3).** A
+  goroutine that itself suspends (e.g. blocks on `inner.Wait()`) while running *inside* another
+  suspending goroutine traps at runtime under the binaryen-ts Asyncify pass — `RuntimeError: memory
+  access out of bounds` — even for a tiny 2×2 case (4 goroutines). The **same** TinyGo module runs
+  correctly through external `wasm-opt --asyncify`, so it is NOT a program/TinyGo bug: it is a
+  correctness bug in binaryen-ts's Asyncify pass for **re-entrant unwind/rewind** (nested suspension
+  points). Corroborating symptom: the in-house module is **~3× larger** than external wasm-opt's
+  (56 KB vs 19 KB) — the pass over-instruments and saves too much per frame (the B4 "save only the
+  live local set" gap, here manifesting as a correctness failure, not just size). Flat concurrency
+  of any width is fine (worker-pool/waitgroup/pipeline all spawn many goroutines); only *nesting a
+  suspend inside a suspend* breaks. The `nested/` fixture is kept and run as a CONTROL through the
+  external-wasm-opt path (proving program validity) and excluded from the forced in-house list until
+  the pass is fixed. Tracked as the next binaryen-ts asyncify item (companion to B4).
 - Earlier this path used `-scheduler=none` + `binaryenOptimize` (`-Oz` only) and errored on
   goroutine code (binaryen-ts lacked the asyncify pass). The pass was ported into binaryen-ts (see
   its `cmem/passes.md` § "In-wasm asyncify-import mode") and wired here — the roadmap "asyncify

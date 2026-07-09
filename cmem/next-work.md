@@ -30,14 +30,22 @@
 
 ## B. Hardening / follow-ups from the 2026-07-08 asyncify work (small)
 
-3. **Broaden goroutine-Go validation** — the in-house asyncify path has ONE e2e
-   (`tests/go_asyncify_tests.ts`, a channel worker-pool → `sum: 30`). Add coverage for `select`,
-   `time.Sleep`, `sync.WaitGroup`/`Mutex`, nested goroutines, and a larger program, to confirm the
-   pass handles the full TinyGo goroutine surface. Small, worthwhile confidence. Force the in-house
-   path with `WASMTK_GO_BINARYEN_ASYNCIFY=1` (works even with a real `wasm-opt` on PATH).
-4. **asyncify liveness-minimized local saving** (binaryen-ts) — the pass saves ALL original locals
-   per frame; upstream saves only the live set (smaller coroutine frames). Optimization, not
-   correctness. See binaryen-ts `cmem/passes.md` known-gaps.
+3. **Broaden goroutine-Go validation — ✅ DONE (2026-07-09).** `tests/go_asyncify_tests.ts` is now
+   table-driven over the full goroutine surface through the forced in-house path: worker-pool
+   (`sum: 30`), `select`/unbuffered (`select-total: 300`), `time.Sleep` (`sleep-result: 42`),
+   `sync.WaitGroup`+`Mutex`+closure+defer (`wg-counter: 45`), 3-stage fan-out pipeline
+   (`pipeline-total: 55`) — 11/11. **FOUND A REAL BUG** doing so → see B4. `nested/` (suspend inside
+   a suspend) miscompiles under the in-house pass (`memory access out of bounds`) but works via
+   external `wasm-opt`; it's kept as a CONTROL and excluded from the forced list until B4 lands.
+4. **asyncify nested-suspension correctness + liveness-minimized local saving** (binaryen-ts) —
+   **PROMOTED to correctness (2026-07-09):** B3 proved the pass MISCOMPILES nested suspension (a
+   goroutine that blocks on `inner.Wait()` inside another suspending goroutine) → runtime OOB, even
+   at 2×2=4 goroutines, while external `wasm-opt --asyncify` on the same TinyGo output is correct.
+   Corroborating: in-house output is ~3× larger (56 KB vs 19 KB) — over-instruments + saves ALL
+   locals per frame (upstream saves only the live set). Fix the re-entrant unwind/rewind handling
+   (and add liveness-min local saving) in binaryen-ts's Asyncify pass, then re-enable `nested/` in
+   the forced in-house list. See binaryen-ts `cmem/passes.md` known-gaps + wasmtk
+   `cmem/polyglot-producers.md` § "KNOWN GAP — NESTED SUSPENSION".
 5. **hybrid nested-backtick-in-`${…}`** — the one documented residual edge in the context-aware
    hybrid call-rewriter (a template literal nested inside an interpolation). Rare, low priority. See
    design-decisions.md § "hybrid call-rewriting … MUST be context-aware".
