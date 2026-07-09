@@ -19318,6 +19318,25 @@ function mergeOneWasmImport(
     watBase = lines.join("\n");
   }
 
+  // A merged TinyGo `wasm-unknown` leaf (alloc-free, mergeable Go library) guards
+  // every exported function on a runtime "initialized" flag that its `_initialize`
+  // sets. After merge, that `_initialize` becomes an internal `$<prefix>__initialize`
+  // that nothing calls — so the leaf functions would trap. Call it once at the top
+  // of `_start` (the reactor-init contract, the same one `runWasi` honors for a
+  // standalone reactor). The flag lives at a fixed page-1 address, so also floor the
+  // merged memory at 2 pages.
+  const initName = `$${prefix}__initialize`;
+  if (result.funcWat && result.funcWat.includes(`(func ${initName}`)) {
+    watBase = watBase.replace(
+      /(\(func\s+\$_start\b[^\n]*\n)/,
+      `$1    (call ${initName})\n`,
+    );
+    watBase = watBase.replace(
+      /\(memory\s+\(export\s+"memory"\)\s+(\d+)\)/,
+      (_f, n: string) => `(memory (export "memory") ${Math.max(2, parseInt(n))})`,
+    );
+  }
+
   // Splice merged fragments before the closing `)` of the module
   const fragments: string[] = [];
   if (result.globalWat) fragments.push(`  ;; globals from ${prefix}\n  ${result.globalWat}`);

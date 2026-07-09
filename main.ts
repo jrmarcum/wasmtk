@@ -184,6 +184,7 @@ Options:
                                          (goroutine-free code); goroutine code needs binaryen.
       --go-target=wasm         (init)    Scaffold a browser (syscall/js) project instead of the default wasm library
       --go-target=wasm         (modc)    Build a browser module instead of the default wasm (reactor) library
+      --go-target=wasm-unknown (modc)    Build an alloc-free MERGEABLE leaf library (wasmmerge-able into a wasic/bundle build)
     `);
     return;
   }
@@ -276,12 +277,18 @@ Options:
         // bindgen — the Go analog of TS `modc` library mode. The BROWSER build (`-target=wasm`,
         // syscall/js + wasm_exec.js) is opt-in via `--go-target=wasm` (it imports `gojs` and only
         // runs in a browser, so wasmtk can't host it).
-        const goBrowser = (args["go-target"] as string | undefined)?.toLowerCase() === "wasm";
+        const goTgt = (args["go-target"] as string | undefined)?.toLowerCase();
+        // wasm = browser; wasm-unknown/leaf = alloc-free MERGEABLE leaf; else reactor library.
+        const goModcTarget = goTgt === "wasm"
+          ? "wasm"
+          : (goTgt === "wasm-unknown" || goTgt === "leaf")
+          ? "leaf"
+          : "reactor";
         const { compileGoWasi } = await import("./src/gowasic.ts");
         const r = await compileGoWasi(langPath, {
           outPath,
           runtime: goRuntime,
-          target: goBrowser ? "wasm" : "reactor",
+          target: goModcTarget,
         });
         if (!r.success) Deno.exit(1);
         break;

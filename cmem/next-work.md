@@ -6,9 +6,9 @@
 
 ## Recommended next pickup
 
-- **B3 (broaden goroutine coverage)** — small companion to lock down the just-shipped in-house
-  asyncify (only one e2e today).
-- **A2 (Go mergeable-leaf)** — the remaining feature item.
+- **B3 (broaden goroutine coverage)** — small companion to lock down the in-house asyncify (one e2e).
+- **B4/B5/B6** — the remaining small hardening items (all low priority).
+  (A. feature work is now all DONE — utility-types + Go mergeable-leaf both shipped 2026-07-08.)
 
 ## A. Feature work (optional, self-contained)
 
@@ -21,10 +21,12 @@
    cases). DEFERRED (low value in wasic's typed subset): `Exclude`/`Extract` (need first-class
    string-literal-union types wasic lacks) and a `type X = ReturnType<F>` alias where F returns a
    SCALAR (wasic has no scalar type aliases — write it inline).
-2. **Go "mergeable leaf"** — an alloc-free `wasm-unknown` Go library so Go output can be _merged_
-   (not just reactor/bindgen-consumed), the way Zig + `FixedBufferAllocator` already merges. Go's
-   runtime allocator corrupts on merge (currently guarded by a `memory.grow` merge guard). Niche —
-   only matters for Go-in-a-merged-bundle use cases. See polyglot-producers.md.
+2. **Go "mergeable leaf" — ✅ DONE (2026-07-08).** `modc --lang=go --go-target=wasm-unknown` →
+   `buildGoLeaf` builds TinyGo's freestanding `wasm-unknown` target (0 imports, no `memory.grow`),
+   which `wasmmerge`s into a wasic/bundle build like a Zig `FixedBufferAllocator` leaf. The merge
+   (`mergeOneWasmImport`) calls the leaf's `_initialize` + floors memory at 2 pages (TinyGo's export
+   init-guard sits at fixed address 65536). Test `go_merge_tests.ts` (7/7). Caveat: host must not use
+   page 1 — small hosts only; else use reactor/bindgen. See polyglot-producers.md § "Mergeable Go leaf".
 
 ## B. Hardening / follow-ups from the 2026-07-08 asyncify work (small)
 

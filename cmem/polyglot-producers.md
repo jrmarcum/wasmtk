@@ -533,7 +533,21 @@ default — the Go analog of TS `modc` library mode — and move the browser bui
 `--go-target=wasm`. Caveat captured: Go's mandatory runtime means even this library is NOT as bare
 as the TS one — it carries `_initialize` (runtime init), one WASI import (`random_get`), and runtime
 `malloc`/`free`. (The truly-bare option, `wasm-unknown` with no WASI, is allocation-free-only — the
-mergeable-leaf sub-target, still not auto-wired; reactor is the general default.)
+**mergeable-leaf sub-target, ✅ WIRED 2026-07-08** as `modc --lang=go --go-target=wasm-unknown` →
+`buildGoLeaf`; reactor is still the general default.)
+
+**Mergeable Go leaf (`--go-target=wasm-unknown`, 2026-07-08).** TinyGo's freestanding `wasm-unknown`
+target produces a module with **0 imports and no `memory.grow`** (no WASI, no scheduler, no runtime
+allocator) — so a pure-compute Go library `wasmmerge`s into a wasic/`wasmbundle` build like a Zig
+`FixedBufferAllocator` leaf, resolving the "Go allocating silently corrupts" gate by simply not
+allocating. `buildGoLeaf` (`src/gowasic.ts`) builds `tinygo build -target=wasm-unknown -no-debug
+-opt=z` (+ passthrough shim + binaryen-ts `-Oz` when no real wasm-opt; NO asyncify — a leaf has no
+goroutine scheduler). The one merge-integration fix: TinyGo guards every export on a runtime-init
+flag its `_initialize` sets, so `mergeOneWasmImport` now injects `(call $<prefix>__initialize)` at the
+top of `_start` and floors the merged memory at 2 pages (the flag lives at the fixed page-1 address
+65536). CAVEAT: that hardcoded address means the host must not use page 1 — fine for typical small
+hosts; large-memory hosts should stay on the reactor/bindgen path. Verified `tests/go_merge_tests.ts`
+(7/7): a Go leaf (`addi`/`muli`/`clampi`) merged into a wasic program computes correct results.
 
 **Implementation:**
 

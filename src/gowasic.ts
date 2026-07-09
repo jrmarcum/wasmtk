@@ -30,7 +30,7 @@
 
 import { basename, dirname, join, resolve } from "@std/path";
 import { rt } from "./rt.ts";
-import { binaryenAsyncify } from "./binaryen.ts";
+import { binaryenAsyncify, binaryenOptimize } from "./binaryen.ts";
 
 /** Go backend toolchain: `tinygo` (default, small) or `std` (standard `go`, large — full runtime/GC). */
 export type GoRuntime = "tinygo" | "std";
@@ -40,7 +40,7 @@ export type GoRuntime = "tinygo" | "std";
  * WASI library (`-buildmode=c-shared`: no `_start`, exports //go:wasmexport funcs + runtime, callable
  * via `wasmtk mod` / bindgen — the Go analog of TS `modc` library mode).
  */
-export type GoTarget = "wasip1" | "wasm" | "reactor";
+export type GoTarget = "wasip1" | "wasm" | "reactor" | "leaf";
 
 /** Project scaffold flavor: `library` (wasm library + test harness) or `browser` (syscall/js variant). */
 export type GoScaffold = "library" | "browser";
@@ -216,6 +216,9 @@ async function buildWithTinyGo(
     console.error(`❌ wasmtk (go): ${msg}`);
     return { success: false, error: msg };
   }
+  // leaf: an alloc-free, MERGEABLE `wasm-unknown` library (its own build path — no WASI, no
+  // scheduler/asyncify, no runtime allocator).
+  if (target === "leaf") return await buildGoLeaf(baseDir, buildArg, out);
   // reactor (WASI library) builds wasip1 + `-buildmode=c-shared`; everything else maps directly.
   const tgoTarget = target === "wasm" ? "wasm" : "wasip1";
   const buildModeArgs = target === "reactor" ? ["-buildmode=c-shared"] : [];
@@ -310,6 +313,63 @@ async function buildWithTinyGo(
     console.error(`❌ wasmtk (go): binaryen-ts asyncify pass failed: ${msg}`);
     return { success: false, error: "binaryen-ts asyncify failed" };
   }
+}
+
+/**
+ * Build an alloc-free, MERGEABLE `wasm-unknown` leaf library from Go (`//go:wasmexport` funcs).
+ * `wasm-unknown` is TinyGo's freestanding target: no WASI, no scheduler/asyncify, no runtime
+ * allocator — the output has 0 imports and no `memory.grow`, so it `wasmmerge`s into a wasic/
+ * wasmbundle build like a Zig `FixedBufferAllocator` leaf. (wasmtk's merge calls the leaf's
+ * `_initialize` — TinyGo guards each export on a runtime-init flag — see `mergeOneWasmImport`.)
+ * No asyncify path: a leaf has no goroutine scheduler, so `-Oz` alone (real `wasm-opt` or the
+ * binaryen-ts passthrough) suffices.
+ *
+ * CAVEAT: the init flag sits at a fixed page-1 address (65536), so the host program must not use
+ * that region — fine for typical small hosts; large-memory hosts should prefer the reactor/bindgen
+ * path. Suitable for pure-compute leaves (no Go runtime allocation).
+ */
+async function buildGoLeaf(baseDir: string, buildArg: string, out: string): Promise<GoResult> {
+  const baseEnv = {
+    ...rt.env.toObject(),
+    TINYGO_CACHE: join(baseDir, ".tinygo-cache"),
+    GOTMPDIR: baseDir,
+  };
+  const args = [
+    "build",
+    "-p",
+    "1",
+    "-no-debug",
+    "-opt=z",
+    "-o",
+    out,
+    "-target=wasm-unknown",
+    buildArg,
+  ];
+  const runBuild = async (env: Record<string, string>): Promise<GoResult | null> => {
+    const r = await new rt.Command("tinygo", { args, cwd: baseDir, env, stdout: "piped", stderr: "piped" })
+      .output();
+    if (r.success) return null;
+    const errText = decodeOut(r);
+    console.error(`❌ wasmtk (go): TinyGo leaf build failed:\n${errText}${goBuildHint(errText, "leaf")}`);
+    return { success: false, error: "tinygo build failed" };
+  };
+  const haveRealWasmOpt = !!rt.env.get("WASMOPT") || await toolAvailable("wasm-opt", ["--version"]);
+  if (haveRealWasmOpt) {
+    const fail = await runBuild(baseEnv);
+    if (fail) return fail;
+    return await report(out, "tinygo:wasm-unknown leaf (wasm-opt)");
+  }
+  // No real wasm-opt → passthrough shim + binaryen-ts `-Oz` (a leaf needs no asyncify).
+  const shim = await writeWasmOptShim(baseDir);
+  try {
+    const fail = await runBuild({ ...baseEnv, WASMOPT: shim.launcher });
+    if (fail) return fail;
+  } finally {
+    await shim.cleanup();
+  }
+  const { bytes, optimized } = binaryenOptimize(await rt.readFile(out));
+  if (optimized) await rt.writeFile(out, bytes);
+  return await report(out, `tinygo:wasm-unknown leaf${optimized ? " + binaryen-ts -Oz" : ""}`);
 }
 
 async function buildWithStd(
