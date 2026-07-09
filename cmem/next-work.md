@@ -46,9 +46,11 @@
    (and add liveness-min local saving) in binaryen-ts's Asyncify pass, then re-enable `nested/` in
    the forced in-house list. See binaryen-ts `cmem/passes.md` known-gaps + wasmtk
    `cmem/polyglot-producers.md` § "KNOWN GAP — NESTED SUSPENSION".
-5. **hybrid nested-backtick-in-`${…}`** — the one documented residual edge in the context-aware
-   hybrid call-rewriter (a template literal nested inside an interpolation). Rare, low priority. See
-   design-decisions.md § "hybrid call-rewriting … MUST be context-aware".
+5. **hybrid nested-backtick-in-`${…}` — ✅ DONE (2026-07-09).** `skipLiteral` now descends into
+   `${…}` via `findInterpEnd` (mutual recursion), so an arbitrarily-nested backtick template no
+   longer truncates a `@wasm` body (a nested template whose text held a `}` leaked it into
+   brace-depth) or defeats call-rewriting in a doubly-nested interpolation. Two teeth-verified
+   regression tests in `tests/hybrid_tests.ts`. No known residual scanner edge remains.
 6. **asyncify list-options ↔ binary-parse name retention** (binaryen-ts) — add/remove/only-list
    options key on internal `$funcN` names, so they don't match real symbols on a _binary-parsed_
    module (the binary reader drops the name section). Only needed if we ever expose asyncify lists

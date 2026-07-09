@@ -674,6 +674,14 @@ So:
   suspend inside a suspend* breaks. The `nested/` fixture is kept and run as a CONTROL through the
   external-wasm-opt path (proving program validity) and excluded from the forced in-house list until
   the pass is fixed. Tracked as the next binaryen-ts asyncify item (companion to B4).
+  **Diagnostic narrowing (2026-07-09):** bumping TinyGo's goroutine stack 8× (`-stack-size=256KB`)
+  did NOT fix it, and the trap is a raw `memory access out of bounds` (a bad load/store address), NOT
+  the asyncify overflow-check's `unreachable`. So it is **NOT** an asyncify-buffer overflow from the
+  over-saving — it is a genuine **re-entrant unwind/rewind miscompile** (a stale/garbage
+  `__asyncify_data` pointer or wrong save/restore offset when a suspend happens inside an
+  already-suspending frame). The B4 liveness-min saving would shrink frames but is decoupled from
+  this correctness bug. Fixing it is deep work in binaryen-ts's Asyncify pass (its own asyncify test
+  harness), not a wasmtk-side change.
 - Earlier this path used `-scheduler=none` + `binaryenOptimize` (`-Oz` only) and errored on
   goroutine code (binaryen-ts lacked the asyncify pass). The pass was ported into binaryen-ts (see
   its `cmem/passes.md` § "In-wasm asyncify-import mode") and wired here — the roadmap "asyncify

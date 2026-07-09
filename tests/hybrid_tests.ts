@@ -30,6 +30,49 @@ Deno.test("hybrid — a @wasm function body with a `}` in a string is fully extr
   assert(!r.remainingSrc.includes("function f"), "function not removed from remaining source");
 });
 
+Deno.test("hybrid — a nested-backtick interpolation whose text has a `}` does not truncate the body (B5)", () => {
+  // The interpolation `${ `raw } text` }` contains a nested backtick template whose TEXT
+  // holds a `}`. The naive scanner mistook the nested opening backtick for the outer
+  // template's closing backtick, then counted that `}` as a real close brace and truncated
+  // the function early (proven: body 68 chars vs 82). skipLiteral now descends into `${…}`.
+  const src = [
+    "// @wasm",
+    "function tpl(x: i32): string {",
+    "  const s: string = `${ `raw } text` }`;",
+    "  return s;",
+    "}",
+    "const y = tpl(1);",
+  ].join("\n");
+  const r = parseHybridFile(src);
+  assertEquals(r.wasmFuncs.length, 1);
+  const text = r.wasmFuncs[0].text;
+  assert(text.includes("return s;"), "body truncated before the return (nested-backtick `}` leaked)");
+  assert(text.trimEnd().endsWith("}"), "function did not extend to its real close brace");
+  assert(!r.remainingSrc.includes("function tpl"), "function not removed from remaining source");
+  assert(r.remainingSrc.includes("const y = tpl(1);"), "trailing host statement lost");
+});
+
+Deno.test("hybrid — call rewriting descends through a doubly-nested-backtick interpolation (B5)", () => {
+  // A @wasm call sits in an interpolation alongside a doubly-nested template whose inner
+  // text has a `}` (`${ `a ${ `x}y` } b` + add(1, 2) }`). findInterpEnd → skipLiteral must
+  // skip the nested templates to find the real interpolation end; without the fix the call
+  // was NOT rewritten (proven: rewrote=false vs true).
+  const src = [
+    "// @wasm",
+    "function add(a: i32, b: i32): i32 { return a + b; }",
+    "const msg: string = `${ `a ${ `x}y` } b` + add(1, 2) }`;",
+    "console.log(msg);",
+  ].join("\n");
+  const r = parseHybridFile(src);
+  const runner = generateRunner(
+    r.remainingSrc,
+    new Set(r.wasmFuncs.map((f) => f.name)),
+    "./m.bindings.ts",
+    "./m.wasm",
+  );
+  assert(runner.includes("lib.add(1, 2)"), "nested-interpolation call was not rewritten to lib.add");
+});
+
 Deno.test("hybrid — a @wasm function with a brace inside a line comment is fully extracted", () => {
   const src = [
     "// @wasm",

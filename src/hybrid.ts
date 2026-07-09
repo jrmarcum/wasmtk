@@ -161,11 +161,22 @@ function skipLiteral(src: string, i: number, prevSig: string, prevWord: string):
   const ch = src[i];
   const n = src.length;
   if (ch === '"' || ch === "'" || ch === "`") {
+    const isTemplate = ch === "`";
     let j = i + 1;
     while (j < n) {
       const c = src[j];
       if (c === "\\") {
         j += 2;
+        continue;
+      }
+      // A template's `${…}` interpolation is CODE, not string text — it may itself
+      // contain a nested backtick template (the one-time residual edge). Skip the
+      // whole balanced interpolation via findInterpEnd (mutually recursive with this
+      // function, so nested templates inside it are handled too) instead of letting a
+      // nested backtick be mistaken for this template's closing backtick.
+      if (isTemplate && c === "$" && src[j + 1] === "{") {
+        const end = findInterpEnd(src, j + 2); // index of the interpolation's closing `}`
+        j = src[end] === "}" ? end + 1 : end; // resume after `}` (or at n if unterminated)
         continue;
       }
       if (c === ch) return j + 1;
@@ -254,8 +265,8 @@ function findInterpEnd(src: string, start: number): number {
 /**
  * Walk forward from `openLine` until the opening brace's matching close brace.
  * Strings, templates, comments, and regex literals are opaque so a brace inside
- * any of them doesn't skew the depth count. (A nested backtick inside a `${…}`
- * interpolation is the one residual edge — rare in wasic-compilable bodies.)
+ * any of them doesn't skew the depth count — including a nested backtick template
+ * inside a `${…}` interpolation (handled via `skipLiteral`→`findInterpEnd`).
  */
 function findCloseBrace(lines: string[], openLine: number): number {
   const src = lines.slice(openLine).join("\n");

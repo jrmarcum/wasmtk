@@ -185,8 +185,15 @@ from division by the previous significant token (a value / keyword). Load-bearin
   regresses this (the pre-2026-07-08 naive regex rewrote it by accident).
 - `isMethodDefinition` is the guard that keeps an object method shorthand (`{ add(x){…} }`) from
   being rewritten; it must skip strings/regex inside the arg list so a `)` there doesn't misparse.
-- Residual (documented, rare): a nested backtick inside a `${…}` interpolation. Regression tests
-  live in `tests/hybrid_tests.ts`.
+- **Nested backtick inside a `${…}` interpolation — CLOSED (B5, 2026-07-09).** `skipLiteral`'s
+  backtick branch now descends into each `${…}` interpolation via `findInterpEnd` (mutually
+  recursive, so arbitrarily-nested templates are handled) instead of scanning greedily for the next
+  backtick — which mistook a nested opening backtick for the outer template's close. The observable
+  bug: a nested template whose TEXT holds a `}` leaked that brace into depth counting →
+  `findCloseBrace` truncated a `@wasm` body early (proven: 68 vs 82 chars), and `findInterpEnd`
+  mis-scanned a doubly-nested interpolation → a routed call in it was NOT rewritten. Both cases are
+  regression-tested in `tests/hybrid_tests.ts` (the two "(B5)" tests — verified to fail without the
+  fix). No known residual scanner edge remains.
 
 ## Producer shims must be runtime-agnostic (`rt.*`, not `Deno.*`) (2026-07-08)
 
