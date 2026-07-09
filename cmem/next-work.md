@@ -34,18 +34,20 @@
    table-driven over the full goroutine surface through the forced in-house path: worker-pool
    (`sum: 30`), `select`/unbuffered (`select-total: 300`), `time.Sleep` (`sleep-result: 42`),
    `sync.WaitGroup`+`Mutex`+closure+defer (`wg-counter: 45`), 3-stage fan-out pipeline
-   (`pipeline-total: 55`) — 11/11. **FOUND A REAL BUG** doing so → see B4. `nested/` (suspend inside
-   a suspend) miscompiles under the in-house pass (`memory access out of bounds`) but works via
-   external `wasm-opt`; it's kept as a CONTROL and excluded from the forced list until B4 lands.
-4. **asyncify nested-suspension correctness + liveness-minimized local saving** (binaryen-ts) —
-   **PROMOTED to correctness (2026-07-09):** B3 proved the pass MISCOMPILES nested suspension (a
-   goroutine that blocks on `inner.Wait()` inside another suspending goroutine) → runtime OOB, even
-   at 2×2=4 goroutines, while external `wasm-opt --asyncify` on the same TinyGo output is correct.
-   Corroborating: in-house output is ~3× larger (56 KB vs 19 KB) — over-instruments + saves ALL
-   locals per frame (upstream saves only the live set). Fix the re-entrant unwind/rewind handling
-   (and add liveness-min local saving) in binaryen-ts's Asyncify pass, then re-enable `nested/` in
-   the forced in-house list. See binaryen-ts `cmem/passes.md` known-gaps + wasmtk
-   `cmem/polyglot-producers.md` § "KNOWN GAP — NESTED SUSPENSION".
+   (`pipeline-total: 55`), and **`nested/` (re-entrant suspend, `nested-sum: 36`) — now in the forced
+   list — 12/12.** **FOUND A REAL BUG** doing so → fixed under B4.
+4. **asyncify nested-suspension correctness + liveness-minimized local saving — ✅ DONE (2026-07-09),
+   binaryen-ts 1.4.3.** Two independent deliverables. (a) **Liveness-minimized saving** — the Asyncify
+   pass now saves only locals live across a suspend (`computeRelevantLocals`, CFG point-wise
+   liveness), frames smaller than `wasm-opt`. (b) **The nested crash's TRUE root cause was NOT
+   asyncify** — it was a binaryen-ts **binary-decoder reorder bug (WT-2k)**: the decoder took a value
+   kept on the operand stack (TinyGo's trampoline keeps `$__stack_pointer` there across a
+   `global.set $sp; call…` then restores it) and reordered it past the `global.set` that overwrote it
+   → `global.set(global.get)` self-assign that corrupted the shadow stack → boundary OOB. Fix: spill
+   the reordered value to a temp local. `nested/` re-enabled in the forced in-house list (12/12).
+   wasmtk pins `@jrmarcum/binaryen-ts@^1.4.3`. See binaryen-ts `cmem/correctness.md` § "WT-2k" + wasmtk
+   `cmem/polyglot-producers.md` § "NESTED SUSPENSION — found then FIXED". (The earlier "memory-grow
+   ordering" hypothesis was a red herring — see that note's "Investigation lesson".)
 5. **hybrid nested-backtick-in-`${…}` — ✅ DONE (2026-07-09).** `skipLiteral` now descends into
    `${…}` via `findInterpEnd` (mutual recursion), so an arbitrarily-nested backtick template no
    longer truncates a `@wasm` body (a nested template whose text held a `}` leaked it into

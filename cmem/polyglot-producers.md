@@ -661,45 +661,35 @@ So:
   (an un-asyncified module has unresolved `asyncify.*` imports and won't instantiate), so `gowasic`
   reports a hard error rather than shipping a broken module.
 
-  **KNOWN GAP (in-house asyncify only) — NESTED SUSPENSION miscompiles (found 2026-07-09, B3).** A
-  goroutine that itself suspends (e.g. blocks on `inner.Wait()`) while running *inside* another
-  suspending goroutine traps at runtime under the binaryen-ts Asyncify pass — `RuntimeError: memory
-  access out of bounds` — even for a tiny 2×2 case (4 goroutines). The **same** TinyGo module runs
-  correctly through external `wasm-opt --asyncify`, so it is NOT a program/TinyGo bug: it is a
-  correctness bug in binaryen-ts's Asyncify pass for **re-entrant unwind/rewind** (nested suspension
-  points). Corroborating symptom: the in-house module is **~3× larger** than external wasm-opt's
-  (56 KB vs 19 KB). Flat concurrency of any width is fine (worker-pool/waitgroup/pipeline all spawn
-  many goroutines); only *nesting a suspend inside a suspend* breaks. The `nested/` fixture is kept
-  and run as a CONTROL through the external-wasm-opt path (proving program validity) and excluded
-  from the forced in-house list until the pass is fixed.
+  **NESTED SUSPENSION — found (B3) then FIXED (2026-07-09), binaryen-ts 1.4.3.** A goroutine that
+  itself suspends (blocks on `inner.Wait()`) while running *inside* another suspending goroutine
+  trapped `RuntimeError: memory access out of bounds` under the in-house path (even a 2×2 = 4-goroutine
+  case), while the SAME TinyGo module ran correctly via external `wasm-opt --asyncify`. **The
+  in-house path (nested included) now passes** — `go_asyncify_tests.ts` runs `nested/` in the forced
+  in-house list (`nested-sum: 36`).
 
-  **ROOT-CAUSE narrowing (2026-07-09, extensive):** built a fast repro (TinyGo `-scheduler=asyncify`
-  + copy-shim → `nested_pre.wasm` with un-instrumented `asyncify.*` imports → binaryen-ts Asyncify
-  pass, no `-Oz`). Findings: (1) our pass instruments the **exact same 29 functions** as
-  `wasm-opt --asyncify` (analysis is correct — not over-instrumentation). (2) wasmtime backtrace: OOB
-  at **exactly linear-memory end** (`0x80000` in an `0x80000` memory) during a memory access in the
-  goroutine machinery — so the asyncify stack walks off the buffer. (3) `-stack-size=256KB` does NOT
-  help, but raising the module's **initial memory** (→256 pages) makes nested run correctly
-  (`nested-sum: 36`) — so it IS an asyncify-stack space problem, but of the MODULE's linear memory /
-  buffer, not the goroutine stack. (4) **B4 liveness-minimized saving landed in binaryen-ts** (commit
-  `967fbbb`): our frames are now **smaller than wasm-opt** (27 KB vs 29 KB) and per-frame saved bytes
-  MATCH wasm-opt — yet nested **still** OOBs identically, AND the pre-fix all-locals version crashed
-  identically. **(5) CONCLUSIVE (runtime stackPos trace at every control-function call):** our
-  instrumentation behaves **IDENTICALLY to `wasm-opt --asyncify`** — same 13 concurrent goroutine
-  buffers at the same addresses, each buffer nowhere near full (used ≤116 B of a 64 KB buffer; ours
-  uses LESS than wasm-opt). So it is **NOT** an asyncify save/restore / leak bug at all. It's a
-  **memory-grow ORDERING** bug in the instrumented OUTPUT: nested spawns 13 concurrent goroutines,
-  TinyGo mallocs a ~64 KB asyncify buffer per goroutine (marching to ~14 pages), and ours ACCESSES a
-  freshly-allocated buffer at the current memory boundary **just before** TinyGo grows memory →
-  faults at exactly the current linear-memory end (0x80000 at 8 pages; `-stack-size=8KB` shrinks
-  buffers and the fault MOVES to 0x20000 at 2 pages — always the current end, at ANY buffer size).
-  `wasm-opt`'s output grows first, so it never faults; ours needs the whole working set
-  pre-allocated (≥15 pages initial fixes nested). `-Oz` doesn't change it. The root cause of the
-  grow-vs-access ordering flip is a further layer — a CALLER of the (uninstrumented, byte-identical)
-  `memory.grow` wrapper reorders vs wasm-opt; pinning needs instruction-level diffing. **Decoupled
-  from and not fixed by the B4 liveness work** (which is correct + committed, binaryen-ts `967fbbb`).
-  Full repro + trace harness in scratchpad `b4/`. See binaryen-ts `cmem/passes.md`
-  § "Liveness-minimized local saving … CONCLUSIVELY DIAGNOSED".
+  **Root cause (the real one) — a binaryen-ts BINARY-DECODER bug, NOT asyncify** (tracked as WT-2k in
+  binaryen-ts `cmem/correctness.md`). TinyGo's goroutine trampoline (`tinygo_launch`) keeps the
+  caller's `$__stack_pointer` (a `global.get`) live on the operand STACK across `global.set $sp …;
+  call_indirect; call`, then a trailing `global.set $sp` RESTORES it. binaryen-ts's `readBinary`
+  reconstructs the tree by taking the topmost value-producing entry, skipping void statements — so it
+  grabbed that `global.get $sp` from BELOW the intervening `global.set $sp` and placed it as the
+  restore's operand, **re-evaluating `global.get $sp` after `$sp` was overwritten** →
+  `global.set $sp (global.get $sp)` self-assign. The shadow stack was never restored, so every later
+  allocation corrupted memory → the boundary trap. **Fix:** the decoder now SPILLS such a reordered
+  value into a temp local at its original position (a `Pop` placeholder is exempt); binaryen-ts 1.4.2
+  (published as 1.4.3 after a JSR type-check fixup). wasmtk `deno.json` pins
+  `jsr:@jrmarcum/binaryen-ts@^1.4.3/compat`.
+
+  **Investigation lesson (worth keeping):** the earlier "memory-grow ordering" / "asyncify re-entrant
+  unwind" hypotheses were RED HERRINGS — a runtime `stackPos` trace proved our asyncify save/restore
+  matched `wasm-opt` byte-for-byte (same 13 goroutine buffers, ours used LESS per frame). What cracked
+  it: bisecting the merged module function-by-function (splicing `wasm-opt`'s working functions into
+  ours) to the single culprit `tinygo_launch`, then confirming a pure `readBinary→emitBinary` (no
+  passes) reproduced the self-assign → the bug was upstream in the DECODER, not the pass. The B4
+  liveness-minimized saving (binaryen-ts `967fbbb`) is a real, independent improvement (smaller frames)
+  but did NOT fix nested — the decoder fix did. Repro + trace/bisect harness in scratchpad `b4/`;
+  full write-up in binaryen-ts `cmem/correctness.md` § "WT-2k".
 - Earlier this path used `-scheduler=none` + `binaryenOptimize` (`-Oz` only) and errored on
   goroutine code (binaryen-ts lacked the asyncify pass). The pass was ported into binaryen-ts (see
   its `cmem/passes.md` § "In-wasm asyncify-import mode") and wired here — the roadmap "asyncify

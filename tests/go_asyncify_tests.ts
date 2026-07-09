@@ -16,16 +16,16 @@
  *   sleep_ch     — `time.Sleep` in a goroutine (scheduler yields)          (sleep-result: 42)
  *   waitgroup    — `sync.WaitGroup` + `Mutex` + closure capture + defer    (wg-counter: 45)
  *   pipeline     — 3-stage fan-out with WaitGroup-driven channel close     (pipeline-total: 55)
+ *   nested       — a goroutine that suspends on `inner.Wait()` INSIDE another
+ *                  suspending goroutine (re-entrant suspension)            (nested-sum: 36)
  *
- * KNOWN GAP (in-house path only) — `nested/` (a goroutine that suspends on
- * `inner.Wait()` *inside* another suspending goroutine) miscompiles under the
- * binaryen-ts Asyncify pass → "memory access out of bounds", while the SAME
- * module runs correctly via external `wasm-opt --asyncify`. Tracked as a
- * binaryen-ts asyncify nested-suspension bug (see cmem/polyglot-producers.md
- * § "Goroutine Go … known gap"). This suite therefore runs `nested/` as a
- * CONTROL through the default (external-wasm-opt) path to prove the program +
- * TinyGo output are valid, and excludes it from the forced in-house list until
- * the binaryen-ts pass is fixed.
+ * `nested/` was the reproducer for a binaryen-ts BINARY-DECODER bug (WT-2k, fixed
+ * in binaryen-ts 1.4.2): the decoder reordered a value kept on the operand stack
+ * (TinyGo's goroutine trampoline keeps the caller's `$__stack_pointer` there and
+ * restores it via a trailing `global.set`) past the `global.set` that overwrote
+ * it → a `global.set(global.get)` self-assign that corrupted the shadow stack and
+ * trapped at the linear-memory boundary. NOT an asyncify bug — the fix spills the
+ * reordered value to a temp local. See cmem/polyglot-producers.md § "Goroutine Go".
  *
  * GATED on TinyGo being installed (the CI image has none) — skips cleanly.
  *
@@ -49,6 +49,7 @@ const INHOUSE: Array<{ name: string; src: string; expect: RegExp }> = [
   { name: "time.Sleep", src: join(FIXTURE, "sleep_ch", "main.go"), expect: /sleep-result:\s*42/ },
   { name: "WaitGroup+Mutex", src: join(FIXTURE, "waitgroup", "main.go"), expect: /wg-counter:\s*45/ },
   { name: "pipeline", src: join(FIXTURE, "pipeline", "main.go"), expect: /pipeline-total:\s*55/ },
+  { name: "nested (re-entrant suspend)", src: join(FIXTURE, "nested", "main.go"), expect: /nested-sum:\s*36/ },
 ];
 
 let passed = 0;
@@ -96,20 +97,6 @@ async function main(): Promise<void> {
     ok(`${f.name}: in-house asyncify path used`, /binaryen-ts asyncify/.test(text));
     ok(`${f.name}: ran and printed the expected result`, success && f.expect.test(text));
     if (!(success && f.expect.test(text))) console.error(text.slice(0, 600));
-  }
-
-  // ── Control: nested suspension is a KNOWN in-house gap; prove the program
-  //    itself is valid by running it through the default (external wasm-opt)
-  //    path. Skips if no external wasm-opt is available. ──
-  if (await toolAvailable("wasm-opt", ["--version"])) {
-    const { success, text } = await runGo(join(FIXTURE, "nested", "main.go"), /*forceInhouse*/ false);
-    ok(
-      "nested (control, external wasm-opt): program is valid (nested-sum: 36)",
-      success && /nested-sum:\s*36/.test(text),
-    );
-    if (!(success && /nested-sum:\s*36/.test(text))) console.error(text.slice(0, 600));
-  } else {
-    console.log("  (nested control skipped — no external wasm-opt on PATH)");
   }
 
   console.log(`\n  ${passed} passed, ${failed} failed`);
