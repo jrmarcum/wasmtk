@@ -1273,3 +1273,54 @@ async (`2e.10`) + generators (`2e.9`) are the hardest**; everything else is incr
 growth on the proven dynrt scaffolding. **Recommendation:** get the Route A/B decision first — if the
 owner is willing to scope full-JS compile out, Route B retires `javyc` in a single small PR
 (`2h.3`/`2h.4` only) without any 2e/2f work.
+
+## Dynamic modules → run on ANY WASI runtime (wasmtime / wasmer / WAMR / wazero) — PLANNED (2026-07-09)
+
+**Gap (proven).** A `wasmtk dync <file>` artifact (and the merged dynrt-driver `.wasm` the `18*`
+dynamic @test-pipelines produce) currently runs ONLY under wasmtk. `wasm-opt --print` on a `dync`
+output shows exactly three imports:
+
+```
+(import "wasi_snapshot_preview1" "proc_exit" …)   ← standard WASI ✓
+(import "env" "__host_call"  (func (param i32 i32) (result i32)))   ← wasmtk-only ✗
+(import "env" "__host_print" (func (param i32 i32)))               ← wasmtk-only ✗
+```
+
+`wasmtime run` rejects it: `unknown import: env::__host_call has not been defined`. Note there is
+**no `fd_write`** — the dynrt does *all* console output through `env.__host_print`, which only the
+wasmtk runner (`src/utils.ts` `__host_print`) and the bindgen loader (`src/bindgen.ts`) supply. Those
+two `env.*` imports are the entire portability blocker. (`dync.ts` already *claims* "self-contained
+WASI `.wasm`" — this makes the claim true.)
+
+**Fix — make the dynrt library emit pure WASI (both in `dynrt_lib_modc.ts`):**
+
+1. **`env.__host_print` → WASI `fd_write`.** The static path (`console_log.ts`) already emits the
+   canonical sequence: reserve an iovec `[ptr,len]` in scratch, call
+   `fd_write(1, iovPtr, 1, nwrittenPtr)`. dynrt's `print(ptr,len)` must do the same instead of
+   `__host.print`. Wrinkle: dynrt is authored in the wasic subset and holds *raw* `(ptr,len)` bytes,
+   so it can't reuse wasic's string-literal `console.log` emission. **Assist:** add a tiny wasic
+   **intrinsic** `__wasi_write(ptr,len)` (inlines the same iovec+`fd_write` `console_log.ts` produces)
+   and have dynrt call it. (The interpreter already appends the trailing newline, so it's a raw write
+   — no extra formatting.)
+2. **`env.__host_call` → internal trap for the standalone build.** `__host_call` is reached ONLY when
+   a HOST passes a JS function into the core as `any` (the bindgen scenario, `dynMakeHostFn`). A
+   standalone WASI command has no such host, so the import is present-but-never-called — yet runtimes
+   require every import defined at instantiate. Replace it (standalone/dync path) with an internal
+   wasm function that `unreachable`-traps; KEEP the real `env.__host_call` import on the host/bindgen
+   path (which is host-driven, not standalone). Net: **zero non-WASI imports**.
+
+After both, the module imports only `wasi_snapshot_preview1.*` → runs unchanged on **wasmtime**,
+**wasmer**, **WAMR (`iwasm`)**, **wazero** (Go host). (Math.random uses the self-contained xorshift
+PRNG from the Phase-38 mathlib, not `random_get`, so no host dep is added there.)
+
+**Verification + bonus regression suite.** Extend the runner to cross-run each dynamic module under
+every installed runtime (skip-if-absent, like the TinyGo gates) and assert byte-identical stdout vs
+wasmtk. Turns "portable dynamic runtime" into a standing guarantee and catches any re-introduction of
+a host import.
+
+**Scope / sequencing.** Self-contained: a `dynrt_lib_modc.ts` change + one small wasic intrinsic; does
+NOT touch the 19.7K `wasic.ts` monolith's structure. It's exactly the kind of wasmtk-only host
+coupling the modularization Phase-0 audit targets, and it's on-vision (the dynamic runtime becomes a
+genuine *universal* WASI module). Slot as a small high-value item folded into Phase 0 or a mini-track
+right after. **Next action when picked up:** prototype `__wasi_write` + the trap-stub, then prove the
+four-runtime run end-to-end on a `dync` demo.

@@ -4,11 +4,19 @@
 > binaryen). Authoritative status lives in [roadmap.md](roadmap.md); this file is the short,
 > prioritized "what to pick up next" list. Prune items as they land.
 
-## Recommended next pickup
+## Recommended next pickup (updated 2026-07-09)
 
-- **B3 (broaden goroutine coverage)** — small companion to lock down the in-house asyncify (one e2e).
-- **B4/B5/B6** — the remaining small hardening items (all low priority).
-  (A. feature work is now all DONE — utility-types + Go mergeable-leaf both shipped 2026-07-08.)
+- **THE BIG TRACK: wasic modularization** — see [wasic-modularization-plan.md](wasic-modularization-plan.md).
+  **Phase 0 = "look for code issues" audit, run as a loop to ZERO (HARD GATE)** before any module
+  extraction. This is the agreed next major effort.
+- **Dynamic runtime → runs on ANY WASI runtime (wasmtime/wasmer/WAMR/wazero)** — small, high-value,
+  self-contained. `dync`/dynrt `.wasm` currently imports `env.__host_print` + `env.__host_call`
+  (wasmtk-only) → fails standalone. Fix: `__host_print` → WASI `fd_write` (add a `__wasi_write(ptr,len)`
+  wasic intrinsic; dynrt calls it) + `__host_call` → internal trap on the standalone path. Then it's
+  pure-WASI + a cross-runtime regression suite. Full plan in [dynrt-design.md](dynrt-design.md)
+  § "Dynamic modules → run on ANY WASI runtime". Fold into Phase 0 or a mini-track right after.
+- **B6** — asyncify list↔binary-parse name retention: still deferred (no consumer).
+  (A + B3/B4/B5 all DONE 2026-07-09.)
 
 ## A. Feature work (optional, self-contained)
 
