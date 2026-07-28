@@ -119,6 +119,22 @@ code in `utils.ts`. Suite **360/360** (+`18zz`), bindgen 131/131, jstyper 73/73.
 dynrt own-runtime track is functionally complete** — `wasic` (`any`/`eval`) and `dync` (whole-file
 dynamic) both route to wasmtk's own runtime; the interim `javyc` fallback is gone.
 
+**2026-07-27 — `dync` is now PURE-WASI portable + `wasic` guides to `dync`-or-fix (no silent
+fallback).** (1) **Portability:** `wasmtk dync` output previously imported the wasmtk-only
+`env.__host_print` + `env.__host_call`, so it ran only under wasmtk. `internalizeDynrtHostImports`
+(in `compileWasiTs`, before final assembly) now rewrites those into internal definitions —
+`__host_print`→inline WASI `fd_write(1,…)`, `__host_call`→`unreachable` trap — so the module imports
+ONLY `wasi_snapshot_preview1` and runs unchanged on wasmtime/wasmer/wazero (byte-identical stdout,
+9/9). Keyed on the reserved dynrt import names and scoped to the WASI-executable path only, so bindgen
+libraries (`compileLibTs`) keep their `env.*` imports for the host loader. New standing gate
+`tests/dync_cross_runtime_tests.ts` (3/3). (2) **wasic↔dync UX:** on a `wasmtk wasic` abort, the CLI
+now classifies the diagnostics and prints the right next step — `wasmtk dync <file>` for a dynamic
+feature, or "fix this first" for a genuine undefined-name error (dync would fail on it too). Decision:
+KEEP both engines, NO silent auto-fallback (avoids the interpreter-size cliff + masking wasic gaps).
+(3) Merge notices reclassified `⚠️`→`ℹ️` (informational, not warnings; `⚠️` reserved for real
+warnings). Suites green: wasi 375/375, dync_conformance 3/3, bindgen 142/142. Full write-up in
+[dynrt-design.md](dynrt-design.md).
+
 **Version 1.11.0** (2026-06-30) was the async + remaining-ES6 batch (two increments): **2e.10**
 async/await + Promise in eval source — a **SYNCHRONOUS** model (the re-parse interpreter has no
 event loop): an `async

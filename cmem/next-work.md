@@ -9,12 +9,25 @@
 - **THE BIG TRACK: wasic modularization** — see [wasic-modularization-plan.md](wasic-modularization-plan.md).
   **Phase 0 = "look for code issues" audit, run as a loop to ZERO (HARD GATE)** before any module
   extraction. This is the agreed next major effort.
-- **Dynamic runtime → runs on ANY WASI runtime (wasmtime/wasmer/WAMR/wazero)** — small, high-value,
-  self-contained. `dync`/dynrt `.wasm` currently imports `env.__host_print` + `env.__host_call`
-  (wasmtk-only) → fails standalone. Fix: `__host_print` → WASI `fd_write` (add a `__wasi_write(ptr,len)`
-  wasic intrinsic; dynrt calls it) + `__host_call` → internal trap on the standalone path. Then it's
-  pure-WASI + a cross-runtime regression suite. Full plan in [dynrt-design.md](dynrt-design.md)
-  § "Dynamic modules → run on ANY WASI runtime". Fold into Phase 0 or a mini-track right after.
+- **Dynamic runtime → runs on ANY WASI runtime — ✅ DONE (2026-07-27).** `wasmtk dync` output now
+  imports ONLY `wasi_snapshot_preview1.*` and runs unchanged on wasmtime/wasmer/wazero (byte-identical
+  stdout, 9/9). Shipped as a post-merge WAT transform **`internalizeDynrtHostImports`** in
+  `compileWasiTs` (NOT the planned intrinsic — that would have broken bindgen, which shares the dynrt
+  library; the transform is scoped to the hostless WASI-executable path only). print → inline WASI
+  `fd_write(1,…)`; `__host_call` → `unreachable` trap. Standing gate:
+  `tests/dync_cross_runtime_tests.ts` (asserts pure-WASI imports always; byte-diffs under any present
+  runtime, skip-if-absent). Suites green: wasi 375/375, dync_conformance 3/3, bindgen 142/142. Full
+  write-up in [dynrt-design.md](dynrt-design.md) § "Dynamic modules → run on ANY WASI runtime" →
+  "### ✅ IMPLEMENTED".
+- **wasic ↔ dync: keep both engines; abort GUIDES to dync-or-fix — ✅ DONE (2026-07-27).** Owner
+  question ("do we need both? can wasic detect + use dync?") → keep both (different targets), NO
+  silent fallback (interpreter-size cliff + masks wasic gaps). On a `wasmtk wasic` abort the CLI now
+  classifies the diagnostics and points to `wasmtk dync <file>` (dynamic feature) or "fix this first"
+  (undefined name — dync fails on it too); mixed shows both. `compileWasiTs` surfaces `aborted` +
+  `diagnostics` in `WasicResult`; the guidance lives in the `wasic` CLI wrapper only (auto-gated —
+  the dync driver + modc don't use it). Also merge notices `⚠️`→`ℹ️`. See
+  [dynrt-design.md](dynrt-design.md) § "wasic ↔ dync". Deferred: the fuller `wasmtk compile` router
+  (classify-and-route typed/dynamic/mixed) — owner chose the actionable-abort scope.
 - **B6** — asyncify list↔binary-parse name retention: still deferred (no consumer).
   (A + B3/B4/B5 all DONE 2026-07-09.)
 

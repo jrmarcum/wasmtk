@@ -307,7 +307,7 @@ export async function runWasmBundle(
     exportDeclParts.push(...result.exportDecls);
     for (const w of result.wasiImportNames) allWasiNames.add(w);
     for (const notice of result.notices) {
-      allNotices.push(`  ⚠️  ${basename(mod.filePath)}: ${notice}`);
+      allNotices.push(`  ℹ️  ${basename(mod.filePath)}: ${notice}`);
     }
     if (result.droppedAllocator) anyDroppedAllocator = true;
 

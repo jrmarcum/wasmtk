@@ -1274,7 +1274,48 @@ growth on the proven dynrt scaffolding. **Recommendation:** get the Route A/B de
 owner is willing to scope full-JS compile out, Route B retires `javyc` in a single small PR
 (`2h.3`/`2h.4` only) without any 2e/2f work.
 
-## Dynamic modules → run on ANY WASI runtime (wasmtime / wasmer / WAMR / wazero) — PLANNED (2026-07-09)
+## wasic ↔ dync: keep both engines; abort GUIDES to dync-or-fix (no silent fallback) — ✅ SHIPPED (2026-07-27)
+
+**Decision (owner, 2026-07-27):** "Do we need both wasic and dync? Can wasic detect the need for dync
+and use it instead?" → **Keep both engines** (they are different targets, not redundancy: `wasic` =
+static → native WASM for the typed subset = the whole DLL vision; `dync` = the whole program through
+the `wasmtk:dynrt` boxed-value interpreter = the `javyc` replacement, the structural escape hatch for
+what wasic can't express). You can't fold dync's engine into wasic, and you never want wasic output to
+become interpreter-sized. **No silent auto-fallback** — one dynamic line silently swapping a small
+native module for a ~48 KB interpreted one is a 10–100× size/speed cliff that also MASKS real wasic
+gaps (utility types, the ~14 known-open bugs) behind the interpreter. Rejected.
+
+**Shipped instead — actionable abort (Tier 1, refined by owner):** wasic keeps detecting
+incompatibility as before, and on abort **classifies the cause and prints the right next step**:
+
+- `compileWasiTs` now surfaces the abort reason in `WasicResult` (`aborted: true` +
+  `diagnostics: string[]`) — additive, harmless to every other caller.
+- The `wasic` **CLI wrapper `compileWasi`** (and ONLY it — the dync-internal driver compile calls
+  `compileWasiTs` directly, so it can never recommend dync to itself; `modc`/`compileLibTs` doesn't
+  call it either, correct since dync makes an executable, not a library) calls
+  `suggestNextStepOnAbort(path, diagnostics)`, which splits the diagnostics:
+  - **`Unknown function '…' — not declared`** → an undefined name: "fix it first — the dynamic runtime
+    would fail on it too (ReferenceError)." (Flagged as *verify*, not asserted broken — it can also be
+    legit dynamic dispatch wasic can't resolve statically.)
+  - **everything else** (Unsupported statement/expression/string-expression, destructuring gaps) →
+    wasic-static-subset limits → "if this is dynamic, compile with the dynamic runtime:
+    `wasmtk dync <path>`." A mixed program prints BOTH sections (fix first, then dync for the rest).
+- Guidance is informational stderr (no `⚠️`), printed alongside the existing abort; a SUCCESSFUL
+  compile is untouched (no guidance, exit 0). Verified: dynamic-only → dync; undefined-name → fix;
+  mixed → both; success → clean. wasi suite **375/375** (incl. `@expect-fail` abort tests), no regression.
+
+**Deferred (not built):** the fuller unified front-end (`wasmtk compile` router that classifies up
+front and routes typed→wasic / dynamic→dync / mixed→hybrid, reusing `hybrid.ts analyzeSignature`).
+Owner chose the actionable-abort scope; the router remains a future option (note: `wasmtk build` is
+already taken by the Rust polyglot delegation, so a router would be `wasmtk compile`).
+
+## Dynamic modules → run on ANY WASI runtime (wasmtime / wasmer / WAMR / wazero) — ✅ SHIPPED (2026-07-27)
+
+> **DONE.** `wasmtk dync` now emits pure-WASI modules (imports ONLY `wasi_snapshot_preview1.*`) that
+> run unchanged on wasmtime / wasmer / wazero (WAMR untested locally — standard WASI-P1). Implemented
+> NOT via the originally-planned `__wasi_write` intrinsic + `dynrt_lib_modc.ts` edits, but via a
+> **post-merge WAT transform** — see "### ✅ IMPLEMENTED" at the end of this section for the final
+> design and why it's better. The PLANNED / PROVEN notes below are kept for history.
 
 **Gap (proven).** A `wasmtk dync <file>` artifact (and the merged dynrt-driver `.wasm` the `18*`
 dynamic @test-pipelines produce) currently runs ONLY under wasmtk. `wasm-opt --print` on a `dync`
@@ -1348,3 +1389,43 @@ for the host/bindgen build. Then wire the cross-runtime regression suite. (Scrat
 into the real impl: the hand-patch reused iov@0/nwritten@128 — fine because dynrt's print is
 transient — but the intrinsic should use wasic's actual `iovBase`/`NWRITTEN_OFFSET`/`scratchBase`
 constants, not hardcoded 0/128, to stay correct after any merge relocation.)
+
+### ✅ IMPLEMENTED — post-merge WAT transform, not an intrinsic (2026-07-27)
+
+Shipped as **`internalizeDynrtHostImports(wat)`** in `src/wasic.ts`, called in `compileWasiTs` right
+after `injectDynrtMarshalExports` and before `watToOptimisedWasm` (the final merged-WAT stage). It is
+a no-op unless the reserved dynrt-internal imports are present; when they are it:
+
+- removes `(import "env" "__host_print" (func $NAME (param i32 i32)))` and defines `$NAME(ptr,len)` as
+  `(i32.store (i32.const IOV_BASE) ptr) (i32.store (i32.const IOV_BASE+4) len) (drop (call $fd_write
+  (i32.const 1) (i32.const IOV_BASE) (i32.const 1) (i32.const NWRITTEN_OFFSET)))` — using the imported
+  `IOV_BASE`(0) / `NWRITTEN_OFFSET`(128) constants (the main driver never prints, so its low scratch
+  `[0,260)` is free; data starts at DATA_BASE=260);
+- adds `(import "wasi_snapshot_preview1" "fd_write" …)` after `proc_exit` if absent;
+- removes `(import "env" "__host_call" …)` and defines `$NAME2(i32 i32)->i32` as `unreachable`.
+
+Regexes capture the merged func name (`$dynrt___host_print` / `$dynrt___host_call`) so the transform
+is prefix-agnostic; `wat2wasm` + binaryen `-Oz` downstream renumber indices and dead-strip.
+
+**Why the transform beats the planned intrinsic + library edit:**
+
+1. **The dynrt library is shared, and bindgen NEEDS the `env.*` imports.** `wasmtk:dynrt` is merged
+   into BOTH `dync` (standalone, this path) AND bindgen `any`-signature libraries (`compileLibTs`,
+   whose host loader supplies `env.__host_print`/`env.__host_call`). Editing `dynrt_lib_modc.ts` to
+   drop those imports would have broken the bindgen host-callback path (or forced a bindgen WASI-shim
+   change + re-embedding the dynrt bytes). Keying the fix to `compileWasiTs` ONLY (WASI-executable =
+   always hostless) leaves bindgen's `compileLibTs` path — and the embedded dynrt bytes — completely
+   untouched. Verified: `bindgen_tests.ts` 142/142 unchanged.
+2. **No re-embedding, no intrinsic surface.** The embedded `caps_bytes.ts` dynrt bytes stay as-is; no
+   new wasic call-recognition path (which would itself have needed the bindgen-vs-standalone split).
+3. **Keyed on reserved names** (`__host_print`/`__host_call`, never user-authored), so ordinary
+   Phase-40 `declare const` host imports are untouched.
+
+**Verification (2026-07-27).** `wasmtk dync` on demo1/2/3 → each imports only `wasi_snapshot_preview1`
+(`proc_exit` + `fd_write`); byte-identical stdout to `deno run` under **wasmtime ✓ wasmer ✓ wazero ✓**
+(9/9). fd is 1 (stdout) for log/error/warn/info — matches the prior `env.__host_print` (runner wrote
+all console output to stdout via `rt.stdout.writeSync`; dynrt collapses the four methods to one
+`print`), so **no behavior change**. Suites green: wasi **375/375**, dync_conformance **3/3**, bindgen
+**142/142**. New standing gate: **`tests/dync_cross_runtime_tests.ts`** — always asserts pure-WASI
+imports (runtime-free CI safe) and byte-diffs under any of wasmtime/wasmer/wazero present
+(skip-if-absent).

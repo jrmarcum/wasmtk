@@ -135,6 +135,7 @@ import {
   getJoinHelperWat,
   IOV_BASE,
   type LogSegment,
+  NWRITTEN_OFFSET,
   parseConsoleLogArgs,
   SCRATCH_BASE,
   setFuncTableLookup,
@@ -177,6 +178,13 @@ export interface WasicResult {
   sizeBytes?: number;
   /** Human-readable failure message, when unsuccessful. */
   error?: string;
+  /**
+   * True when the failure is specifically the "unsupported feature(s)" abort (not a read/transpile
+   * error). Lets the `wasic` CLI offer the right next step — the dynamic runtime, or fixing an error.
+   */
+  aborted?: boolean;
+  /** The unsupported-feature diagnostics that caused an `aborted` failure (for CLI classification). */
+  diagnostics?: readonly string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -414,6 +422,65 @@ function injectDynrtMarshalExports(wat: string, transpiler: WasicTranspiler): st
     exps += `\n  (export "cabi_realloc" (func $cabi_realloc))`;
   }
   return wat.replace(/\)\s*$/, `  ${exps}\n)`);
+}
+
+/**
+ * Standalone-portability transform (dynrt → pure WASI). A WASI-executable module built via
+ * `compileWasiTs` always targets a HOSTLESS runtime (its entry is `_start`; there is no wasmtk host).
+ * When such a module has merged the `wasmtk:dynrt` runtime, that runtime carries two wasmtk-host-only
+ * imports — `env.__host_print` (console output) and `env.__host_call` (host→core callback) — so the
+ * module fails to instantiate on a plain WASI runtime (wasmtime / wasmer / WAMR / wazero: "unknown
+ * import: env::__host_call"). This rewrites both imports into internal definitions so the output is
+ * pure-WASI and self-contained:
+ *
+ *   - `__host_print(ptr, len)` → an inline WASI `fd_write(1, …)` that writes the byte span to stdout,
+ *     reusing the low scratch wasic already reserves for console output (iov @ `IOV_BASE` = 0,
+ *     nwritten @ `NWRITTEN_OFFSET` = 128 — free: the driver never prints and static data starts at
+ *     DATA_BASE = 260). A `wasi_snapshot_preview1.fd_write` import is added if not already present.
+ *   - `__host_call(idx, args)` → `unreachable`. A standalone dynamic program can never hold a host
+ *     function value (`dynMakeHostFn` is reached only through bindgen's host loader, which uses the
+ *     library `compileLibTs` path — NOT this one), so the call site is dead; trap defensively.
+ *
+ * Keyed on the reserved dynrt-internal import NAMES (`__host_print` / `__host_call`, never
+ * user-authored), so ordinary Phase-40 `declare const` host imports are left untouched. No-op when
+ * neither import is present. `wat2wasm` + binaryen `-Oz` downstream renumber indices and dead-strip.
+ * Proven byte-identical stdout across wasmtime / wasmer / wazero (2026-07-09 hand-patch, now productized).
+ */
+function internalizeDynrtHostImports(wat: string): string {
+  const printRe =
+    /^[ \t]*\(import "env" "__host_print" \(func (\$[A-Za-z0-9_]+) \(param i32 i32\)\)\)[ \t]*\r?\n/m;
+  const callRe =
+    /^[ \t]*\(import "env" "__host_call" \(func (\$[A-Za-z0-9_]+) \(param i32 i32\) \(result i32\)\)\)[ \t]*\r?\n/m;
+  const printM = wat.match(printRe);
+  const callM = wat.match(callRe);
+  if (!printM && !callM) return wat;
+
+  const defs: string[] = [];
+  if (printM) {
+    wat = wat.replace(printRe, "");
+    const fn = printM[1];
+    defs.push(
+      `  (func ${fn} (param $ptr i32) (param $len i32)\n` +
+        `    (i32.store (i32.const ${IOV_BASE}) (local.get $ptr))\n` +
+        `    (i32.store (i32.const ${IOV_BASE + 4}) (local.get $len))\n` +
+        `    (drop (call $fd_write (i32.const 1) (i32.const ${IOV_BASE}) (i32.const 1) (i32.const ${NWRITTEN_OFFSET}))))`,
+    );
+  }
+  if (callM) {
+    wat = wat.replace(callRe, "");
+    defs.push(`  (func ${callM[1]} (param i32 i32) (result i32) unreachable)`);
+  }
+
+  // __host_print needs a WASI fd_write import — add it (after proc_exit, so imports precede defs).
+  if (printM && !/\(import "wasi_snapshot_preview1" "fd_write"/.test(wat)) {
+    wat = wat.replace(
+      /(\(import "wasi_snapshot_preview1" "proc_exit"[^\n]*\)[ \t]*\r?\n)/,
+      `$1  (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n`,
+    );
+  }
+
+  // Append the new definitions before the module's closing paren.
+  return wat.replace(/\)\s*$/, `${defs.join("\n")}\n)`);
 }
 
 /** Converts camelCase or snake_case identifiers to WIT kebab-case. */
@@ -19443,6 +19510,8 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
   if (transpiler.warnings.length > 0) {
     return {
       success: false,
+      aborted: true,
+      diagnostics: [...transpiler.warnings],
       error:
         `Compilation aborted: ${transpiler.warnings.length} unsupported feature(s) — see warnings above`,
     };
@@ -19462,7 +19531,7 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
       wabtMod,
     );
     for (const notice of notices) {
-      console.log(`  ⚠️  Imported "${entry.filePath}": ${notice}`);
+      console.log(`  ℹ️  Imported "${entry.filePath}": ${notice}`);
     }
     wat = mergedWat;
     if (hasMutableGlobals) anyMutableGlobals = true;
@@ -19514,6 +19583,13 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
   // #14 follow-up: export the dynrt marshalling helpers (+ cabi_realloc for `any` strings) so bindgen
   // can box/unbox JS values for `any`-signature functions. Injected before the module's closing `)`.
   wat = injectDynrtMarshalExports(wat, transpiler);
+
+  // Dynamic-runtime portability: a WASI executable that merged `wasmtk:dynrt` imports
+  // `env.__host_print` / `env.__host_call` (wasmtk-host-only). Internalize them (print → WASI
+  // fd_write; call → trap) so `wasmtk dync` output runs on any WASI runtime (wasmtime/wasmer/WAMR/
+  // wazero). No-op unless those reserved dynrt imports are present. (bindgen libraries take the
+  // `compileLibTs` path and keep the env imports for their host loader.)
+  wat = internalizeDynrtHostImports(wat);
 
   // Write WAT alongside the output for inspection / debugging
   await rt.writeTextFile(watPath, wat);
@@ -19614,6 +19690,8 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
   if (transpiler.warnings.length > 0) {
     return {
       success: false,
+      aborted: true,
+      diagnostics: [...transpiler.warnings],
       error:
         `Compilation aborted: ${transpiler.warnings.length} unsupported feature(s) — see warnings above`,
     };
@@ -19631,7 +19709,7 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
       wabtMod2,
     );
     for (const notice of notices) {
-      console.log(`  ⚠️  Imported "${entry.filePath}": ${notice}`);
+      console.log(`  ℹ️  Imported "${entry.filePath}": ${notice}`);
     }
     wat = mergedWat;
     const mod2 = wabtMod2.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: false });
@@ -19704,6 +19782,50 @@ export async function compileWasi(path: string, outPath?: string): Promise<void>
   const result = await compileWasiTs(path, outPath);
   if (!result.success) {
     if (result.error) console.error(`❌ wasic: ${result.error}`);
+    if (result.aborted) suggestNextStepOnAbort(path, result.diagnostics ?? []);
     rt.exit(1);
+  }
+}
+
+/**
+ * After `wasmtk wasic` aborts on unsupported feature(s), tell the user which way to go: recompile
+ * with the dynamic runtime (`wasmtk dync`) when the program is simply too dynamic for wasic's
+ * static subset, OR fix a genuine error first when one of the diagnostics is an undefined-name error
+ * that the dynamic runtime would hit too. Called ONLY from the `wasic` CLI wrapper — never from the
+ * dync-internal driver compile (which uses `compileWasiTs` directly), so it can't recommend dync to
+ * itself. Reserves `⚠️` for warnings; guidance is informational (stderr, alongside the abort).
+ */
+function suggestNextStepOnAbort(path: string, diagnostics: readonly string[]): void {
+  // An "Unknown function '…' — not declared" diagnostic is an undefined reference: it may be a typo
+  // or a missing declaration (which the dynamic runtime would also fail on, as a ReferenceError),
+  // OR legitimate dynamic dispatch wasic can't resolve statically. Flag it for the user to verify
+  // rather than asserting either way. Every other diagnostic is a wasic-only static-subset limit.
+  const errorLike = diagnostics.filter((d) => /Unknown function .* not declared/.test(d));
+  const featureLike = diagnostics.filter((d) => !errorLike.includes(d));
+
+  console.error("");
+  if (errorLike.length > 0) {
+    console.error(
+      "   Some item(s) above look like undefined names, not just unsupported features:",
+    );
+    for (const d of errorLike) console.error(`     • ${d}`);
+    console.error(
+      "   If any is a typo or missing declaration, fix it first — the dynamic runtime would fail on it too.",
+    );
+    console.error("");
+  }
+  if (featureLike.length > 0) {
+    console.error(
+      "   wasic compiles a statically-typed TypeScript subset. If this program is dynamic (uses",
+    );
+    console.error(
+      "   `any`, dynamic object shapes, `eval`, or untyped values), compile it with the dynamic",
+    );
+    console.error(
+      "   runtime instead — it runs any JS/TS, though the module is larger and slower than wasic's:",
+    );
+    console.error("");
+    console.error(`       wasmtk dync ${path}`);
+    console.error("");
   }
 }

@@ -685,11 +685,13 @@ bundled.
 
 ```bash
 wasmtk dync myprogram.ts
-wasmtk run myprogram.wasm
+wasmtk run myprogram.wasm      # or any WASI runtime — e.g. `wasmtime run myprogram.wasm`
 ```
 
-**What it produces:** A self-contained WASI executable that interprets your whole program at module
-start; `console.log`/`error`/`warn` print to stdout via the runtime's host-print import.
+**What it produces:** A self-contained, **pure-WASI** executable that interprets your whole program at
+module start; `console.log`/`error`/`warn` print to stdout via WASI `fd_write`. It imports **only**
+`wasi_snapshot_preview1`, so it runs unchanged on any standard WASI runtime — wasmtk's own `run`, and
+also `wasmtime`, `wasmer`, `wazero`, WAMR, etc.
 
 **Best suited for:**
 
@@ -702,7 +704,10 @@ start; `console.log`/`error`/`warn` print to stdout via the runtime's host-print
 **How it differs from `wasic`:** `wasic` validates and lowers statically-typed TypeScript to
 hand-tuned WAT (smallest, fastest). `dync` embeds the source and interprets it (larger,
 interpreter-speed) but accepts fully-dynamic code. When a program is statically typeable, prefer
-`wasic`; reach for `dync` when it isn't.
+`wasic`; reach for `dync` when it isn't. If you run `wasmtk wasic` on a dynamic program it aborts and
+points you here (`wasmtk dync <file>`); if the failure is a genuine error such as an undefined name,
+it tells you to fix that first (the dynamic runtime would fail on it too). Both compilers are kept —
+there is no silent fallback.
 
 **Out of scope (v1):** interactive `prompt` (the interpreter has no host stdin) and ESM
 `import`/`export` of _other_ modules — `dync` compiles a single self-contained file. Output parity
