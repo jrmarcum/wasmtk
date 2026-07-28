@@ -8,6 +8,45 @@
 > it fully ships. Highlights are full descriptions (no `…` truncation): a feature says what it does;
 > a bug fix states the issue and the fix. Detail sections were collapsed into this table (2026-07);
 > deep internals live in `cmem/`, worked examples in each command's README section.
+>
+> **ROW PLACEMENT — group by PHASE, not by date (owner directive 2026-07-28).** A new enhancement or
+> bug-fix row goes **immediately beneath the phase row it belongs to**, so everything about a phase
+> reads together. Do NOT append new dated rows to the end of the `✅` block — they are invisible
+> there (this is exactly what went wrong on the 2026-07-28 stress-test batch: five correctly-dated
+> rows were added at the bottom and the owner could not find them). The only global ordering rule
+> that outranks this is the `⏳`-always-last rule above.
+>
+> **ROW LABELLING.** The **Phase** column carries the phase number, the kind of change, and the date:
+> `NN (YYYY-MM-DD)` for the phase itself, `NN bug fix (YYYY-MM-DD)` / `NN enhancement (YYYY-MM-DD)`
+> for a later change to that phase. Put the date in the **Phase** column, never buried in Highlights.
+> End the Highlights with the regression/stress-test filename(s) that cover the change (e.g.
+> ``Stress test `26_NestedForOfMatrix` ``) so the row points at its own proof.
+>
+> **This applies to every future stress-test batch.** When a batch surfaces bugs across several
+> phases, the rows scatter — one under each affected phase — rather than clustering as a batch.
+> The batch itself is recorded as a single unit in `compiler-bugs.md` (post-mortems) and
+> `testing.md` (counts); the README only ever gets the per-phase, user-facing rows.
+
+## Working tree (2026-07-28, post-v1.11.7) — stress-test batch + 6 compiler fixes
+
+Uncommitted, unreleased. 8 owner-supplied Phase 22/24/25/26 stress tests added to
+`tests/wasi/wasm_wasi`; 5 of them surfaced genuine compiler bugs, all fixed in `src/wasic.ts` +
+`src/console_log.ts`. Suite **375 → 383/383**, zero regressions; bindgen 142, jstyper 73, mod 55,
+merge 1, varscope 12 all unchanged.
+
+New capability: **nullable module-level globals** (`let g: T | null` at module scope, with `g ??= v`
+from inside a function) — previously a hard *unsupported statement* abort. Fixes: `expr as T` no
+longer mis-types `**`/`Math.*` sources (this also repaired the common `Math.floor(x) as i32`
+idiom); nested `for…of` no longer shares one cursor (a 3×2 matrix summed to 3 instead of 21); `??`
+now works inside `console.log` args; `T | null` functions can return tuple/struct literals;
+`$__nullable_ret_flag` is declared whenever it is referenced. Full post-mortems (including a
+self-inflicted mid-fix regression and its root cause) in
+[compiler-bugs.md](compiler-bugs.md) § "Stress-test batch (2026-07-28)"; the new
+must-not-revert invariants are in [design-decisions.md](design-decisions.md) § "Nullable (`T |
+null`) + cast invariants".
+
+`tests/bundle_tests.ts` `StructImport` fails — **verified pre-existing** on a clean tree, not from
+this batch. Still open.
 
 ## Release status (2026-07-28) — v1.11.7 (JSR score 100)
 

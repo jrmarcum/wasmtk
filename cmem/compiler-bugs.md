@@ -1,5 +1,71 @@
 # Compiler bug log
 
+## Stress-test batch (2026-07-28) — 8 new Phase 22/24/25/26 tests surfaced 6 bugs, all FIXED
+
+Owner supplied 8 hand-written stress tests (Phase 22 enum-folding/casts, 24 nullable returns, 25
+nullish/logical-assignment, 26 `for…of`/destructuring). 3 passed as-written; the other 5 each
+exposed a genuine defect. Gate after the fixes: wasi **383/383** (was 375; +8 new tests, zero
+regressions), bindgen **142**, jstyper 73, mod 55, merge 1, varscope 12.
+
+**1. `expr as T` hardcoded the cast SOURCE type to `i32` for every compound expression**
+(`emitExpr`, the Phase 22 ` as ` handler). `**` always emits `(call $mathlib_pow …)` → f64
+regardless of the requested `defaultType`, so `(baseVal ** 3) as f64` wrapped an f64 producer in
+`f64.convert_i32_s` → `expected type i32, found call of type f64`. Probing showed the far more
+common `Math.floor(x) as i32` was broken the same way (`local.set[0] expected i32, found
+f64.floor`) — most `Math.*` handlers emit a native f64 op unconditionally; only
+`abs`/`min`/`max`/`imul`/`clz32` branch on `defaultType`. **Fix:** new `compoundExprIsAlwaysF64()`
++ `MATH_I32_AWARE` set; those two provably-f64 forms now type as f64. Deliberately conservative —
+only whole-expression matches count, so a merely f64-*containing* expression (`(a + Math.floor(x))`)
+keeps the i32 default. A blanket `inferExprType` fallback was rejected: `inferInitType` returns
+"f64" for anything parenthesized, which would have broken parenthesized i32 arithmetic cast to f64.
+Test `22_ConstEnumFoldingAndExponentCast`.
+
+**2. Tuple/struct literal returned from a `T | null` function was emitted as a homogeneous array.**
+The nullable-return branch short-circuited with a plain `emitExpr` *before* the dedicated
+aggregate-return paths, so `return [100, 3.14159]` from `(): Pair | null` hit the generic
+array-literal emitter (which assumes uniform elements) and produced the invalid token
+`(i32.const 3.14159)`. Inline and aliased tuple returns both worked; only `| null` broke it.
+**Fix:** delegate aggregate literals to the existing struct/tuple return emitters, guarded on the
+return type actually resolving to a `StructDef` so plain `i32[] | null` returns keep their path.
+
+**3. `$__nullable_ret_flag` referenced but never declared.** `needsNullableResultFlag` was set only
+by a nullable *variable declaration carrying an explicit annotation*; a caller relying on inference
+(`const n = maybeGet()`) left the global undeclared while the callee still emitted `global.set` into
+it → `undefined global`. Masked by bug 2 (parse error aborted first). **Fix:** set the flag at the
+site that references it. Test `24_NullableTupleReturnAndFlags`.
+
+**4. `??` was unsupported inside `console.log` arguments.** `console_log.ts` has no nullable
+awareness, so `val ?? -1` fell through to the comment-stub fallback plus a stray unary minus
+(printed `-1` instead of `100`). **Fix:** new `setNullishResolver` singleton delegating to
+`emitExpr` (same pattern as `_instanceofResolver`), avoiding a 12th parameter on `parseSingleArg`.
+Must run BEFORE the boolexpr/ternary blocks — the `_hasTernary` probe matches the leading `?` of
+`??` and would otherwise swallow it.
+
+**5. Nullable MODULE globals were unimplemented** — `globalNullable ??= 77` aborted with
+*unsupported statement*. `parseModuleGlobals`'s annotation group was `(\w+)`, which cannot match
+`i32 | null`, so the declaration never became a global; notably the `??=`-on-nullable-global
+**emitter already existed** (`logicalAssignMatch`) — only the declaration side was missing.
+**Fix:** persistent `moduleNullableGlobals` map + a companion `$name__null` WASM global + re-seeding
+`nullableVarInnerType` after its per-function reset. Test `25_LogicalAssignmentOperators`.
+**Self-inflicted regression during this fix (worth remembering):** widening the annotation regex
+made `let x: i32 | null = 7` match the OUTER regex for the first time; when promotion declined, it
+**fell through to the plain-global path**, registering a global with no `__null` companion while
+every reference site still emitted `local.get $x__null` — broke `24_NullUndefined` +
+`25_NullishOps` (378/380). Fixed by making a nullable annotation never reach that path, and
+restricting promotion to names genuinely referenced in a non-`_start` function body.
+
+**6. Nested `for…of` shared ONE cursor local.** A single `$__forof_idx` meant the inner loop
+clobbered the outer loop's index; the outer then re-tested an exhausted cursor and ran exactly one
+iteration — a 3×2 matrix summed to **3 instead of 21**. Silently wrong, not a crash. **Fix:**
+per-nesting-depth index locals (`forOfDepth` + `forOfIdxLocal()`), incremented around body
+emission; depth 0 keeps the unsuffixed name so non-nested loops emit byte-identical WAT. Both
+pre-scans declare one cursor per `for…of` statement — an upper bound on nesting depth.
+Test `26_NestedForOfMatrix`.
+
+**Verified pre-existing, NOT caused by this batch:** `tests/bundle_tests.ts` `StructImport`
+(compile abort, 10 unsupported features) fails identically on a clean tree — confirmed by stashing
+the working changes, rebuilding, and re-running. Still open; worth a look separately.
+
 ## Code-audit sweep (2026-07-08) — THREE fan-out passes, all fixed, all suites green
 
 Three adversarial fan-out passes over the freshly-added asyncify port (binaryen-ts) + Go-bindgen /

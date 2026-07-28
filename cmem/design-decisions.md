@@ -4,6 +4,49 @@ Invariants and codegen rules that are easy to break in a refactor and must NOT b
 reverted. The exhaustive list (with line numbers) is in the legacy `CLAUDE.md`; this is the
 high-value subset.
 
+## Nullable (`T | null`) + cast invariants (added 2026-07-28)
+
+- **Each `for…of` loop needs its OWN cursor local.** `forOfIdxLocal()` returns `__forof_idx` at
+  depth 0 and `__forof_idx<N>` deeper; `forOfDepth` is incremented around the loop-body emission in
+  BOTH for-of emitters (the `isStringArr` one and the general one). Do NOT collapse these back to a
+  single shared `$__forof_idx` — the inner loop then clobbers the outer cursor and the outer loop
+  runs exactly one iteration (silently wrong: a 3×2 matrix summed to 3 instead of 21). Depth 0 keeps
+  the unsuffixed name deliberately, so non-nested loops emit byte-identical WAT. Both pre-scans
+  declare one cursor per `for…of` statement (an upper bound on nesting depth), so any name
+  `forOfIdxLocal()` can return is always declared.
+- **A nullable annotation must NEVER fall through to the plain-module-global path.** In
+  `parseModuleGlobals` the annotation group accepts `T | null`; when the nullable branch declines to
+  promote, it MUST `remaining.push(line); continue;`. Letting it reach the ordinary global path
+  registers a global with no `__null` companion while every reference site still emits
+  `local.get $x__null` (this exact regression broke `24_NullUndefined` + `25_NullishOps`).
+- **Module-level nullables are promoted to globals ONLY when a non-`_start` function references
+  them.** A nullable used purely at top level stays in `startBodyLines` and becomes a `_start` local
+  with its `$x__null` companion local — which is what every existing nullable reference site emits.
+- **`moduleNullableGlobals` is persistent; `nullableVarInnerType` is per-function.** Re-seed the
+  latter from the former after BOTH resets (`emitFunction` and the `_start` pre-scan), or `g ??= v`
+  stops resolving inside function bodies.
+- **Set `needsNullableResultFlag` at the site that REFERENCES `$__nullable_ret_flag`** (the
+  nullable-return branch), not only where nullable variables are declared — a caller relying on
+  inference (`const n = maybeGet()`) otherwise leaves the global undeclared.
+- **A `T | null` function returning an aggregate literal must delegate to the aggregate-return
+  emitters.** The nullable-return branch short-circuits with a plain `emitExpr`; for `[…]`/`{…}`
+  whose return type resolves to a `StructDef`, hand off to the struct/tuple paths instead, or the
+  generic array-literal emitter assumes uniform elements and emits `(i32.const 3.14159)` for an f64
+  tuple field. Keep the `StructDef` guard so plain `i32[] | null` returns keep their own path.
+- **`expr as T` must not assume an `i32` source for compound expressions.**
+  `compoundExprIsAlwaysF64()` types the two forms that `emitExpr` emits as f64 regardless of the
+  requested `defaultType`: a depth-0 `**` (always `$mathlib_pow`) and a whole-expression
+  `Math.fn(...)` whose `fn` is not in `MATH_I32_AWARE` (`abs`/`min`/`max`/`imul`/`clz32` — the only
+  handlers that branch on `defaultType`). Keep it whole-expression-only: a merely f64-*containing*
+  expression must keep the i32 default. Do NOT replace it with a blanket `inferExprType` fallback —
+  `inferInitType` returns "f64" for anything parenthesized, which breaks parenthesized i32
+  arithmetic cast to f64.
+- **`??` inside `console.log`/`console.error` args routes through `setNullishResolver`.**
+  `console_log.ts` has no view of the nullable tables, so it delegates to `emitExpr`. The check must
+  sit BEFORE the boolexpr and ternary blocks in `parseSingleArg` — the `_hasTernary` probe matches
+  the leading `?` of `??` and otherwise swallows it. (Same singleton pattern as
+  `_instanceofResolver`; set and cleared around each `parseConsoleLogArgs` call at BOTH sites.)
+
 ## Scanners / parsing correctness
 
 - **Bracket/paren/operator scanners MUST skip string & template literals.** `findBinaryOp` and the

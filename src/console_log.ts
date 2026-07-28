@@ -265,6 +265,28 @@ export function setInstanceofResolver(
   _instanceofResolver = fn;
 }
 
+/** Resolve a nullish-coalescing token (`a ?? b`) to a WAT expression plus its result type via
+ *  wasic's emitExpr, which owns the Phase 24 nullable-variable tables (`$x__null` companions)
+ *  this module has no view of. Set by wasic.ts around parseConsoleLogArgs. Returns undefined
+ *  when the token has no depth-0 `??`. */
+let _nullishResolver:
+  | ((
+    token: string,
+    locals: Map<string, string>,
+  ) => { wat: string; type: string } | undefined)
+  | undefined = undefined;
+/**
+ * Inject the callback that resolves an `a ?? b` token to a WAT expression via wasic's emitExpr;
+ * returns `undefined` when the token isn't a nullish coalesce. Pass `undefined` to clear it.
+ */
+export function setNullishResolver(
+  fn:
+    | ((token: string, locals: Map<string, string>) => { wat: string; type: string } | undefined)
+    | undefined,
+): void {
+  _nullishResolver = fn;
+}
+
 /** Resolve a string-producing expression (e.g. `s.toUpperCase()`, `arr[i].toUpperCase()`) to a
  *  ptr/len WAT pair via wasic's emitStringPtrLen (captured into temp locals). Set by wasic.ts
  *  around parseConsoleLogArgs. Returns undefined when the token isn't a handled string expr. */
@@ -1210,6 +1232,17 @@ function parseSingleArg(
   if (_instanceofResolver && /^\w+\s+instanceof\s+\w+$/.test(token)) {
     const iw = _instanceofResolver(token, locals);
     if (iw !== undefined) return [{ kind: "boolexpr", wat: iw }];
+  }
+
+  // ── Phase 25: nullish coalescing `a ?? b` → delegate to wasic's emitExpr, which owns the
+  // nullable-variable tables. MUST run before the boolexpr and ternary blocks below: the
+  // `_hasTernary` probe matches the leading `?` of `??`, so `val ?? -1` would otherwise be
+  // mis-parsed as a ternary and fall through to the comment-stub fallback.
+  if (_nullishResolver && findTopLevelOp(token, "??") !== -1) {
+    const nw = _nullishResolver(token, locals);
+    if (nw !== undefined) {
+      return [{ kind: nw.type === "f64" || nw.type === "f32" ? "f64expr" : "i32expr", wat: nw.wat }];
+    }
   }
 
   // ── Boolean expression: &&, ||, !, comparisons → boolexpr (prints "true"/"false")

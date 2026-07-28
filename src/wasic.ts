@@ -140,6 +140,7 @@ import {
   SCRATCH_BASE,
   setFuncTableLookup,
   setInstanceofResolver,
+  setNullishResolver,
   setStrCmpNeededCallback,
   setStringArrayAllocator,
   setStringExprResolver,
@@ -272,6 +273,11 @@ function watBaseType(t: WatType): "i32" | "i64" | "f32" | "f64" {
   if (t === "bool" || t === "string" || t === "never") return "i32";
   return t as "i32" | "i64" | "f32" | "f64";
 }
+
+/** The `Math.*` functions whose emitters branch on the requested `defaultType` and can
+ *  yield i32. Every other Math handler emits a native f64 op unconditionally — see
+ *  `compoundExprIsAlwaysF64`, which uses this set to type `Math.fn(...) as T` casts. */
+const MATH_I32_AWARE = new Set(["abs", "min", "max", "imul", "clz32"]);
 
 // ---------------------------------------------------------------------------
 // Minimal WAT s-expression helpers (used by the terminal-fallthru fix).
@@ -1703,6 +1709,16 @@ class WasicTranspiler {
   // Reference types (string, struct, array) use 0-pointer as the null sentinel.
   // Reset at the start of each emitFunction call and before the _start body pre-scan.
   private nullableVarInnerType: Map<string, WatType> = new Map();
+  // Phase 24: MODULE-LEVEL `T | null` globals — name → inner type + whether the initialiser
+  // was `null`. Persistent (unlike nullableVarInnerType, which is per-function), because the
+  // companion `$name__null` is a WASM global rather than a local; nullableVarInnerType is
+  // re-seeded from this after each per-function reset so `g ??= v` resolves inside any body.
+  private moduleNullableGlobals: Map<string, { inner: WatType; initiallyNull: boolean }> =
+    new Map();
+  // Phase 26: current `for…of` nesting depth, so each loop gets its OWN index local.
+  // A single shared `$__forof_idx` made an inner loop clobber its outer loop's cursor —
+  // the outer loop then re-tested an already-exhausted index and ran exactly one iteration.
+  private forOfDepth = 0;
   // Phase 24: functions returning T|null — funcName → inner WAT type.
   private nullableFuncReturnType: Map<string, WatType> = new Map();
   // Phase 24: set to true when the function currently being emitted returns T|null.
@@ -3338,13 +3354,56 @@ class WasicTranspiler {
     const remaining: string[] = [];
     for (const line of this.startBodyLines) {
       const m = line.match(
-        /^(?:export\s+)?(const|let|var)\s+(\w+)\s*(?::\s*(\w+))?\s*=\s*(.+?);?$/,
+        // The annotation accepts a Phase 24 nullable union (`i32 | null`) as well as a plain
+        // type name — without the union alternative the whole match fails and the declaration
+        // silently stays a _start local, so `g ??= v` inside a function can't resolve it.
+        /^(?:export\s+)?(const|let|var)\s+(\w+)\s*(?::\s*(\w+(?:\s*\|\s*(?:null|undefined))*))?\s*=\s*(.+?);?$/,
       );
       if (m) {
         const keyword = m[1];
         const name = m[2];
         const typeStr = m[3] ?? "";
         const initExpr = m[4].trim();
+        // Phase 24: `let g: T | null = null | <literal>` — a value global plus a companion
+        // `$g__null` flag global (1 = null). Only literal initialisers are constant-foldable
+        // into a WAT global init expression; anything else falls through to startBodyLines.
+        const mgNullInner = typeStr ? parseNullableAnnotation(typeStr) : null;
+        // Promote ONLY when a real function body references it. A nullable used purely at
+        // top level stays in startBodyLines and becomes a _start local with its `$x__null`
+        // companion local, which is what every existing nullable reference site emits; making
+        // those globals would leave `local.get $x__null` pointing at a local that no longer
+        // exists. Same reasoning (and same idiom) as the mutable module-level string globals.
+        // A function that declares its OWN local of this name is shadowing, not referencing.
+        const mgReferencedInFn = this.functions.some((f) =>
+          f.name !== "_start" &&
+          new RegExp(`\\b${name}\\b`).test(f.bodyLines.join("\n")) &&
+          !new RegExp(`\\b(?:const|let|var)\\s+${name}\\b`).test(f.bodyLines.join("\n"))
+        );
+        if (mgNullInner !== null) {
+          const isNullInit = initExpr === "null" || initExpr === "undefined";
+          if (
+            watBaseType(mgNullInner) !== undefined && mgReferencedInFn &&
+            (isNullInit || /^-?\d+(\.\d+)?n?$/.test(initExpr))
+          ) {
+            this.moduleGlobals.set(name, {
+              type: mgNullInner,
+              mutable: keyword !== "const",
+              initExpr: isNullInit ? "0" : initExpr,
+            });
+            this.moduleNullableGlobals.set(name, {
+              inner: mgNullInner,
+              initiallyNull: isNullInit,
+            });
+            continue;
+          }
+          // Not promoted — keep it in startBodyLines as a _start local (the pre-existing
+          // behaviour). It must NOT fall through to the plain-global path below: widening the
+          // annotation regex above made `let x: i32 | null = 7` reach that path for the first
+          // time, which registered a global with no `__null` companion while every reference
+          // site still emitted `local.get $x__null`.
+          remaining.push(line);
+          continue;
+        }
         // Skip arrows, arrays, objects, and multi-word initialisers we can't constant-fold
         if (initExpr.includes("=>") || initExpr.startsWith("[") || initExpr.startsWith("{")) {
           remaining.push(line);
@@ -6913,6 +6972,64 @@ class WasicTranspiler {
   }
 
   /**
+   * True when `expr` is a compound form that `emitExpr` always emits as f64, no matter
+   * which `defaultType` the caller asks for. Used by the `as`-cast source-type inference,
+   * whose fallback for compound expressions is otherwise i32.
+   *
+   * Two such forms exist:
+   *  - `a ** b` — always `(call $mathlib_pow …)` (see the Phase 22 exponentiation handler).
+   *  - `Math.<fn>(…)` — every Math handler emits a native f64 op EXCEPT abs/min/max/imul/
+   *    clz32, which branch on `defaultType` and yield i32 in i32 context.
+   *
+   * Deliberately conservative: only whole-expression matches count, so a merely
+   * f64-*containing* expression (e.g. `(a + Math.floor(x))`) keeps the i32 default.
+   */
+  /** Name of the `for…of` cursor local for the current nesting depth. Depth 0 keeps the
+   *  original unsuffixed `__forof_idx`, so non-nested loops emit byte-identical WAT. The
+   *  matching pre-scans declare one local per for…of statement in the body — an upper bound
+   *  on nesting depth, so the name resolved here is always declared. */
+  private forOfIdxLocal(): string {
+    return this.forOfDepth === 0 ? "__forof_idx" : `__forof_idx${this.forOfDepth}`;
+  }
+
+  private compoundExprIsAlwaysF64(expr: string): boolean {
+    // Strip parens that wrap the WHOLE expression, so `(a ** b)` is seen the same as
+    // `a ** b`. Only a truly wrapping pair is peeled: in `(a) ** (b)` the first `(`
+    // closes before the end, so the loop stops and the `**` scan below still sees it.
+    let e = expr.trim();
+    while (e.startsWith("(") && e.endsWith(")")) {
+      let d = 0, wraps = true;
+      for (let i = 0; i < e.length - 1; i++) {
+        if (e[i] === "(" || e[i] === "[") d++;
+        else if (e[i] === ")" || e[i] === "]") d--;
+        if (d === 0) {
+          wraps = false;
+          break;
+        }
+      }
+      if (!wraps) break;
+      e = e.slice(1, -1).trim();
+    }
+    // `a ** b` at depth 0 — always routes to $mathlib_pow (f64).
+    if (this.findDepth0LTR(e, "**") !== -1) return true;
+    // Whole-expression `Math.fn(...)`; the paren-balance scan rejects a partial match
+    // such as `Math.floor(x) + 1`, where the trailing `)` is not the expression end.
+    const mM = e.match(/^Math\.(\w+)\s*\(([\s\S]*)\)$/);
+    if (mM) {
+      let depth = 0, balanced = true;
+      for (const ch of mM[2]) {
+        if (ch === "(") depth++;
+        else if (ch === ")" && --depth < 0) {
+          balanced = false;
+          break;
+        }
+      }
+      if (balanced && depth === 0 && !MATH_I32_AWARE.has(mM[1])) return true;
+    }
+    return false;
+  }
+
+  /**
    * Returns a pair of WAT expressions `"ptr_wat len_wat"` for a string-typed
    * expression, suitable as arguments to $__str_cmp.
    * Handles: string variable identifiers and string literals.
@@ -7554,6 +7671,12 @@ class WasicTranspiler {
             const sv = this.structVars.get(sfM[1]);
             const field = sv?.def.fields.find((f) => f.name === sfM[2]);
             srcType = (field?.type as WatType) ?? defaultType;
+          } else if (this.compoundExprIsAlwaysF64(inner)) {
+            // Some compound forms are emitted as f64 REGARDLESS of the requested
+            // defaultType (`**` → $mathlib_pow; most Math.* → native f64 ops), so the
+            // i32 default below would wrap an f64 producer in `f64.convert_i32_s` /
+            // feed it to an i32 slot. See compoundExprIsAlwaysF64.
+            srcType = "f64";
           } else {
             // compound expressions default to i32 (arithmetic result)
             srcType = "i32";
@@ -10144,10 +10267,34 @@ class WasicTranspiler {
       // Phase 24: nullable-return function — set $__nullable_ret_flag before returning.
       // flag=1 → has value; flag=0 → is null.
       if (this.currentFuncIsNullableReturn) {
+        // Declare the flag global here, at the site that REFERENCES it. The pre-scan only
+        // sets this when a nullable variable is declared with an explicit `T | null`
+        // annotation, so a caller relying on inference (`const n = maybeGet()`) left the
+        // global undeclared while the callee still emitted `global.set` into it.
+        this.needsNullableResultFlag = true;
         if (expr === "null" || expr === "undefined") {
           return `(global.set $__nullable_ret_flag (i32.const 0))\n      (return (${
             watBaseType(funcResult)
           }.const 0))`;
+        }
+        // Aggregate literal returned from a `T | null` function — `return [a, b]` (tuple)
+        // or `return { k: v }` (struct). These need the dedicated aggregate-return paths
+        // further down, which allocate the StructDef and store each field with its OWN
+        // type. Falling through to emitExpr instead would hit the generic array-literal
+        // path, which assumes homogeneous elements and emits e.g. `(i32.const 3.14159)`
+        // for an f64 tuple field — invalid WAT. Only delegate when the return type really
+        // resolves to a StructDef, so plain `i32[] | null` returns keep their existing path.
+        const nullableAggDef = this.currentFuncResultTsName
+          ? this.structDefs.get(this.currentFuncResultTsName)
+          : undefined;
+        if (nullableAggDef && (expr.startsWith("[") || expr.startsWith("{"))) {
+          this.currentFuncIsNullableReturn = false;
+          try {
+            const aggWat = this.emitStatement(line, locals, funcResult);
+            return `(global.set $__nullable_ret_flag (i32.const 1))\n      ${aggWat}`;
+          } finally {
+            this.currentFuncIsNullableReturn = true;
+          }
         }
         const retWat = this.emitExpr(expr, locals, funcResult);
         return `(global.set $__nullable_ret_flag (i32.const 1))\n      (return ${retWat})`;
@@ -12391,6 +12538,19 @@ class WasicTranspiler {
           lenWat: `(local.get $__str_op_len)`,
         };
       });
+      // Nullish coalescing (`a ?? b`): emitExpr owns the Phase 24 nullable tables, so let it
+      // build the if/else. The result type is the LHS's — nullableVarInnerType first (a tracked
+      // `T | null` local), else ordinary inference.
+      setNullishResolver((tok, locs) => {
+        const nlLocals = locs as Map<string, WatType>;
+        const qqAt = this.findBinaryOp(tok, "??");
+        if (qqAt === -1) return undefined;
+        const qqLhs = tok.slice(0, qqAt).trim();
+        const qqT = this.nullableVarInnerType.get(qqLhs) ??
+          this.inferExprType(qqLhs, nlLocals);
+        const qqBt = qqT === "f64" || qqT === "f32" ? "f64" : "i32";
+        return { wat: this.emitExpr(tok, nlLocals, qqBt), type: qqBt };
+      });
       const segments = parseConsoleLogArgs(
         logMatch[1],
         locals as Map<string, string>,
@@ -12410,6 +12570,7 @@ class WasicTranspiler {
       setFuncTableLookup(undefined);
       setInstanceofResolver(undefined);
       setStringExprResolver(undefined);
+      setNullishResolver(undefined);
       const { statements, needsHelpers, needsStrGather, needsArrPrintHelper, needsJoinHelper } =
         emitConsoleLog(segments, allocator, "    ", 1, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
@@ -12761,6 +12922,19 @@ class WasicTranspiler {
           lenWat: `(local.get $__str_op_len)`,
         };
       });
+      // Nullish coalescing (`a ?? b`): emitExpr owns the Phase 24 nullable tables, so let it
+      // build the if/else. The result type is the LHS's — nullableVarInnerType first (a tracked
+      // `T | null` local), else ordinary inference.
+      setNullishResolver((tok, locs) => {
+        const nlLocals = locs as Map<string, WatType>;
+        const qqAt = this.findBinaryOp(tok, "??");
+        if (qqAt === -1) return undefined;
+        const qqLhs = tok.slice(0, qqAt).trim();
+        const qqT = this.nullableVarInnerType.get(qqLhs) ??
+          this.inferExprType(qqLhs, nlLocals);
+        const qqBt = qqT === "f64" || qqT === "f32" ? "f64" : "i32";
+        return { wat: this.emitExpr(tok, nlLocals, qqBt), type: qqBt };
+      });
       const segments = parseConsoleLogArgs(
         errMatch[2],
         locals as Map<string, string>,
@@ -12780,6 +12954,7 @@ class WasicTranspiler {
       setFuncTableLookup(undefined);
       setInstanceofResolver(undefined);
       setStringExprResolver(undefined);
+      setNullishResolver(undefined);
       const {
         statements,
         needsHelpers,
@@ -13582,7 +13757,7 @@ class WasicTranspiler {
             const brk2 = `$break_${lbl2}`;
             const loop2 = `$loop_${lbl2}`;
             const cont2 = `$cont_${lbl2}`;
-            const idxVar2 = "$__forof_idx";
+            const idxVar2 = `$${this.forOfIdxLocal()}`;
             const lenWat2 = `(i32.load (local.get $${arrName}))`;
             // base address of element i: arr + 8 + i*8
             const elemBaseWat =
@@ -13590,7 +13765,9 @@ class WasicTranspiler {
             const setPtrWat = `(local.set $${itemName}_ptr (i32.load ${elemBaseWat}))`;
             const setLenWat = `(local.set $${itemName}_len (i32.load offset=4 ${elemBaseWat}))`;
             this.controlStack.push({ breakLabel: brk2, continueLabel: cont2 });
+            this.forOfDepth++; // nested for…of loops must not share an index local
             const bodyWat2 = this.emitBlock(forOfBody, locals, funcResult, indent + "      ");
+            this.forOfDepth--;
             this.controlStack.pop();
             out.push(`${indent}(local.set ${idxVar2} (i32.const 0))`);
             out.push(`${indent}(block ${brk2}`);
@@ -13622,7 +13799,7 @@ class WasicTranspiler {
           const brk = `$break_${lbl}`;
           const loop = `$loop_${lbl}`;
           const cont = `$cont_${lbl}`;
-          const idxVar = "$__forof_idx";
+          const idxVar = `$${this.forOfIdxLocal()}`;
 
           // Element load and length WAT — mirrors the array indexing logic at emitExpr line ~2749.
           // ptr=-1: runtime param pointer (no header). ptr=-2/dynamic: heap array (8-byte header). ptr>=0: static.
@@ -13656,7 +13833,9 @@ class WasicTranspiler {
           }
 
           this.controlStack.push({ breakLabel: brk, continueLabel: cont });
+          this.forOfDepth++; // nested for…of loops must not share an index local
           const bodyWat = this.emitBlock(forOfBody, locals, funcResult, indent + "      ");
+          this.forOfDepth--;
           this.controlStack.pop();
 
           out.push(`${indent}(local.set ${idxVar} (i32.const 0))`);
@@ -16644,7 +16823,11 @@ class WasicTranspiler {
     this.findResultVars = new Set();
     this.catchVarNames = new Set();
     this.catchVarShadows = new Set();
+    this.forOfDepth = 0;
     this.nullableVarInnerType = new Map();
+    // Re-seed module-level `T | null` globals — the reset above is per-function, but their
+    // companion `$g__null` is a WASM global visible from every body.
+    for (const [gn, gi] of this.moduleNullableGlobals) this.nullableVarInnerType.set(gn, gi.inner);
     // #14.3.1: collect `any`-typed locals (from body `: any` declarations) so the `as`-unbox path
     // knows which i32s are boxed dynrt handles. (any-PARAM unboxing is a documented follow-up — the
     // FuncParam struct doesn't retain the raw `any` annotation; any params still work via the
@@ -17541,9 +17724,15 @@ class WasicTranspiler {
           declaredLocals.push([foItemName, foElemType]);
           locals.set(foItemName, foElemType);
         }
-        if (!locals.has("__forof_idx")) {
-          declaredLocals.push(["__forof_idx", "i32"]);
-          locals.set("__forof_idx", "i32");
+        // One cursor local per for…of statement — an upper bound on nesting depth, so the
+        // name forOfIdxLocal() resolves to at any depth is always declared.
+        for (let fi = 0;; fi++) {
+          const foIdxName = fi === 0 ? "__forof_idx" : `__forof_idx${fi}`;
+          if (!locals.has(foIdxName)) {
+            declaredLocals.push([foIdxName, "i32"]);
+            locals.set(foIdxName, "i32");
+            break;
+          }
         }
       }
       // catch variable: } catch (e) { — registers e as a (ptr, len) string pair
@@ -18457,7 +18646,12 @@ class WasicTranspiler {
       this.structVarRuntimeInits = new Map();
       this.structSpreadVars = new Map();
       this.classVars = new Map();
+      this.forOfDepth = 0;
       this.nullableVarInnerType = new Map();
+      // Re-seed module-level `T | null` globals (see the matching reset in emitFunction).
+      for (const [gn, gi] of this.moduleNullableGlobals) {
+        this.nullableVarInnerType.set(gn, gi.inner);
+      }
       this.catchVarNames = new Set();
       this.catchVarShadows = new Set();
       // #14.3.1: module-level `any` locals (top-level `: any` declarations) for the as-unbox path.
@@ -19041,9 +19235,14 @@ class WasicTranspiler {
             startDeclaredLocals.push([foItemName2, foElemType2]);
             startLocals.set(foItemName2, foElemType2);
           }
-          if (!startLocals.has("__forof_idx")) {
-            startDeclaredLocals.push(["__forof_idx", "i32"]);
-            startLocals.set("__forof_idx", "i32");
+          // One cursor local per for…of statement (see the matching emitFunction pre-scan).
+          for (let fi = 0;; fi++) {
+            const foIdxName2 = fi === 0 ? "__forof_idx" : `__forof_idx${fi}`;
+            if (!startLocals.has(foIdxName2)) {
+              startDeclaredLocals.push([foIdxName2, "i32"]);
+              startLocals.set(foIdxName2, "i32");
+              break;
+            }
           }
         }
         // catch variable: } catch (e) { — registers e as a (ptr, len) string pair
@@ -19225,6 +19424,13 @@ class WasicTranspiler {
         return `  (global $${name} ${typeDecl} ${initWat})`;
       },
     );
+    // Phase 24: companion null-flag global for each module-level `T | null` global
+    // (1 = is-null, 0 = has-value) — the global-scope counterpart of the `$x__null` local.
+    for (const [name, { initiallyNull }] of this.moduleNullableGlobals) {
+      moduleGlobalDecls.push(
+        `  (global $${name}__null (mut i32) (i32.const ${initiallyNull ? 1 : 0}))`,
+      );
+    }
     // Mutable module-level string globals: one (mut i32) for the ptr, one for the len.
     for (const [name, { ptr, len }] of this.moduleStringGlobals) {
       moduleGlobalDecls.push(

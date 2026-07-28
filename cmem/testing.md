@@ -36,7 +36,19 @@ installed launcher prompts interactively (`Deno requests ffi access … [y/n/A]`
 invocation, which stalls the whole test run. (Regression history: a documented reinstall command
 here once omitted `--allow-ffi`; fixed 2026-06-08 by deferring to `deno task install`.)
 
-## Current pass counts (2026-07-08, wabt-ts 1.3.5 + binaryen-ts 1.4.0)
+## Current pass counts (2026-07-28, wabt-ts 1.3.5 + binaryen-ts 1.4.3)
+
+> **`tests/wasi/wasm_wasi` is now 383 / 383** (2026-07-28) — the 375 below plus 8 owner-supplied
+> stress tests: `22_ConstEnumFoldingAndExponentCast`, `24_NullableTupleReturnAndFlags`,
+> `25_NullishOnlyNullFallback`, `25_LogicalAssignmentOperators`,
+> `25_NullishShortCircuitSideEffects`, `26_ForOfBreakContinue`, `26_ArrayDestructuringDefaults`,
+> `26_NestedForOfMatrix`. Five of them surfaced real compiler bugs (all fixed — see
+> compiler-bugs.md § "Stress-test batch (2026-07-28)"); zero regressions. Adjacent suites re-run
+> and unchanged: bindgen 142, jstyper 73, mod 55, merge 1, varscope 12.
+> **`tests/bundle_tests.ts` `StructImport` fails and is PRE-EXISTING** — verified by stashing the
+> working changes, rebuilding, and re-running on a clean tree (fails identically). Still open.
+
+### Snapshot as of 2026-07-08 (wabt-ts 1.3.5 + binaryen-ts 1.4.0)
 
 | Suite                                                                                           | Result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -126,6 +138,16 @@ from rsxtk!")/`build`→`.wasm`/`add`/`list`/`clean`. Manual verify command is i
 ## Conventions
 
 - **File naming:** `NN_Label.ext` (phase number first) so listings sort by phase.
+- **Stress-test batches (owner workflow, 2026-07-28).** The owner supplies hand-written stress
+  programs to probe a phase for latent bugs. Each lands in `tests/wasi/wasm_wasi/` as
+  `NN_DescriptiveLabel.ts`, where `NN` is the phase whose feature is under test (pick the phase that
+  owns the core mechanic — e.g. a nullable-return test crossing tuples and `??` is Phase 24, because
+  nullable returns are the mechanic). Run the batch with the phase filter (`"^25_"`) first, then the
+  FULL suite — a fix in shared codegen regresses other phases (the 2026-07-28 batch regressed two
+  Phase 24/25 tests mid-fix). Confirm any newly-failing adjacent suite against a clean tree
+  (`git stash` + reinstall + re-run) before attributing it to the batch. Record the batch as ONE
+  unit in `compiler-bugs.md`; update the counts here; and add **per-phase** rows to the README table
+  — see the placement/labelling directive at the top of [roadmap.md](roadmap.md).
 - **Generated artifacts are NOT tracked (2026-07-01):** the `.wasm`/`.wat`/`.wit` in
   `tests/wasi/wasm_wasi/` that pair 1:1 with a `.ts` are BUILD OUTPUTS (the runner regenerates them
   from the `.ts` on every run) and are `.gitignore`d — committing them had pushed the folder past
