@@ -45,8 +45,12 @@ here once omitted `--allow-ffi`; fixed 2026-06-08 by deferring to `deno task ins
 > `26_NestedForOfMatrix`. Five of them surfaced real compiler bugs (all fixed — see
 > compiler-bugs.md § "Stress-test batch (2026-07-28)"); zero regressions. Adjacent suites re-run
 > and unchanged: bindgen 142, jstyper 73, mod 55, merge 1, varscope 12.
-> **`tests/bundle_tests.ts` `StructImport` fails and is PRE-EXISTING** — verified by stashing the
-> working changes, rebuilding, and re-running on a clean tree (fails identically). Still open.
+> **`tests/bundle_tests.ts` is now 4/4 — `StructImport` FIXED 2026-07-28.** It had been the one
+> long-standing red suite (a pre-existing failure, not from the stress batch): struct-type
+> annotations were gated on PascalCase spelling, which rejects every `tsbundler`-mangled imported
+> type (`Vec2` in `vec.ts` → `vec_Vec2`). Now gated on the `structDefs`/`classDefs` registry.
+> Regression `12_LowercaseStructTypeName`; suite **384/384**. See compiler-bugs.md §
+> "`bundle_tests.ts` StructImport".
 
 ### Snapshot as of 2026-07-08 (wabt-ts 1.3.5 + binaryen-ts 1.4.0)
 

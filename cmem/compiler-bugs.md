@@ -1,5 +1,39 @@
 # Compiler bug log
 
+## `bundle_tests.ts` StructImport — struct types gated on PascalCase spelling (FIXED 2026-07-28)
+
+The one long-standing red suite. `StructImport` (a two-file fixture importing `interface Vec2`
+from `vec.ts`) aborted with 10 "unsupported expression" diagnostics — every `a.x` field access and
+both struct literals.
+
+**Root cause — a spelling proxy standing in for an authoritative registry.** wasic decided "is this
+type annotation a struct?" with `/^[A-Z]\w*$/`, i.e. *PascalCase means struct*. `tsbundler` prefixes
+every imported symbol with the module's **filename**, which is conventionally lower-case: `Vec2` in
+`vec.ts` becomes **`vec_Vec2`**. That name is a perfectly valid registered struct but fails the
+capitalization test, so no param was registered in `structVars`, no struct literal was allocated,
+and every field access fell through. Bisected with single-file probes: `Vec2` ✅, `Vec_2` ✅,
+`A_B` ✅, but `vecVec2` ❌, `vec_Vec2` ❌, `abc_Vec2` ❌, `_Vec2` ❌ — the underscore is irrelevant,
+**only the first character mattered**. So it was never bundler-specific: a hand-written
+`interface point {}` failed identically in a single file.
+
+**Fix.** Use the registry that was already being consulted one line later. At the eight
+struct-annotation sites (`sdm`, `namedTupleLitStmt`, `structSpreadMatch`, `structLetMatch`,
+`namedTuplePre`/`Pre2`, `structPre`/`Pre2`) the regex is now `(\w+)` instead of `([A-Z]\w*)`; each
+is immediately followed by a `structDefs`/`structVars`/`structSpreadVars` lookup that returns
+undefined for a non-struct, so the relaxation cannot widen what they accept. The struct-array
+element check drops its redundant `/^[A-Z]/` (the `structDefs.has()` beside it already decides).
+The function-param `structType` gate had no registry guard, so it is **additive**: PascalCase
+behaves exactly as before, plus any identifier already in `structDefs`/`classDefs` (`parseStructs`
+and `parseClasses` both run before `parseFunctions`, so the lookup is populated).
+
+**Deliberately NOT fixed in the bundler.** Capitalizing the mangled prefix would have papered over
+it while leaving the same bug for hand-written lower-case type names, and would have broken
+tsbundler's documented invariant that the canonical name is always `<module>_<original>`.
+
+Regression `12_LowercaseStructTypeName` (lower-case and `_`-initial interfaces; field read, field
+write, struct params, struct literals). Gate: wasi **384/384**, **bundle 4/4 (was 3/4)**, bindgen
+142, jstyper 73, mod 55, merge 1, varscope 12, wasmmerge_guard — all zero failures.
+
 ## Stress-test batch (2026-07-28) — 8 new Phase 22/24/25/26 tests surfaced 6 bugs, all FIXED
 
 Owner supplied 8 hand-written stress tests (Phase 22 enum-folding/casts, 24 nullable returns, 25

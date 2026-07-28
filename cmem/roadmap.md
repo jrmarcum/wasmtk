@@ -45,8 +45,13 @@ self-inflicted mid-fix regression and its root cause) in
 must-not-revert invariants are in [design-decisions.md](design-decisions.md) § "Nullable (`T |
 null`) + cast invariants".
 
-`tests/bundle_tests.ts` `StructImport` fails — **verified pre-existing** on a clean tree, not from
-this batch. Still open.
+**`bundle_tests.ts` `StructImport` — the one long-standing red suite — is now FIXED (2026-07-28).**
+It was pre-existing (verified on a clean tree), then researched and fixed in this same working
+tree: struct-type annotations were gated on PascalCase spelling, so every `tsbundler`-mangled
+imported type (`Vec2` in `vec.ts` → `vec_Vec2`) was rejected and multi-file struct imports could
+not compile. Now gated on the `structDefs`/`classDefs` registry. Regression
+`12_LowercaseStructTypeName`. **ALL suites are green: wasi 384/384, bundle 4/4, bindgen 142,
+jstyper 73, mod 55, merge 1, varscope 12, wasmmerge_guard.**
 
 ## Release status (2026-07-28) — v1.11.7 (JSR score 100)
 

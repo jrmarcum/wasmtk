@@ -2556,12 +2556,19 @@ class WasicTranspiler {
         : undefined;
       // For struct array params (e.g. Person[]), preserve the struct type name for arr[i].field access
       const arrayStructElemType: string | undefined =
-        (arrElemMatch && /^[A-Z]/.test(arrElemMatch[1]) && this.structDefs.has(arrElemMatch[1]))
+        (arrElemMatch && this.structDefs.has(arrElemMatch[1]))
           ? arrElemMatch[1]
           : undefined;
-      // Detect struct param: capitalized type name that isn't a known primitive
-      // structType is stored so emitFunction can register it in structVars.
-      const structType: string | undefined = !arrElemMatch && /^[A-Z]\w*$/.test(typeAnnotation)
+      // Detect struct param: a capitalized type name that isn't a known primitive, OR any
+      // identifier already REGISTERED as a struct/class. The capitalization test alone is a
+      // proxy that misses lower-case-initial type names — which `tsbundler` produces for every
+      // imported type (`Vec2` in `vec.ts` → `vec_Vec2`), so a multi-file struct import failed to
+      // register the param and every `p.field` became an "unsupported expression". parseStructs /
+      // parseClasses both run before parseFunctions, so the registry lookup is populated here.
+      const structType: string | undefined = !arrElemMatch &&
+          (/^[A-Z]\w*$/.test(typeAnnotation) ||
+            (/^\w+$/.test(typeAnnotation) &&
+              (this.structDefs.has(typeAnnotation) || this.classDefs.has(typeAnnotation))))
         ? typeAnnotation
         : undefined;
       const resolvedType: WatType = structType ? "i32" : paramType;
@@ -10156,7 +10163,10 @@ class WasicTranspiler {
     // Scoped to function-call / runtime inits (ptr=-1); static-literal ptrs are per-occurrence and
     // owned by their own emit path, so they are left untouched.
     {
-      const sdm = line.match(/^(?:const|let|var)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*(.+)$/);
+      // `(\w+)` not `([A-Z]\w*)`: the structDefs lookup below is the authoritative filter, and
+      // the capitalization proxy misses tsbundler-mangled type names (`vec_Vec2`). Same at every
+      // struct-annotation site in this file.
+      const sdm = line.match(/^(?:const|let|var)\s+(\w+)\s*:\s*(\w+)\s*=\s*(.+)$/);
       if (sdm) {
         const declDef = this.structDefs.get(sdm[2]);
         const cur = this.structVars.get(sdm[1]);
@@ -10809,7 +10819,7 @@ class WasicTranspiler {
 
     // Phase 23: named tuple alias with bracket initializer: const p: Pair = [e0, e1]
     // Must come before the generic letMatch which would mishandle the bracket value.
-    const namedTupleLitStmt = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\[/);
+    const namedTupleLitStmt = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\w+)\s*=\s*\[/);
     if (namedTupleLitStmt) {
       const sv = this.structVars.get(namedTupleLitStmt[1]);
       if (sv && sv.def.fields.every((f) => /^_\d+$/.test(f.name))) {
@@ -10925,7 +10935,7 @@ class WasicTranspiler {
     // The pre-scan flagged `r` in structSpreadVars and declared it as an i32 local; build the
     // struct at runtime (copy base fields, apply overrides) and assign the pointer.
     // Must come BEFORE the static structLetMatch handler below (which assumes a non-spread literal).
-    const structSpreadMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\{/);
+    const structSpreadMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\w+)\s*=\s*\{/);
     if (structSpreadMatch && this.structSpreadVars.has(structSpreadMatch[1])) {
       const litStr = line.slice(line.indexOf("{"));
       const rt = this.emitRuntimeStructLiteral(litStr, structSpreadMatch[2], locals);
@@ -10936,7 +10946,7 @@ class WasicTranspiler {
     // The pre-scan allocated static memory; emit local.set $p (i32.const ptr).
     // Phase 30: also emits runtime stores for shorthand-property fields.
     // Must come BEFORE the generic letMatch handler below.
-    const structLetMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\{/);
+    const structLetMatch = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\w+)\s*=\s*\{/);
     if (structLetMatch) {
       const sv = this.structVars.get(structLetMatch[1]);
       if (sv && sv.ptr >= 0) {
@@ -17039,7 +17049,7 @@ class WasicTranspiler {
         }
       }
       // Phase 23: named tuple alias with bracket initializer: const p: Pair = [6, 7]
-      const namedTuplePre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\[/);
+      const namedTuplePre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\w+)\s*=\s*\[/);
       if (namedTuplePre) {
         const typeName = namedTuplePre[2];
         const def = this.structDefs.get(typeName);
@@ -17117,7 +17127,7 @@ class WasicTranspiler {
       // Struct object literal: const p: Point = { x: 1.5, y: 2.5 }
       // Phase 30: also handles shorthand properties { x, y } (treated as { x: x, y: y })
       // Phase 42: also handles nested struct literals { start: { x: 1, y: 2 }, end: { x: 3, y: 4 } }
-      const structPre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\{/);
+      const structPre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\w+)\s*=\s*\{/);
       if (structPre) {
         const varName = structPre[1];
         const typeName = structPre[2];
@@ -18691,7 +18701,7 @@ class WasicTranspiler {
           }
         }
         // Phase 23: named tuple alias with bracket initializer: const p: Pair = [6, 7]
-        const namedTuplePre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\[/);
+        const namedTuplePre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\w+)\s*=\s*\[/);
         if (namedTuplePre2) {
           const typeNameT2 = namedTuplePre2[2];
           const defT2 = this.structDefs.get(typeNameT2);
@@ -18717,7 +18727,7 @@ class WasicTranspiler {
         }
         // Phase 30: struct object literal (mirrors emitFunction pre-scan)
         // Phase 42: also handles nested struct literals { start: { x: 1, y: 2 }, ... }
-        const structPre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*([A-Z]\w*)\s*=\s*\{/);
+        const structPre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\w+)\s*=\s*\{/);
         if (structPre2) {
           const varName2 = structPre2[1];
           const typeName2 = structPre2[2];

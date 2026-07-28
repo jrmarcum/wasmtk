@@ -4,6 +4,25 @@ Invariants and codegen rules that are easy to break in a refactor and must NOT b
 reverted. The exhaustive list (with line numbers) is in the legacy `CLAUDE.md`; this is the
 high-value subset.
 
+## Struct-type detection uses the REGISTRY, not capitalization (added 2026-07-28)
+
+- **Never gate a struct/class type annotation on `/^[A-Z]/`.** The authoritative test is
+  `structDefs.has(name)` / `classDefs.has(name)`; the PascalCase spelling test is only a proxy and
+  it is WRONG for `tsbundler` output — imported types are prefixed with the module's (lower-case)
+  filename, so `Vec2` in `vec.ts` becomes `vec_Vec2`. That broke every multi-file struct import
+  (`bundle_tests.ts` StructImport) and any hand-written lower-case interface. The eight
+  struct-annotation regexes therefore match `(\w+)` and rely on the registry lookup that
+  immediately follows; do not "tighten" them back to `([A-Z]\w*)`.
+- **Ordering that makes this safe:** `parseStructs()` (18579) and `parseClasses()` (18580) both run
+  before `parseFunctions()` (18606), so a registry lookup inside `parseFunctions` is populated. If
+  a pass is ever reordered ahead of `parseStructs`, its struct-type lookups become empty.
+- **The function-param `structType` gate is additive on purpose** — PascalCase OR a registered
+  struct/class name. It has no registry guard downstream (unlike the other sites), so narrowing it
+  to registry-only would drop TypedArray/DU/tuple-alias params that rely on the capitalization arm.
+- **Do NOT "fix" this in the bundler** by capitalizing the mangled prefix: it hides the same bug for
+  hand-written lower-case type names and breaks tsbundler's documented invariant that the canonical
+  name is always `<module>_<original>`.
+
 ## Nullable (`T | null`) + cast invariants (added 2026-07-28)
 
 - **Each `for…of` loop needs its OWN cursor local.** `forOfIdxLocal()` returns `__forof_idx` at

@@ -1122,7 +1122,7 @@ phases extend the toolchain with bundling and distribution capabilities.
 > (⏳ — to-do / planned / blocked) are always listed at the end of the table**, after every ✅ row.
 > Worked examples for each feature live in its command section above; deep implementation notes live
 > in [`cmem/`](cmem/). Test-count taglines in the table are historical snapshots — the current suite
-> is green (`tests/wasi/wasm_wasi` 383/383) on `jsr:@jrmarcum/wabt-ts` + `jsr:@jrmarcum/binaryen-ts`,
+> is green (`tests/wasi/wasm_wasi` 384/384) on `jsr:@jrmarcum/wabt-ts` + `jsr:@jrmarcum/binaryen-ts`,
 > with all 50 wasic phases, Stage 0/0.6/0.7, and the five Tier-1 stdlib capabilities
 > (Set/Map/Date/JSON/RegExp) shipped.
 
@@ -1144,6 +1144,7 @@ phases extend the toolchain with bundling and distribution capabilities.
 | ✅ | 6b | Structs / objects | `interface` and `type` as fixed-layout structs, field read/write, struct params |
 | ✅ | 6c | Object destructuring | `const { x, y } = vec` → `i32.load` / `f64.load` at field offsets; renamed destructuring |
 | ✅ | 6d | Multi-dimensional arrays | `i32[][]` — nested dynamic arrays; `const m: i32[][] = [[1,2],[3,4]]` allocates outer + inner row arrays; `m[i].push(val)` updates slot after possible row growth; `console.log(m)` prints Deno-format `[ [ 1, 2 ], ... ]` |
+| ✅ | 8 bug fix (2026-07-28) | Multi-file struct imports (`import { Vec2 } from "./vec.ts"`) | Importing an `interface`/`type` from another file failed to compile — every field access on it reported *unsupported expression*. Struct types were recognized by a PascalCase spelling rule, but the bundler prefixes imported names with the module's lower-case filename (`Vec2` in `vec.ts` → `vec_Vec2`), so bundled types were never registered. Struct types are now recognized by the type registry, so any valid type name works — including hand-written lower-case ones like `interface point`. Regression `12_LowercaseStructTypeName`; fixes the `StructImport` bundle test |
 | ✅ | 12b | Interface dispatch | `interface` types used as return values + method call sites: `createManager()` returns a struct of closure ptrs; `manager.addRow([6])` dispatches via `call_indirect` trampoline pattern; `stats.length` on i32 dynamic-array locals in `console.log`; `return { key: fn }` object literal emits interface struct with factory closure ptrs; trivial closures (no captures) auto-wrapped in a 4-byte `{table_idx}` mini-closure so dispatch is uniform |
 | ✅ | 7a | Math intrinsics | `Math.sqrt/abs/pow/floor/ceil/round/min/max/sign/trunc` → native WASM ops |
 | ✅ | 7b | Stderr output | `console.error` / `console.warn` → WASI fd=2 |
