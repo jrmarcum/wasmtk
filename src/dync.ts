@@ -74,7 +74,9 @@ dynRunB64(__dyn_b64, __dyn_env);
   const driverPath = `${srcDir}/${name}.__dync.ts`;
   await rt.writeTextFile(driverPath, driver);
   try {
-    const result = await compileWasiTs(driverPath, wasmOut);
+    // A dync module is a whole-program WASI command with no exports — its WIT would be an empty
+    // world, so skip generating it (emitWit: false) to save a step.
+    const result = await compileWasiTs(driverPath, wasmOut, { emitWit: false });
     if (!result.success) {
       if (result.error) console.error(`❌ dync: ${result.error}`);
       rt.exit(1);

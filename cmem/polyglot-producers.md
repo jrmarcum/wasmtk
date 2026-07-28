@@ -5,6 +5,40 @@
 > pipeline), [roadmap.md](roadmap.md) (execution order), [vision.md](vision.md) (polyglot
 > ecosystem).
 
+## UPDATED 2026-07-28 — unified producer verbs + `--lang` auto-detect + Go browser removal
+
+> **This section supersedes the per-producer command tables further down** (which described the older
+> shape: `init`→library, `--go-target=wasm` browser build, rust-only `initmod`/`build`). Owner
+> directives, all shipped this session (code in `main.ts`, `src/gowasic.ts`, `src/zigwasic.ts`):
+
+- **Same verbs across every producer (the Rust model).** `init` = scaffold a **WASI program**
+  (`func main` / `pub fn main` / rust script); `initmod` = scaffold a **wasm library** (exports, no
+  entry point); `build` = compile a WASI program → standalone `.wasm` (no run); `modc` = compile a
+  wasm library → `.wasm`; `run` = build + run. Go/Zig gained program scaffolds (`MAIN_GO_PROGRAM`,
+  `MAIN_ZIG_PROGRAM`) and a `GoScaffold`/`ZigScaffold` `"program"|"library"` param; `initmod` now
+  branches to go/zig (not just rust).
+- **`--lang` is OPTIONAL for `run`/`build`/`modc`** — auto-detected from the target: a `.go`/`.zig`/
+  `.rs` file, or a directory with `go.mod`/`Cargo.toml`. Implemented via a shared `effLang` in
+  `main.ts` (`= explicit --lang ?? detectRunLang(langPath)` for those three verbs). `init`/`initmod`
+  still REQUIRE `--lang` (nothing to detect from). `detectRunLang` (already used by `run`) is now the
+  single source of truth. `run <dir>` with no `go.mod`/`Cargo.toml` → a clear "no Go/Rust project
+  found" error (instead of a cryptic wasm-instantiate failure).
+- **Rust-exclusive verbs need no `--lang`.** `add`/`remove`/`list`/`fmt`/`clean` are implicitly Rust
+  (only Rust uses them) — `delegateRust` skips the `--lang=rust` guard for them, and `isProducerCmd`
+  treats them as producer commands so bare `wasmtk fmt` reaches rsxtk instead of the help screen.
+  `initmod`/`build` were moved OUT of the "rust-only" set (they're now shared go/zig/rust verbs).
+- **Go browser scaffold REMOVED (owner: use the universal wasm loader instead).** Deleted the
+  `"browser"` `GoScaffold`, the `"wasm"` `GoTarget`, `MAIN_GO_BROWSER`, and `copyWasmExecJs`;
+  `GoTarget` is now `"wasip1" | "reactor" | "leaf"`. `init`/`modc --go-target=wasm` now ERROR with a
+  pointer to `@jrmarcum/universal-wasm-loader` (a `goBrowserRemoved()` helper). `--go-target=wasm-unknown`
+  (the alloc-free mergeable leaf) is KEPT. wasmtk produces only WASI modules now; browser consumption
+  is the universal loader's job.
+- **CORRECTION — Go/Zig/Rust do NOT auto-emit `.wit`.** Only the TypeScript path (`wasic`/`modc`,
+  Phase 41 `generateWit`) auto-writes a `.wit`. The Go `bindgen` flow uses a **hand-written** `.wit`
+  (e.g. `tests/go_fixtures/strlib/strlib.wit`); `bindgen` itself is language-agnostic (consumes any
+  `.wit`), but `.wit` PRODUCTION for the producers is still ⏳ (the "producer WIT emission" roadmap
+  item). Earlier notes implying Go emits `.wit` were wrong.
+
 ## Project goal — one congruent polyglot wasm capability
 
 **wasmtk's goal is to unify the TS/JS, Rust, Zig, and Go toolchains into a single congruent wasm

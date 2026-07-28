@@ -19445,7 +19445,11 @@ function mergeOneWasmImport(
  * @param tsPath - Path to the source .ts file.
  * @param outPath - Optional output path; defaults to same name with .wasm extension.
  */
-export async function compileWasiTs(tsPath: string, outPath?: string): Promise<WasicResult> {
+export async function compileWasiTs(
+  tsPath: string,
+  outPath?: string,
+  opts?: { emitWit?: boolean },
+): Promise<WasicResult> {
   const name = basename(tsPath).replace(/\.[^/.]+$/, "");
   const srcDir = dirname(tsPath);
   const out = outPath ?? `${srcDir}/${name}.wasm`;
@@ -19596,12 +19600,16 @@ export async function compileWasiTs(tsPath: string, outPath?: string): Promise<W
 
   const result = await watToOptimisedWasm(wat, watPath, out);
   if (result.success) {
-    // Phase 41: emit .wit interface file alongside the compiled .wasm
-    const witPath = out.replace(/\.wasm$/, ".wit");
-    await rt.writeTextFile(witPath, transpiler.generateWit(name));
     console.log(`✅ WASI: ${out} (${result.sizeBytes} bytes)`);
     console.log(`   WAT:  ${watPath}`);
-    console.log(`   WIT:  ${witPath}`);
+    // Phase 41: emit a .wit interface file alongside the compiled .wasm. Skipped for `dync`
+    // (opts.emitWit === false): a dync module is a whole-program WASI command with no exports,
+    // so its WIT is an empty world — writing it is a wasted step.
+    if (opts?.emitWit !== false) {
+      const witPath = out.replace(/\.wasm$/, ".wit");
+      await rt.writeTextFile(witPath, transpiler.generateWit(name));
+      console.log(`   WIT:  ${witPath}`);
+    }
     if (wasmImports.length > 0) {
       console.log(`   Merged: ${wasmImports.map((e) => e.prefix).join(", ")}`);
     }

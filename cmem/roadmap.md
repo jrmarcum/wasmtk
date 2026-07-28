@@ -1,6 +1,18 @@
 # Roadmap, phase status & vision
 
-## Release status (2026-07-09) — v1.11.5 (JSR score 100)
+> **README roadmap-table convention (owner directive):** the README's `## wasmtk Toolkit Roadmap` →
+> `### Feature Status` is ONE unified `| Complete | Phase | Feature | Highlights |` table.
+> **Complete** is `✅` (shipped) or `⏳` (incomplete: to-do / planned / blocked). **All incomplete
+> (`⏳`) rows are ALWAYS listed at the end of the table, after every `✅` row** — when adding a new
+> item, put a `⏳` row at the bottom and flip it to `✅` (moving it up among the completed rows) once
+> it fully ships. Highlights are full descriptions (no `…` truncation): a feature says what it does;
+> a bug fix states the issue and the fix. Detail sections were collapsed into this table (2026-07);
+> deep internals live in `cmem/`, worked examples in each command's README section.
+
+## Release status (2026-07-28) — v1.11.7 (JSR score 100)
+
+> Latest: **v1.11.7** (producer/dync/README pass — see "### v1.11.7 (2026-07-28)" below). The
+> v1.11.5 detail that follows is retained as history.
 
 **v1.11.5 released to JSR** (score 100). On backend **wabt-ts 1.3.5 + binaryen-ts 1.4.3**.
 Regression gate green: wasi **375/375**, `go_merge` 7/7, `go_bindgen` 7/7, **`go_asyncify` 12/12**
@@ -9,6 +21,31 @@ B6 stays deferred (no consumer). (v1.11.4 shipped the same code but scored 94 �
 an `@module` tag so JSR's `allEntrypointsDocs` was false; v1.11.5 added it, restoring 100. JSR
 provenance is absent since ≥v1.11.3 — a GitHub org OIDC-policy infra issue, not a code fix; see
 next-work.md "Published state".)
+
+### v1.11.7 (2026-07-28) — producer/dync/README pass
+
+**v1.11.6** shipped dync pure-WASI portability + `wasmtk wasic`→dync abort guidance (see
+[dynrt-design.md](dynrt-design.md)). **v1.11.7 PUBLISHED to JSR** — a large producer/dync/README pass
+(files: `main.ts`, `src/gowasic.ts`, `src/zigwasic.ts`, `src/wasic.ts`, `src/dync.ts`, `README.md`,
+`CHANGELOG.md`, `cmem/*`):
+
+- **Producer verbs unified across go/zig/rust** (Rust model): `init`=WASI program, `initmod`=wasm
+  library, `build`=program→`.wasm`, `modc`=library→`.wasm`, `run`=build+run. **`--lang` is now
+  optional for run/build/modc** (auto-detected from `.go`/`.zig`/`.rs` or `go.mod`/`Cargo.toml`);
+  **add/remove/list/fmt/clean no longer need `--lang=rust`**. **Go browser scaffold REMOVED**
+  (`--go-target=wasm` errors → universal wasm loader; `--go-target=wasm-unknown` leaf kept). `run
+  <dir>` with no project → clear error. Full detail: [polyglot-producers.md](polyglot-producers.md)
+  § "UPDATED 2026-07-28".
+- **dync no longer writes the empty `.wit`**; merge notices `⚠️`→`ℹ️`. **Correction recorded:**
+  Go/Zig/Rust do NOT auto-emit `.wit` (only TypeScript does; Go bindgen uses a hand-written one).
+- **README restructured**: Compiler Options → Choosing → Programmatic API → Producers & Backends →
+  **Utility Options** (new: mod/info/wasm2js/convert alongside wasmbundle/jstyper/bindgen/wast/run) →
+  Roadmap. Added wasic/modc/dync/hybrid **Limitations** notes. **Roadmap collapsed into ONE unified
+  `Complete | Phase | Feature | Highlights` table** (`✅`/`⏳`; **all `⏳` rows always last** — see the
+  README-table convention note at the top of this file); detail sections removed (examples live in
+  each command section, internals in `cmem/`). New gate `tests/dync_cross_runtime_tests.ts`.
+- Suites green throughout: wasi 375/375, go_merge 7/7, go_bindgen 7/7, go_asyncify 12/12,
+  dync_conformance 3/3, dync_cross_runtime 3/3, bindgen 142, jstyper 73. **Published as v1.11.7.**
 
 1. **Nested goroutines now run in-house — the headline.** A goroutine that suspends *inside* another
    suspending goroutine (`inner.Wait()`) used to trap `memory access out of bounds`. Root cause was

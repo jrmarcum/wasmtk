@@ -4,11 +4,20 @@
 > binaryen). Authoritative status lives in [roadmap.md](roadmap.md); this file is the short,
 > prioritized "what to pick up next" list. Prune items as they land.
 
-## Recommended next pickup (updated 2026-07-09)
+## Recommended next pickup (updated 2026-07-28)
 
 - **THE BIG TRACK: wasic modularization** — see [wasic-modularization-plan.md](wasic-modularization-plan.md).
   **Phase 0 = "look for code issues" audit, run as a loop to ZERO (HARD GATE)** before any module
   extraction. This is the agreed next major effort.
+- **✅ v1.11.7 PUBLISHED (2026-07-28).** The large producer/dync/README pass is committed and
+  published to JSR. See [roadmap.md](roadmap.md) § "v1.11.7 (2026-07-28)".
+- **Producer verbs unified + `--lang` auto-detect + Go browser removed — ✅ DONE (2026-07-28).** Same
+  verbs across go/zig/rust (`init`=program, `initmod`=library, `build`=program→`.wasm`); `--lang`
+  optional for run/build/modc (auto-detected); add/remove/list/fmt/clean need no `--lang`; Go
+  `--go-target=wasm` browser scaffold removed (→ universal wasm loader). Correction recorded:
+  producers do NOT auto-emit `.wit` (TS-only). See [polyglot-producers.md](polyglot-producers.md)
+  § "UPDATED 2026-07-28". **Follow-up ⏳: producer `.wit` auto-emission** (Go/Zig/Rust) — a real
+  roadmap item, currently hand-written for Go bindgen.
 - **Dynamic runtime → runs on ANY WASI runtime — ✅ DONE (2026-07-27).** `wasmtk dync` output now
   imports ONLY `wasi_snapshot_preview1.*` and runs unchanged on wasmtime/wasmer/wazero (byte-identical
   stdout, 9/9). Shipped as a post-merge WAT transform **`internalizeDynrtHostImports`** in

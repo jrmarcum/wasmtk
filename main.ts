@@ -120,11 +120,14 @@ async function main(): Promise<void> {
   // `wasmtk wasic --lang=go` reaches its handler and prints the "removed — use `run --lang=go`"
   // message rather than falling through to the generic help screen.
   const langLower = (args.lang as string | undefined)?.toLowerCase();
-  // Rust-only verbs delegate to rsxtk; the shared verbs (init/modc/run) work for go/zig/rust.
-  const rustOnlyVerbs = new Set(["initmod", "build", "add", "remove", "list", "fmt", "clean"]);
+  // Shared producer verbs work for go/zig/rust; the rust-exclusive verbs delegate to rsxtk and are
+  // implicitly Rust (no --lang needed — Rust is the only producer that uses them). All accept an
+  // optional path (default = cwd), so they must not fall through to the help screen when bare.
+  const sharedProducerVerbs = new Set(["init", "initmod", "build", "modc", "run"]);
+  const rustExclusiveVerbs = new Set(["add", "remove", "list", "fmt", "clean"]);
   const isProducerCmd = ((langLower === "go" || langLower === "zig" || langLower === "rust") &&
-    (command === "init" || command === "modc" || command === "run")) ||
-    (langLower === "rust" && rustOnlyVerbs.has(command)) ||
+    sharedProducerVerbs.has(command)) ||
+    rustExclusiveVerbs.has(command) ||
     (langLower === "go" && command === "wasic");
 
   if (args.help || !command || (!target && command !== "wasmbundle" && !isProducerCmd)) {
@@ -134,21 +137,15 @@ wasmtk - WebAssembly Development Toolkit v${VERSION}
 Usage:
   wasmtk modc <file.ts>                   Compile a TypeScript file to a WASM library
   wasmtk wasic <file.ts|.wat>             Compile to a standalone WASI module (no JS runtime, smaller output)
-  wasmtk init  --lang=go [dir]            Scaffold a Go wasm library project (go.mod + main.go); --go-target=wasm for a browser project
-  wasmtk modc  --lang=go [path]           Compile Go → WASI reactor library (callable via wasmtk mod/bindgen)
-                                          (add --go-target=wasm for a browser module + wasm_exec.js)
-  wasmtk run   --lang=go [path]           Build a Go WASI module (via TinyGo) and run it in one step
-                                          (or just: wasmtk run <file.go> / <dir-with-go.mod> — auto-detected)
-  wasmtk init  --lang=zig [dir]           Scaffold a Zig wasm library project (main.zig)
-  wasmtk modc  --lang=zig [path]          Compile Zig → wasm library (freestanding; exports 'export fn' funcs)
-  wasmtk run   --lang=zig [path]          Build a Zig WASI program (wasm32-wasi) and run it (or: wasmtk run <file.zig>)
-  wasmtk init    --lang=rust [dir]        Scaffold a Rust wasi script/program   (delegates to rsxtk)
-  wasmtk initmod --lang=rust [dir]        Scaffold a Rust library module        (delegates to rsxtk)
-  wasmtk modc    --lang=rust [path]       Build a Rust wasm library              (delegates to rsxtk build)
-  wasmtk build   --lang=rust [path]       Build a Rust wasi program             (delegates to rsxtk build)
-  wasmtk run     --lang=rust [path]       Build + run a Rust wasi program       (rsxtk run; or: wasmtk run <file.rs>)
-  wasmtk add|remove|list --lang=rust      Manage Rust dependencies              (delegates to rsxtk)
-  wasmtk fmt|clean --lang=rust            Inject a manifest (fmt) · wipe the .tk cache (clean)  (rsxtk)
+  Producers — Go / Zig / Rust. run/build/modc AUTO-DETECT the language from the file
+  (.go/.zig/.rs) or dir (go.mod/Cargo.toml), so --lang is optional; init/initmod need --lang:
+  wasmtk init    --lang=go|zig|rust [dir]   Scaffold a WASI PROGRAM project (entry point; run/build it)
+  wasmtk initmod --lang=go|zig|rust [dir]   Scaffold a wasm LIBRARY project (exported functions, no entry point)
+  wasmtk build   [--lang=…] <path>          Build a WASI program → standalone .wasm (no run)
+  wasmtk modc    [--lang=…] <path>          Build a wasm LIBRARY (callable via wasmtk mod)
+  wasmtk run     [--lang=…] <path>          Build + run a WASI program (e.g. wasmtk run hello.go)
+     Go:   --go-target=wasm-unknown → mergeable leaf library · --go-runtime=std → standard Go toolchain
+     Rust: also add|remove|list (deps) · fmt · clean  — Rust-only, delegated to rsxtk (no --lang needed)
   wasmtk dync <file.ts>                   Compile a fully-dynamic TS/JS file to a self-contained WASI module via wasmtk's own runtime (no Javy)
   wasmtk run <file>                       Run a .wasm, .wat, .js, .ts, .go, .zig, or .rs file (Go/Zig/Rust auto-detected)
   wasmtk mod <file> [fn] [...]            Call a function in a WASM library module (no fn = list functions)
@@ -177,14 +174,14 @@ Options:
       -o, --name <dir>         (hybrid)  Output directory for generated files (default: same as input)
       --auto                   (hybrid)  Route every statically-typed function to WASM by type
                                          (no // @wasm needed); dynamic/async/any stay in TS host
-      --lang=go|zig|rust       (init/modc/run)  Treat the input as Go/Zig/Rust (path defaults to cwd)
-                               (--lang=rust also enables: initmod build add remove list fmt clean — via rsxtk)
+      --lang=go|zig|rust       Force the producer language. REQUIRED for init/initmod; OPTIONAL for
+                               run/build/modc (auto-detected from .go/.zig/.rs or go.mod/Cargo.toml).
+                               (add/remove/list/fmt/clean are Rust-only — no --lang needed.)
       --go-runtime=tinygo|std  (go)      Go backend: tinygo (default, small) or std go (large).
                                          TinyGo without wasm-opt installed auto-uses binaryen-ts -Oz
                                          (goroutine-free code); goroutine code needs binaryen.
-      --go-target=wasm         (init)    Scaffold a browser (syscall/js) project instead of the default wasm library
-      --go-target=wasm         (modc)    Build a browser module instead of the default wasm (reactor) library
       --go-target=wasm-unknown (modc)    Build an alloc-free MERGEABLE leaf library (wasmmerge-able into a wasic/bundle build)
+                                         (browser/syscall/js output is not produced — use the universal wasm loader)
     `);
     return;
   }
@@ -194,6 +191,15 @@ Options:
     ? "std"
     : "tinygo";
   const langPath = target ?? "."; // producer commands default to the current directory
+
+  // For run/build/modc the producer language is either explicit (--lang) or **auto-detected** from
+  // the target (a `.go`/`.zig`/`.rs` file, or a directory with go.mod/Cargo.toml) — so `--lang` is
+  // OPTIONAL for those verbs. Scaffolding (init/initmod) still needs --lang (there's no file to
+  // detect from). `effLang` is the resolved producer language used by run/build/modc + delegateRust.
+  const autoDetectVerb = command === "run" || command === "build" || command === "modc";
+  const effLang: string | undefined = (lang === "go" || lang === "zig" || lang === "rust")
+    ? lang
+    : (autoDetectVerb ? (await detectRunLang(langPath)) ?? undefined : undefined);
 
   // Args to forward to rsxtk: the raw CLI args minus the wasmtk command token and any --lang flag,
   // so rsxtk's own positional args AND flags pass straight through.
@@ -220,7 +226,9 @@ Options:
   // appended after the forwarded args — used to supply rsxtk `build`'s TARGET (wasm/wasi) so
   // `modc`/`build` carry their library/program meaning without the user typing the target.
   const delegateRust = async (subcommand: string, extraArgs: string[] = []): Promise<void> => {
-    if (lang !== "rust") {
+    // Rust-exclusive verbs (add/remove/list/fmt/clean) are implicitly Rust — no --lang required.
+    // For the shared verbs (init/initmod/modc/build), Rust must be explicit or auto-detected.
+    if (effLang !== "rust" && !rustExclusiveVerbs.has(command)) {
       console.error(`❌ wasmtk: \`${command}\` is a Rust producer command — use --lang=rust.`);
       Deno.exit(1);
     }
@@ -229,16 +237,29 @@ Options:
     if (!r.success) Deno.exit(1);
   };
 
+  // Browser (syscall/js) Go output is no longer produced: consume wasmtk's WASI modules with the
+  // universal wasm loader instead. `--go-target=wasm` on init/modc surfaces this pointer.
+  const goBrowserRemoved = (): never => {
+    console.error(
+      "❌ wasmtk: `--go-target=wasm` (browser / syscall/js) output is no longer produced.\n" +
+        "   wasmtk builds WASI modules — load them in the browser with the universal wasm loader\n" +
+        "   (`@jrmarcum/universal-wasm-loader`) alongside the .wasm/.wit you produce here.\n" +
+        "   For a mergeable library use `--go-target=wasm-unknown`; for a reactor library, plain `modc`.",
+    );
+    Deno.exit(1);
+  };
+
   switch (command) {
     case "init": {
+      // `init` scaffolds a WASI PROGRAM for every producer (the Rust model). A wasm LIBRARY is
+      // scaffolded with `initmod`.
       if (lang === "rust") {
-        // `init --lang=rust` → rsxtk's wasi script/program template; `initmod` is the library one.
-        await delegateRust("init");
+        await delegateRust("init"); // rsxtk's wasi script/program template
         break;
       }
       if (lang === "zig") {
         const { scaffoldZigProject } = await import("./src/zigwasic.ts");
-        const r = await scaffoldZigProject(langPath);
+        const r = await scaffoldZigProject(langPath, "program");
         if (!r.success) Deno.exit(1);
         break;
       }
@@ -246,24 +267,22 @@ Options:
         console.error("❌ wasmtk: `init` supports `--lang=go`, `--lang=zig`, or `--lang=rust`.");
         Deno.exit(1);
       }
+      if ((args["go-target"] as string | undefined)?.toLowerCase() === "wasm") goBrowserRemoved();
       const { scaffoldGoProject } = await import("./src/gowasic.ts");
-      // Default scaffold is a wasm LIBRARY (the Go producer's primary output via `modc --lang=go`);
-      // a browser project is opt-in via --go-target=wasm.
-      const scaffold = (args["go-target"] as string | undefined)?.toLowerCase() === "wasm"
-        ? "browser"
-        : "library";
-      const r = await scaffoldGoProject(langPath, scaffold);
+      const r = await scaffoldGoProject(langPath, "program");
       if (!r.success) Deno.exit(1);
       break;
     }
     case "modc":
-      if (lang === "rust") {
+      // Producer language is explicit (--lang) or auto-detected from the file/dir; a `.ts` input
+      // (no producer detected) is the TypeScript library compiler.
+      if (effLang === "rust") {
         // `modc --lang=rust <path>` → `rsxtk build <path> wasm` (library/universal wasm). The wasi
         // *program* build is `build --lang=rust` (→ `rsxtk build <path> wasi`).
         await delegateRust("build", ["wasm"]);
         break;
       }
-      if (lang === "zig") {
+      if (effLang === "zig") {
         // `modc --lang=zig` builds a freestanding wasm LIBRARY: exports the `export fn` functions,
         // no `_start`/WASI — callable via `wasmtk mod`/bindgen, the Zig analog of TS `modc`.
         const { compileZig } = await import("./src/zigwasic.ts");
@@ -271,19 +290,14 @@ Options:
         if (!r.success) Deno.exit(1);
         break;
       }
-      if (lang === "go") {
+      if (effLang === "go") {
         // `modc --lang=go` builds a WASI reactor LIBRARY by default (`-buildmode=c-shared`): no
         // _start, exports the `//go:wasmexport` functions + runtime, callable via `wasmtk mod` /
-        // bindgen — the Go analog of TS `modc` library mode. The BROWSER build (`-target=wasm`,
-        // syscall/js + wasm_exec.js) is opt-in via `--go-target=wasm` (it imports `gojs` and only
-        // runs in a browser, so wasmtk can't host it).
+        // bindgen — the Go analog of TS `modc` library mode. `--go-target=wasm-unknown` builds the
+        // alloc-free MERGEABLE leaf instead. (Browser output — `--go-target=wasm` — is not produced.)
         const goTgt = (args["go-target"] as string | undefined)?.toLowerCase();
-        // wasm = browser; wasm-unknown/leaf = alloc-free MERGEABLE leaf; else reactor library.
-        const goModcTarget = goTgt === "wasm"
-          ? "wasm"
-          : (goTgt === "wasm-unknown" || goTgt === "leaf")
-          ? "leaf"
-          : "reactor";
+        if (goTgt === "wasm") goBrowserRemoved();
+        const goModcTarget = (goTgt === "wasm-unknown" || goTgt === "leaf") ? "leaf" : "reactor";
         const { compileGoWasi } = await import("./src/gowasic.ts");
         const r = await compileGoWasi(langPath, {
           outPath,
@@ -306,8 +320,8 @@ Options:
             "   Direct Go→WASI compilation is no longer a standalone command — the Go WASI output\n" +
             "   isn't consumable by wasmtk's merge/bundle pipeline (heap-using Go can't be merged).\n" +
             "   To build and run a Go WASI module in one step, use:\n" +
-            "       wasmtk run --lang=go [path]\n" +
-            "   (For a browser module: wasmtk modc --lang=go [path].)",
+            "       wasmtk run <file.go>   (language auto-detected; or a dir with go.mod)\n" +
+            "   (For a callable library: wasmtk modc <file.go>.)",
         );
         Deno.exit(1);
       }
@@ -321,9 +335,7 @@ Options:
       // builds + runs without needing `--lang`. The explicit flag still works (incl. bare cwd via
       // langPath = "."). Producer build → run on wasmtk's TS WASI host. Detection is in main.ts so a
       // plain `wasmtk run x.wasm` never loads a producer module.
-      const runLang = (lang === "go" || lang === "zig" || lang === "rust")
-        ? lang
-        : (typeof target === "string" ? await detectRunLang(target) : null);
+      const runLang = effLang;
       if (runLang === "go") {
         const { compileGoWasi } = await import("./src/gowasic.ts");
         const r = await compileGoWasi(langPath, { outPath, runtime: goRuntime, target: "wasip1" });
@@ -345,6 +357,24 @@ Options:
         const r = await runRust("run", rsxtkForwardArgs());
         if (!r.success) Deno.exit(1);
         break;
+      }
+      // A directory reached here means no producer project was auto-detected in it (no `go.mod` /
+      // `Cargo.toml`) — a directory isn't a runnable module, so surface a clear error instead of a
+      // cryptic "failed to instantiate" from trying to run it as `.wasm`.
+      if (typeof target === "string") {
+        let targetIsDir = false;
+        try {
+          const st = await rt.stat(target) as { isDirectory: boolean | (() => boolean) };
+          targetIsDir = typeof st.isDirectory === "function" ? st.isDirectory() : !!st.isDirectory;
+        } catch { /* not found — let runWasi report the missing path */ }
+        if (targetIsDir) {
+          console.error(
+            `❌ wasmtk run: '${target}' is a directory, but no Go or Rust project was found in it ` +
+              `(expected a go.mod or Cargo.toml).\n` +
+              `   Point run at a project directory, or at a .wasm / .wat / .ts / .js / .go / .zig / .rs file.`,
+          );
+          Deno.exit(1);
+        }
       }
       await runWasi(target, []);
       break;
@@ -432,11 +462,45 @@ Options:
     }
     // Rust producer commands (delegate to rsxtk; require --lang=rust).
     case "initmod":
-      await delegateRust("initmod");
+      // `initmod` scaffolds a wasm LIBRARY (exports, no entry point) for every producer — the
+      // counterpart to `init` (a WASI program). Mirrors the Rust producer's init/initmod split.
+      if (lang === "rust") {
+        await delegateRust("initmod");
+      } else if (lang === "zig") {
+        const { scaffoldZigProject } = await import("./src/zigwasic.ts");
+        const r = await scaffoldZigProject(langPath, "library");
+        if (!r.success) Deno.exit(1);
+      } else if (lang === "go") {
+        const { scaffoldGoProject } = await import("./src/gowasic.ts");
+        const r = await scaffoldGoProject(langPath, "library");
+        if (!r.success) Deno.exit(1);
+      } else {
+        console.error("❌ wasmtk: `initmod` supports `--lang=go`, `--lang=zig`, or `--lang=rust`.");
+        Deno.exit(1);
+      }
       break;
     case "build":
-      // `build --lang=rust <path>` → `rsxtk build <path> wasi` (a WASI program).
-      await delegateRust("build", ["wasi"]);
+      // `build` compiles a WASI PROGRAM to a standalone `.wasm` (without running it) for every
+      // producer — the Rust `build` verb, extended to Go (`wasip1`) and Zig (`wasm32-wasi`). The
+      // producer is explicit (--lang) or auto-detected from the file/dir. (For a TypeScript program,
+      // use `wasic`.)
+      if (effLang === "rust") {
+        await delegateRust("build", ["wasi"]); // → `rsxtk build <path> wasi`
+      } else if (effLang === "zig") {
+        const { compileZig } = await import("./src/zigwasic.ts");
+        const r = await compileZig(langPath, { outPath, target: "wasi" });
+        if (!r.success) Deno.exit(1);
+      } else if (effLang === "go") {
+        const { compileGoWasi } = await import("./src/gowasic.ts");
+        const r = await compileGoWasi(langPath, { outPath, runtime: goRuntime, target: "wasip1" });
+        if (!r.success) Deno.exit(1);
+      } else {
+        console.error(
+          "❌ wasmtk: `build` needs a Go/Zig/Rust program — pass a .go/.zig/.rs file (auto-detected) " +
+            "or `--lang=go|zig|rust`. (For a TypeScript program, use `wasmtk wasic`.)",
+        );
+        Deno.exit(1);
+      }
       break;
     case "add":
       await delegateRust("add");

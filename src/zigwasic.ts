@@ -10,9 +10,11 @@
  * name/debug sections.
  *
  * Commands (wired in `main.ts` under `--lang=zig`):
- *   - `wasmtk init --lang=zig [dir]`  → scaffold a wasm-library `main.zig`
- *   - `wasmtk modc --lang=zig [path]` → freestanding wasm LIBRARY (exports `export fn`, no WASI)
- *   - `wasmtk run  --lang=zig [path]` → wasm32-wasi PROGRAM, run on wasmtk's TS WASI host
+ *   - `wasmtk init    --lang=zig [dir]`  → scaffold a WASI PROGRAM `main.zig` (`pub fn main`)
+ *   - `wasmtk initmod --lang=zig [dir]`  → scaffold a wasm-LIBRARY `main.zig` (`export fn`s)
+ *   - `wasmtk build   --lang=zig [path]` → wasm32-wasi PROGRAM → standalone `.wasm` (no run)
+ *   - `wasmtk modc    --lang=zig [path]` → freestanding wasm LIBRARY (exports `export fn`, no WASI)
+ *   - `wasmtk run     --lang=zig [path]` → wasm32-wasi PROGRAM, run on wasmtk's TS WASI host
  *
  * Scope (v1, numerics-first): command-mode (`pub fn main`) + `export fn` library exports. Zig
  * string/aggregate HOST bindings (bindgen) are deferred (ABI forward-alignment), as for Go.
@@ -175,7 +177,17 @@ export async function compileZig(input: string, opts: ZigCompileOptions = {}): P
 }
 
 /** Scaffolds a Zig wasm-library project: writes `main.zig` (export fn + a comptime-guarded test main). */
-export async function scaffoldZigProject(dir: string): Promise<ZigResult> {
+/**
+ * Scaffold kind: `"program"` = a WASI command (`pub fn main`, via `wasmtk init`); `"library"` =
+ * a wasm library (`export fn` + a comptime-guarded test harness, via `wasmtk initmod`). Mirrors the
+ * Rust/Go producers' `init` (program) vs `initmod` (library) split.
+ */
+export type ZigScaffold = "program" | "library";
+
+export async function scaffoldZigProject(
+  dir: string,
+  scaffold: ZigScaffold = "library",
+): Promise<ZigResult> {
   if (!(await toolAvailable("zig", ["version"]))) {
     const msg =
       "Zig not found on PATH. Install it (https://ziglang.org/download/) to use --lang=zig.";
@@ -184,7 +196,11 @@ export async function scaffoldZigProject(dir: string): Promise<ZigResult> {
   }
   const baseDir = resolve(dir && dir.length > 0 ? dir : ".");
   const name = basename(baseDir);
-  console.log(`Initializing Zig wasm library project: ${name}`);
+  console.log(
+    scaffold === "program"
+      ? `Initializing Zig WASI program project: ${name}`
+      : `Initializing Zig wasm library project: ${name}`,
+  );
   try {
     await rt.mkdir(baseDir, { recursive: true });
   } catch { /* already exists — fine */ }
@@ -194,15 +210,39 @@ export async function scaffoldZigProject(dir: string): Promise<ZigResult> {
     await rt.stat(mainPath);
     console.log("   main.zig already exists — leaving it as is.");
   } catch {
-    await rt.writeTextFile(mainPath, MAIN_ZIG_LIBRARY);
+    await rt.writeTextFile(mainPath, scaffold === "program" ? MAIN_ZIG_PROGRAM : MAIN_ZIG_LIBRARY);
     console.log(`   wrote ${mainPath}`);
   }
-  console.log(`   Test:  wasmtk run  --lang=zig ${baseDir}   (runs main as a test harness)`);
-  console.log(
-    `   Build: wasmtk modc --lang=zig ${baseDir}   (→ wasm library; exports 'export fn' funcs)`,
-  );
+  if (scaffold === "program") {
+    console.log(`   Run:   wasmtk run   --lang=zig ${baseDir}   (runs main as a WASI program)`);
+    console.log(`   Build: wasmtk build --lang=zig ${baseDir}   (→ standalone WASI .wasm)`);
+  } else {
+    console.log(`   Test:  wasmtk run  --lang=zig ${baseDir}   (runs main as a test harness)`);
+    console.log(
+      `   Build: wasmtk modc --lang=zig ${baseDir}   (→ wasm library; exports 'export fn' funcs)`,
+    );
+  }
   return { success: true, outputPath: baseDir };
 }
+
+// `init` scaffold: a WASI PROGRAM (a runnable command). Run it with `wasmtk run --lang=zig`, or
+// build a standalone `.wasm` with `wasmtk build --lang=zig`. For a callable wasm LIBRARY instead
+// (exported `export fn`s, no entry point), scaffold with `wasmtk initmod --lang=zig`.
+const MAIN_ZIG_PROGRAM = `const std = @import("std");
+
+// This is a WASI PROGRAM — 'pub fn main' is the entry point that runs when you
+// 'wasmtk run --lang=zig .' (or 'wasmtk build --lang=zig .' to produce a standalone .wasm you
+// can run on any WASI runtime). For a callable wasm LIBRARY instead (exported 'export fn's, no
+// 'main'), scaffold with 'wasmtk initmod --lang=zig' and build with 'wasmtk modc --lang=zig'.
+pub fn main() void {
+    std.debug.print("Hello from Zig on WASI!\\n", .{});
+    std.debug.print("2 + 3 = {d}\\n", .{add(2, 3)});
+}
+
+fn add(a: i32, b: i32) i32 {
+    return a + b;
+}
+`;
 
 const MAIN_ZIG_LIBRARY = `const builtin = @import("builtin");
 const std = @import("std");

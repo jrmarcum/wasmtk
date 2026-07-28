@@ -1390,6 +1390,19 @@ into the real impl: the hand-patch reused iov@0/nwritten@128 — fine because dy
 transient — but the intrinsic should use wasic's actual `iovBase`/`NWRITTEN_OFFSET`/`scratchBase`
 constants, not hardcoded 0/128, to stay correct after any merge relocation.)
 
+### ✅ dync no longer generates the (empty) `.wit` (2026-07-28)
+
+A `dync` module is a whole-program WASI command with **no exports**, so its WIT is an empty world
+(`world name {}`) — writing it was a wasted step. `compileWasiTs` gained an `opts?: { emitWit?:
+boolean }` param; when `emitWit === false` it skips the `generateWit` + `.wit` write (and the
+`WIT:` log line). `compileDyn` passes `{ emitWit: false }`. All other callers (the `wasic`/`modc`
+CLI paths) default to emitting `.wit` as before. (Also this session: `wasmtk wasic` merge notices
+were reclassified `⚠️`→`ℹ️` — informational, not warnings; and on an unsupported-feature abort the
+`wasic` CLI wrapper now classifies the cause and prints "recompile with `wasmtk dync`" for a dynamic
+feature, or "fix this first" for a genuine undefined-name error — `suggestNextStepOnAbort`, gated to
+the `compileWasi` wrapper so it never fires on the dync-internal driver compile. `WasicResult` gained
+`aborted` + `diagnostics`.)
+
 ### ✅ IMPLEMENTED — post-merge WAT transform, not an intrinsic (2026-07-27)
 
 Shipped as **`internalizeDynrtHostImports(wat)`** in `src/wasic.ts`, called in `compileWasiTs` right
