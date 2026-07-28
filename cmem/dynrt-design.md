@@ -1324,3 +1324,27 @@ coupling the modularization Phase-0 audit targets, and it's on-vision (the dynam
 genuine *universal* WASI module). Slot as a small high-value item folded into Phase 0 or a mini-track
 right after. **Next action when picked up:** prototype `__wasi_write` + the trap-stub, then prove the
 four-runtime run end-to-end on a `dync` demo.
+
+### ✅ PROVEN end-to-end via hand-patch (2026-07-09)
+
+Before implementing, the fix was validated by hand-patching a real `dync` artifact
+(`tests/wasi/wasm_wasi_dync/demo1.wat`, the closures/classes/JSON/reduce/map program):
+removed the two `env` imports; added `(import "wasi_snapshot_preview1" "fd_write" …)`; replaced
+`$dynrt___host_call` with `(func … unreachable)` and `$dynrt___host_print(ptr,len)` with
+`(i32.store (i32.const 0) ptr) (i32.store (i32.const 4) len) (drop (call $fd_write (i32.const 1)
+(i32.const 0) (i32.const 1) (i32.const 128)))` — reusing the reserved low scratch region (data starts
+at 260, so `[0,260)` is free for the iov@0 / nwritten@128 layout). Reassembled with `wasm-opt
+--all-features`. Resulting imports: **`wasi_snapshot_preview1.proc_exit` + `.fd_write` only**.
+
+Ran **byte-identical** output (`counter: 11 12 13 / dist: 5 / sorted / sum: 28 / upper / fib`) under
+**wasmtime ✓, wasmer ✓, wazero ✓** (WAMR `iwasm` not installed locally — standard WASI-P1, no reason
+to differ). So the plan is de-risked: the two `env.*` imports are the ONLY blocker, `fd_write` via the
+reserved scratch works, and the `__host_call` trap-stub is safe (never reached standalone).
+
+**Remaining = productionize** (so `wasmtk dync` emits pure-WASI directly, no hand-patch): add the
+`__wasi_write(ptr,len)` intrinsic to wasic (emit the iovec+fd_write inline, as `console_log.ts` does)
+and switch `dynrt_lib_modc.ts`'s `print`/`__host_call` to it + the trap; keep the `env.*` path only
+for the host/bindgen build. Then wire the cross-runtime regression suite. (Scratch caveat to carry
+into the real impl: the hand-patch reused iov@0/nwritten@128 — fine because dynrt's print is
+transient — but the intrinsic should use wasic's actual `iovBase`/`NWRITTEN_OFFSET`/`scratchBase`
+constants, not hardcoded 0/128, to stay correct after any merge relocation.)
