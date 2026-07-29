@@ -36,6 +36,44 @@ installed launcher prompts interactively (`Deno requests ffi access … [y/n/A]`
 invocation, which stalls the whole test run. (Regression history: a documented reinstall command
 here once omitted `--allow-ffi`; fixed 2026-06-08 by deferring to `deno task install`.)
 
+## Which suites to run for a given change (owner policy, 2026-07-28)
+
+**Rule: when a BUG IS FOUND/FIXED, run the ENTIRE suite set — including `wast_tests` — to catch
+overlapping regressions.** Skip suites only when the change is *provably* outside their reach; the
+map below is the evidence for that call. "Outlier" is relative to WHICH FILE changed, never absolute.
+
+**A change to `src/wasic.ts` / `src/console_log.ts` (the compiler) reaches:**
+
+| Suite | Why it is reached |
+| --- | --- |
+| `wasi_tests` | drives `wasic` / `modc` / `run` |
+| `bundle_tests` | `wasic` on multi-file projects |
+| `bindgen_tests` | `modc` = wasic library mode |
+| `merge_tests` | `wasic` + `modc` |
+| **`go_merge_tests`** | **compiles a TypeScript driver with `wasic` (`tests/go_merge_tests.ts:70`)** — only the merged *leaf* is Go, so this is NOT a Go-only suite |
+| `dync_conformance_tests`, `dync_cross_runtime_tests` | `src/dync.ts` imports `compileWasiTs` from `wasic.ts`, so every dync program is wasic-compiled |
+
+**Independent of wasic codegen (safe to skip for a pure-wasic change) — each with its OWN trigger:**
+
+| Suite | Exercises | Its own trigger |
+| --- | --- | --- |
+| `hybrid_tests` | `src/hybrid.ts` parser/scanners (unit) | `src/hybrid.ts` |
+| `jstyper_tests` | `src/jstyper.ts` (unit; emits `.ts`, never compiles) | `src/jstyper.ts` |
+| `wast_tests` | `src/wast.ts` → `wabt` only | **any `wabt-ts` / `binaryen-ts` backend bump**, `src/wast.ts` |
+| `varscope_tests` | `src/varscope.ts` | `src/varscope.ts` |
+| `wasmmerge_guard_tests` | `src/wasmmerge.ts` | `src/wasmmerge.ts` — **and wasic merge-path changes**, which call into it |
+| `mod_tests` | loads 36 **committed** `.wasm` fixtures under `tests/module/wasm_mod/`; no compile step | the loader, `src/utils.ts` |
+| `go_bindgen_tests`, `go_asyncify_tests` | `--lang=go` → `gowasic` (+ `bindgen.ts`) | `src/gowasic.ts`, `src/bindgen.ts` |
+
+**Verify, don't assume.** The quickest check of what a suite actually drives:
+
+```bash
+grep -ohE '"(wasic|modc|dync|bindgen|run)"' tests/<suite>.ts | sort -u   # CLI verbs it shells out to
+grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src modules it unit-tests
+```
+
+`go_merge_tests` was mis-classified as a Go-only outlier until this grep showed the `wasic` call.
+
 ## Current pass counts (2026-07-28, wabt-ts 1.3.5 + binaryen-ts 1.4.3)
 
 > **`tests/wasi/wasm_wasi` is now 383 / 383** (2026-07-28) — the 375 below plus 8 owner-supplied
@@ -57,6 +95,8 @@ here once omitted `--allow-ffi`; fixed 2026-06-08 by deferring to `deno task ins
 > `0`). **Every suite in the repo is green:** bindgen 142, mod, hybrid, jstyper, merge, varscope,
 > bundle 4/4, wasmmerge_guard, and `go_bindgen` / `go_merge` / `go_asyncify` — the Go three
 > genuinely ran (TinyGo present), they did not self-skip.
+>
+> `wast_tests` baseline (2026-07-28): **41 files, 12444 passed, 0 failed**, 3466 skipped — ALL CLEAN.
 >
 > **Runner note:** a full `tests/wasi/wasm_wasi` pass now exceeds 10 minutes on this machine; run it
 > backgrounded or with a raised timeout. Beware the shell idiom `… ; grep -c "FAILED"` as the last
