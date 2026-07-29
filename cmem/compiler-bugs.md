@@ -1,5 +1,50 @@
 # Compiler bug log
 
+## Phase 27 string methods missing from `emitStringPtrLen` — silent `0` (FIXED 2026-07-28)
+
+Surfaced by an owner stress test whose only failing line was `console.log("Repeated:", "x".repeat(3))`
+→ printed **`0`** instead of `xxx`. Pulling the thread showed a whole family of silent-wrong output.
+
+**Root cause — handler parity gap between the two string entry points.** `emitStringAssign` (RHS of a
+string assignment) implemented the full Phase 27 set, but `emitStringPtrLen` — the entry point for a
+string used as a **console.log argument**, comparison operand, or call argument — implemented only
+`.at`, `.slice`, `.padStart`/`.padEnd` and case conversion. `trim`/`trimStart`/`trimEnd`, `charAt`,
+`repeat`, `replace`, `replaceAll` existed **only** in the assignment path. So they worked when
+assigned to a variable first and silently produced `0` when used inline. Additionally `slice`, `.at`
+and the case handler gated their receiver on `locals.get(recv) === "string"`, so a string **literal**
+receiver fell through the same way.
+
+Measured before → after (all eight forms, wasm vs the ts baseline):
+
+| Form | Before | After |
+| --- | --- | --- |
+| `s.repeat(3)` (variable receiver, inline) | `0` | `xxx` |
+| `"z".repeat(3)` / `"  t  ".trim()` | `0` | `zzz` / `t` |
+| `"a-a".replace("a","b")` | `0` | `b-a` |
+| `"hello".slice(1,3)` / `"hello".charAt(1)` | `0` | `el` / `e` |
+| `"ab".toUpperCase()`, `"q".padStart(3,"*")` | already correct | unchanged |
+
+`const b: string = "y".repeat(3)` was a *loud* abort ("unsupported string assignment"); also fixed.
+
+**Fix.** One generic block in `emitStringPtrLen` covering trim family / `charAt` / `repeat` /
+`replace` / `replaceAll`, following the existing `padStart` pattern: the receiver is resolved by
+**recursing through `emitStringPtrLen`**, so a variable, a string literal, a string-array element,
+and a string-returning call all work uniformly. Every helper already returned multi-value
+`(result i32 i32)`, so the call is returned directly — no new WAT runtime. An arity gate
+(0/1/2 args per method) makes a wrong arg count fall through rather than emit a mismatched call.
+For `slice` and `.at`, which need the receiver's length **independently** (defaulted `end`, negative
+index), a new `stringReceiverParts()` helper returns SEPARATE ptr/len for a string local, module
+string const, or literal; it returns null otherwise so callers keep their existing paths. The
+case-conversion receiver was generalized the same way.
+
+This is the failure mode INDEX.md calls the compiler's worst — silent-wrong, not an abort — and it
+had been reachable by any inline `console.log(s.trim())` since Phase 27 shipped.
+
+Tests `27_StringSplitAndForOf`, `27_StringTrimPadReplace`, `27_CharCodeAndSubstringQuery` (the other
+two passed as-written). Gate: wasi **387/387**; bindgen 142, mod, hybrid, jstyper, merge, varscope,
+bundle 4/4, wasmmerge_guard, and the three TinyGo `go_*` suites (TinyGo present — genuinely ran, not
+skipped) all **0 failures**.
+
 ## `bundle_tests.ts` StructImport — struct types gated on PascalCase spelling (FIXED 2026-07-28)
 
 The one long-standing red suite. `StructImport` (a two-file fixture importing `interface Vec2`

@@ -4,6 +4,26 @@ Invariants and codegen rules that are easy to break in a refactor and must NOT b
 reverted. The exhaustive list (with line numbers) is in the legacy `CLAUDE.md`; this is the
 high-value subset.
 
+## String methods: `emitStringPtrLen` must stay at PARITY with `emitStringAssign` (added 2026-07-28)
+
+- **Every string-producing method must be implemented in BOTH entry points.** `emitStringAssign`
+  handles the RHS of a string assignment; `emitStringPtrLen` handles a string used as a
+  console.log argument, a comparison operand, or a call argument. A method present in only the
+  first works when assigned to a variable and **silently emits `0`** when used inline — the
+  compiler's worst failure mode, and exactly what happened to `trim`/`charAt`/`repeat`/`replace`/
+  `replaceAll` from Phase 27 until 2026-07-28. When adding a string method, add it to both.
+- **Resolve the receiver by recursing through `emitStringPtrLen`, never by gating on
+  `locals.get(recv) === "string"`.** The recursion is what makes a variable, a string LITERAL, a
+  string-array element, and a string-returning call all work with one handler (this is the
+  long-standing `padStart` pattern). The `locals` gate silently rejects literal receivers.
+- **`stringReceiverParts()` exists for the cases that need ptr and len SEPARATELY** — `slice`'s
+  defaulted `end` and `.at`'s negative-index normalization can't use the multi-value pair. It
+  returns null for unrecognized receivers so callers fall through to their existing paths; keep
+  that null-return contract.
+- **Gate on arity before emitting.** The generic Phase 27 block checks the arg count per method
+  (0 for the trim family, 1 for `charAt`/`repeat`, 2 for `replace`/`replaceAll`) and falls through
+  on a mismatch, rather than emitting a call with a mismatched signature.
+
 ## Struct-type detection uses the REGISTRY, not capitalization (added 2026-07-28)
 
 - **Never gate a struct/class type annotation on `/^[A-Z]/`.** The authoritative test is

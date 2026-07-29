@@ -49,8 +49,19 @@ here once omitted `--allow-ffi`; fixed 2026-06-08 by deferring to `deno task ins
 > long-standing red suite (a pre-existing failure, not from the stress batch): struct-type
 > annotations were gated on PascalCase spelling, which rejects every `tsbundler`-mangled imported
 > type (`Vec2` in `vec.ts` → `vec_Vec2`). Now gated on the `structDefs`/`classDefs` registry.
-> Regression `12_LowercaseStructTypeName`; suite **384/384**. See compiler-bugs.md §
-> "`bundle_tests.ts` StructImport".
+> Regression `12_LowercaseStructTypeName`. See compiler-bugs.md § "`bundle_tests.ts` StructImport".
+>
+> **Suite is now 387 / 387** (2026-07-28) — +3 Phase 27 string stress tests
+> (`27_StringSplitAndForOf`, `27_StringTrimPadReplace`, `27_CharCodeAndSubstringQuery`), which
+> surfaced the `emitStringPtrLen` parity gap (inline `s.trim()` / `"x".repeat(3)` silently emitted
+> `0`). **Every suite in the repo is green:** bindgen 142, mod, hybrid, jstyper, merge, varscope,
+> bundle 4/4, wasmmerge_guard, and `go_bindgen` / `go_merge` / `go_asyncify` — the Go three
+> genuinely ran (TinyGo present), they did not self-skip.
+>
+> **Runner note:** a full `tests/wasi/wasm_wasi` pass now exceeds 10 minutes on this machine; run it
+> backgrounded or with a raised timeout. Beware the shell idiom `… ; grep -c "FAILED"` as the last
+> command — `grep -c` exits **1** when the count is 0, so a perfectly green run reports a non-zero
+> script exit. Check the runner's own `EXIT=` / summary block, not the trailing pipeline status.
 
 ### Snapshot as of 2026-07-08 (wabt-ts 1.3.5 + binaryen-ts 1.4.0)
 

@@ -7041,6 +7041,35 @@ class WasicTranspiler {
    * expression, suitable as arguments to $__str_cmp.
    * Handles: string variable identifiers and string literals.
    */
+  /**
+   * Resolves a string receiver to SEPARATE ptr / len WAT expressions.
+   *
+   * `emitStringPtrLen` returns one multi-value `"ptr len"` string, which is fine when the pair is
+   * consumed positionally but useless when only the length is needed (e.g. `slice`'s defaulted
+   * `end`). Handles a string local/param, a module-level string const, and a string literal;
+   * returns null for anything else so callers fall through to their existing paths.
+   */
+  private stringReceiverParts(
+    recv: string,
+    locals: Map<string, WatType>,
+  ): { ptr: string; len: string } | null {
+    const r = recv.trim();
+    if (/^\w+$/.test(r) && locals.get(r) === "string") {
+      return { ptr: `(local.get $${r}_ptr)`, len: `(local.get $${r}_len)` };
+    }
+    if (/^\w+$/.test(r) && this.moduleStringConsts.has(r)) {
+      const [o, l] = this.moduleStringConsts.get(r)!;
+      return { ptr: `(i32.const ${o})`, len: `(i32.const ${l})` };
+    }
+    // Escape-aware literal match (mirrors the literal handling in emitStringPtrLen).
+    const lm = r.match(/^"((?:[^"\\]|\\.)*)"$/) ?? r.match(/^'((?:[^'\\]|\\.)*)'$/);
+    if (lm) {
+      const [o, l] = this.allocString(lm[1]!);
+      return { ptr: `(i32.const ${o})`, len: `(i32.const ${l})` };
+    }
+    return null;
+  }
+
   private emitStringPtrLen(expr: string, locals: Map<string, WatType>): string {
     expr = expr.trim();
     // String variable (or param) — use locals map for accuracy
@@ -7178,33 +7207,34 @@ class WasicTranspiler {
       }
     }
     // Phase 49: str.at(n) — returns (ptr+normIdx, 1) inline for use in str comparisons
-    const strAtSPLM = expr.match(/^(\w+)\.at\s*\((.+)\)$/);
-    if (
-      strAtSPLM && locals.get(strAtSPLM[1]) === "string" && parenDepthNeverNegative(strAtSPLM[2])
-    ) {
-      const strName = strAtSPLM[1];
+    const strAtSPLM = expr.match(/^(.+)\.at\s*\((.+)\)$/);
+    const strAtParts = strAtSPLM && parenDepthNeverNegative(strAtSPLM[2])
+      ? this.stringReceiverParts(strAtSPLM[1]!, locals)
+      : null;
+    if (strAtSPLM && strAtParts) {
       const nWat = this.emitExpr(strAtSPLM[2].trim(), locals, "i32");
-      const ptrW = "(local.get $" + strName + "_ptr)";
-      const lenW = "(local.get $" + strName + "_len)";
+      const ptrW = strAtParts.ptr;
+      const lenW = strAtParts.len;
       const normIdx = "(select " + nWat + " (i32.add " + lenW + " " + nWat + ") (i32.ge_s " + nWat +
         " (i32.const 0)))";
       return "(i32.add " + ptrW + " " + normIdx + ") (i32.const 1)";
     }
 
     // str.slice(start[, end]) — returns inline multi-value call (ptr, len) for use in $__str_cmp args
-    const sliceSPLM = expr.match(/^(\w+)\.slice\s*\((.+)\)$/);
-    if (
-      sliceSPLM && locals.get(sliceSPLM[1]) === "string" && parenDepthNeverNegative(sliceSPLM[2])
-    ) {
+    // Receiver may be a string var/module-const or a string LITERAL (stringReceiverParts) — the
+    // literal form previously fell through and silently yielded 0.
+    const sliceSPLM = expr.match(/^(.+)\.slice\s*\((.+)\)$/);
+    const sliceRecvParts = sliceSPLM && parenDepthNeverNegative(sliceSPLM[2])
+      ? this.stringReceiverParts(sliceSPLM[1]!, locals)
+      : null;
+    if (sliceSPLM && sliceRecvParts) {
       this.needsStringOpHelpers = true;
       const sliceArgs = this.splitArgs(sliceSPLM[2].trim());
       const startWat = this.emitArrayIndex(sliceArgs[0].trim(), locals);
       const endWat = sliceArgs.length >= 2
         ? this.emitArrayIndex(sliceArgs[1].trim(), locals)
-        : `(local.get $${sliceSPLM[1]}_len)`;
-      return `(call $__str_slice (local.get $${sliceSPLM[1]}_ptr) (local.get $${
-        sliceSPLM[1]
-      }_len) ${startWat} ${endWat})`;
+        : sliceRecvParts.len;
+      return `(call $__str_slice ${sliceRecvParts.ptr} ${sliceRecvParts.len} ${startWat} ${endWat})`;
     }
     // n.toString(radix) — numeric var/global with a radix arg → $__i32_to_str_radix into the
     // $__str_op temp pair, returned as (ptr, len). (No-arg n.toString() is a different, single-value
@@ -7244,6 +7274,61 @@ class WasicTranspiler {
       }
     }
 
+    // Phase 27 string methods that produce a NEW string: trim family, charAt, repeat, replace,
+    // replaceAll. Every helper returns multi-value (ptr, len), so the call is returned directly.
+    // The receiver is resolved by recursing through emitStringPtrLen (same as padStart above), so a
+    // variable, a string LITERAL, a string-array element, or a string-returning call all work.
+    // Previously these lived only in emitStringAssign, so they resolved when assigned to a variable
+    // but SILENTLY produced 0 anywhere emitStringPtrLen was the entry point — most visibly as a
+    // console.log argument (`console.log(s.repeat(3))` printed `0`).
+    {
+      const extSPLM = expr.match(
+        /^(.+)\.(trimStart|trimEnd|trimLeft|trimRight|trim|charAt|repeat|replaceAll|replace)\s*\((.*)\)$/,
+      );
+      if (extSPLM && parenDepthNeverNegative(extSPLM[3]!)) {
+        const method = extSPLM[2]!;
+        const rawArgs = extSPLM[3]!.trim();
+        const args = rawArgs ? this.splitArgs(rawArgs) : [];
+        // Arity gate: a wrong arg count is not this construct — fall through rather than
+        // emitting a call with a mismatched signature.
+        const wantArgs = method === "charAt" || method === "repeat"
+          ? 1
+          : (method === "replace" || method === "replaceAll" ? 2 : 0);
+        if (args.length === wantArgs) {
+          const recvPtrLen = this.quietEmit(() =>
+            this.emitStringPtrLen(extSPLM[1]!.trim(), locals)
+          );
+          if (recvPtrLen !== "(i32.const 0) (i32.const 0)") {
+            const HELPER: Record<string, string> = {
+              trim: "$__str_trim",
+              trimStart: "$__str_trim_start",
+              trimLeft: "$__str_trim_start",
+              trimEnd: "$__str_trim_end",
+              trimRight: "$__str_trim_end",
+              charAt: "$__str_char_at",
+              repeat: "$__str_repeat",
+              replace: "$__str_replace",
+              replaceAll: "$__str_replace_all",
+            };
+            this.needsStringExtHelpers = true;
+            if (wantArgs === 0) return `(call ${HELPER[method]} ${recvPtrLen})`;
+            if (method === "charAt" || method === "repeat") {
+              const nWat = this.emitExpr(args[0]!.trim(), locals, "i32");
+              return `(call ${HELPER[method]} ${recvPtrLen} ${nWat})`;
+            }
+            // replace / replaceAll — both extra args are strings (ptr,len pairs)
+            const oldPL = this.emitStringPtrLen(args[0]!.trim(), locals);
+            const newPL = this.emitStringPtrLen(args[1]!.trim(), locals);
+            if (
+              oldPL !== "(i32.const 0) (i32.const 0)" && newPL !== "(i32.const 0) (i32.const 0)"
+            ) {
+              return `(call ${HELPER[method]} ${recvPtrLen} ${oldPL} ${newPL})`;
+            }
+          }
+        }
+      }
+    }
+
     // str.toUpperCase() / str.toLowerCase() — plain string var OR string-array element receiver.
     // Returns the multi-value ($__str_to_upper/lower) call (ptr, len) for capture by the caller.
     const caseSPLM = expr.match(/^(\w+(?:\[[^\]]*\])?)\.(toUpperCase|toLowerCase)\s*\(\s*\)$/);
@@ -7253,8 +7338,10 @@ class WasicTranspiler {
       let ptrLen: string | null = null;
       if (/^\w+$/.test(recv) && locals.get(recv) === "string") {
         ptrLen = `(local.get $${recv}_ptr) (local.get $${recv}_len)`;
-      } else if (recv.includes("[")) {
-        const inner = this.quietEmit(() => this.emitStringPtrLen(recv, locals)); // string-array element arr[i]
+      } else {
+        // Any other receiver form (string-array element `arr[i]`, string literal, …) — resolve it
+        // recursively, same as padStart / the Phase 27 block above.
+        const inner = this.quietEmit(() => this.emitStringPtrLen(recv, locals));
         if (inner !== "(i32.const 0) (i32.const 0)") ptrLen = inner;
       }
       if (ptrLen) {

@@ -50,8 +50,20 @@ It was pre-existing (verified on a clean tree), then researched and fixed in thi
 tree: struct-type annotations were gated on PascalCase spelling, so every `tsbundler`-mangled
 imported type (`Vec2` in `vec.ts` → `vec_Vec2`) was rejected and multi-file struct imports could
 not compile. Now gated on the `structDefs`/`classDefs` registry. Regression
-`12_LowercaseStructTypeName`. **ALL suites are green: wasi 384/384, bundle 4/4, bindgen 142,
+`12_LowercaseStructTypeName`. **ALL suites are green: wasi 387/387, bundle 4/4, bindgen 142,
 jstyper 73, mod 55, merge 1, varscope 12, wasmmerge_guard.**
+
+**Phase 27 string-method parity gap FIXED (2026-07-28).** Three more owner stress tests (string
+`split` + `for…of`, trim/pad/replace, charCode/startsWith/endsWith) — two passed as-written; the
+third exposed that `emitStringPtrLen` implemented only a SUBSET of the Phase 27 methods that
+`emitStringAssign` had. `trim`/`charAt`/`repeat`/`replace`/`replaceAll` worked when assigned to a
+variable and **silently emitted `0`** used inline (`console.log(s.repeat(3))` → `0`); string-literal
+receivers failed the same way for `slice`/`.at`/case. Fixed by one generic handler that resolves the
+receiver recursively (the existing `padStart` pattern) plus a `stringReceiverParts()` helper for the
+cases needing ptr/len separately. No new WAT runtime — every helper already returned multi-value.
+Post-mortem in [compiler-bugs.md](compiler-bugs.md); the parity invariant is now recorded in
+[design-decisions.md](design-decisions.md) § "String methods: `emitStringPtrLen` must stay at PARITY
+with `emitStringAssign`".
 
 ## Release status (2026-07-28) — v1.11.7 (JSR score 100)
 
