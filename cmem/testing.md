@@ -76,27 +76,27 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 
 ## Current pass counts (2026-07-28, wabt-ts 1.3.5 + binaryen-ts 1.4.3)
 
-> **`tests/wasi/wasm_wasi` is now 383 / 383** (2026-07-28) — the 375 below plus 8 owner-supplied
-> stress tests: `22_ConstEnumFoldingAndExponentCast`, `24_NullableTupleReturnAndFlags`,
+> ### EVERY suite in the repo is green (2026-07-28) — full roster, all measured this session
+>
+> | Suite | Result |
+> | --- | --- |
+> | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **387 / 387**, 0 failed |
+> | `wast_tests.ts` | **41 files, 12444 passed, 0 failed**, 3466 skipped — ALL CLEAN |
+> | `bindgen_tests.ts` | 142, 0 failed |
+> | `bundle_tests.ts` | **4 / 4** — `StructImport` fixed, no longer a standing failure |
+> | `mod_tests.ts` · `merge_tests.ts` · `varscope_tests.ts` · `wasmmerge_guard_tests.ts` | 0 failed |
+> | `hybrid_tests.ts` · `jstyper_tests.ts` | 0 failed |
+> | `go_bindgen_tests.ts` · `go_merge_tests.ts` · `go_asyncify_tests.ts` | 0 failed — TinyGo IS installed, so these genuinely ran; they did NOT self-skip |
+> | `dync_conformance_tests.ts` · `dync_cross_runtime_tests.ts` | 0 failed |
+>
+> **How 375 → 387:** +8 stress tests in the 22/24/25/26 batch
+> (`22_ConstEnumFoldingAndExponentCast`, `24_NullableTupleReturnAndFlags`,
 > `25_NullishOnlyNullFallback`, `25_LogicalAssignmentOperators`,
 > `25_NullishShortCircuitSideEffects`, `26_ForOfBreakContinue`, `26_ArrayDestructuringDefaults`,
-> `26_NestedForOfMatrix`. Five of them surfaced real compiler bugs (all fixed — see
-> compiler-bugs.md § "Stress-test batch (2026-07-28)"); zero regressions. Adjacent suites re-run
-> and unchanged: bindgen 142, jstyper 73, mod 55, merge 1, varscope 12.
-> **`tests/bundle_tests.ts` is now 4/4 — `StructImport` FIXED 2026-07-28.** It had been the one
-> long-standing red suite (a pre-existing failure, not from the stress batch): struct-type
-> annotations were gated on PascalCase spelling, which rejects every `tsbundler`-mangled imported
-> type (`Vec2` in `vec.ts` → `vec_Vec2`). Now gated on the `structDefs`/`classDefs` registry.
-> Regression `12_LowercaseStructTypeName`. See compiler-bugs.md § "`bundle_tests.ts` StructImport".
->
-> **Suite is now 387 / 387** (2026-07-28) — +3 Phase 27 string stress tests
-> (`27_StringSplitAndForOf`, `27_StringTrimPadReplace`, `27_CharCodeAndSubstringQuery`), which
-> surfaced the `emitStringPtrLen` parity gap (inline `s.trim()` / `"x".repeat(3)` silently emitted
-> `0`). **Every suite in the repo is green:** bindgen 142, mod, hybrid, jstyper, merge, varscope,
-> bundle 4/4, wasmmerge_guard, and `go_bindgen` / `go_merge` / `go_asyncify` — the Go three
-> genuinely ran (TinyGo present), they did not self-skip.
->
-> `wast_tests` baseline (2026-07-28): **41 files, 12444 passed, 0 failed**, 3466 skipped — ALL CLEAN.
+> `26_NestedForOfMatrix`) — 5 of which surfaced real compiler bugs; +1
+> `12_LowercaseStructTypeName` (the `bundle_tests` StructImport fix); +3 Phase 27 string tests
+> (`27_StringSplitAndForOf`, `27_StringTrimPadReplace`, `27_CharCodeAndSubstringQuery`) which
+> surfaced the `emitStringPtrLen` parity gap. All post-mortems in compiler-bugs.md.
 >
 > **Runner note:** a full `tests/wasi/wasm_wasi` pass now exceeds 10 minutes on this machine; run it
 > backgrounded or with a raised timeout. Beware the shell idiom `… ; grep -c "FAILED"` as the last

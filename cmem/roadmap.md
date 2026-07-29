@@ -27,12 +27,18 @@
 > The batch itself is recorded as a single unit in `compiler-bugs.md` (post-mortems) and
 > `testing.md` (counts); the README only ever gets the per-phase, user-facing rows.
 
-## Working tree (2026-07-28, post-v1.11.7) — stress-test batch + 6 compiler fixes
+## Branch `fix/stress-test-batch-2026-07-28` (post-v1.11.7) — 8 compiler fixes, 12 new tests
 
-Uncommitted, unreleased. 8 owner-supplied Phase 22/24/25/26 stress tests added to
-`tests/wasi/wasm_wasi`; 5 of them surfaced genuine compiler bugs, all fixed in `src/wasic.ts` +
-`src/console_log.ts`. Suite **375 → 383/383**, zero regressions; bindgen 142, jstyper 73, mod 55,
-merge 1, varscope 12 all unchanged.
+**Committed and pushed to the branch; NOT merged to `main` and NOT released** (still v1.11.7 in
+`deno.json`; a release needs this promoted to a Release-status section + `deno task update-version`).
+Commits: `bfe0f5a` (stress batch, 6 fixes) → `9245c9d` (StructImport) → `3fb62af` (Phase 27 string
+parity) → `d2c8aa1` (regression-gate policy).
+
+11 owner-supplied stress tests across Phases 22/24/25/26/27 plus 1 regression test. **8 of them
+surfaced genuine compiler bugs**, all fixed in `src/wasic.ts` + `src/console_log.ts`. Suite
+**375 → 387/387**, zero regressions — and **every other suite in the repo is green too**, including
+`bundle_tests` (4/4) for the first time and `wast_tests` (12444 assertions, 0 failed). Full roster
+in [testing.md](testing.md).
 
 New capability: **nullable module-level globals** (`let g: T | null` at module scope, with `g ??= v`
 from inside a function) — previously a hard *unsupported statement* abort. Fixes: `expr as T` no
@@ -50,8 +56,7 @@ It was pre-existing (verified on a clean tree), then researched and fixed in thi
 tree: struct-type annotations were gated on PascalCase spelling, so every `tsbundler`-mangled
 imported type (`Vec2` in `vec.ts` → `vec_Vec2`) was rejected and multi-file struct imports could
 not compile. Now gated on the `structDefs`/`classDefs` registry. Regression
-`12_LowercaseStructTypeName`. **ALL suites are green: wasi 387/387, bundle 4/4, bindgen 142,
-jstyper 73, mod 55, merge 1, varscope 12, wasmmerge_guard.**
+`12_LowercaseStructTypeName`.
 
 **Phase 27 string-method parity gap FIXED (2026-07-28).** Three more owner stress tests (string
 `split` + `for…of`, trim/pad/replace, charCode/startsWith/endsWith) — two passed as-written; the
@@ -64,6 +69,16 @@ cases needing ptr/len separately. No new WAT runtime — every helper already re
 Post-mortem in [compiler-bugs.md](compiler-bugs.md); the parity invariant is now recorded in
 [design-decisions.md](design-decisions.md) § "String methods: `emitStringPtrLen` must stay at PARITY
 with `emitStringAssign`".
+
+**Process decision — regression-gate policy (owner, 2026-07-28).** When a bug is found/fixed, run
+the ENTIRE suite set **including `wast_tests`**; skip a suite only when the change is provably
+outside its reach, justified from the impact map in [testing.md](testing.md) § "Which suites to run
+for a given change". Grepping each runner corrected two intuitive-but-wrong assumptions:
+`go_merge_tests` is **not** a Go-only outlier (it compiles a TypeScript driver with `wasic`), and
+both `dync_*` suites are wasic-dependent (`src/dync.ts` imports `compileWasiTs`). Genuine outliers
+for a pure-wasic change are `hybrid_tests`, `jstyper_tests`, `wast_tests`, `varscope_tests`,
+`wasmmerge_guard_tests`, `mod_tests`, `go_bindgen_tests`, `go_asyncify_tests` — each with its own
+separate trigger, so "outlier" is relative to which FILE changed, never absolute.
 
 ## Release status (2026-07-28) — v1.11.7 (JSR score 100)
 
