@@ -3,6 +3,43 @@
 All notable, user-facing changes to `wasmtk`. Versions follow the `deno.json` version and the
 published [`@jrmarcum/wasmtk`](https://jsr.io/@jrmarcum/wasmtk) JSR package.
 
+## 1.11.9 — Operator-precedence fix (2026-07-29)
+
+**Upgrade promptly.** This release fixes a long-standing arithmetic bug that produced **silently
+wrong numbers** — no error, no warning, just the wrong answer. If your code divides or takes a
+remainder after a multiply, your results may have been incorrect.
+
+### Fixed — wrong arithmetic results
+
+- **`a * b / c` and `a * b % c` computed the wrong value.** `*`, `/` and `%` have equal precedence
+  and group left-to-right, but were being grouped right-to-left — so `a * b / c` was computed as
+  `a * (b / c)`. With integer division the result was badly wrong:
+
+  ```ts
+  const a: i32 = 180;
+  a * 5 / 9    // was 0    (computed as 180 * (5/9)) — should be 100
+  a * 5 % 9    // was 900  (computed as 180 * (5%9)) — should be 0
+  ```
+
+  Only `*` to the **left** of `/` or `%` was affected; `a / b * c`, `a / b / c` and `a % b * c`
+  were always correct. The bug applied both in ordinary code and in `console.log` arguments. A
+  typical victim is any unit conversion, e.g. `(f - 32) * 5 / 9`.
+
+### Fixed — failed to compile
+
+- **String enums are now usable as values.** A **pure** string enum (all members strings) could
+  previously only be printed. Assigning one (`const lvl: LogLevel = LogLevel.Error`) or comparing
+  (`lvl === LogLevel.Error`) failed to compile. Both work now, and printing a string-enum
+  **variable** or function parameter shows its text (`ERROR`) instead of an internal number.
+- **`console.log` arithmetic starting with a number or `(`.** `console.log("x:", 1 + n)` and
+  `console.log("x:", (n + 0) * 5)` failed to instantiate for integer variables, while the
+  equivalent `n + 1` worked. `1.5 + n` still means floating-point.
+
+### Testing
+
+- 4 new tests (3 stress + 1 regression). Suite **391 → 395/395**; `wast_tests` 41 files /
+  12444 assertions / 0 failed; every other suite green.
+
 ## 1.11.8 — Stress-test bug-fix release (2026-07-28)
 
 Ten compiler bugs found by hand-written stress tests across Phases 22/24/25/26/27/28 and fixed.

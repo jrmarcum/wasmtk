@@ -27,9 +27,16 @@
 > The batch itself is recorded as a single unit in `compiler-bugs.md` (post-mortems) and
 > `testing.md` (counts); the README only ever gets the per-phase, user-facing rows.
 
-## Working tree (2026-07-29, post-v1.11.8) — Phase 29 batch, 4 more compiler fixes
+## Release status (2026-07-29) — v1.11.9: operator-precedence fix
 
-Branch `test/phase29-stress-2026-07-29`, **not merged, not released** (deno.json still v1.11.8).
+**v1.11.9 — merged to `main` from `test/phase29-stress-2026-07-29` (commit `852c531`) and published
+to JSR.** Backend unchanged (wabt-ts 1.3.5 + binaryen-ts 1.4.3). Pre-publish gate: `deno publish
+--dry-run` clean, `deno doc --lint` clean across all 16 JSR entrypoints. Full regression gate: wasi
+**395/395**, wast 41 files / 12444 assertions / 0 failed, every other suite 0 failures.
+
+**This release is worth upgrading to promptly** — the headline fix changes the VALUE of ordinary
+arithmetic that previously compiled and ran without any diagnostic.
+
 3 owner Phase 29 stress tests (static fields / getters+setters / string enums) + 1 regression test.
 Test 1 passed; the other two each exposed genuine bugs — **including the most consequential one of
 the whole stress-test series**:
