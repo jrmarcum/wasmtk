@@ -2528,8 +2528,38 @@ function parenDepthNeverNegative(s: string): boolean {
   return true;
 }
 
+/** Marks every index of `s` that lies inside a string/template literal (quotes included), so the
+ *  depth scanner below skips literal content. A local twin of `wasic.ts`'s `buildStringLiteralMask`
+ *  — this module is imported BY wasic.ts, so it cannot import back without a cycle. Keep the two in
+ *  sync; see design-decisions.md § "Bracket/paren/operator scanners MUST skip string literals". */
+function literalMask(s: string): boolean[] {
+  const mask = new Array<boolean>(s.length).fill(false);
+  let q: string | null = null;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (q !== null) {
+      mask[i] = true;
+      if (c === "\\") {
+        if (i + 1 < s.length) mask[i + 1] = true;
+        i++;
+        continue;
+      }
+      if (c === q) q = null;
+    } else if (c === '"' || c === "'" || c === "`") {
+      q = c;
+      mask[i] = true;
+    }
+  }
+  return mask;
+}
+
 function findTopLevelOp(expr: string, op: string): number {
   let depth = 0;
+  // Brackets INSIDE a string literal must not count toward depth, and an operator inside one is
+  // not a top-level operator. Without this, `w + "]"` drove depth to 1 at the literal's `]`, so the
+  // top-level `+` was never seen at depth 0 and the whole concat silently fell through to the
+  // numeric path printing `0`. (`"{" + w + "}"` worked only because braces aren't counted.)
+  const inStr = literalMask(expr);
   // Scan the FULL string from the end so trailing ) / ] (e.g. a RHS ending in a call or
   // `.slice(…)`) are counted toward depth; only test for an op match at valid start positions
   // (i <= maxStart). Starting at `length - op.length` skipped those trailing chars, so an
@@ -2537,6 +2567,7 @@ function findTopLevelOp(expr: string, op: string): number {
   // at depth 0 → the comparison silently fell through to the numeric/terminal path.
   const maxStart = expr.length - op.length;
   for (let i = expr.length - 1; i >= 0; i--) {
+    if (inStr[i]) continue; // literal content: neither depth nor a match site
     const ch = expr[i];
     if (ch === ")" || ch === "]") depth++;
     else if (ch === "(" || ch === "[") depth--;
@@ -3829,5 +3860,50 @@ export function getJoinHelperWat(): string {
       )
     )
     (i32.store (local.get $cursor_addr) (local.get $cur))
+  )
+  ;; ── join → a real (ptr, len) STRING value ──────────────────────────────────
+  ;; The two helpers above write into a caller-supplied scratch buffer, which only suits the
+  ;; console.log gather path. These wrappers give arr.join(sep) a string VALUE, so it also works in
+  ;; \`const s: string = arr.join(sep)\`, in concatenation and in comparisons. They reuse the scratch
+  ;; writers verbatim (same tested loop) over a heap buffer plus a 4-byte cursor cell. Capacity is a
+  ;; worst-case bound: an i32 renders in <= 11 bytes ("-2147483648"), an f64 (Dragon4) in well under
+  ;; 32, plus one separator per element and slack.
+  (func $__dynarr_join_str_i32
+    (param $arr i32) (param $sep_ptr i32) (param $sep_len i32)
+    (result i32 i32)
+    (local $buf i32)
+    (local $cursor i32)
+    (local $n i32)
+    (local.set $n (i32.load (local.get $arr)))
+    (local.set $buf (call $__malloc
+      (i32.add (i32.const 16)
+        (i32.add (i32.mul (local.get $n) (i32.const 12))
+                 (i32.mul (local.get $n) (local.get $sep_len))))))
+    (local.set $cursor (call $__malloc (i32.const 4)))
+    (i32.store (local.get $cursor) (i32.const 0))
+    (call $__dynarr_join_to_scratch_i32
+      (local.get $arr) (local.get $sep_ptr) (local.get $sep_len)
+      (local.get $buf) (local.get $cursor))
+    (local.get $buf)
+    (i32.load (local.get $cursor))
+  )
+  (func $__dynarr_join_str_f64
+    (param $arr i32) (param $sep_ptr i32) (param $sep_len i32)
+    (result i32 i32)
+    (local $buf i32)
+    (local $cursor i32)
+    (local $n i32)
+    (local.set $n (i32.load (local.get $arr)))
+    (local.set $buf (call $__malloc
+      (i32.add (i32.const 16)
+        (i32.add (i32.mul (local.get $n) (i32.const 32))
+                 (i32.mul (local.get $n) (local.get $sep_len))))))
+    (local.set $cursor (call $__malloc (i32.const 4)))
+    (i32.store (local.get $cursor) (i32.const 0))
+    (call $__dynarr_join_to_scratch_f64
+      (local.get $arr) (local.get $sep_ptr) (local.get $sep_len)
+      (local.get $buf) (local.get $cursor))
+    (local.get $buf)
+    (i32.load (local.get $cursor))
   )`;
 }

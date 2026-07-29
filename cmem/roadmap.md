@@ -27,18 +27,19 @@
 > The batch itself is recorded as a single unit in `compiler-bugs.md` (post-mortems) and
 > `testing.md` (counts); the README only ever gets the per-phase, user-facing rows.
 
-## Branch `fix/stress-test-batch-2026-07-28` (post-v1.11.7) — 8 compiler fixes, 12 new tests
+## Branch `fix/stress-test-batch-2026-07-28` (post-v1.11.7) — 10 compiler fixes, 16 new tests
 
 **Committed and pushed to the branch; NOT merged to `main` and NOT released** (still v1.11.7 in
 `deno.json`; a release needs this promoted to a Release-status section + `deno task update-version`).
 Commits: `bfe0f5a` (stress batch, 6 fixes) → `9245c9d` (StructImport) → `3fb62af` (Phase 27 string
-parity) → `d2c8aa1` (regression-gate policy).
+parity) → `d2c8aa1` (regression-gate policy) → `04c8cf0` (memory consolidation) → Phase 28
+join + bracket-concat.
 
-11 owner-supplied stress tests across Phases 22/24/25/26/27 plus 1 regression test. **8 of them
-surfaced genuine compiler bugs**, all fixed in `src/wasic.ts` + `src/console_log.ts`. Suite
-**375 → 387/387**, zero regressions — and **every other suite in the repo is green too**, including
-`bundle_tests` (4/4) for the first time and `wast_tests` (12444 assertions, 0 failed). Full roster
-in [testing.md](testing.md).
+14 owner-supplied stress tests across Phases 22/24/25/26/27/28 plus 2 regression tests. **10 genuine
+compiler bugs found and fixed** in `src/wasic.ts` + `src/console_log.ts`. Suite **375 → 391/391**,
+zero regressions — and **every other suite in the repo is green too**, including `bundle_tests`
+(4/4) for the first time and `wast_tests` (12444 assertions, 0 failed). Full roster in
+[testing.md](testing.md).
 
 New capability: **nullable module-level globals** (`let g: T | null` at module scope, with `g ??= v`
 from inside a function) — previously a hard *unsupported statement* abort. Fixes: `expr as T` no
@@ -69,6 +70,17 @@ cases needing ptr/len separately. No new WAT runtime — every helper already re
 Post-mortem in [compiler-bugs.md](compiler-bugs.md); the parity invariant is now recorded in
 [design-decisions.md](design-decisions.md) § "String methods: `emitStringPtrLen` must stay at PARITY
 with `emitStringAssign`".
+
+**Phase 28 `join` + console.log bracket-concat FIXED (2026-07-28).** Three Phase 28 array-method
+stress tests; two passed as-written. `28_ArrayJoin` showed `join` had **no string value** — it lived
+only in `console_log.ts` as a scratch-buffer `joinarr` segment, so `const s: string = arr.join("-")`
+aborted. Fixed with `$__dynarr_join_str_i32`/`_f64` wrappers over the existing scratch writer plus a
+handler in `emitStringPtrLen` (which `emitStringAssign` falls back through, so assignment, concat
+and comparison were all fixed at one site). Testing that surfaced a **second, unrelated** bug:
+`console_log.ts`'s `findTopLevelOp` counted `()`/`[]` without skipping string literals, so a closing
+`]`/`)` inside a literal hid the top-level `+` and `console.log(w + "]")` silently printed `0` — the
+same bug class already fixed on the wasic side but never mirrored into console_log. Regression
+`27_ConsoleLogBracketConcat`; post-mortems in [compiler-bugs.md](compiler-bugs.md).
 
 **Process decision — regression-gate policy (owner, 2026-07-28).** When a bug is found/fixed, run
 the ENTIRE suite set **including `wast_tests`**; skip a suite only when the change is provably

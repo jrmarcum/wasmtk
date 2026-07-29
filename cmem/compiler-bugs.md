@@ -1,5 +1,51 @@
 # Compiler bug log
 
+## `arr.join()` had no string VALUE + console.log concat broke on `]`/`)` (FIXED 2026-07-28)
+
+Two bugs from the Phase 28 array-method stress batch (`28_ArrayPredicatesAndAt` and
+`28_ArrayMutationsAndSort` passed as-written; `28_ArrayJoin` failed).
+
+**1. `join` existed only inside `console.log`.** `console_log.ts` implements it as a `joinarr`
+segment that writes straight into the gather scratch buffer, so it never produced a string *value*:
+`const s: string = arr.join("-")` aborted with "unsupported string assignment". Same shape as the
+Phase 27 parity gap, from the other direction — a method living only in the console.log path.
+**Fix:** two WAT wrappers, `$__dynarr_join_str_i32` / `_f64`, that reuse the existing (tested)
+scratch writer over a `$__malloc`'d buffer plus a 4-byte cursor cell and return multi-value
+`(ptr, len)`; plus a `join` handler in `emitStringPtrLen`. Because `emitStringAssign` ends in a
+last-resort fallback through `emitStringPtrLen`, that single handler fixed assignment, concatenation
+and comparison at once. Capacity is a worst-case bound (12 B/i32, 32 B/f64, + one separator per
+element + slack); verified against `-2147483648` (11 bytes), empty arrays, and single elements.
+Non-literal separators and `string[]` receivers return the sentinel and stay unsupported.
+
+**2. `console.log` string concat silently printed `0` when a literal contained `]` or `)`.**
+`findTopLevelOp` in `console_log.ts` counted `()`/`[]` for depth but did **not** skip string
+literals, so the `]` in `w + "]"` drove depth to 1 and the top-level `+` was never seen at depth 0 —
+the whole concat fell through to the numeric path. Discovered while testing `"[" + arr.join(",") +
+"]"`, but **entirely independent of `join`**: plain `w + "]"` failed identically. Measured:
+
+| Expression | Before | After |
+| --- | --- | --- |
+| `"a" + w + "b"` | `aVb` | unchanged |
+| `"{" + w + "}"` | `{V}` | unchanged (braces were never counted) |
+| `"[" + w` (open only) | `[V` | unchanged |
+| `"[" + w + "]"` · `"(" + w + ")"` · `w + "]"` | **`0`** | `[V]` · `(V)` · `V]` |
+
+**Fix:** a local `literalMask()` twin of `wasic.ts`'s `buildStringLiteralMask` (console_log.ts is
+imported BY wasic.ts, so it cannot import back without a cycle) + `if (inStr[i]) continue;` in the
+scan. This is the **same bug class already fixed on the wasic side** and recorded in
+design-decisions.md § "Bracket/paren/operator scanners MUST skip string literals" — the
+console_log.ts twin had never been done. High blast radius (`findTopLevelOp` drives all console.log
+operator parsing), so the full gate was re-run.
+
+Tests `28_ArrayJoin`, `28_ArrayPredicatesAndAt`, `28_ArrayMutationsAndSort`, plus regression
+`27_ConsoleLogBracketConcat`. Gate: wasi **391/391**, wast 12444/0, and every other suite 0 failures.
+
+**Windows runner caveat (not a bug):** running `go_asyncify_tests` CONCURRENTLY with the full wasi
+suite produced 4 spurious failures — all `os error 32` ("file is being used by another process") on
+`tests/go_fixtures/**/main.wasm`, i.e. TinyGo build / asyncify write racing the OS lock, not
+assertion failures. Run alone it is 12/12. **Do not run the Go suites in parallel with other suites
+on Windows.**
+
 ## Phase 27 string methods missing from `emitStringPtrLen` — silent `0` (FIXED 2026-07-28)
 
 Surfaced by an owner stress test whose only failing line was `console.log("Repeated:", "x".repeat(3))`

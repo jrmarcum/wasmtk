@@ -4,6 +4,21 @@ Invariants and codegen rules that are easy to break in a refactor and must NOT b
 reverted. The exhaustive list (with line numbers) is in the legacy `CLAUDE.md`; this is the
 high-value subset.
 
+## `console_log.ts` scanners must skip string literals too (added 2026-07-28)
+
+- **`findTopLevelOp` in `console_log.ts` masks string literals via the local `literalMask()`.** It
+  counts `()`/`[]` for depth; without the mask a closing `]`/`)` INSIDE a literal drove depth above
+  0 and hid the top-level operator, so `console.log(w + "]")` silently printed `0`. This is the same
+  bug class as the wasic-side scanners below — the console_log twin was simply never done. Do not
+  remove the `if (inStr[i]) continue;` guard.
+- **`literalMask()` is a deliberate DUPLICATE of `wasic.ts`'s `buildStringLiteralMask`.**
+  `console_log.ts` is imported BY `wasic.ts`, so it cannot import back without a cycle. Keep the two
+  implementations in sync; if one gains escape/template handling, mirror it.
+- **Parity rule for join-like features:** `console_log.ts` may implement a fast path (e.g. the
+  `joinarr` segment writing into the gather scratch buffer), but the feature must ALSO have a
+  string-VALUE form reachable from `emitStringPtrLen`, or it works only inside `console.log`.
+  `$__dynarr_join_str_i32`/`_f64` wrap the scratch writer to supply that value form.
+
 ## String methods: `emitStringPtrLen` must stay at PARITY with `emitStringAssign` (added 2026-07-28)
 
 - **Every string-producing method must be implemented in BOTH entry points.** `emitStringAssign`

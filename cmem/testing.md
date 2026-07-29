@@ -80,7 +80,7 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 >
 > | Suite | Result |
 > | --- | --- |
-> | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **387 / 387**, 0 failed |
+> | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **391 / 391**, 0 failed |
 > | `wast_tests.ts` | **41 files, 12444 passed, 0 failed**, 3466 skipped — ALL CLEAN |
 > | `bindgen_tests.ts` | 142, 0 failed |
 > | `bundle_tests.ts` | **4 / 4** — `StructImport` fixed, no longer a standing failure |
@@ -89,14 +89,22 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 > | `go_bindgen_tests.ts` · `go_merge_tests.ts` · `go_asyncify_tests.ts` | 0 failed — TinyGo IS installed, so these genuinely ran; they did NOT self-skip |
 > | `dync_conformance_tests.ts` · `dync_cross_runtime_tests.ts` | 0 failed |
 >
-> **How 375 → 387:** +8 stress tests in the 22/24/25/26 batch
+> **How 375 → 391:** +8 stress tests in the 22/24/25/26 batch
 > (`22_ConstEnumFoldingAndExponentCast`, `24_NullableTupleReturnAndFlags`,
 > `25_NullishOnlyNullFallback`, `25_LogicalAssignmentOperators`,
 > `25_NullishShortCircuitSideEffects`, `26_ForOfBreakContinue`, `26_ArrayDestructuringDefaults`,
 > `26_NestedForOfMatrix`) — 5 of which surfaced real compiler bugs; +1
 > `12_LowercaseStructTypeName` (the `bundle_tests` StructImport fix); +3 Phase 27 string tests
 > (`27_StringSplitAndForOf`, `27_StringTrimPadReplace`, `27_CharCodeAndSubstringQuery`) which
-> surfaced the `emitStringPtrLen` parity gap. All post-mortems in compiler-bugs.md.
+> surfaced the `emitStringPtrLen` parity gap; +3 Phase 28 array-method tests
+> (`28_ArrayPredicatesAndAt`, `28_ArrayMutationsAndSort`, `28_ArrayJoin`) which surfaced
+> `join`-has-no-string-value; +1 `27_ConsoleLogBracketConcat` (the `]`/`)`-in-literal concat bug
+> that `28_ArrayJoin` exposed as a side-discovery). All post-mortems in compiler-bugs.md.
+>
+> ⚠️ **Do NOT run the Go suites concurrently with other suites on Windows.** Running
+> `go_asyncify_tests` alongside the full wasi suite produced 4 spurious failures — all `os error 32`
+> ("file is being used by another process") on `tests/go_fixtures/**/main.wasm`, i.e. the TinyGo
+> build / asyncify write racing the OS file lock, NOT assertion failures. Run alone it is 12/12.
 >
 > **Runner note:** a full `tests/wasi/wasm_wasi` pass now exceeds 10 minutes on this machine; run it
 > backgrounded or with a raised timeout. Beware the shell idiom `… ; grep -c "FAILED"` as the last

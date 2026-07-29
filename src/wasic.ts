@@ -7274,6 +7274,38 @@ class WasicTranspiler {
       }
     }
 
+    // Phase 28: arr.join([sep]) as a string VALUE. console_log.ts has its own `joinarr` segment that
+    // writes straight into the gather scratch buffer, so join only ever worked INSIDE console.log —
+    // `const s: string = arr.join("-")` aborted as "unsupported string assignment". $__dynarr_join_str_T
+    // wraps the same scratch writer over a heap buffer and returns multi-value (ptr, len). Adding it
+    // here also covers concatenation and comparison, and emitStringAssign's last-resort fallback
+    // routes through this function (see the parity invariant in design-decisions.md).
+    {
+      const joinSPLM = expr.match(/^(\w+)\.join\s*\((.*)\)$/);
+      if (joinSPLM && parenDepthNeverNegative(joinSPLM[2]!)) {
+        const arrN = joinSPLM[1]!;
+        const arrI = this.arrayVars.get(arrN);
+        // i32/f64 element arrays only — a string[] join would need a different element writer.
+        if (arrI && (arrI.elemType === "i32" || arrI.elemType === "f64") && !arrI.isStringArr) {
+          const rawSep = joinSPLM[2]!.trim();
+          let sepPtr: number, sepLen: number;
+          if (rawSep === "") {
+            [sepPtr, sepLen] = this.allocString(","); // JS default separator
+          } else {
+            const sepLit = rawSep.match(/^"((?:[^"\\]|\\.)*)"$/) ??
+              rawSep.match(/^'((?:[^'\\]|\\.)*)'$/);
+            if (!sepLit) return "(i32.const 0) (i32.const 0)"; // non-literal separator: unsupported
+            [sepPtr, sepLen] = this.allocString(sepLit[1]!);
+          }
+          this.needsJoinHelper = true;
+          this.needsNumericHelpers = true; // the writers call $__i32_to_str / $__f64_to_str
+          return `(call $__dynarr_join_str_${arrI.elemType} ${
+            this.arrGetWat(arrN)
+          } (i32.const ${sepPtr}) (i32.const ${sepLen}))`;
+        }
+      }
+    }
+
     // Phase 27 string methods that produce a NEW string: trim family, charAt, repeat, replace,
     // replaceAll. Every helper returns multi-value (ptr, len), so the call is returned directly.
     // The receiver is resolved by recursing through emitStringPtrLen (same as padStart above), so a
