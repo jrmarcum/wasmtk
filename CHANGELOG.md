@@ -3,6 +3,51 @@
 All notable, user-facing changes to `wasmtk`. Versions follow the `deno.json` version and the
 published [`@jrmarcum/wasmtk`](https://jsr.io/@jrmarcum/wasmtk) JSR package.
 
+## 1.11.8 — Stress-test bug-fix release (2026-07-28)
+
+Ten compiler bugs found by hand-written stress tests across Phases 22/24/25/26/27/28 and fixed.
+Most were **silently wrong output** rather than errors — code compiled and ran, but printed the
+wrong value — so they are worth reading if you hit odd results on any of these constructs.
+
+### Fixed — silently wrong output
+
+- **`console.log` string concatenation printed `0` when a literal contained `]` or `)`.**
+  `console.log("[" + name + "]")` or `console.log(s + ")")` printed `0` instead of the string. A
+  closing bracket inside a string literal confused the expression scanner and hid the `+`. Literals
+  with `{`/`}`, or an opening bracket alone, were unaffected — which made it look arbitrary.
+- **String methods used inline printed `0`.** `trim`, `trimStart`/`trimEnd`, `charAt`, `repeat`,
+  `replace`, `replaceAll` worked when assigned to a variable first but produced `0` when used
+  directly as a `console.log` argument, comparison operand, or call argument. String **literal**
+  receivers failed the same way for `slice`, `.at` and case conversion (`"hello".slice(1,3)` → `0`).
+- **Nested `for...of` iterated only the first row.** Both loops shared one cursor, so the outer loop
+  ran exactly one iteration — a 3×2 matrix summed to `3` instead of `21`.
+- **`??` inside `console.log` arguments** returned the fallback instead of the value, including for
+  a non-null `0` (`0 ?? 999` gave `999`).
+
+### Fixed — failed to compile
+
+- **Multi-file struct imports.** `import { Vec2 } from "./vec.ts"` then using `Vec2` failed with
+  *unsupported expression* on every field access. Struct types were matched by a PascalCase naming
+  rule, but the bundler prefixes imported names with the module's lower-case filename. Types are now
+  recognized by the type registry, so any valid name works — including `interface point`.
+- **`arr.join()` as a value.** `const s: string = nums.join("-")` failed to compile; `join` worked
+  only inside `console.log`. It now produces a real string, usable in concatenation and comparisons.
+- **`T | null` functions returning a tuple or struct literal**, plus an *undefined global* error when
+  a nullable return was consumed via inference rather than an explicit annotation.
+- **`as` casts of `**` and `Math.*` expressions** — `(base ** 3) as f64` and the common
+  `Math.floor(x) as i32` idiom both emitted invalid code.
+
+### Added
+
+- **Module-level nullable globals.** `let g: T | null = null` at module scope now compiles, so
+  `g ??= 77` works from inside any function. Previously this aborted as *unsupported statement*;
+  only function-local nullables were supported.
+
+### Testing
+
+- 16 new tests (14 stress + 2 regression). Suite **375 → 391/391**; `bundle_tests` is green for the
+  first time (4/4); `wast_tests` 41 files / 12444 assertions / 0 failed.
+
 ## 1.11.7 — Unified producer verbs & Go browser removal (2026-07-28)
 
 ### Producers (Go / Zig / Rust) — unified verbs

@@ -184,6 +184,19 @@ export async function compileZig(input: string, opts: ZigCompileOptions = {}): P
  */
 export type ZigScaffold = "program" | "library";
 
+/**
+ * Scaffolds a new Zig project in `dir`, creating the directory if needed.
+ *
+ * Writes `main.zig` and `build.zig` for the requested {@linkcode ZigScaffold} kind — a WASI
+ * command (`wasmtk init --lang=zig`) or a wasm library (`wasmtk initmod --lang=zig`). An existing
+ * `main.zig` is left untouched rather than overwritten.
+ *
+ * @param dir Target directory; `""` or `"."` means the current working directory. The project name
+ *            is derived from its basename.
+ * @param scaffold Which template to emit — defaults to `"library"`.
+ * @returns `{ success: true }` on success, or `{ success: false, error }` when Zig is not on PATH
+ *          or a filesystem step fails. Never throws.
+ */
 export async function scaffoldZigProject(
   dir: string,
   scaffold: ZigScaffold = "library",

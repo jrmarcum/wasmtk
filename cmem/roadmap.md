@@ -27,13 +27,29 @@
 > The batch itself is recorded as a single unit in `compiler-bugs.md` (post-mortems) and
 > `testing.md` (counts); the README only ever gets the per-phase, user-facing rows.
 
-## Branch `fix/stress-test-batch-2026-07-28` (post-v1.11.7) — 10 compiler fixes, 16 new tests
+## Release status (2026-07-28) — v1.11.8: stress-test bug-fix release
 
-**Committed and pushed to the branch; NOT merged to `main` and NOT released** (still v1.11.7 in
-`deno.json`; a release needs this promoted to a Release-status section + `deno task update-version`).
+**v1.11.8 — 10 compiler fixes, 16 new tests, published from the
+`fix/stress-test-batch-2026-07-28` work.** The whole release came out of owner-supplied stress
+tests across Phases 22/24/25/26/27/28: 14 stress programs + 2 regression tests, of which **8 stress
+programs exposed genuine compiler bugs**. Backend unchanged (wabt-ts 1.3.5 + binaryen-ts 1.4.3).
+
+Pre-publish gate: `deno publish --dry-run` clean; **`deno doc --lint` clean across all 16 JSR
+entrypoints** — this required documenting `scaffoldZigProject` (`src/zigwasic.ts`), a PRE-EXISTING
+missing-JSDoc that would have dropped the score below 100, the same failure mode that made v1.11.4
+score 94. Full regression gate: wasi **391/391**, wast 41 files / 12444 assertions / 0 failed, and
+bindgen, bundle 4/4, merge, go_merge, both dync, mod, varscope, wasmmerge_guard, hybrid, jstyper,
+go_bindgen, go_asyncify all 0 failures.
+
 Commits: `bfe0f5a` (stress batch, 6 fixes) → `9245c9d` (StructImport) → `3fb62af` (Phase 27 string
-parity) → `d2c8aa1` (regression-gate policy) → `04c8cf0` (memory consolidation) → Phase 28
-join + bracket-concat.
+parity) → `d2c8aa1` (regression-gate policy) → `04c8cf0` (memory consolidation) → `05bc662`
+(Phase 28 join + bracket-concat) → v1.11.8 bump.
+
+**The 10 fixes:** `as`-cast source type for `**`/`Math.*`; `T | null` tuple/struct returns;
+`$__nullable_ret_flag` declaration; `??` in console.log args; nullable MODULE globals (new
+capability); nested `for…of` cursor aliasing; PascalCase struct-type gate (fixed `bundle_tests`
+StructImport, the last standing red suite); Phase 27 `emitStringPtrLen` method parity;
+`arr.join()` as a string value; console.log concat broken by `]`/`)` inside a literal.
 
 14 owner-supplied stress tests across Phases 22/24/25/26/27/28 plus 2 regression tests. **10 genuine
 compiler bugs found and fixed** in `src/wasic.ts` + `src/console_log.ts`. Suite **375 → 391/391**,
