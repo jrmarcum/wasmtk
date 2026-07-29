@@ -4,6 +4,49 @@ Invariants and codegen rules that are easy to break in a refactor and must NOT b
 reverted. The exhaustive list (with line numbers) is in the legacy `CLAUDE.md`; this is the
 high-value subset.
 
+## Same-precedence operator groups split at the RIGHTMOST operator (added 2026-07-29)
+
+- **`*`, `/` and `%` are ONE left-associative precedence group.** Both binary-op loops iterate an
+  operator TABLE and split at the first match, so a group member appearing earlier in the table
+  wins even when another member sits further right — that parsed `a * b / c` as `a * (b / c)`, i.e.
+  right-associative, giving `180 * 5 / 9 = 0` and `180 * 5 % 9 = 900`. The `MUL_GROUP` guard skips a
+  candidate when another member occurs further right. Do not remove it, and do not "simplify" it by
+  reordering the table — no fixed order fixes both `a * b / c` and `a / b * c`.
+- **The guard MUST exist in BOTH loops** — `emitExpr` (`wasic.ts`) and `exprToWat`
+  (`console_log.ts`). Fixing only one left `console.log("x:", a * 5 % 9)` emitting
+  `(i32.mul … (f64.rem …))`. These two loops are permanent parallel code paths: any operator
+  precedence/associativity change belongs in both.
+- **`+`/`-` intentionally have no guard.** `a + (b - c)` equals `(a + b) - c` in exact arithmetic, so
+  there is no integer bug; they CAN differ in f64 rounding, which is a known, accepted nuance (the
+  `+` path also carries string-concat logic, so changing it is higher-risk than the payoff).
+
+## console.log operand typing: a literal or paren LHS has no type (added 2026-07-29)
+
+- **The operand type is taken from the LHS lead atom, which an integer literal and a parenthesised
+  group both lack** — so `console.log("x:", 1 + n)` and `console.log("x:", (n + 0) * 5)` emitted
+  f64 ops over i32 operands and failed to instantiate, while `n + 1` worked. Both now fall back to
+  the first TYPED atom: the RHS for an integer-literal LHS, inside the group for a parenthesised one.
+- **The fallback must be applied in BOTH decisions** — `parseSingleArg` (which picks the segment
+  KIND, `i32expr` vs `f64expr`) and `exprToWat` (which picks the WAT OPS). Fixing only one yields
+  `$__i32_to_str` wrapped around f64 arithmetic.
+- **A FLOAT literal LHS keeps f64** (`1.5 + n` is genuinely f64), and the fallback is deliberately
+  NOT applied to a call LHS — scanning there would take an argument's type instead of the return
+  type. Keep it narrow to those two shapes.
+
+## String enums carry BOTH a tag and a text (added 2026-07-29)
+
+- **Every string enum member gets a synthetic i32 tag, pure or heterogeneous.** Gating tag
+  assignment on `hasString && hasNumeric` left a PURE string enum with no `enumValues` entry, so
+  `const a: LogLevel = LogLevel.Error` and `a === LogLevel.Error` aborted as unsupported. The tag is
+  the runtime representation; `enumStringValues` holds the display text.
+- **Printing a string-enum VARIABLE needs the runtime ladder `$__enum_str_<Enum>`** — the variable
+  holds the tag, not the text. `stringEnumVars` (populated from params and both pre-scans) drives
+  `setEnumStrVarResolver`, which must be consulted BEFORE console_log's simple-identifier handler or
+  the raw tag is printed. Member access (`LogLevel.Info`) stays a compile-time lookup.
+- **The `$__str_op_ptr`/`$__str_op_len` prologue must cover it** — the ladder returns multi-value
+  (ptr,len) captured into that pair; without the extra condition the WAT references undeclared
+  locals.
+
 ## `console_log.ts` scanners must skip string literals too (added 2026-07-28)
 
 - **`findTopLevelOp` in `console_log.ts` masks string literals via the local `literalMask()`.** It

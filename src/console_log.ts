@@ -265,6 +265,23 @@ export function setInstanceofResolver(
   _instanceofResolver = fn;
 }
 
+/** Resolve a bare identifier that holds a STRING-ENUM value to a ptr/len pair. Such a variable's
+ *  WAT value is the member's synthetic i32 tag, so printing it needs a runtime tag→string mapping
+ *  (`$__enum_str_<Enum>`); without this it printed the raw tag. Returns undefined for every other
+ *  identifier. Set by wasic.ts around parseConsoleLogArgs. */
+let _enumStrVarResolver:
+  | ((token: string) => { ptrWat: string; lenWat: string } | undefined)
+  | undefined = undefined;
+/**
+ * Inject the callback that maps a string-enum-typed variable to its member text at runtime.
+ * Pass `undefined` to clear it.
+ */
+export function setEnumStrVarResolver(
+  fn: ((token: string) => { ptrWat: string; lenWat: string } | undefined) | undefined,
+): void {
+  _enumStrVarResolver = fn;
+}
+
 /** Resolve a nullish-coalescing token (`a ?? b`) to a WAT expression plus its result type via
  *  wasic's emitExpr, which owns the Phase 24 nullable-variable tables (`$x__null` companions)
  *  this module has no view of. Set by wasic.ts around parseConsoleLogArgs. Returns undefined
@@ -572,6 +589,14 @@ function parseSingleArg(
   if (/^-?\d+n$/.test(token)) {
     const n = token.slice(0, -1);
     return [{ kind: "i64expr", wat: `(i64.const ${n})` }];
+  }
+
+  // ── Phase 29: an identifier holding a STRING-ENUM value prints its member TEXT, not the
+  // synthetic i32 tag it is stored as. Must precede the simple-identifier handler below, which
+  // would emit it as a plain i32 (that is what printed `0` / `2` instead of `INFO` / `ERROR`).
+  if (_enumStrVarResolver && /^\w+$/.test(token)) {
+    const es = _enumStrVarResolver(token);
+    if (es) return [{ kind: "strexpr" as const, ptrWat: es.ptrWat, lenWat: es.lenWat }];
   }
 
   // ── Simple identifier
@@ -1457,9 +1482,28 @@ function parseSingleArg(
   const leadArr = leadId ? arrayLookup?.(leadId) : undefined;
   // A lead atom may be a function-local OR a module GLOBAL (e.g. `const a: i32 = 1` at module scope
   // → `console.log(a + b)`); consult both, else `a + b` of i32 globals would default to f64.add.
-  const leadType = leadArr
+  let leadType = leadArr
     ? leadArr.elemType
     : (leadId ? (locals.get(leadId) ?? globals?.get(leadId)) : undefined);
+  // A leading INTEGER LITERAL or a leading PARENTHESIS has no declared type, so the expression was
+  // classified f64 while its operands stayed i32 — `console.log("x:", 1 + n)` and
+  // `console.log("x:", (n + 0) * 5)` emitted an f64 segment over i32 arithmetic and failed to
+  // instantiate, even though `n + 1` worked. Take the type from the first TYPED atom instead. A
+  // leading FLOAT literal (`1.5 + n`) genuinely means f64, so it is skipped. String/bool/ternary
+  // forms are all handled by earlier branches, so only numeric expressions reach here.
+  if (
+    leadType === undefined &&
+    (/^-?\d+\s*[-+*/%]/.test(token) || (token.startsWith("(") && /[-+*/%]/.test(token)))
+  ) {
+    for (const m of token.matchAll(/\b([A-Za-z_]\w*)\b/g)) {
+      const a = arrayLookup?.(m[1]);
+      const t = a ? a.elemType : (locals.get(m[1]) ?? globals?.get(m[1]));
+      if (t !== undefined) {
+        leadType = t;
+        break;
+      }
+    }
+  }
   if (leadType === "i64") {
     return [{
       kind: "i64expr",
@@ -2400,9 +2444,18 @@ function exprToWat(
     ["/", "f64.div", "i32.div_s", false, false],
     ["%", "f64.rem", "i32.rem_u", false, false],
   ];
+  // `*`, `/` and `%` share ONE precedence level and are LEFT-associative, but this loop splits at
+  // the first operator in table order, where `*` precedes `/` and `%`. `a * b / c` therefore
+  // matched `*` and produced `a * (b / c)` — right-associative and silently wrong for integer
+  // division/remainder. Skip a candidate when another member of its group sits further right, so
+  // the later entry splits at the RIGHTMOST operator. This mirrors the identical guard in wasic.ts's
+  // emitExpr; the two binary-op loops are parallel code paths and must be fixed together.
+  const MUL_GROUP = ["*", "/", "%"];
+  const mulRightmost = Math.max(...MUL_GROUP.map((o) => findTopLevelOp(expr, o)));
   for (const [op, f64op, i32op, positiveIdx, alwaysI32] of binOps) {
     const idx = findTopLevelOp(expr, op);
     if (idx === -1) continue;
+    if (MUL_GROUP.includes(op) && idx < mulRightmost) continue;
     if (positiveIdx && idx === 0) continue;
     const lhs = expr.slice(0, idx).trim();
     const rhs = expr.slice(idx + op.length).trim();
@@ -2469,11 +2522,39 @@ function exprToWat(
       ? (structLookup ? structLookup(leadM[1], leadM[2])?.type : undefined)
       // plain lead atom: a function-local OR a module global (`a + b` of i32 globals must be i32.add).
       : (locals.get(leadM[1]) ?? globals?.get(leadM[1]));
+    // A plain INTEGER-literal LHS carries no type of its own, so opType fell back to f64 while an
+    // i32 RHS stayed i32 — `console.log("x:", 1 + n)` emitted `f64.add` over an `i32` operand and
+    // failed to instantiate (`a + 1` worked, `1 + a` did not). Take the type from the RHS lead atom
+    // in that case. A FLOAT literal (`1.5 + n`) genuinely means f64, so it keeps the default.
+    let effLhsType = lhsLocalType;
+    if (effLhsType === undefined) {
+      // First typed atom in `s`, or undefined. Deliberately used ONLY for the two operand shapes
+      // that carry no type of their own (below) — applying it to e.g. a call LHS would wrongly
+      // take the type of an argument instead of the return type.
+      const firstTypedAtom = (s: string): string | undefined => {
+        for (const m of s.matchAll(/\b([A-Za-z_]\w*)\b/g)) {
+          const arr = arrayLookup?.(m[1]);
+          const t = arr ? arr.elemType : (locals.get(m[1]) ?? globals?.get(m[1]));
+          if (t !== undefined) return t;
+        }
+        return undefined;
+      };
+      const lhsTrim = lhs.trim();
+      if (lhsTrim.startsWith("(")) {
+        // Parenthesised LHS: `(n + 0) * 5` — the group has no lead atom, so the operand type
+        // defaulted to f64 over i32 arithmetic and failed to instantiate.
+        effLhsType = firstTypedAtom(lhsTrim);
+      } else if (/^-?\d+$/.test(lhsTrim)) {
+        // Integer-literal LHS: `1 + n`. Take the type from the RHS. A FLOAT literal (`1.5 + n`)
+        // genuinely means f64 and is intentionally not matched here.
+        effLhsType = firstTypedAtom(rhs);
+      }
+    }
     const opType = alwaysI32
       ? "i32"
-      : lhsLocalType === "i64"
+      : effLhsType === "i64"
       ? "i64"
-      : lhsLocalType === "i32" || lhsLocalType === "bool"
+      : effLhsType === "i32" || effLhsType === "bool"
       ? "i32"
       : numType;
     const watOp = (opType === "f64" || opType === "f32")

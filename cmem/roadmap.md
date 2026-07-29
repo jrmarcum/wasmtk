@@ -27,6 +27,29 @@
 > The batch itself is recorded as a single unit in `compiler-bugs.md` (post-mortems) and
 > `testing.md` (counts); the README only ever gets the per-phase, user-facing rows.
 
+## Working tree (2026-07-29, post-v1.11.8) — Phase 29 batch, 4 more compiler fixes
+
+Branch `test/phase29-stress-2026-07-29`, **not merged, not released** (deno.json still v1.11.8).
+3 owner Phase 29 stress tests (static fields / getters+setters / string enums) + 1 regression test.
+Test 1 passed; the other two each exposed genuine bugs — **including the most consequential one of
+the whole stress-test series**:
+
+- **`*`, `/`, `%` were parsed RIGHT-associatively.** `a * b / c` became `a * (b / c)`, so
+  `180 * 5 / 9` gave **0** instead of 100 and `180 * 5 % 9` gave **900** instead of 0. It surfaced
+  only because a Fahrenheit→Celsius setter used `(f - 32) * 5 / 9`; nothing about classes was
+  involved. Fixed in BOTH binary-op loops (`emitExpr` + `exprToWat`) — fixing one alone left
+  `console.log` emitting mixed `i32.mul`/`f64.rem`.
+- **Pure string enums had no usable value form** — only heterogeneous enums got synthetic tags, so
+  `const a: LogLevel = LogLevel.Error` and `a === LogLevel.Error` aborted. Now tagged, plus a
+  runtime `$__enum_str_<Enum>` ladder so printing a string-enum VARIABLE shows its text, not the tag.
+- **Literal-led / paren-led arithmetic in `console.log`** (`1 + n`, `(n + 0) * 5`) emitted f64 ops
+  over i32 operands and failed to instantiate — PRE-EXISTING, found while writing the regression
+  test. Fixed in both the segment-kind and operand-type decisions.
+
+Suite **391 → 395/395**; wast 12444/0; every other suite 0 failures. Post-mortems in
+[compiler-bugs.md](compiler-bugs.md); three new invariant sections in
+[design-decisions.md](design-decisions.md).
+
 ## Release status (2026-07-28) — v1.11.8: stress-test bug-fix release
 
 **v1.11.8 — 10 compiler fixes, 16 new tests, published from the

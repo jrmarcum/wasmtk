@@ -1,5 +1,56 @@
 # Compiler bug log
 
+## Multiplicative associativity + string-enum values + literal-led console.log (FIXED 2026-07-29)
+
+Phase 29 stress batch (static fields / getters+setters / string enums). Test 1 passed; the other two
+each failed, and the getter/setter failure turned out to be a **general arithmetic bug** with nothing
+to do with classes.
+
+**1. `*`, `/`, `%` were parsed RIGHT-associatively — the most consequential bug found so far.**
+They share one precedence level and are left-associative, but the binary-op loop splits at the FIRST
+operator **in table order**, where `*` is listed before `/` and `%`. So `a * b / c` matched `*` and
+produced `a * (b / c)`. With integer division that is silently, badly wrong:
+
+| Expression (a = 180) | Was | Correct |
+| --- | --- | --- |
+| `a * 5 / 9` | `0` (= `180 * (5/9)`) | `100` |
+| `a * 5 % 9` | `900` (= `180 * (5%9)`) | `0` |
+
+Surfaced only because a Fahrenheit→Celsius setter used `(f - 32) * 5 / 9` and silently produced 0.
+`a / b * c`, `a / b / c` and `a % b * c` were already correct — the broken shapes are exactly `*`
+left of `/` or `%`. **Fix:** skip a candidate when another member of its precedence group sits
+further right, so the split lands on the RIGHTMOST operator. Applied in **both** binary-op loops —
+`emitExpr` (wasic.ts) *and* `exprToWat` (console_log.ts). Fixing only the first left
+`console.log("x:", a * 5 % 9)` emitting `(i32.mul … (f64.rem …))`; the two loops are parallel code
+paths and must always be fixed together. (`+`/`-` need no guard: `a + (b - c)` and `(a + b) - c` are
+mathematically equal — though they can differ in f64 rounding, noted in design-decisions.md.)
+
+**2. Pure string enums had no usable value form.** The Phase 22 work assigned synthetic i32 tags only
+to *heterogeneous* enums (`hasString && hasNumeric`), so a pure string enum had NO `enumValues` entry:
+`const a: LogLevel = LogLevel.Error` and `a === LogLevel.Error` hit the terminal "Unsupported
+expression" abort, and only `console.log(LogLevel.Info)` (the compile-time display path) worked.
+**Fix (a):** tag string members whenever any exist — for a pure string enum tags simply start at 0.
+That made comparison work but printing a *variable* then showed the raw tag (`0`, `2`) instead of
+`INFO`/`ERROR`. **Fix (b):** a runtime tag→string ladder `$__enum_str_<Enum>` emitted on demand,
+`stringEnumVars` tracking (params + both pre-scans), and a `setEnumStrVarResolver` hook in
+console_log consulted **before** the simple-identifier handler. The `$__str_op_*` temp-pair prologue
+also had to learn about it, else the multi-value capture referenced undeclared locals.
+
+**3. Literal-led / paren-led arithmetic in `console.log` failed to instantiate.** PRE-EXISTING and
+unrelated to the above — found while writing the regression test. `console.log("x:", 1 + n)` emitted
+`f64.add` over an `i32` operand, while `n + 1` worked. The operand type is taken from the LHS lead
+atom; an integer literal and a parenthesised group both have none, so it fell back to f64.
+**Fix:** take the type from the first typed atom — the RHS for an integer-literal LHS, inside the
+group for a parenthesised LHS — in BOTH the segment-kind decision (`parseSingleArg`) and the
+operand-type decision (`exprToWat`); the two disagreeing produced `$__i32_to_str` wrapped around
+f64 ops. A FLOAT literal (`1.5 + n`) still means f64. Deliberately NOT applied to a call LHS, where
+scanning would take an argument's type instead of the return type.
+
+Tests `29_StaticFieldsAndGlobals`, `29_GettersAndSetters`, `29_StringEnumDispatch`, plus regression
+`22_MultiplicativeAssociativity` (both broken shapes, the already-correct shapes, longer chains,
+mixed additive, through a function body, and f64). Gate: wasi **395/395**, wast 12444/0, and every
+other suite 0 failures.
+
 ## `arr.join()` had no string VALUE + console.log concat broke on `]`/`)` (FIXED 2026-07-28)
 
 Two bugs from the Phase 28 array-method stress batch (`28_ArrayPredicatesAndAt` and

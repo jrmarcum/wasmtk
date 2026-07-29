@@ -139,6 +139,7 @@ import {
   parseConsoleLogArgs,
   SCRATCH_BASE,
   setFuncTableLookup,
+  setEnumStrVarResolver,
   setInstanceofResolver,
   setNullishResolver,
   setStrCmpNeededCallback,
@@ -1692,6 +1693,14 @@ class WasicTranspiler {
   private enumValues: Map<string, number> = new Map();
   // Phase 29: string-valued enum members: "EnumName.MemberName" → string value
   private enumStringValues: Map<string, string> = new Map();
+  /** Enums that have at least one string-valued member. Such members carry BOTH a synthetic i32
+   *  tag (in enumValues, for identity comparison) and a display string (in enumStringValues). */
+  private stringEnumNames: Set<string> = new Set();
+  /** Variables/params declared with a string-enum type — name → enum name. Their WAT value is the
+   *  synthetic tag, so a display context must map it back through `$__enum_str_<Enum>`. */
+  private stringEnumVars: Map<string, string> = new Map();
+  /** String enums needing the runtime tag→string helper emitted. */
+  private neededEnumStrHelpers: Set<string> = new Set();
   private loopCounter = 0;
   // Stack of { breakLabel, continueLabel? } entries for break/continue emission.
   // switch pushes only breakLabel; loops push both.
@@ -3899,13 +3908,19 @@ class WasicTranspiler {
         autoVal = val + 1;
       }
 
-      // Third pass: heterogeneous enums — assign synthetic integer tags to string
-      // members so comparisons (env === DeployEnv.Prod) work as i32 ops. The string
-      // display value is still tracked in enumStringValues; console_log.ts checks
-      // enumStringValues first so display contexts keep printing the string.
+      // Third pass: assign synthetic integer tags to string members so identity comparisons
+      // (`level === LogLevel.Error`) and enum-typed variables/params work as i32 ops. The string
+      // display value is still tracked in enumStringValues; console_log.ts checks enumStringValues
+      // FIRST, so display contexts keep printing the string.
+      //
+      // This fires for a PURE string enum too, not just a heterogeneous one. Gating it on
+      // `hasString && hasNumeric` left a pure string enum with no enumValues entry at all, so
+      // `const a: LogLevel = LogLevel.Error` and `a === LogLevel.Error` hit the terminal
+      // "Unsupported expression" abort — only the display path (console.log of a member) worked.
+      // For a pure string enum `resolved` is empty, so tags simply start at 0.
       const hasString = raws.some((r) => r.kind === "string");
-      const hasNumeric = raws.some((r) => r.kind !== "string");
-      if (hasString && hasNumeric) {
+      if (hasString) this.stringEnumNames.add(enumName);
+      if (hasString) {
         let maxVal = -1;
         for (const v of resolved.values()) if (v > maxVal) maxVal = v;
         let nextTag = maxVal + 1;
@@ -6991,6 +7006,39 @@ class WasicTranspiler {
    * Deliberately conservative: only whole-expression matches count, so a merely
    * f64-*containing* expression (e.g. `(a + Math.floor(x))`) keeps the i32 default.
    */
+  /**
+   * WAT for the runtime tag→string helpers of every string enum used in a display context.
+   *
+   * A string-enum value is carried as its synthetic i32 tag so identity comparison is a plain
+   * `i32.eq`; printing one has to map that tag back to the member's text. Each helper is a flat
+   * `i32.eq` ladder returning the member string's static (ptr, len) — the strings are already in
+   * the data section via allocString. Unknown tags fall through to the empty string rather than
+   * trapping. Only enums actually printed get a helper (see `neededEnumStrHelpers`).
+   */
+  private emitEnumStrHelpers(): string {
+    const out: string[] = [];
+    for (const enumName of this.neededEnumStrHelpers) {
+      const arms: string[] = [];
+      for (const [key, text] of this.enumStringValues) {
+        const dot = key.indexOf(".");
+        if (key.slice(0, dot) !== enumName) continue;
+        const tag = this.enumValues.get(key);
+        if (tag === undefined) continue;
+        const [ptr, len] = this.allocString(text);
+        arms.push(
+          `    (if (i32.eq (local.get $t) (i32.const ${tag}))\n` +
+            `      (then (return (i32.const ${ptr}) (i32.const ${len}))))`,
+        );
+      }
+      out.push(
+        `  (func $__enum_str_${enumName} (param $t i32) (result i32 i32)\n` +
+          `${arms.join("\n")}\n` +
+          `    (i32.const 0) (i32.const 0)\n  )`,
+      );
+    }
+    return out.join("\n");
+  }
+
   /** Name of the `for…of` cursor local for the current nesting depth. Depth 0 keeps the
    *  original unsuffixed `__forof_idx`, so non-nested loops emit byte-identical WAT. The
    *  matching pre-scans declare one local per for…of statement in the body — an upper bound
@@ -9696,8 +9744,19 @@ class WasicTranspiler {
     ];
 
     const STRING_CMP_OPS = new Set(["===", "!==", "==", "!=", "<", ">", "<=", ">="]);
+    // `*`, `/` and `%` share ONE precedence level and are LEFT-associative, but the loop below
+    // splits at the first operator in table order — so `a * b / c` matched `*` and produced
+    // `a * (b / c)`. With integer division that is silently, badly wrong: `180 * 5 / 9` gave
+    // `180 * (5/9)` = 0 instead of 100, and `180 * 5 % 9` gave `180 * (5%9)` = 900 instead of 0.
+    // For a same-precedence group the split must be at the RIGHTMOST operator, so skip a candidate
+    // when another member of its group occurs further right; that later entry then splits correctly.
+    // (`+`/`-` need no such guard: `a + (b - c)` and `(a + b) - c` are mathematically equal, though
+    // they can differ in f64 rounding — see design-decisions.md.)
+    const MUL_GROUP = ["*", "/", "%"];
+    const mulRightmost = Math.max(...MUL_GROUP.map((o) => this.findBinaryOp(expr, o)));
     for (const [op, i32suf, f64suf, alwaysI32] of binaryOps) {
       const idx = this.findBinaryOp(expr, op);
+      if (MUL_GROUP.includes(op) && idx !== -1 && idx < mulRightmost) continue;
       if (idx !== -1) {
         const lhs = expr.slice(0, idx).trim();
         const rhs = expr.slice(idx + op.length).trim();
@@ -12667,6 +12726,20 @@ class WasicTranspiler {
           lenWat: `(local.get $__str_op_len)`,
         };
       });
+      // String-enum variable → its member text. The value is the synthetic tag, so route it
+      // through the per-enum `$__enum_str_<Enum>` ladder (emitted on demand).
+      setEnumStrVarResolver((tok) => {
+        const en = this.stringEnumVars.get(tok);
+        if (!en) return undefined;
+        this.neededEnumStrHelpers.add(en);
+        const call = `(call $__enum_str_${en} ${
+          locals.has(tok) ? `(local.get $${tok})` : `(global.get $${tok})`
+        })`;
+        return {
+          ptrWat: `(block (result i32) ${call} (local.set $__str_op_len))`,
+          lenWat: `(local.get $__str_op_len)`,
+        };
+      });
       // Nullish coalescing (`a ?? b`): emitExpr owns the Phase 24 nullable tables, so let it
       // build the if/else. The result type is the LHS's — nullableVarInnerType first (a tracked
       // `T | null` local), else ordinary inference.
@@ -12700,6 +12773,7 @@ class WasicTranspiler {
       setInstanceofResolver(undefined);
       setStringExprResolver(undefined);
       setNullishResolver(undefined);
+      setEnumStrVarResolver(undefined);
       const { statements, needsHelpers, needsStrGather, needsArrPrintHelper, needsJoinHelper } =
         emitConsoleLog(segments, allocator, "    ", 1, this.iovBase, this.scratchBase);
       if (needsHelpers) this.needsNumericHelpers = true;
@@ -13051,6 +13125,20 @@ class WasicTranspiler {
           lenWat: `(local.get $__str_op_len)`,
         };
       });
+      // String-enum variable → its member text. The value is the synthetic tag, so route it
+      // through the per-enum `$__enum_str_<Enum>` ladder (emitted on demand).
+      setEnumStrVarResolver((tok) => {
+        const en = this.stringEnumVars.get(tok);
+        if (!en) return undefined;
+        this.neededEnumStrHelpers.add(en);
+        const call = `(call $__enum_str_${en} ${
+          locals.has(tok) ? `(local.get $${tok})` : `(global.get $${tok})`
+        })`;
+        return {
+          ptrWat: `(block (result i32) ${call} (local.set $__str_op_len))`,
+          lenWat: `(local.get $__str_op_len)`,
+        };
+      });
       // Nullish coalescing (`a ?? b`): emitExpr owns the Phase 24 nullable tables, so let it
       // build the if/else. The result type is the LHS's — nullableVarInnerType first (a tracked
       // `T | null` local), else ordinary inference.
@@ -13084,6 +13172,7 @@ class WasicTranspiler {
       setInstanceofResolver(undefined);
       setStringExprResolver(undefined);
       setNullishResolver(undefined);
+      setEnumStrVarResolver(undefined);
       const {
         statements,
         needsHelpers,
@@ -14606,6 +14695,7 @@ class WasicTranspiler {
     if (this.needsNumericHelpers) parts.push(getHelperWat());
     if (this.needsArrPrintHelper) parts.push(getArrPrintHelperWat());
     if (this.needsJoinHelper) parts.push(getJoinHelperWat());
+    if (this.neededEnumStrHelpers.size > 0) parts.push(this.emitEnumStrHelpers());
     if (this.mathHelpers.size > 0) parts.push(this.emitMathHelpers());
     if (this.needsNumParsers) parts.push(this.emitNumParserHelpers());
     if (this.dynArrHelpers.size > 0) parts.push(this.emitDynArrHelpers());
@@ -16982,6 +17072,12 @@ class WasicTranspiler {
     for (const p of fn.params) {
       locals.set(p.name, p.type);
       if (p.type === "string") this.stringVars.add(p.name);
+      // A param declared with a string-enum type (`level: LogLevel`) carries the synthetic i32 tag;
+      // remember the enum so a display context can map it back to the member text. `structType`
+      // holds the raw annotation for any non-primitive PascalCase type, enums included.
+      if (p.structType && this.stringEnumNames.has(p.structType)) {
+        this.stringEnumVars.set(p.name, p.structType);
+      }
       // Array param: register in arrayVars so arr[i] works inside the function body
       if (p.arrayElemType) {
         const isStrArr = p.arrayElemType === "string";
@@ -17246,6 +17342,12 @@ class WasicTranspiler {
       // Struct object literal: const p: Point = { x: 1.5, y: 2.5 }
       // Phase 30: also handles shorthand properties { x, y } (treated as { x: x, y: y })
       // Phase 42: also handles nested struct literals { start: { x: 1, y: 2 }, end: { x: 3, y: 4 } }
+      // `const level: LogLevel = LogLevel.Error` — a string-enum-typed local holds the synthetic
+      // tag; record the enum so console.log can map it back to the member text.
+      const seVarPre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\w+)\s*=/);
+      if (seVarPre && this.stringEnumNames.has(seVarPre[2]!)) {
+        this.stringEnumVars.set(seVarPre[1]!, seVarPre[2]!);
+      }
       const structPre = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\w+)\s*=\s*\{/);
       if (structPre) {
         const varName = structPre[1];
@@ -17969,7 +18071,11 @@ class WasicTranspiler {
         // console.log/error/warn with a string-equality op: the comparison may route a non-trivial
         // operand (`a === getName()`, `a === obj.f`, `a === s.slice(…)`) through the string-expr
         // resolver, which captures len into $__str_op_len.
-        (/\bconsole\.(log|error|warn)\b/.test(l) && /===|!==|==|!=/.test(l))
+        (/\bconsole\.(log|error|warn)\b/.test(l) && /===|!==|==|!=/.test(l)) ||
+        // Printing a string-enum variable routes through $__enum_str_<Enum>, whose multi-value
+        // (ptr,len) result is captured into this pair. Over-declares slightly when string enums
+        // exist but none is printed here — an unused local, which Binaryen strips.
+        (this.stringEnumVars.size > 0 && /\bconsole\.(log|error|warn)\b/.test(l))
       )
     ) {
       declaredLocals.push(["__str_op_ptr", "i32"], ["__str_op_len", "i32"]);
@@ -18846,6 +18952,11 @@ class WasicTranspiler {
         }
         // Phase 30: struct object literal (mirrors emitFunction pre-scan)
         // Phase 42: also handles nested struct literals { start: { x: 1, y: 2 }, ... }
+        // string-enum-typed local (see the matching emitFunction pre-scan)
+        const seVarPre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\w+)\s*=/);
+        if (seVarPre2 && this.stringEnumNames.has(seVarPre2[2]!)) {
+          this.stringEnumVars.set(seVarPre2[1]!, seVarPre2[2]!);
+        }
         const structPre2 = line.match(/^(?:var|let|const)\s+(\w+)\s*:\s*(\w+)\s*=\s*\{/);
         if (structPre2) {
           const varName2 = structPre2[1];
@@ -19445,7 +19556,9 @@ class WasicTranspiler {
           /\w\[[^\]]+\]\s*\+|\+\s*\w+\[|\+=[^;]*\w+\[/.test(l) || // char subscript in a concat: s[i] + … / x += s[i]
           // console.* with a string-equality op may route a non-trivial operand through the
           // string-expr resolver (captures len into $__str_op_len).
-          (/\bconsole\.(log|error|warn)\b/.test(l) && /===|!==|==|!=/.test(l))
+          (/\bconsole\.(log|error|warn)\b/.test(l) && /===|!==|==|!=/.test(l)) ||
+          // string-enum variable printed → $__enum_str_<Enum> multi-value capture (see emitFunction)
+          (this.stringEnumVars.size > 0 && /\bconsole\.(log|error|warn)\b/.test(l))
         )
       ) {
         startDeclaredLocals.push(["__str_op_ptr", "i32"], ["__str_op_len", "i32"]);
