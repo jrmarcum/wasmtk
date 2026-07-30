@@ -228,6 +228,19 @@ export function setStructLiteralAllocator(
   _structLiteralAlloc = fn;
 }
 
+let _structArgLayoutCheck: ((callee: string, argList: string[]) => void) | undefined = undefined;
+/**
+ * Inject the callback that validates struct-pointer arguments of a direct call against the
+ * parameter types they bind to (Phase 33 layout-prefix guard). This module knows the call's
+ * argument TEXT but not the struct layouts, so wasic.ts owns the check; without this hook a
+ * `console.log(f(x))`-nested call would bypass it entirely. Pass `undefined` to clear it.
+ */
+export function setStructArgLayoutChecker(
+  fn: ((callee: string, argList: string[]) => void) | undefined,
+): void {
+  _structArgLayoutCheck = fn;
+}
+
 /** Called when exprToWat emits a $__str_cmp call so wasic can enable the helper. */
 let _strCmpNeeded: (() => void) | undefined = undefined;
 /**
@@ -965,6 +978,8 @@ function parseSingleArg(
       return [{ kind: "i32expr", wat }];
     }
     const sig = funcLookup?.(callee);
+    // Phase 33 guard: struct args must be layout-compatible with the params they bind to
+    _structArgLayoutCheck?.(callee, argList);
     // String params expand to two stack values (ptr + len); use allocString if available.
     const watArgsList = argList.flatMap((a, i) => {
       const ptype = sig?.params[i]?.type ?? "i32";
@@ -2187,6 +2202,8 @@ function exprToWat(
     const rawArgs = callMatch[2]?.trim() ?? "";
     const argList = rawArgs ? splitTopLevelArgs(rawArgs) : [];
     const sig = funcLookup?.(callee);
+    // Phase 33 guard: struct args must be layout-compatible with the params they bind to
+    _structArgLayoutCheck?.(callee, argList);
     // String params expand to two stack values
     const watArgsList = argList.flatMap((a, i) => {
       const ptype = sig?.params[i]?.type ?? "i32";

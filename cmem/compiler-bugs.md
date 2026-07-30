@@ -1,5 +1,57 @@
 # Compiler bug log
 
+## Phase 33 intersection base-prefix: a base-typed parameter read the wrong fields (FIXED 2026-07-30)
+
+Phase 33 stress batch (intersection types). **All three owner tests passed as written** — the bug
+came from a follow-up probe on test 3's mechanic, not from the tests themselves.
+
+Test 3 (`33_IntersectionBasePointerParam`) passes a `Sprite = Transform & Renderable` to
+`getScaleArea(t: Transform)` and correctly printed `6`. Reversing ONE token —
+`type Sprite = Renderable & Transform` — printed **`1.6`**, with no error at any stage.
+
+**Root cause.** A struct travels as a POINTER, and the callee reads fields at the offsets of its own
+declared parameter type. `parseIntersectionTypes` merges constituents in **declaration order**, so
+`Renderable & Transform` lays out `alpha@0, scaleX@8, scaleY@16` while `getScaleArea` reads
+`scaleX@0, scaleY@8` — i.e. it multiplied `alpha * scaleX` = `0.8 * 2.0` = `1.6`. Every offset was a
+valid in-bounds f64 slot, so nothing trapped and the WAT was well-formed. **The prefix assumption
+was known and written down** — the README's Phase 33 row states "passing a derived intersection
+pointer to a function expecting a base intersection pointer is safe because the first N bytes of the
+derived layout are identical to the base layout" — but nothing *enforced* the ordering it depends on.
+
+**Why it survived.** All four pre-existing Phase 33 tests, and the owner's three new ones, declare
+the constituent that a function later consumes FIRST. `33_IntersectionFunc` and
+`33_IntersectionThreeWay` only ever pass the FULL intersection to a parameter of its own type, so
+they never exercise a base-typed parameter at all. The favourable ordering was luck, not coverage.
+
+**Fix (guard, not codegen).** `checkStructArgLayouts` + `structLayoutPrefixMismatch` in `wasic.ts`:
+at every direct call, a bare-identifier argument whose tracked struct type differs from the
+parameter's declared struct type must be a byte-exact layout prefix (same field name, offset, type
+and size), else a `diagnostics` entry aborts the compile naming the variable, both types, the
+offending field and both byte offsets, and pointing at the two fixes (list the base constituent
+first, or type the parameter with the intersection). This is the documented preference — a hard
+abort over silently-wrong codegen — applied to a case where the source language (TypeScript) is
+genuinely happy: `Sprite` really is assignable to `Transform`, wasic's flat-pointer representation
+is what cannot express it.
+
+**Deliberately NOT done.** Monomorphising the callee per actual argument struct type is what would
+make the program *work*, but the function body is compiled once against the parameter type; cloning
+per call-site layout is a far larger change than this batch warrants. Re-packing the argument into a
+temporary of the parameter's layout was also rejected — structs are by-reference here, so the
+callee's writes would be silently lost.
+
+**Parallel-path trap, again.** The check was initially added to the two call-emission paths in
+`wasic.ts` and looked correct — but `console.log("area:", getScaleArea(hero))` still compiled,
+because a call nested inside `console.log` is emitted by `console_log.ts`. Since that module knows
+the argument TEXT but not the struct layouts, the check is injected into it as
+`setStructArgLayoutChecker(...)`, matching the existing `setStructLiteralAllocator` pattern, and is
+called from BOTH of its call-emission sites. **The original probe used `console.log(f(x))` — so the
+first version of the fix appeared to do nothing.** See design-decisions.md § parallel code paths.
+
+Regressions: `33_IntersectionBasePrefixGuard` (`@expect-fail: compile`) pins the rejected shape;
+`33_IntersectionPrefixOk` pins four shapes that must keep compiling — base-typed param with a
+two-way and a three-way intersection argument, an intermediate intersection as a prefix of a longer
+chain, and an exact-type parameter.
+
 ## A union field shared by two variants took the FIRST variant's type (FIXED 2026-07-30)
 
 Phase 19 stress batch (discriminated unions: super-struct layout / switch dispatch / chained

@@ -45,6 +45,26 @@ high-value subset.
   expansion, so an unrelated `obj.member` is never touched, and literal content is skipped by the
   same mask. Regression: `30_NamespaceStringMembers`.
 
+## A struct parameter's layout must be a PREFIX of the argument's (added 2026-07-30)
+
+- **Structs are passed by pointer and the callee reads fields at ITS OWN parameter type's offsets.**
+  Passing a different struct type therefore only works when the parameter type is a byte-exact
+  layout prefix of the argument type (same field name, offset, WAT type and size). This has always
+  been the model — Phase 33's README row states it — but until 2026-07-30 nothing enforced it, so
+  `type Sprite = Renderable & Transform` passed to `(t: Transform)` silently read `alpha`/`scaleX`
+  as `scaleX`/`scaleY` (printed `1.6`, expected `6`).
+- **`checkStructArgLayouts` is a hard abort, not a warning.** Do not downgrade it. The program is
+  valid TypeScript, so there is no downstream trap to catch it — the alternative is wrong numbers.
+- **It runs at THREE call-emission sites**: the expression and statement forms in `wasic.ts`, plus
+  `console_log.ts` via the injected `setStructArgLayoutChecker` hook (a call nested in a
+  `console.log` argument never reaches `wasic.ts`'s emitters — this exact gap made the first version
+  of the fix look like a no-op). Any new call-emission path needs the check too.
+- **Intersection field order is therefore load-bearing.** `parseIntersectionTypes` merges
+  constituents in declaration order, so `type T = A & B` is prefix-compatible with `A` and NOT with
+  `B`. Do not "normalise" that order (alphabetically, by size, or to pack tighter) — it would break
+  every base-typed parameter that compiles today. Regressions: `33_IntersectionBasePrefixGuard`
+  (rejected shape), `33_IntersectionPrefixOk` (the four shapes that must keep compiling).
+
 ## Same-precedence operator groups split at the RIGHTMOST operator (added 2026-07-29)
 
 - **`*`, `/` and `%` are ONE left-associative precedence group.** Both binary-op loops iterate an

@@ -99,7 +99,7 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 >
 > | Suite | Result |
 > | --- | --- |
-> | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **410 / 410** — 407 + the Phase 33 intersection batch (3 owner stress tests), 2026-07-30. All three passed as written; the phase filter `"^33_"` was 7/7 |
+> | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **412 / 412** — 407 + the Phase 33 intersection batch (3 owner stress tests, all passing as written) + 2 regressions for the base-prefix bug a follow-up probe found, 2026-07-30. Full suite RE-RUN: the fix changed `src/wasic.ts` + `src/console_log.ts`, so the gate applied |
 > | `wast_tests.ts` | **41 files, 12444 passed, 0 failed**, 3466 skipped — ALL CLEAN |
 > | `bindgen_tests.ts` | 142, 0 failed |
 > | `bundle_tests.ts` | **4 / 4** — `StructImport` fixed, no longer a standing failure |
@@ -127,6 +127,11 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 > unqualified references to a namespace's own members were never rewritten, and probing that
 > surfaced (and fixed) string-typed namespace members: **+1 `30_NamespaceStringMembers`**.
 > All post-mortems in compiler-bugs.md.
+>
+> **410 → 412 (2026-07-30):** +2 Phase 33 regressions for the base-prefix guard —
+> `33_IntersectionBasePrefixGuard` (`@expect-fail: compile`; the reversed-order shape that used to
+> print `1.6` instead of `6`) and `33_IntersectionPrefixOk` (the four prefix-compatible shapes the
+> guard must NOT reject). `src/wasic.ts` + `src/console_log.ts` changed, so the full gate applied.
 >
 > **407 → 410 (2026-07-30):** +3 Phase 33 intersection-type stress tests
 > (`33_IntersectionMixedTypeMerge`, `33_ChainedIntersectionIntDivide`,

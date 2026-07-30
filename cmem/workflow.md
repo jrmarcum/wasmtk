@@ -195,7 +195,11 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
   **Widened 2026-07-30: the Go suites race EACH OTHER too.** Chained back-to-back in one
   `for s in go_bindgen go_merge go_asyncify` loop, `go_asyncify` reported 10 passed / 2 failed; run
   alone immediately afterwards it was 12/12 with no source change. Run them one at a time, and
-  re-run any Go failure alone before believing it.
+  re-run any Go failure alone before believing it. **Sharpened 2026-07-30: SEPARATE back-to-back
+  invocations are still too close.** Run as three individual commands (not a loop), `go_asyncify`
+  again gave 10/2 with `TinyGo build failed`, then 12/12 on an immediate re-run. It is the TinyGo
+  build directory, not the shell loop — let the previous Go suite settle, and treat a first-run Go
+  failure as unproven until it reproduces alone.
 - **`deno doc --lint` must be clean across all 16 JSR entrypoints** or the JSR score drops below
   100. This has bitten twice: v1.11.4 scored 94 (missing `@module` tag), and v1.11.8 nearly shipped
   with an undocumented `scaffoldZigProject`.

@@ -41,7 +41,15 @@ function typed with one of its CONSTITUENT interfaces). Suite **407 → 410**; p
 when the base interface is the intersection's FIRST constituent. Reversing the declaration to
 `type Sprite = Renderable & Transform` made `getScaleArea(hero)` print `1.6` instead of `6` — silent
 wrong output, no error. Post-mortem + fix in [compiler-bugs.md](compiler-bugs.md) § "Phase 33
-intersection base-prefix".
+intersection base-prefix"; the invariant it protects is in
+[design-decisions.md](design-decisions.md) § "A struct parameter's layout must be a PREFIX of the
+argument's".
+
+**Branch `fix/phase33-intersection-base-prefix-2026-07-30`** (cut from `main` after the tests
+landed, per the branch-only-for-a-fix rule): `checkStructArgLayouts` rejects a layout-incompatible
+struct argument at all three call-emission sites, +2 regressions
+(`33_IntersectionBasePrefixGuard` `@expect-fail: compile`, `33_IntersectionPrefixOk`). Suite
+**410 → 412**. Full gate run, since `src/wasic.ts` + `src/console_log.ts` changed. Not yet released.
 
 ## Release status (2026-07-30) — v1.11.11: discriminated-union shared variant fields
 

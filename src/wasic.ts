@@ -145,6 +145,7 @@ import {
   setStrCmpNeededCallback,
   setStringArrayAllocator,
   setStringExprResolver,
+  setStructArgLayoutChecker,
   setStructLiteralAllocator,
   type StructFieldLookup,
   unescapeString,
@@ -4463,6 +4464,59 @@ class WasicTranspiler {
       if (fields.length > 0) {
         this.structDefs.set(name, { name, fields, totalSize: offset });
       }
+    }
+  }
+
+  /**
+   * Phase 33 guard (2026-07-30): describes why `base` is NOT a byte-exact layout prefix of
+   * `actual`, or null when it is.  A struct travels as a POINTER, so a callee reads fields at the
+   * offsets of its own declared parameter type; handing it a different struct type is only sound
+   * when the parameter's layout is a prefix of the argument's.  For `type T = A & B` that holds
+   * for `A` (merged first) but NOT for `B`.
+   */
+  private structLayoutPrefixMismatch(base: StructDef, actual: StructDef): string | null {
+    for (const bf of base.fields) {
+      const af = actual.fields.find((f) => f.name === bf.name);
+      if (!af) return `'${actual.name}' has no field '${bf.name}'`;
+      if (af.offset !== bf.offset) {
+        return `field '${bf.name}' is at byte ${bf.offset} in '${base.name}' but byte ` +
+          `${af.offset} in '${actual.name}'`;
+      }
+      if (af.type !== bf.type || af.size !== bf.size) {
+        return `field '${bf.name}' is ${bf.type}/${bf.size}B in '${base.name}' but ` +
+          `${af.type}/${af.size}B in '${actual.name}'`;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Phase 33 guard: reject a struct argument whose layout the callee cannot read at its own
+   * parameter offsets.  Before this check the mismatch was SILENT — `getScaleArea(hero)` with
+   * `type Sprite = Renderable & Transform` read `alpha`/`scaleX` as `scaleX`/`scaleY` and printed
+   * 1.6 instead of 6.  A diagnostic aborts the compile, which is the documented preference over
+   * silently-wrong codegen.  See cmem/compiler-bugs.md § "Phase 33 intersection base-prefix".
+   */
+  private checkStructArgLayouts(callee: string, fn: FuncDef, args: string[]): void {
+    for (let i = 0; i < args.length; i++) {
+      const param = fn.params[i];
+      const declared = param?.structType;
+      if (!declared) continue;
+      const arg = args[i].trim();
+      if (!/^[A-Za-z_$][\w$]*$/.test(arg)) continue; // only a bare identifier has a tracked type
+      const sv = this.structVars.get(arg);
+      if (!sv || sv.def.name === declared) continue;
+      const baseDef = this.structDefs.get(declared);
+      if (!baseDef || baseDef === sv.def) continue;
+      const mismatch = this.structLayoutPrefixMismatch(baseDef, sv.def);
+      if (!mismatch) continue;
+      this.diagnostics.push(
+        `Struct layout mismatch: '${arg}' of type '${sv.def.name}' cannot be passed as ` +
+          `parameter '${param.name}: ${declared}' of '${callee}' — ${mismatch}. Structs are ` +
+          `passed by pointer, so '${declared}' must be a byte-exact PREFIX of '${sv.def.name}'. ` +
+          `For an intersection type, list '${declared}' FIRST ` +
+          `(\`type ${sv.def.name} = ${declared} & …\`), or type the parameter '${sv.def.name}'.`,
+      );
     }
   }
 
@@ -9646,6 +9700,8 @@ class WasicTranspiler {
         this.diagnostics.push(`Unknown function '${callee}' — not declared in this module`);
         return `(unreachable)`;
       }
+      // Phase 33 guard: a struct arg must be layout-compatible with the param it binds to
+      this.checkStructArgLayouts(callee, fn, args);
       // String params expand to two stack values (ptr + len)
       const emittedArgsList = args.flatMap((a, i) => {
         const paramType = fn.params[i]?.type ?? defaultType;
@@ -12822,6 +12878,10 @@ class WasicTranspiler {
       setStructLiteralAllocator((sName, fields) =>
         this.allocStructData(this.structDefs.get(sName)!, fields)
       );
+      setStructArgLayoutChecker((callee, argList) => {
+        const fnDef = this.functions.find((f) => f.name === callee);
+        if (fnDef) this.checkStructArgLayouts(callee, fnDef, argList);
+      });
       setStrCmpNeededCallback(() => {
         this.needsStringHelpers = true;
       });
@@ -12886,6 +12946,7 @@ class WasicTranspiler {
       );
       setStringArrayAllocator(undefined);
       setStructLiteralAllocator(undefined);
+      setStructArgLayoutChecker(undefined);
       setStrCmpNeededCallback(undefined);
       setFuncTableLookup(undefined);
       setInstanceofResolver(undefined);
@@ -13221,6 +13282,10 @@ class WasicTranspiler {
       setStructLiteralAllocator((sName, fields) =>
         this.allocStructData(this.structDefs.get(sName)!, fields)
       );
+      setStructArgLayoutChecker((callee, argList) => {
+        const fnDef = this.functions.find((f) => f.name === callee);
+        if (fnDef) this.checkStructArgLayouts(callee, fnDef, argList);
+      });
       setStrCmpNeededCallback(() => {
         this.needsStringHelpers = true;
       });
@@ -13285,6 +13350,7 @@ class WasicTranspiler {
       );
       setStringArrayAllocator(undefined);
       setStructLiteralAllocator(undefined);
+      setStructArgLayoutChecker(undefined);
       setStrCmpNeededCallback(undefined);
       setFuncTableLookup(undefined);
       setInstanceofResolver(undefined);
@@ -13658,6 +13724,8 @@ class WasicTranspiler {
           this.diagnostics.push(`Unknown function '${callee}' — not declared in this module`);
           return "(unreachable)";
         }
+        // Phase 33 guard: a struct arg must be layout-compatible with the param it binds to
+        this.checkStructArgLayouts(callee, fn, args);
         const emittedArgsList = args.flatMap((a, i) => {
           const pt = fn.params[i]?.type ?? "f64" as WatType;
           if (pt === "string") return [this.emitStringPtrLen(a, locals)];
