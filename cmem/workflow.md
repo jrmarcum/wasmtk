@@ -34,7 +34,9 @@ keep it that way (see the note at the top of INDEX.md).
    `chore/trim-session-bootstrap` — `<type>/<short-desc>-<date>`.
 2. **Add the tests verbatim** as the owner supplied them, named `NN_DescriptiveLabel.ts` for the
    phase owning the core mechanic. Don't "improve" the owner's code — it is the specimen.
-3. **Run the phase filter first** (`"^29_"`), then the full suite.
+3. **Run the phase filter first** (`"^29_"`). While fixing, stay in the **debug phase** — the phase
+   filter plus the tests that exercise the construct being changed (see "Debug phase" below). Save
+   the full suite for the regression phase, once the targeted set is green.
 4. **Bisect any failure to its minimal shape** with scratch probes before touching `src/`. Most
    failures this session were NOT about the feature under test — a getter/setter test exposed
    right-associative `*`/`/`, a namespace test exposed string members. Report what it *actually* is.
@@ -43,11 +45,53 @@ keep it that way (see the note at the top of INDEX.md).
    class of string bugs for free).
 6. **Add a regression test** that pins the fix AND its guards — the shapes that were already
    correct, so a future "simplification" can't silently reintroduce the bug.
-7. **Run the full gate** (see below).
+7. **Regression phase — run the full gate** (see below), once the targeted set is green.
 8. **Update memory** — `compiler-bugs.md` (root cause + fix + why it went untested),
    `design-decisions.md` (any new must-not-revert invariant), `testing.md` (counts),
    `roadmap.md` (working-tree entry), INDEX pointers; then README rows if user-relevant.
 9. **Commit and push** the branch.
+
+## Debug phase: run the AFFECTED tests, not the full suite
+
+The full wasi suite takes **>10 minutes**, so iterating on it while fixing is wasteful. Two phases
+(owner directive 2026-07-30):
+
+1. **Debug phase** — run the failing stress tests plus the tests that exercise the construct being
+   changed. Iterate here until they all pass.
+2. **Regression phase** — only then run the whole suite set (below) to catch what the fix disturbed.
+
+### Deriving the affected set
+
+The runner's filter is a regex tested against the **full filename including `.ts`**
+(`wasi_tests.ts:241` → `fileFilter.test(entry.name)`), so anchor with `\.ts$`, not `$`.
+
+Grep the corpus for the SYNTAX the change affects, then turn that into a filter:
+
+```bash
+# every test that uses .join( → a runner filter
+FILTER=$(grep -l '\.join(' tests/wasi/wasm_wasi/*.ts \
+         | xargs -n1 basename | sed 's/\.ts$//' | paste -sd'|' -)
+deno run --allow-read --allow-write --allow-run --allow-env \
+  tests/wasi_tests.ts tests/wasi/wasm_wasi "^($FILTER)\.ts\$"
+```
+
+Measured on the 400-test corpus (2026-07-30):
+
+| Change touches | Grep | Affected | Debug-phase cost |
+| --- | --- | --- | --- |
+| `join` handling | `\.join(` | 3 tests | **7.4 s** (vs >10 min) |
+| namespaces | `namespace` | 7 tests | seconds |
+| enum handling | `enum ` | 11 tests | seconds |
+| string methods | `\.repeat(\|\.trim(\|\.charAt(` | 5 tests | seconds |
+| `for…of` | `for (const .* of ` | 7 tests | seconds |
+
+**When it degenerates, skip it.** `console\.log` matches 351/400 tests (87%) — for a change that
+broad (most of `console_log.ts`, or the binary-op loop) the targeted set isn't meaningfully cheaper
+than the full suite, so go straight to the full run. Rule of thumb: **>60 % of the corpus means
+don't bother filtering.**
+
+Always include the batch's own phase filter alongside the construct filter — the failing stress
+tests are the primary signal, and a fix must not regress its own phase.
 
 ## The full gate
 
