@@ -1,8 +1,8 @@
 # Working process (the loop we actually run)
 
 The end-to-end loop for a stress-test batch, from a fresh context to a published release. Written
-down 2026-07-30 so it survives a context boundary — it produced 16 compiler-bug fixes and three
-releases (v1.11.8 → v1.11.10) across Phases 22–30 and is worth keeping intact.
+down 2026-07-30 so it survives a context boundary — it produced 17 compiler-bug fixes and four
+releases (v1.11.8 → v1.11.11) across Phases 19–31 and is worth keeping intact.
 
 The *testing* half (where tests go, phase filter then full suite, verifying pre-existing failures)
 lives in [testing.md](testing.md) § "Stress-test batches" and § "Which suites to run for a given

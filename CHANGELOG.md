@@ -3,6 +3,43 @@
 All notable, user-facing changes to `wasmtk`. Versions follow the `deno.json` version and the
 published [`@jrmarcum/wasmtk`](https://jsr.io/@jrmarcum/wasmtk) JSR package.
 
+## 1.11.11 — Discriminated unions: shared variant fields (2026-07-30)
+
+A discriminated union whose variants share a field name now compiles correctly. Previously the
+shared field silently took the **first** variant's type — the kind of failure that either corrupts a
+value or refuses to run, with nothing pointing at the cause.
+
+### Fixed
+
+- **A field declared in more than one variant kept only the first variant's type.**
+
+  ```ts
+  type ValueContainer =
+    | { type: "intVal"; val: i32 }
+    | { type: "floatVal"; val: f64 };
+
+  const v: ValueContainer = { type: "floatVal", val: 25.5 }; // ← stored as 25
+  ```
+
+  `val` was laid out as a 4-byte `i32`, so `25.5` was truncated to `25` on the way into memory, and
+  reading it back inside a function returning `f64` emitted an `i32` load — producing a module that
+  failed to instantiate with `type error in return[0] (expected f64, got i32)`.
+
+  Shared fields are now resolved across **all** variants before layout and widened to the type that
+  holds every one of them (`i32`/`f32` → `f64`, `i32` → `i64`). This matches what TypeScript already
+  means, since `i32` and `f64` are both `number` aliases — the union's field is simply `number`.
+  Fields declared after a widened one keep their alignment, and the result does not depend on which
+  variant is declared first.
+
+- **A genuinely incompatible shared field now reports itself.** When two variants declare the same
+  field at types that no single slot can hold (e.g. `string` vs `f64`), compilation stops with a
+  message naming the union, the field and both types. It previously surfaced as the unrelated
+  `Offset is outside the bounds of the DataView`.
+
+- **Unions written as inline `{ … } | { … }` blocks now support nested struct fields**, matching
+  unions written as `type X = A | B` over named interfaces. The two forms were handled by separate
+  code paths and only the latter propagated nested struct types.
+
 ## 1.11.10 — Namespace members (2026-07-30)
 
 Namespaces now work from the inside and with every member type. Both fixes are things that

@@ -27,7 +27,16 @@
 > The batch itself is recorded as a single unit in `compiler-bugs.md` (post-mortems) and
 > `testing.md` (counts); the README only ever gets the per-phase, user-facing rows.
 
-## Working tree (2026-07-30) — `test/phase19-union-stress-2026-07-30`
+## Release status (2026-07-30) — v1.11.11: discriminated-union shared variant fields
+
+**v1.11.11 — merged to `main` from `test/phase19-union-stress-2026-07-30` (commits `84bf88f` +
+`fa72036`) and published to JSR.** Backend unchanged (wabt-ts 1.3.5 + binaryen-ts 1.4.3).
+Pre-publish gate: `deno publish --dry-run` clean, `deno doc --lint` clean across all 16 JSR
+entrypoints. Full regression gate: wasi **407/407**, wast 41 files / 12444 assertions / 0 failed,
+every other suite 0 failures.
+
+This release carries TWO batches: the Phase 19 union fix below, and the Phase 31 TypedArray tests
+(clean, no `src/` change) whose branch was deleted — see the section after it.
 
 3 owner Phase 19 discriminated-union stress tests: `19_DiscUnionSuperStructLayout` (super-struct
 layout + `if` narrowing across three variants), `19_SwitchCaseVariantDispatch` (`switch` on the
@@ -54,7 +63,7 @@ Also corrected in memory: `hybrid_tests.ts` and `wasmmerge_guard_tests.ts` are `
 the documented `deno run` invocation executed nothing and exited 0; and the Go suites race each
 other, not just the wasi suite.
 
-## Working tree (2026-07-30) — Phase 31 TypedArray tests (branch deleted; rides on the Phase 19 branch)
+### Shipped in v1.11.11 too — Phase 31 TypedArray tests (branch deleted)
 
 3 owner Phase 31 TypedArray stress tests, **all passing as written — the first batch of the series
 to surface no bug**: `31_TypedArraySubWordAccess` (Uint8/Int16 widths, `.length` vs `.byteLength`,
@@ -68,9 +77,9 @@ directive during this batch and is now recorded in INDEX.md, testing.md, workflo
 
 **Branch deleted 2026-07-30.** `test/phase31-typedarray-stress-2026-07-30` was never pushed and
 never needed to exist — a batch with no `src/` fix has nothing to isolate. Its commit `4e32a7f5056`
-is an ancestor of the Phase 19 branch, so the three tests reach `main` with that merge. The rule
-this produced is at the top of [workflow.md](workflow.md): **branch only when a test fails and needs
-a fix.**
+is an ancestor of the Phase 19 branch, so the three tests reached `main` with that merge and shipped
+in v1.11.11. The rule this produced is at the top of [workflow.md](workflow.md): **branch only when
+a test fails and needs a fix.**
 
 ## Release status (2026-07-30) — v1.11.10: namespace members
 
