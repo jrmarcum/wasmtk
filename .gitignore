@@ -59,3 +59,9 @@ tests/go_fixtures/**/*.wit
 !tests/go_fixtures/strlib/strlib.wit
 tests/go_fixtures/**/*.bindings.ts
 tests/go_fixtures/**/.tinygo-cache/
+
+# Claude Code machine-local settings (per-developer permission allowlist).
+# Local-only: it records commands approved on THIS machine and must not travel
+# with the repo — an allowlist from one machine should never pre-approve
+# commands on someone else's checkout.
+.claude/settings.local.json
