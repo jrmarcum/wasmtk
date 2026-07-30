@@ -41,12 +41,15 @@ OUTSIDE (`MathUtils.PI`) — none read one from inside a namespace function. Reg
 `30_NamespaceInternalRefs` also pins the three guards (string literals, `obj.NAME` property access,
 already-prefixed tokens).
 
-**OPEN — string members in a namespace do not work** (pre-existing; verified on a clean tree with
-the fix stashed). `export const NAME: string` reads as `0`; a string-returning namespace function
-fails to instantiate. Numeric members are fine. Distinct feature gap, not a regression — see
-[compiler-bugs.md](compiler-bugs.md).
+**ALSO FIXED — string members in a namespace.** Pre-existing (verified on a clean tree with the
+first fix stashed): `export const NAME: string` read as `0` and a string-returning namespace
+function failed to instantiate, because each QUALIFIED use was resolved ad hoc (a numeric-constant
+branch, a dot-call branch) and neither knew the string ptr/len ABI. Rather than add a third special
+case, `expandNamespaces` now also rewrites `Ns.member` → `Ns_member`, so a namespace member is an
+ORDINARY top-level symbol and every existing path handles it. Regression
+`30_NamespaceStringMembers`.
 
-Suite **395 → 399/399**; wast 12444/0; every other suite 0 failures.
+Suite **395 → 400/400**; wast 12444/0; every other suite 0 failures.
 
 ## Release status (2026-07-29) — v1.11.9: operator-precedence fix
 

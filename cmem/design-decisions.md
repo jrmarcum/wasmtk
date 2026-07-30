@@ -14,9 +14,16 @@ high-value subset.
   string/template literal (`buildStringLiteralMask` — otherwise a member name mentioned in a
   message gets mangled), after a `.` (a struct FIELD may share the member's name), and after `_`
   (the token is already prefixed, e.g. `Cfg_LIMIT`).
-- **KNOWN GAP (pre-existing, not fixed):** string-typed namespace members don't work — a
-  `export const NAME: string` reads as `0`, and a string-returning namespace function fails to
-  instantiate. Numeric members are fine. See compiler-bugs.md.
+- **QUALIFIED uses are rewritten too: `Ns.member` → `Ns_member`.** This is what makes a namespace
+  member an ORDINARY top-level symbol, so every existing path (string consts, the string-return
+  side-channel, concat, comparison, arrays, structs) handles it without a per-type special case.
+  Resolving qualified uses ad hoc at each site is what left `string` members broken — a
+  `export const NAME: string` read as `0` and a string-returning namespace function failed to
+  instantiate, because the numeric-constant and dot-call branches didn't know the string ptr/len
+  ABI. Do NOT reintroduce per-site resolution; extend the rewrite instead.
+- **The qualified rewrite matches only exact (namespace, member) pairs** collected during
+  expansion, so an unrelated `obj.member` is never touched, and literal content is skipped by the
+  same mask. Regression: `30_NamespaceStringMembers`.
 
 ## Same-precedence operator groups split at the RIGHTMOST operator (added 2026-07-29)
 

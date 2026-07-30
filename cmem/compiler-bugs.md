@@ -23,18 +23,33 @@ transformed body. Guards: skips names inside a string/template literal (via
 const reference, a sibling FUNCTION call, a member name inside a string literal, and a struct field
 sharing a member name.
 
-**OPEN (pre-existing, NOT from this batch) — string members in a namespace do not work.** Verified
-by stashing the fix and re-testing on a clean tree: identical failures.
+### String members in a namespace — ALSO FIXED (2026-07-30)
 
-- `namespace A { export const NAME: string = "cfg" }` → `console.log(A.NAME)` prints **`0`**
+Found while probing the above; pre-existing (verified on a clean tree with the first fix stashed),
+then fixed in the same batch.
+
+- `namespace A { export const NAME: string = "cfg" }` → `console.log(A.NAME)` printed **`0`**
   instead of `cfg` (silently wrong).
-- A string-RETURNING namespace function (`export function label(): string`) fails to instantiate:
+- A string-RETURNING namespace function (`export function label(): string`) failed to instantiate:
   `not enough arguments on the stack for i32.store`.
 
-Numeric namespace members are unaffected (verified: consts, sibling calls, cross-namespace use).
-Not fixed here — a distinct feature gap, not a regression, and outside this batch's scope.
+**Root cause — per-use-site resolution.** Each *qualified* use was resolved ad hoc: a
+numeric-constant branch in `emitExpr` for `Ns.CONST`, a dot-call branch for `Ns.fn()`. Neither
+understood the string ptr/len ABI, so anything string-typed fell through. Adding a third
+special case per string form would have kept the pattern (and missed the next type).
 
-Gate: wasi **399/399**, wast 12444/0, every other suite 0 failures.
+**Fix — remove the special-casing instead.** `expandNamespaces` now also rewrites QUALIFIED uses,
+`Ns.member` → `Ns_member`, once the bodies are spliced in. A namespace member becomes an ORDINARY
+top-level symbol, so every existing path handles it for free: string consts, the string-return
+side-channel, concatenation, comparison, arrays, structs. Only exact (namespace, member) pairs
+collected during expansion are rewritten, so an unrelated `obj.member` never matches, and
+occurrences inside string/template literals are skipped via `buildStringLiteralMask`.
+
+Regression `30_NamespaceStringMembers` covers string/i32/f64 consts, a string-returning namespace
+function inline + assigned + concatenated + compared, a struct field sharing a member name, and a
+member name inside a string literal.
+
+Gate: wasi **400/400**, wast 12444/0, every other suite 0 failures.
 
 ## Multiplicative associativity + string-enum values + literal-led console.log (FIXED 2026-07-29)
 

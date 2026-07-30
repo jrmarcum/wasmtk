@@ -3964,6 +3964,8 @@ class WasicTranspiler {
     const nsRe = /(?:export\s+)?namespace\s+(\w+)\s*\{/g;
     let m: RegExpExecArray | null;
     const replacements: Array<{ start: number; end: number; text: string }> = [];
+    /** (namespace, member) pairs, for rewriting QUALIFIED uses after the bodies are spliced in. */
+    const nsMembers: Array<[string, string]> = [];
     while ((m = nsRe.exec(src)) !== null) {
       const nsName = m[1];
       const bodyStart = m.index + m[0].length;
@@ -3982,6 +3984,7 @@ class WasicTranspiler {
       const members = new Set<string>();
       for (const mm of body.matchAll(/\bexport\s+function\s+(\w+)/g)) members.add(mm[1]!);
       for (const mm of body.matchAll(/\bexport\s+(?:const|let)\s+(\w+)/g)) members.add(mm[1]!);
+      for (const mem of members) nsMembers.push([nsName, mem]);
 
       // Replace `export function` → `function Name_`, `export const/let` → `const/let Name_`
       let transformed = body;
@@ -4019,6 +4022,32 @@ class WasicTranspiler {
     for (let i = replacements.length - 1; i >= 0; i--) {
       const { start, end, text } = replacements[i];
       result = result.slice(0, start) + text + result.slice(end);
+    }
+
+    // Rewrite QUALIFIED uses — `Ns.member` → `Ns_member` — now that the bodies are spliced in.
+    //
+    // Previously each use site was resolved ad hoc (a numeric-constant branch in emitExpr, a
+    // dot-call branch for functions), which covered only what those branches knew about: a
+    // `string`-typed namespace const printed `0`, and a string-RETURNING namespace function failed
+    // to instantiate, because neither branch understood the string ptr/len ABI. Rewriting to a
+    // plain top-level name instead makes a namespace member an ORDINARY symbol, so every existing
+    // path — string consts, the string-return side-channel, arrays, structs — handles it for free.
+    //
+    // Only exact `Ns.member` pairs collected above are rewritten, so an unrelated `obj.member`
+    // never matches; occurrences inside string/template literals are skipped.
+    if (nsMembers.length > 0) {
+      const inStr = buildStringLiteralMask(result);
+      let out = "";
+      let last = 0;
+      const qualRe = /\b([A-Za-z_]\w*)\s*\.\s*([A-Za-z_]\w*)\b/g;
+      let qm: RegExpExecArray | null;
+      while ((qm = qualRe.exec(result)) !== null) {
+        if (inStr[qm.index]) continue;
+        if (!nsMembers.some(([ns, mem]) => ns === qm![1] && mem === qm![2])) continue;
+        out += result.slice(last, qm.index) + `${qm[1]}_${qm[2]}`;
+        last = qm.index + qm[0].length;
+      }
+      result = out + result.slice(last);
     }
     return result;
   }
