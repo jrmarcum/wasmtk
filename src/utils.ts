@@ -10,23 +10,51 @@ import wasm2js_compiler from "wasm2js";
 import binaryen from "./binaryen.ts";
 import wabt from "wabt";
 import { bundleImports } from "./tsbundler.ts";
+import { compileWasi as compileWasiImpl } from "./wasic.ts";
+import { compileModule as compileModuleImpl } from "./modc.ts";
+
+// These two were previously bare `export { … } from "./…"` re-exports. `deno doc` collapses a
+// re-export to a `kind: "reference"` node carrying no JSDoc whenever the defining module is ALSO a
+// documented entrypoint (both `./wasic` and `./modc` are), so JSR counted them as the only 2
+// undocumented symbols of 102. A JSDoc above the re-export does not help — the comment is dropped
+// with the node. Re-declaring them here as documented pass-through wrappers keeps the exported
+// shape a `function` with the same signature, leaves the implementations in `wasic.ts`/`modc.ts`
+// untouched, and is credited by `deno doc`. See design-decisions.md § JSR doc coverage.
+//
+// ⚠️ These signatures are hand-duplicated: adding a new OPTIONAL parameter to either impl will NOT
+// fail `deno check` here, it will just stop being forwarded. Change the wrapper whenever you change
+// `compileWasi` in wasic.ts or `compileModule` in modc.ts.
 
 /**
  * Compiles a `.ts` or `.wat` source file to a standalone WASI command module.
  *
- * Re-exported from {@link https://jsr.io/@jrmarcum/wasmtk/doc/wasic | wasmtk/wasic} so the
+ * A `.wat` file is assembled directly; a `.ts` file goes through the `wasic` transpiler. This is a
+ * pass-through to the implementation in
+ * {@link https://jsr.io/@jrmarcum/wasmtk/doc/wasic | wasmtk/wasic}, re-declared here so the
  * toolkit's default entrypoint exposes the compiler alongside the runtime helpers below.
+ *
+ * @param path - Path to a `.ts` or `.wat` source file.
+ * @param outPath - Optional output path; defaults to `<name>.wasm` beside the source file.
  */
-export { compileWasi } from "./wasic.ts";
+export async function compileWasi(path: string, outPath?: string): Promise<void> {
+  return await compileWasiImpl(path, outPath);
+}
 
 /**
- * Compiles a TypeScript file to a WASM **library** module, keeping only its `export function`
- * declarations and dropping top-level runner code.
+ * Compiles a TypeScript file to a WASM **library** module.
  *
- * Re-exported from {@link https://jsr.io/@jrmarcum/wasmtk/doc/modc | wasmtk/modc} so the toolkit's
- * default entrypoint exposes library-mode compilation alongside the runtime helpers below.
+ * Only `export function` declarations appear in the output — top-level runner code (`main()`,
+ * `console.log` calls, IIFEs, bare statements) is silently dropped. This is a pass-through to the
+ * implementation in {@link https://jsr.io/@jrmarcum/wasmtk/doc/modc | wasmtk/modc}, re-declared
+ * here so the toolkit's default entrypoint exposes library-mode compilation alongside the runtime
+ * helpers below.
+ *
+ * @param path - Path to the source `.ts` file.
+ * @param outPath - Optional output path; defaults to `<name>.wasm` beside the source file.
  */
-export { compileModule } from "./modc.ts";
+export async function compileModule(path: string, outPath?: string): Promise<void> {
+  return await compileModuleImpl(path, outPath);
+}
 
 // Minimal type stubs for the wabt npm package API
 interface WasmFeatures {

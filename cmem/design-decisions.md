@@ -759,17 +759,47 @@ silently break (all `src/wasic.ts`):
   it is not CI-gated but a regression silently drops the JSR score.
 - **`deno doc --lint` clean does NOT mean 100% documented symbols.** Measured 2026-07-30: the lint
   passed on all 16 entrypoints while JSR reported `percentageDocumentedSymbols: 0.98039216`. That
-  number is exactly **100/102**, and the 2 it counts undocumented are the bare re-exports in
+  number is exactly **100/102**, and the 2 it counted undocumented were the bare re-exports in
   `src/utils.ts` — `export { compileWasi } from "./wasic.ts"` and
   `export { compileModule } from "./modc.ts"`. **A JSDoc comment above an `export … from` cannot fix
   this.** Verified by probe: when the defining module and the re-exporting module are BOTH doc
   entrypoints, `deno doc` collapses the re-export to a `kind: "reference"` node carrying no jsDoc,
-  no matter what is written above it. Only a documented alias
-  (`import { x as _x } …; /** … */ export const x: typeof _x = _x;`) is credited — which would
-  change the public API shape from `function` to `variable`. **Deliberately NOT done:** the targets
-  are fully documented at their definition sites, and JSR's own scoring doc says *"you do not need
-  to complete all factors to get a 100% score"* — the package scores **100** as-is. Trading the
-  rendered function signature for two metric points is a bad deal; revisit only if JSR reweights.
+  no matter what is written above it. **`deno doc --lint` never flags it** — use
+  `deno doc --json <entrypoints>` and count `declarations[].jsDoc.doc` per exported symbol.
+- **FIXED 2026-07-30 by re-declaring both as documented pass-through wrappers** (now **102/102 =
+  100%**). `src/utils.ts` imports the implementations aliased (`compileWasi as compileWasiImpl`) and
+  re-declares each as a real `export async function …` that awaits the impl. Three candidate forms
+  were probed under a multi-entrypoint `deno doc` run; only two are credited, and they are not
+  equivalent:
+  - `/** … */ export { x } from "./m.ts"` → `kind: "reference"`, jsDoc **dropped**. Useless.
+  - `import {x as _x}; /** … */ export { x }` → also `reference`, jsDoc dropped. Useless.
+  - `/** … */ export const x: typeof _x = _x` → credited, but `kind` becomes **`variable`** — the
+    JSR page would stop rendering it as a function with parameters. **Rejected for that reason.**
+  - `/** … */ export async function x(…): Promise<void> { return await _x(…) }` → credited AND
+    stays `kind: "function"` with the original `(path, outPath)` signature. **This is the one used.**
+
+  The implementations in `wasic.ts`/`modc.ts` are untouched, so `./wasic` and `./modc` consumers are
+  unaffected; only the `./utils` (and therefore `.`) entrypoint gains one call frame. **`main.ts`
+  imports both FROM `src/utils.ts`**, so these wrappers are in the hot path of every
+  `wasmtk wasic` / `wasmtk modc` invocation — a change here is NOT cosmetic and takes the full
+  regression gate (it was run: wasi 417/417 + every other suite green).
+- ⚠️ **The wrapper hand-duplicates the signature, so it CAN silently drift from the impl.** Probed
+  2026-07-30: if `compileWasi` in `wasic.ts` gains a new **optional** parameter, the `utils.ts`
+  wrapper keeps forwarding only `(path, outPath)` and **`deno check` stays clean** — TypeScript
+  treats an added optional param as compatible, so nothing errors and the new option is silently
+  unreachable through `./utils` and the CLI. No type-level guard fixes this: `const g: typeof impl =
+  wrapper` passes (fewer params are assignable), and the reverse only catches added *required*
+  params. **When you change the signature of `compileWasi`/`compileModule`, change the wrapper in
+  `src/utils.ts` too** — this is the same parallel-code-path trap as `wasic.ts`/`console_log.ts`,
+  just across a module boundary.
+  - The drift-proof alternative is `export const x: typeof _x = _x` (signature derived, cannot
+    drift) — rejected because it renders as `variable`, not `function`. A
+    `...args: Parameters<typeof _x>` wrapper is also drift-proof but renders `...args` instead of
+    named parameters, losing exactly the per-parameter docs this change was made to gain.
+- **This did not change the JSR score and was not expected to.** JSR's scoring doc says *"you do not
+  need to complete all factors to get a 100% score"*; the package already reported **100** at
+  98.04% documented. The wrapper is worth having because the two symbols now render with real
+  descriptions and parameter docs on jsr.io — do not justify similar work with the score number.
 - **A module JSDoc needs an explicit `@description` tag, or its description renders EMPTY.**
   `deno doc` treats everything after the first tag as that tag's value, so
   `/** @module foo` + bare prose yields a module with **no** description. 15 entrypoints used
