@@ -14,6 +14,10 @@ every session start expensive. Trimmed back; earlier revisions are in git.)
 1. Read this index. 2. Open only the topic files the task needs. 3. Record what you learn in the
 matching topic file, then refresh its one-line pointer below.
 
+**Doing a stress-test batch or a release? Read [workflow.md](workflow.md) first** — it holds the
+established loop (branch → test → bisect → fix → full gate → memory → commit → merge → bump →
+publish) and the traps that have already cost time.
+
 ## Policy (durable — set by the project owner 2026-05-31)
 
 - **`cmem/` is the single home for ALL project memory.** Update the matching topic file, then
@@ -62,6 +66,7 @@ when the change is provably outside its reach, justified from the impact map in
 
 | File | What it holds |
 | --- | --- |
+| [workflow.md](workflow.md) | **The working loop: branch → test → bisect → fix → gate → memory → commit → merge → bump → publish.** Commit conventions, context boundaries, and the traps that have bitten. **Read at the start of a stress-test batch or a release.** |
 | [overview.md](overview.md) | What wasmtk is; repo layout; the key source files |
 | [architecture.md](architecture.md) | wasic / modc / bindgen / hybrid; pluggable wabt+binaryen backends; build & merge pipeline; Canonical ABI alignment; the `wast` spec runner |
 | [testing.md](testing.md) | How to run every suite; **which suites a given change reaches** (impact map); current pass counts; runner gotchas |
