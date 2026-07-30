@@ -50,3 +50,31 @@ jobs:
             --title "${GITHUB_REF_NAME}" \
             --target release/${GITHUB_REF_NAME} \
             --generate-notes
+
+      # The OIDC step above only proves the PREREQUISITE was met. It passed on every release from
+      # v1.11.3 onward while JSR recorded NO provenance at all (rekorLogId null, v1.11.2 was the
+      # last version that had one) — ten releases of false assurance. This checks the OUTCOME: JSR
+      # is the authority on whether a provenance statement actually landed in the Sigstore Rekor
+      # transparency log. Runs last so a failure here never blocks the publish or the GitHub
+      # release, but still fails the job loudly instead of letting the regression stay invisible.
+      - name: Verify provenance was recorded on JSR
+        run: |
+          PKG=$(deno eval 'console.log(JSON.parse(Deno.readTextFileSync("deno.json")).name)')
+          SCOPE=${PKG%/*}; SCOPE=${SCOPE#@}
+          NAME=${PKG#*/}
+          VERSION=${GITHUB_REF_NAME#v}
+          URL="https://api.jsr.io/scopes/${SCOPE}/packages/${NAME}/versions/${VERSION}"
+          echo "Checking $URL"
+          # JSR ingests asynchronously, so poll rather than reading once.
+          for i in $(seq 1 12); do
+            BODY=$(curl -sf -H "Accept: application/json" "$URL" || true)
+            REKOR=$(printf '%s' "$BODY" | deno eval 'const t=await new Response(Deno.stdin.readable).text(); try { console.log(JSON.parse(t).rekorLogId ?? "") } catch { console.log("") }' || true)
+            if [ -n "$REKOR" ]; then
+              echo "✅ Provenance recorded — Rekor log ID: $REKOR"
+              exit 0
+            fi
+            echo "  attempt $i: no provenance yet, retrying in 15s"
+            sleep 15
+          done
+          echo "::error::${PKG}@${VERSION} was published WITHOUT provenance (no Sigstore/Rekor entry). JSR requires publishing from GitHub Actions via the native OIDC integration; verify id-token:write is honored, that deno publish was not passed --no-provenance, and check whether the floating deno-version (v2.x) regressed provenance emission."
+          exit 1

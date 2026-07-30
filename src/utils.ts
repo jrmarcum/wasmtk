@@ -11,7 +11,21 @@ import binaryen from "./binaryen.ts";
 import wabt from "wabt";
 import { bundleImports } from "./tsbundler.ts";
 
+/**
+ * Compiles a `.ts` or `.wat` source file to a standalone WASI command module.
+ *
+ * Re-exported from {@link https://jsr.io/@jrmarcum/wasmtk/doc/wasic | wasmtk/wasic} so the
+ * toolkit's default entrypoint exposes the compiler alongside the runtime helpers below.
+ */
 export { compileWasi } from "./wasic.ts";
+
+/**
+ * Compiles a TypeScript file to a WASM **library** module, keeping only its `export function`
+ * declarations and dropping top-level runner code.
+ *
+ * Re-exported from {@link https://jsr.io/@jrmarcum/wasmtk/doc/modc | wasmtk/modc} so the toolkit's
+ * default entrypoint exposes library-mode compilation alongside the runtime helpers below.
+ */
 export { compileModule } from "./modc.ts";
 
 // Minimal type stubs for the wabt npm package API

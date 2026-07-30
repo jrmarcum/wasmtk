@@ -1,7 +1,6 @@
 /**
- * @module wasmtk/wast
- *
- * wast.ts — a runner for the WebAssembly `.wast` *script* format (a superset of `.wat`).
+ * @module wast
+ * @description A runner for the WebAssembly `.wast` *script* format (a superset of `.wat`).
  *
  * A `.wast` file is a sequence of top-level commands: `(module …)` definitions interleaved with
  * assertion directives (`assert_return`, `assert_trap`, `assert_invalid`, `assert_malformed`,

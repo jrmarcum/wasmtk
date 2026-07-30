@@ -724,8 +724,22 @@ silently break (all `src/wasic.ts`):
   already-edited `deno.json` version (no increment); `bump` is the increment counterpart. `bump` is
   intentionally NOT wired into `deno task publish` (bumping stays a deliberate step). Don't add
   `dependencies` to `package.json`; don't use `nodeModulesDir: "auto"` (Windows junction failures).
+- ⚠️ **The "fmt-clean" claim below is STALE — measured 2026-07-30, `deno fmt --check main.ts src/`
+  FAILS on 8 of 21 files.** Two distinct causes, and they need different treatment:
+  1. **CRLF line endings** — `src/utils.ts` and `src/zigwasic.ts` fail with *"Text differed by line
+     endings"* and no content diff at all. That is the repo-wide CRLF situation, not code style;
+     reformatting would rewrite every line of each file.
+  2. **Real content drift** — `src/bindgen.ts` (40 diff lines), `src/hybrid.ts` (16),
+     `src/wasic.ts` (6), `src/console_log.ts` (5), `src/wast.ts` (4).
+  3. **`src/wasm/mathlib_bytes.ts` must NEVER be formatted** — it is a generated 5-line file holding
+     one enormous byte array; `deno fmt` wants to explode it into ~9,000 lines. If the repo is ever
+     made fmt-clean, add it to a deno.json `fmt.exclude` first.
+
+  Nothing here blocks publishing (fmt is not CI-gated and not a JSR score factor), so this is
+  cleanup, not a release blocker. **Do not fix it as a side effect of an unrelated batch** — an
+  8-file reflow buried in a compiler-fix commit is unreviewable.
 - **Keep the published TypeScript (`main.ts` + `src/`) `deno fmt`-clean.** As of 2026-06-02 it
-  passes `deno fmt --check main.ts src/` (one-time reflow to the deno.json fmt config: lineWidth
+  passed `deno fmt --check main.ts src/` (one-time reflow to the deno.json fmt config: lineWidth
   100, arrow parens, semicolons). Format with the **scoped** `deno fmt main.ts src/` — do **NOT**
   run bare `deno fmt`: with no `include`/`exclude` in deno.json it would reflow the 176 KB README
   and all `cmem/*.md` markdown (mangling tables/code-fences) plus every test. `deno fmt` preserves
@@ -743,6 +757,27 @@ silently break (all `src/wasic.ts`):
   public `compileGoWasi` / `scaffoldGoProject` / `compileZig` / `scaffoldZigProject` / `runRust`
   functions) — do not re-privatize them. Run `deno doc --lint <all 15 exports>` before publishing;
   it is not CI-gated but a regression silently drops the JSR score.
+- **`deno doc --lint` clean does NOT mean 100% documented symbols.** Measured 2026-07-30: the lint
+  passed on all 16 entrypoints while JSR reported `percentageDocumentedSymbols: 0.98039216`. That
+  number is exactly **100/102**, and the 2 it counts undocumented are the bare re-exports in
+  `src/utils.ts` — `export { compileWasi } from "./wasic.ts"` and
+  `export { compileModule } from "./modc.ts"`. **A JSDoc comment above an `export … from` cannot fix
+  this.** Verified by probe: when the defining module and the re-exporting module are BOTH doc
+  entrypoints, `deno doc` collapses the re-export to a `kind: "reference"` node carrying no jsDoc,
+  no matter what is written above it. Only a documented alias
+  (`import { x as _x } …; /** … */ export const x: typeof _x = _x;`) is credited — which would
+  change the public API shape from `function` to `variable`. **Deliberately NOT done:** the targets
+  are fully documented at their definition sites, and JSR's own scoring doc says *"you do not need
+  to complete all factors to get a 100% score"* — the package scores **100** as-is. Trading the
+  rendered function signature for two metric points is a bad deal; revisit only if JSR reweights.
+- **A module JSDoc needs an explicit `@description` tag, or its description renders EMPTY.**
+  `deno doc` treats everything after the first tag as that tag's value, so
+  `/** @module foo` + bare prose yields a module with **no** description. 15 entrypoints used
+  `@module x` + `@description …`; `src/wast.ts` used `@module wasmtk/wast` followed by bare prose
+  and so had an empty module description on jsr.io (fixed 2026-07-30). Module names are also bare
+  (`wast`, not `wasmtk/wast`). Check with
+  `deno doc --json <entrypoints>` → `nodes[file].module_doc.doc`, not with `--lint`, which does not
+  catch it.
 - **JSR provenance is environmental, NOT a `publish.yml` problem.** Provenance was silently `false`
   across v1.6.2–v1.6.5 even though every Action run succeeded — `deno publish` skips attestation
   non-fatally when it can't mint/submit the GitHub OIDC token. The committed workflow was always
@@ -753,6 +788,35 @@ silently break (all `src/wasic.ts`):
   /`_TOKEN` reached the runner, `::warning::` if not) so any recurrence is visible in the run log.
   v1.7.0 published with `hasProvenance: true` (JSR score 100). Do not "fix" provenance by editing the
   publish/permissions YAML — it is already correct; check OIDC policy instead.
+- 🔴 **Provenance has been ABSENT again since v1.11.3 (found 2026-07-30) — 10 releases.** Bisected
+  against the JSR API (`api.jsr.io/scopes/jrmarcum/packages/wasmtk/versions/<v>` → `rekorLogId`):
+  **v1.11.2 (2026-07-03) is the last version with a Rekor entry** (`2053916008`); **v1.11.3
+  (2026-07-09) is the first without**, and every release since — including v1.11.12 — is `null`.
+  `.github/workflows/publish.yml` has not changed since 2026-06-15 (commit `e64595f`), i.e. it is
+  byte-identical to what produced provenance for v1.11.2, and `git diff v1.11.2..v1.11.3` touches
+  only `deno.json` deps. The JSR↔GitHub repo link is intact. So the cause is again environmental,
+  consistent with the entry above — the floating `deno-version: v2.x` in `setup-deno` is the prime
+  suspect, since it is the only input that moved on its own.
+- **The OIDC diagnostic step is NOT sufficient evidence of provenance — it gave 10 releases of false
+  assurance.** It checks only the PREREQUISITE (are the OIDC env vars present), and the v1.11.12 run
+  emitted no `::warning::` at all (verified via the check-runs annotations API — its one annotation
+  is an unrelated Node 20 deprecation notice), yet provenance was still absent. **A green publish run
+  is not proof of provenance; only JSR's `rekorLogId` is.** A **"Verify provenance was recorded on
+  JSR"** step was therefore added as the LAST step of the workflow: it polls the JSR version API and
+  fails the job if `rekorLogId` is null. It runs last on purpose, so a failure surfaces the problem
+  without blocking the publish or the GitHub release (JSR versions are immutable — by the time this
+  runs, the version exists either way). Logic verified locally against both sides of the bisect:
+  1.11.2 → PASS, 1.11.12 → FAIL.
+- **Provenance is NOT what is holding the score.** JSR's scoring doc states *"you do not need to
+  complete all factors to get a 100% score"*, and the package reports `score: 100` with
+  `hasProvenance: false`. Provenance is worth fixing as a **supply-chain/trust** property (SLSA
+  attestation linking the artifact to the building workflow), not to move the number — do not
+  justify the work with the score, it will not change.
+- **Reading CI logs needs auth and `gh` is NOT installed on this machine.** The GitHub Actions logs
+  endpoint returns 403 unauthenticated, so the Deno version each run used could not be read. The next
+  diagnostic step for provenance is `gh run view <run-id> --log | grep -i "deno\|provenance"` on the
+  v1.11.2 vs v1.11.3 runs (ids `30569718486` is v1.11.12; list with
+  `gh run list --workflow=publish.yml`), comparing the resolved `deno-version`.
 
 ## Go producer (CLI / build invariants — set 2026-06-07)
 
