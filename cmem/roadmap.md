@@ -38,7 +38,29 @@
 > replace it with the real version at publish time. A breaking change may ALSO warrant a Feature
 > Status row if it ships alongside a feature — but the Breaking Changes row is mandatory.
 
-## Working tree (2026-07-30) — repo hygiene: fmt-clean + LF pinned
+## Release status (2026-07-30) — v2.0.0: Phase 34 inline predicate targets + `./utils` slimmed
+
+**v2.0.0 — merged to `main` from `fix/phase34-inline-predicate-target-2026-07-30` (commits
+`300f712` → `ff93147`, six commits) via `--ff-only`.** Backend unchanged (wabt-ts 1.3.5 +
+binaryen-ts 1.4.3). The two sections below are the batches this release carries; they were working
+-tree entries and are promoted here on release.
+
+**FIRST BREAKING RELEASE.** `./utils` no longer re-exports `compileWasi` / `compileModule` — see the
+Phase 34 section below and the README's `### ⚠️ Breaking Changes` table. Version chosen as `2.0.0`
+deliberately, to make the break legible; versions remain a sequential counter with no semver meaning.
+
+Full regression gate, run twice (once for the compiler fix, once after the fmt reflow touched
+`wasic.ts` + `console_log.ts`): wasi **417/417**, wast 41 files / 12444 assertions / 0 failed, and
+every other suite 0 failures. `deno doc --lint` clean across 16 entrypoints, documented symbols
+**100/100**, `deno publish --dry-run` Success on BOTH the local Deno (2.9.4) and the pinned CI Deno
+(2.9.1).
+
+**Provenance:** pinned `deno-version: v2.9.1` in `publish.yml` to test the Deno-version hypothesis —
+**this release is the experiment.** If v2.0.0 lands with a `rekorLogId`, the diagnosis holds and the
+pin stays until upstream fixes it; if not, Deno is eliminated. The new "Verify provenance was
+recorded on JSR" step fails the job either way rather than letting it pass silently.
+
+## Repo hygiene shipped in v2.0.0 — fmt-clean + LF pinned
 
 `main.ts` + `src/` are `deno fmt --check` clean again (was 8 of 21 files failing), and **the fix is
 stable across checkouts** — the previous attempts kept going stale because `deno fmt` emits LF while
@@ -50,10 +72,10 @@ worktree `.ts` files were converted CRLF→LF with **zero** content change. Full
 `wasic.ts`/`console_log.ts` are the compiler. Detail in
 [design-decisions.md](design-decisions.md).
 
-## Working tree (2026-07-30) — Phase 34 type predicates, inline object-type targets
+## Phase 34 batch shipped in v2.0.0 — type predicates, inline object-type targets
 
 Branch `fix/phase34-inline-predicate-target-2026-07-30`, cut from `main` **after** test 3 failed,
-per the branch-only-for-a-fix rule. Not yet merged or released.
+per the branch-only-for-a-fix rule. Merged `--ff-only` and released as v2.0.0.
 
 3 owner Phase 34 type-predicate stress tests. **Tests 1 and 2 passed as written** —
 `34_TypePredicateBasicNarrowing` (a `s is Circle` guard used both as a boolean value and as an
