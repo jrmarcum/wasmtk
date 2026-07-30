@@ -3,6 +3,39 @@
 All notable, user-facing changes to `wasmtk`. Versions follow the `deno.json` version and the
 published [`@jrmarcum/wasmtk`](https://jsr.io/@jrmarcum/wasmtk) JSR package.
 
+## 1.11.12 — Intersection types: base-typed parameters are checked (2026-07-30)
+
+Passing an intersection value to a function that takes one of its constituent interfaces either
+works or now tells you why it cannot. Previously one such call quietly computed with the wrong
+fields — no error, no trap, just wrong numbers.
+
+### Fixed
+
+- **A base-typed parameter could read the wrong fields.** Structs are passed by pointer and the
+  callee reads fields at the offsets of its *own* parameter type, while an intersection lays its
+  constituents out in **declaration order**. So the base interface has to come first:
+
+  ```ts
+  type Sprite = Renderable & Transform;               // ← Transform declared SECOND
+
+  function getScaleArea(t: Transform): f64 {
+    return t.scaleX * t.scaleY;
+  }
+
+  const hero: Sprite = { scaleX: 2.0, scaleY: 3.0, alpha: 0.8 };
+  console.log(getScaleArea(hero));                    // printed 1.6, not 6
+  ```
+
+  `getScaleArea` read bytes 0 and 8 — `alpha` and `scaleX` — and multiplied them. Every offset was
+  a valid slot, so the module compiled and ran happily with a wrong answer.
+
+  Every call is now checked: the parameter's struct layout must be a byte-exact **prefix** of the
+  argument's (same field name, offset, type and size). When it is not, compilation stops with a
+  message naming the variable, both types, the offending field, both byte offsets, and the two ways
+  out — declare the base constituent first (`type Sprite = Transform & Renderable`), or type the
+  parameter with the intersection itself. Writing the constituents in the order the code consumes
+  them, which is the common case, is unaffected.
+
 ## 1.11.11 — Discriminated unions: shared variant fields (2026-07-30)
 
 A discriminated union whose variants share a field name now compiles correctly. Previously the

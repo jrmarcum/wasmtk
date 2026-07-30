@@ -27,7 +27,13 @@
 > The batch itself is recorded as a single unit in `compiler-bugs.md` (post-mortems) and
 > `testing.md` (counts); the README only ever gets the per-phase, user-facing rows.
 
-## Working tree (2026-07-30) — Phase 33 intersection-type stress batch
+## Release status (2026-07-30) — v1.11.12: intersection base-typed parameters
+
+**v1.11.12 — merged to `main` from `fix/phase33-intersection-base-prefix-2026-07-30` (commits
+`217f418` + `49291f6`) and published to JSR.** Backend unchanged (wabt-ts 1.3.5 + binaryen-ts
+1.4.3). Pre-publish gate: `deno publish --dry-run` clean, `deno doc --lint` clean across all 16 JSR
+entrypoints. Full regression gate: wasi **412/412**, wast 41 files / 12444 assertions / 0 failed,
+every other suite 0 failures.
 
 3 owner Phase 33 intersection stress tests, **all three passing as written** (every printed value
 matched the owner's inline `// Expected:` annotations): `33_IntersectionMixedTypeMerge` (flat merge
@@ -45,11 +51,13 @@ intersection base-prefix"; the invariant it protects is in
 [design-decisions.md](design-decisions.md) § "A struct parameter's layout must be a PREFIX of the
 argument's".
 
-**Branch `fix/phase33-intersection-base-prefix-2026-07-30`** (cut from `main` after the tests
+The fix (branch `fix/phase33-intersection-base-prefix-2026-07-30`, cut from `main` after the tests
 landed, per the branch-only-for-a-fix rule): `checkStructArgLayouts` rejects a layout-incompatible
-struct argument at all three call-emission sites, +2 regressions
-(`33_IntersectionBasePrefixGuard` `@expect-fail: compile`, `33_IntersectionPrefixOk`). Suite
-**410 → 412**. Full gate run, since `src/wasic.ts` + `src/console_log.ts` changed. Not yet released.
+struct argument at all three call-emission sites — the two in `wasic.ts` plus `console_log.ts` via
+the injected `setStructArgLayoutChecker`, since a call nested in a `console.log` argument never
+reaches `wasic.ts`'s emitters. +2 regressions (`33_IntersectionBasePrefixGuard`
+`@expect-fail: compile`, `33_IntersectionPrefixOk`). Suite **410 → 412**. Full gate run, since
+`src/wasic.ts` + `src/console_log.ts` changed.
 
 ## Release status (2026-07-30) — v1.11.11: discriminated-union shared variant fields
 
