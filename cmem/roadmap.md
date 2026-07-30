@@ -27,6 +27,18 @@
 > The batch itself is recorded as a single unit in `compiler-bugs.md` (post-mortems) and
 > `testing.md` (counts); the README only ever gets the per-phase, user-facing rows.
 
+## Working tree (2026-07-30) — `test/phase31-typedarray-stress-2026-07-30`
+
+3 owner Phase 31 TypedArray stress tests, **all passing as written — the first batch of the series
+to surface no bug**: `31_TypedArraySubWordAccess` (Uint8/Int16 widths, `.length` vs `.byteLength`,
+negative-Int16 sign extension), `31_TypedArrayLiteralInitializer` (`new Float64Array([...])`,
+`byteLength === 24`), `31_TypedArrayFillAndSet` (`.fill(v, start, end)` exclusive end, `.set(src,
+offset)`). Suite **400 → 403**; phase filter `"^31_"` 7/7.
+
+No `src/` change, so **no full-suite run** — that corollary to the regression gate was set by owner
+directive during this batch and is now recorded in INDEX.md, testing.md, workflow.md and CLAUDE.md.
+**No README row**: nothing user-facing changed (a passing stress test documents no new capability).
+
 ## Release status (2026-07-30) — v1.11.10: namespace members
 
 **v1.11.10 — merged to `main` from `test/phase30-stress-2026-07-29` (commits `713bd1f` + `8ae8556`)

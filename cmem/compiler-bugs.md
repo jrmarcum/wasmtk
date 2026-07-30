@@ -1,5 +1,26 @@
 # Compiler bug log
 
+## Phase 31 TypedArray stress batch (2026-07-30) — NO BUGS FOUND
+
+Recorded because a clean batch is itself evidence. 3 owner stress tests, all passing as written on
+the first run, every printed value matching the owner's inline `// Expected:` annotations:
+
+| Test | Covers |
+| --- | --- |
+| `31_TypedArraySubWordAccess` | `Uint8Array`/`Int16Array` element widths; `.length` vs `.byteLength`; **sign-extension of a negative `Int16` element** (`-16000` reads back correctly, not `49536`) |
+| `31_TypedArrayLiteralInitializer` | `new Float64Array([...])` — header allocation + literal float-byte copy; `byteLength === 24` for 3 elements |
+| `31_TypedArrayFillAndSet` | `.fill(v, start, end)` with an **exclusive** end bound (indices 1–3, not 1–4); `.set(src, offset)` |
+
+**Why the phase held.** Phase 31's existing `31_TypedArrayAdvanced` already pinned the load-bearing
+mechanics — runtime-length construction, `Uint8Array`, literal initializers, `.set()` with and
+without an offset, and TypedArray function parameters. The genuinely new ground here was narrow:
+`Int16Array` (the only sub-word *signed* view in the corpus), `Float64Array.byteLength`, and
+`.fill()` with an explicit range. All three were already correct.
+
+**Process note.** No bug and no `src/` edit means the full suite is NOT run — the `"^31_"` filter
+(7/7) is the whole gate. That corollary was added to the regression-gate trigger by owner directive
+during this batch; see INDEX.md and testing.md.
+
 ## Namespace member references not rewritten inside the body (FIXED 2026-07-30)
 
 Phase 30 stress batch (namespaces / interface inheritance / shorthand properties). Tests 2 and 3

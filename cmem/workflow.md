@@ -45,7 +45,9 @@ keep it that way (see the note at the top of INDEX.md).
    class of string bugs for free).
 6. **Add a regression test** that pins the fix AND its guards — the shapes that were already
    correct, so a future "simplification" can't silently reintroduce the bug.
-7. **Regression phase — run the full gate** (see below), once the targeted set is green.
+7. **Regression phase — run the full gate** (see below), once the targeted set is green — **but only
+   if a `src/` file changed.** A batch whose tests all passed as written stops at step 3; there is
+   nothing for a full run to regress (owner directive 2026-07-30).
 8. **Update memory** — `compiler-bugs.md` (root cause + fix + why it went untested),
    `design-decisions.md` (any new must-not-revert invariant), `testing.md` (counts),
    `roadmap.md` (working-tree entry), INDEX pointers; then README rows if user-relevant.
@@ -101,7 +103,13 @@ tests are the primary signal, and a fix must not regress its own phase.
 ## The full gate
 
 Per the regression-gate trigger in [INDEX.md](INDEX.md): when a bug is found/fixed, run
-**everything**, including `wast_tests`. Order that works:
+**everything**, including `wast_tests`.
+
+**Entry condition: a `src/` file changed.** No bug found and no source edit → skip this section
+entirely (owner directive 2026-07-30). New test files alone cannot regress the corpus, and the wasi
+suite alone costs >10 minutes.
+
+Order that works:
 
 ```bash
 # 1. full wasi suite — backgrounded, it exceeds 10 minutes

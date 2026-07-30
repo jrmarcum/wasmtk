@@ -62,6 +62,11 @@ when the change is provably outside its reach, justified from the impact map in
 (`src/dync.ts` imports `compileWasiTs`). "Outlier" is relative to which FILE changed, never absolute
 — verify with the greps in testing.md rather than assuming.
 
+**The gate is triggered by a CHANGE, not by a batch (owner directive 2026-07-30).** If a stress-test
+batch surfaces **no bug** and leaves `src/` untouched — the new tests pass as written — **do NOT run
+the full suite.** Adding `.ts` files to `tests/wasi/wasm_wasi/` cannot regress the other 400; the
+phase filter IS the whole gate. Full-suite runs cost >10 minutes and buy nothing here.
+
 ## Files
 
 | File | What it holds |

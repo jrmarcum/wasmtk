@@ -42,6 +42,14 @@ here once omitted `--allow-ffi`; fixed 2026-06-08 by deferring to `deno task ins
 overlapping regressions.** Skip suites only when the change is *provably* outside their reach; the
 map below is the evidence for that call. "Outlier" is relative to WHICH FILE changed, never absolute.
 
+**Corollary — no bug, no `src/` change, no full suite (owner directive 2026-07-30).** The gate is
+triggered by a CHANGE, not by the act of running a batch. When every new stress test passes as
+written and nothing under `src/` was edited, the phase filter is the complete gate — **stop there.**
+New `.ts` files in `tests/wasi/wasm_wasi/` are inert with respect to the rest of the corpus: each
+test compiles and runs in isolation, so they cannot perturb another test's result. Spending >10
+minutes to re-confirm 400 untouched tests buys nothing. (Recorded after the Phase 31 TypedArray
+batch, where all three tests passed first try and a full run was started needlessly.)
+
 **A change to `src/wasic.ts` / `src/console_log.ts` (the compiler) reaches:**
 
 | Suite | Why it is reached |
@@ -80,7 +88,7 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 >
 > | Suite | Result |
 > | --- | --- |
-> | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **400 / 400**, 0 failed |
+> | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **403 / 403** — 400 measured 2026-07-28 + the 3 Phase 31 TypedArray stress tests added 2026-07-30, verified green under `"^31_"` (7/7). No `src/` change, so per the corollary above the full suite was NOT re-run |
 > | `wast_tests.ts` | **41 files, 12444 passed, 0 failed**, 3466 skipped — ALL CLEAN |
 > | `bindgen_tests.ts` | 142, 0 failed |
 > | `bundle_tests.ts` | **4 / 4** — `StructImport` fixed, no longer a standing failure |
@@ -108,6 +116,12 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 > unqualified references to a namespace's own members were never rewritten, and probing that
 > surfaced (and fixed) string-typed namespace members: **+1 `30_NamespaceStringMembers`**.
 > All post-mortems in compiler-bugs.md.
+>
+> **400 → 403 (2026-07-30):** +3 Phase 31 TypedArray stress tests
+> (`31_TypedArraySubWordAccess`, `31_TypedArrayLiteralInitializer`, `31_TypedArrayFillAndSet`).
+> **The first batch of the series to surface NO bug** — all three passed as written, every printed
+> value matching the owner's inline expectations. See compiler-bugs.md § "Phase 31 TypedArray
+> stress batch" for what they cover and why the phase was already solid.
 >
 > ⚠️ **Do NOT run the Go suites concurrently with other suites on Windows.** Running
 > `go_asyncify_tests` alongside the full wasi suite produced 4 spurious failures — all `os error 32`
@@ -213,9 +227,11 @@ from rsxtk!")/`build`→`.wasm`/`add`/`list`/`clean`. Manual verify command is i
   programs to probe a phase for latent bugs. Each lands in `tests/wasi/wasm_wasi/` as
   `NN_DescriptiveLabel.ts`, where `NN` is the phase whose feature is under test (pick the phase that
   owns the core mechanic — e.g. a nullable-return test crossing tuples and `??` is Phase 24, because
-  nullable returns are the mechanic). Run the batch with the phase filter (`"^25_"`) first, then the
-  FULL suite — a fix in shared codegen regresses other phases (the 2026-07-28 batch regressed two
-  Phase 24/25 tests mid-fix). Confirm any newly-failing adjacent suite against a clean tree
+  nullable returns are the mechanic). Run the batch with the phase filter (`"^25_"`) first. **Escalate
+  to the FULL suite only if the batch forced a `src/` fix** — a fix in shared codegen regresses other
+  phases (the 2026-07-28 batch regressed two Phase 24/25 tests mid-fix). **If every test passed as
+  written, the phase filter ends the batch** (see the corollary under "Which suites to run" above).
+  Confirm any newly-failing adjacent suite against a clean tree
   (`git stash` + reinstall + re-run) before attributing it to the batch. Record the batch as ONE
   unit in `compiler-bugs.md`; update the counts here; and add **per-phase** rows to the README table
   — see the placement/labelling directive at the top of [roadmap.md](roadmap.md).
