@@ -1,5 +1,61 @@
 # Compiler bug log
 
+## Phase 34 inline predicate target: the whole function header failed to parse (FIXED 2026-07-30)
+
+Phase 34 stress batch (type predicates), 3 owner tests. Tests 1 and 2 — basic narrowing and an
+if/else-if chain of two sibling predicates — **passed as written**. Test 3 failed, and probing its
+mechanic surfaced a second, worse bug behind the first.
+
+**Bug 1 — the header regex rejected an inline target, so the function vanished.** Test 3 writes the
+predicate against a discriminated union in the form the variant is normally spelled:
+
+```ts
+function isSphere(g: Geometry): g is { type: "sphere"; r: f64 } { … }
+```
+
+`parseFunctions`'s return-annotation alternative was `[\w]+\s+is\s+[\w]+` — a *named* target only.
+An inline object type matched no alternative, so `restMatch` was null and the loop hit its
+`continue // malformed header — skip`: **the function was never parsed at all.** The call then
+aborted the compile with `Unknown function 'isSphere' — not declared in this module`, and the
+advice attached to that diagnostic ("if any is a typo or missing declaration, fix it first") is
+actively misleading, because the function is right there and correctly declared. Fixed by adding a
+`\{[^}]*\}` alternative to both the header regex and the `typePredicateMatch` extraction.
+
+**Bug 2 — with the header parsed, an inline target narrowed nothing and read 0.** The narrowing site
+resolves the target through `structDefs.get(targetType)`, which an inline object type can never hit.
+Both `targetDef` and `targetCls` came back undefined, narrowing was silently skipped, and the
+then-branch compiled against the variable's *unnarrowed* type. For test 3's DU that is harmless —
+the Phase 32 flat super-struct already carries `r`, `w` and `h` at their real offsets, which is why
+test 3 prints the right answer with no narrowing at all. Over an **interface hierarchy** it is
+silently wrong: with `s: Shape` and target `{ kind: i32; radius: f64 }`, `s.radius` compiled clean
+and printed **0** where native TS printed **5** — a wrong number, no trap, no diagnostic.
+
+**Fix.** `resolveInlineStructTarget` matches the inline shape against registered `StructDef`s by
+exact field-name set plus mapped WAT type (a string-literal discriminant like `type: "sphere"` is
+matched on name alone — it never determines a layout by itself) and narrows to the match, so the
+hierarchy case now uses `Circle`'s real offsets. When nothing matches, narrowing is skipped as
+before — correct for a DU — **unless** the variable's own def is missing a field the inline target
+names, which is exactly the case that has no layout to read against: that now pushes a `diagnostics`
+entry naming the predicate, the variable, the missing fields and the containing type, and telling
+the author to declare the target as a named interface. The documented preference again: hard abort
+over silently-wrong codegen.
+
+**Why it survived.** All four pre-existing Phase 34 tests use named targets, which is the only form
+the regex admitted — the inline form could not reach the narrowing site to be wrong there. The two
+bugs also masked each other: bug 1 made every inline-target program fail loudly at compile, so bug 2
+had no way to produce a wrong number until bug 1 was fixed.
+
+**Deliberately NOT done.** Building a synthetic `StructDef` from the inline object type and
+narrowing to *that* was rejected: its offsets would be computed independently of the allocation the
+variable actually points at, so it would agree with a matching declared type by luck and disagree
+with a DU super-struct by construction — trading a hard abort for a new class of silent-wrong reads.
+Resolving against the DU's per-variant field sets (`DiscUnionDef.variants`) was also left alone; the
+super-struct layout makes it unnecessary for field access.
+
+Regressions: `34_InlinePredicateTargetNarrowing` (the hierarchy case that printed 0, plus a
+named-target guard in the same file) and `34_InlinePredicateUnresolvable` (`@expect-fail: compile`,
+the shape that must abort).
+
 ## Phase 33 intersection base-prefix: a base-typed parameter read the wrong fields (FIXED 2026-07-30)
 
 Phase 33 stress batch (intersection types). **All three owner tests passed as written** — the bug

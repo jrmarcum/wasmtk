@@ -99,7 +99,7 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 >
 > | Suite | Result |
 > | --- | --- |
-> | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **412 / 412** — 407 + the Phase 33 intersection batch (3 owner stress tests, all passing as written) + 2 regressions for the base-prefix bug a follow-up probe found, 2026-07-30. Full suite RE-RUN: the fix changed `src/wasic.ts` + `src/console_log.ts`, so the gate applied |
+> | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **417 / 417** — 412 + the Phase 34 type-predicate batch (3 owner stress tests; 2 passed as written, 1 exposed the inline-target bug) + 2 regressions, 2026-07-30. Full suite RE-RUN: the fix changed `src/wasic.ts`, so the gate applied |
 > | `wast_tests.ts` | **41 files, 12444 passed, 0 failed**, 3466 skipped — ALL CLEAN |
 > | `bindgen_tests.ts` | 142, 0 failed |
 > | `bundle_tests.ts` | **4 / 4** — `StructImport` fixed, no longer a standing failure |
@@ -127,6 +127,16 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 > unqualified references to a namespace's own members were never rewritten, and probing that
 > surfaced (and fixed) string-typed namespace members: **+1 `30_NamespaceStringMembers`**.
 > All post-mortems in compiler-bugs.md.
+>
+> **412 → 417 (2026-07-30):** +3 Phase 34 type-predicate stress tests
+> (`34_TypePredicateBasicNarrowing`, `34_TypePredicateElseIfChains`,
+> `34_DiscUnionPredicateInlineTarget`) +2 regressions (`34_InlinePredicateTargetNarrowing`,
+> `34_InlinePredicateUnresolvable` — `@expect-fail: compile`). Tests 1–2 passed as written; test 3
+> writes the predicate target as an INLINE object type (`g is { type: "sphere"; r: f64 }`), which
+> the function-header regex did not admit — so the predicate function was never parsed and the call
+> died with a misleading "Unknown function". Fixing that exposed a second bug underneath: an inline
+> target resolves to no registered type, so narrowing was skipped and a hierarchy field read printed
+> `0` instead of `5`. See compiler-bugs.md § "Phase 34 inline predicate target".
 >
 > **410 → 412 (2026-07-30):** +2 Phase 33 regressions for the base-prefix guard —
 > `33_IntersectionBasePrefixGuard` (`@expect-fail: compile`; the reversed-order shape that used to

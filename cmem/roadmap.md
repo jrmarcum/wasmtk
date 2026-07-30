@@ -27,6 +27,32 @@
 > The batch itself is recorded as a single unit in `compiler-bugs.md` (post-mortems) and
 > `testing.md` (counts); the README only ever gets the per-phase, user-facing rows.
 
+## Working tree (2026-07-30) — Phase 34 type predicates, inline object-type targets
+
+Branch `fix/phase34-inline-predicate-target-2026-07-30`, cut from `main` **after** test 3 failed,
+per the branch-only-for-a-fix rule. Not yet merged or released.
+
+3 owner Phase 34 type-predicate stress tests. **Tests 1 and 2 passed as written** —
+`34_TypePredicateBasicNarrowing` (a `s is Circle` guard used both as a boolean value and as an
+if-condition over a base-typed reference) and `34_TypePredicateElseIfChains` (two sibling predicates
+in an if/else-if chain inside a helper, each narrowing the same parameter to a different derived
+interface). **Test 3 failed to compile**: `34_DiscUnionPredicateInlineTarget` writes the target as
+an INLINE object type (`g is { type: "sphere"; r: f64 }`), which the function-header
+return-annotation regex did not admit, so the predicate function was never parsed and the call died
+with the misleading `Unknown function 'isSphere' — not declared in this module`.
+
+Fixing the regex exposed a **second bug underneath it**: an inline target matches no registered type
+name, so narrowing was silently skipped. Harmless for a DU (the Phase 32 flat super-struct already
+holds every variant field), but over an interface hierarchy `s.radius` compiled clean and printed
+`0` where native TS printed `5`. `resolveInlineStructTarget` now matches the inline shape to a
+declared type structurally, and an unresolvable target whose fields the variable's own type lacks
+aborts the compile instead of reading garbage. Post-mortem in
+[compiler-bugs.md](compiler-bugs.md) § "Phase 34 inline predicate target".
+
++2 regressions (`34_InlinePredicateTargetNarrowing`, `34_InlinePredicateUnresolvable`
+`@expect-fail: compile`). Suite **412 → 417**; phase filter `"^34_"` 9/9. Full gate run, since
+`src/wasic.ts` changed.
+
 ## Release status (2026-07-30) — v1.11.12: intersection base-typed parameters
 
 **v1.11.12 — merged to `main` from `fix/phase33-intersection-base-prefix-2026-07-30` (commits

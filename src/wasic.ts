@@ -2611,6 +2611,44 @@ class WasicTranspiler {
     });
   }
 
+  /**
+   * Phase 34 — resolve an INLINE object-type predicate target (`x is { kind: i32; radius: f64 }`)
+   * to a registered `StructDef` that has exactly those fields, so narrowing uses that type's real
+   * byte offsets. Returns `null` when no registered type matches — as happens for a discriminated
+   * union, whose per-variant object types are never registered on their own (only the flat
+   * super-struct is). The caller treats `null` as "leave the variable's own def in place", which
+   * is correct precisely because that super-struct already carries every variant field.
+   *
+   * Matching is by exact field-name set AND, for every field written with a plain type name, the
+   * mapped WAT type. A string-literal discriminant (`type: "sphere"`) is not a plain type name, so
+   * it is matched on name alone — deliberately, since it never determines a layout by itself.
+   */
+  private resolveInlineStructTarget(inline: string): StructDef | null {
+    const pairs = WasicTranspiler.inlineObjectFields(inline);
+    if (pairs.length === 0) return null;
+    for (const def of this.structDefs.values()) {
+      if (def.fields.length !== pairs.length) continue;
+      const allMatch = pairs.every(({ name, rawType }) => {
+        const f = def.fields.find((df) => df.name === name);
+        if (!f) return false;
+        if (!/^\w+$/.test(rawType)) return true; // literal / complex annotation — name-only match
+        return mapType(rawType) === f.type;
+      });
+      if (allMatch) return def;
+    }
+    return null;
+  }
+
+  /** Field `name` + raw type annotation of each member of an inline object type `{ a: i32; b: f64 }`. */
+  private static inlineObjectFields(inline: string): Array<{ name: string; rawType: string }> {
+    const body = inline.trim().replace(/^\{/, "").replace(/\}$/, "");
+    const out: Array<{ name: string; rawType: string }> = [];
+    const re = /(\w+)\s*\??\s*:\s*([^;,}]+)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(body)) !== null) out.push({ name: m[1], rawType: m[2].trim() });
+    return out;
+  }
+
   private parseFunctions(): void {
     const src = this.src;
     // Gap fix 2026-06-30: run the header DETECTION over a string/comment-MASKED copy so a
@@ -2634,11 +2672,15 @@ class WasicTranspiler {
 
       // After `)` expect optional `: returnType` then `{`
       // Return type may include array suffix: i32[], i32[][], ClassName, tuple [T1,T2], T|null, etc.
-      // Phase 34: also matches type predicate annotations "param is Type".
+      // Phase 34: also matches type predicate annotations "param is Type" — where Type is either a
+      // named type or an INLINE object type (`g is { type: "sphere"; r: f64 }`), the form a
+      // discriminated-union variant is usually written in. Without the `\{[^}]*\}` alternative the
+      // whole header failed to match and the predicate function was never parsed at all, so every
+      // call to it aborted the compile with the misleading "Unknown function 'isSphere'".
       // Also matches function-type return annotations like `() => number` or `(a: i32) => f64`.
       // Phase 13: also matches `Promise<T>` (async return) — handled just below.
       const restMatch = src.slice(afterClose).match(
-        /^\s*(?::\s*(Promise\s*<[^>]*>|[\w]+\s+is\s+[\w]+|[\w]+(?:\[\])*(?:\s*\|\s*(?:null|undefined))*|\[[^\]]*\]|\([^)]*\)\s*=>\s*[\w]+))?\s*\{/,
+        /^\s*(?::\s*(Promise\s*<[^>]*>|[\w]+\s+is\s+(?:\{[^}]*\}|[\w]+(?:\[\])*)|[\w]+(?:\[\])*(?:\s*\|\s*(?:null|undefined))*|\[[^\]]*\]|\([^)]*\)\s*=>\s*[\w]+))?\s*\{/,
       );
       if (!restMatch) continue; // malformed header — skip
 
@@ -2662,7 +2704,11 @@ class WasicTranspiler {
       }
       // Phase 34: detect type predicate return annotation "param is Type"
       // e.g. function isCircle(s: Shape): s is Circle { ... }
-      const typePredicateMatch = rawResult.match(/^(\w+)\s+is\s+(\w+)$/);
+      // The target may be an inline object type; it is kept verbatim, which simply means no
+      // registered StructDef matches it and the narrowing site below leaves the variable's own
+      // def in place. That is the correct behaviour for a discriminated union, whose flat
+      // super-struct already carries every variant's fields at their real offsets.
+      const typePredicateMatch = rawResult.match(/^(\w+)\s+is\s+([\s\S]+)$/);
       if (typePredicateMatch) {
         this.typePredicateFuncs.set(name, {
           paramName: typePredicateMatch[1],
@@ -14009,7 +14055,34 @@ class WasicTranspiler {
             narrowKey = predCallMatch[2];
             narrowOrigStruct = this.structVars.get(narrowKey);
             narrowOrigClass = this.classVars.get(narrowKey);
-            const targetDef = this.structDefs.get(predInfo.targetType);
+            // An inline object-type target (`g is { type: "sphere"; r: f64 }`) names no registered
+            // type, so resolve it structurally to one that has exactly those fields. If nothing
+            // matches, narrowing is skipped — fine for a DU super-struct, which already holds every
+            // variant field, but silently WRONG if the variable's own def is missing one of them
+            // (the read would land on whatever occupies that offset). Abort instead of emitting it.
+            const inlineTarget = predInfo.targetType.startsWith("{");
+            let targetDef = this.structDefs.get(predInfo.targetType);
+            if (!targetDef && inlineTarget) {
+              targetDef = this.resolveInlineStructTarget(predInfo.targetType) ?? undefined;
+              if (!targetDef) {
+                const curDef = narrowOrigStruct?.def;
+                const missing = WasicTranspiler.inlineObjectFields(predInfo.targetType)
+                  .map((p) => p.name)
+                  .filter((n) => !curDef?.fields.some((f) => f.name === n));
+                if (curDef && missing.length > 0) {
+                  const predName = predCallMatch[1];
+                  const fieldList = missing.map((n) => `'${n}'`).join(", ");
+                  const hint = `\`function ${predName}(…): ${narrowKey} is <TypeName>\``;
+                  this.diagnostics.push(
+                    `Type predicate '${predName}' narrows '${narrowKey}' to an inline object type ` +
+                      `whose field(s) ${fieldList} are absent from '${curDef.name}', and no ` +
+                      `declared type matches that inline shape — so the narrowed field read has no ` +
+                      `layout to resolve against. Declare the target as a named interface ` +
+                      `(e.g. ${hint}) so its offsets are known.`,
+                  );
+                }
+              }
+            }
             const targetCls = this.classDefs.get(predInfo.targetType);
             if (targetDef) {
               // Preserve the current pointer (static address or -1 for params); only swap the def.

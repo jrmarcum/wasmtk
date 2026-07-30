@@ -45,6 +45,30 @@ high-value subset.
   expansion, so an unrelated `obj.member` is never touched, and literal content is skipped by the
   same mask. Regression: `30_NamespaceStringMembers`.
 
+## Narrowing must resolve to a REAL registered layout, never a synthesised one (added 2026-07-30)
+
+- **A type predicate's target is only usable for narrowing if it names a layout that actually
+  exists.** `emitBlock`'s predicate handler swaps the variable's `structVars` def for the target's;
+  the pointer is unchanged, so the new def must describe the memory that pointer already refers to.
+- **Never build a `StructDef` from an inline object type just to have something to narrow to.** Its
+  offsets would be computed independently of the allocation the pointer refers to: it would agree
+  with a matching declared type only by coincidence, and disagree with a DU super-struct by
+  construction. `resolveInlineStructTarget` therefore MATCHES the inline shape to an existing
+  registered def (exact field-name set + mapped WAT type) and returns `null` rather than inventing
+  one.
+- **Skipping narrowing is safe only when the variable's own def already covers every field the
+  target names.** That is exactly the discriminated-union case — the Phase 32 flat super-struct
+  carries all variants' fields at their real offsets — and it is why an inline DU predicate works
+  with no narrowing at all. When a named field is NOT on the current def, there is no layout to read
+  against and the compile aborts; do not downgrade that to a warning, because the read that follows
+  is a plausible-looking wrong number (it printed `0` where TS printed `5`). Regressions:
+  `34_InlinePredicateTargetNarrowing`, `34_InlinePredicateUnresolvable`.
+- **The function-header return-annotation regex is a parse gate for the WHOLE function, not just the
+  return type.** A shape it fails to match hits `continue // malformed header — skip`, so the
+  function silently disappears from the module and its call sites report "Unknown function" — a
+  diagnostic that blames the caller for a problem in the declaration. When adding a return-type form,
+  remember failure mode is *function vanishes*, not *return type defaults*.
+
 ## A struct parameter's layout must be a PREFIX of the argument's (added 2026-07-30)
 
 - **Structs are passed by pointer and the callee reads fields at ITS OWN parameter type's offsets.**
