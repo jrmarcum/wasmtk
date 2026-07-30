@@ -27,11 +27,16 @@
 > The batch itself is recorded as a single unit in `compiler-bugs.md` (post-mortems) and
 > `testing.md` (counts); the README only ever gets the per-phase, user-facing rows.
 
-## Working tree (2026-07-30, post-v1.11.9) — Phase 30 batch, 1 fix + 1 gap documented
+## Release status (2026-07-30) — v1.11.10: namespace members
 
-Branch `test/phase30-stress-2026-07-29`, **not merged, not released** (deno.json still v1.11.9).
-3 owner Phase 30 stress tests (namespaces / interface inheritance / shorthand properties) + 1
-regression test. Tests 2 and 3 passed as-written.
+**v1.11.10 — merged to `main` from `test/phase30-stress-2026-07-29` (commits `713bd1f` + `8ae8556`)
+and published to JSR.** Backend unchanged (wabt-ts 1.3.5 + binaryen-ts 1.4.3). Pre-publish gate:
+`deno publish --dry-run` clean, `deno doc --lint` clean across all 16 JSR entrypoints. Full
+regression gate: wasi **400/400**, wast 41 files / 12444 assertions / 0 failed, every other suite
+0 failures.
+
+3 owner Phase 30 stress tests (namespaces / interface inheritance / shorthand properties) + 2
+regression tests. Tests 2 and 3 passed as-written.
 
 **FIXED — namespace member references weren't rewritten inside the body.** `expandNamespaces`
 renamed the DECLARATIONS (`export const GRAVITY` → `PhysicsEngine_GRAVITY`) but left the body's

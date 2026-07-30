@@ -3,6 +3,40 @@
 All notable, user-facing changes to `wasmtk`. Versions follow the `deno.json` version and the
 published [`@jrmarcum/wasmtk`](https://jsr.io/@jrmarcum/wasmtk) JSR package.
 
+## 1.11.10 — Namespace members (2026-07-30)
+
+Namespaces now work from the inside and with every member type. Both fixes are things that
+previously required awkward workarounds — hoisting constants out of the namespace, or qualifying
+every internal reference.
+
+### Fixed
+
+- **Using a `namespace` member from inside the same namespace.** A namespace function referring to
+  one of its own members by bare name failed to compile with *unsupported expression*:
+
+  ```ts
+  namespace Physics {
+    export const GRAVITY: i32 = 9;
+    export function force(mass: i32): i32 {
+      return mass * GRAVITY; // ← failed; only Physics.GRAVITY from outside worked
+    }
+  }
+  ```
+
+  Bare references to sibling **constants** and sibling **functions** now both resolve. A member
+  name appearing in a string literal, or as an object field (`obj.GRAVITY`), is correctly left
+  alone.
+
+- **`string`-typed namespace members.** `export const NAME: string = "cfg"` printed `0` instead of
+  its text, and a namespace function returning a `string` failed to compile. Namespace members of
+  every type — `string`, `i32`, `f64` — now work in all positions: read directly, assigned,
+  concatenated, compared, and returned from a namespace function.
+
+### Testing
+
+- 5 new tests (3 stress + 2 regression). Suite **395 → 400/400**; `wast_tests` 41 files /
+  12444 assertions / 0 failed; every other suite green.
+
 ## 1.11.9 — Operator-precedence fix (2026-07-29)
 
 **Upgrade promptly.** This release fixes a long-standing arithmetic bug that produced **silently
