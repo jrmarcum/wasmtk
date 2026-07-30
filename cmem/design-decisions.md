@@ -4,6 +4,20 @@ Invariants and codegen rules that are easy to break in a refactor and must NOT b
 reverted. The exhaustive list (with line numbers) is in the legacy `CLAUDE.md`; this is the
 high-value subset.
 
+## Namespace member references are rewritten inside the body (added 2026-07-30)
+
+- **`expandNamespaces` must rewrite BOTH the declarations and the bare references.** Renaming
+  `export const GRAVITY` → `PhysicsEngine_GRAVITY` without touching `return mass * GRAVITY` inside
+  the same namespace leaves the body pointing at a name that no longer exists. Collect the member
+  names BEFORE renaming, then substitute bare occurrences in the transformed body.
+- **Three guards are load-bearing** and must not be dropped: skip occurrences inside a
+  string/template literal (`buildStringLiteralMask` — otherwise a member name mentioned in a
+  message gets mangled), after a `.` (a struct FIELD may share the member's name), and after `_`
+  (the token is already prefixed, e.g. `Cfg_LIMIT`).
+- **KNOWN GAP (pre-existing, not fixed):** string-typed namespace members don't work — a
+  `export const NAME: string` reads as `0`, and a string-returning namespace function fails to
+  instantiate. Numeric members are fine. See compiler-bugs.md.
+
 ## Same-precedence operator groups split at the RIGHTMOST operator (added 2026-07-29)
 
 - **`*`, `/` and `%` are ONE left-associative precedence group.** Both binary-op loops iterate an

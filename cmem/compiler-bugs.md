@@ -1,5 +1,41 @@
 # Compiler bug log
 
+## Namespace member references not rewritten inside the body (FIXED 2026-07-30)
+
+Phase 30 stress batch (namespaces / interface inheritance / shorthand properties). Tests 2 and 3
+passed as-written; test 1 failed with `Unsupported expression: GRAVITY`.
+
+**Root cause.** `expandNamespaces` renames a namespace's exported DECLARATIONS
+(`export const GRAVITY` → `const PhysicsEngine_GRAVITY`, `export function f` → `function
+PhysicsEngine_f`) but never touched the namespace BODY, where members are referred to by their bare
+name. So `export function calculateForce(mass) { return mass * GRAVITY; }` kept pointing at
+`GRAVITY`, which no longer existed after the rename.
+
+**Why it survived this long:** the existing Phase 30 tests declare namespace constants
+(`30_Namespace`, `30_NamespaceAdvanced`, `30_Phase30Combined` all have `export const`) but **none
+of them reads a constant from inside a namespace function** — every use is qualified from outside
+(`MathUtils.PI`). The batch's first unqualified internal reference broke immediately.
+
+**Fix.** Collect the exported member names BEFORE renaming, then rewrite bare occurrences within the
+transformed body. Guards: skips names inside a string/template literal (via
+`buildStringLiteralMask`), a property access (`obj.LIMIT`), and an already-prefixed token
+(`Cfg_LIMIT`, caught by the `prev === "_"` check). Regression `30_NamespaceInternalRefs` covers a
+const reference, a sibling FUNCTION call, a member name inside a string literal, and a struct field
+sharing a member name.
+
+**OPEN (pre-existing, NOT from this batch) — string members in a namespace do not work.** Verified
+by stashing the fix and re-testing on a clean tree: identical failures.
+
+- `namespace A { export const NAME: string = "cfg" }` → `console.log(A.NAME)` prints **`0`**
+  instead of `cfg` (silently wrong).
+- A string-RETURNING namespace function (`export function label(): string`) fails to instantiate:
+  `not enough arguments on the stack for i32.store`.
+
+Numeric namespace members are unaffected (verified: consts, sibling calls, cross-namespace use).
+Not fixed here — a distinct feature gap, not a regression, and outside this batch's scope.
+
+Gate: wasi **399/399**, wast 12444/0, every other suite 0 failures.
+
 ## Multiplicative associativity + string-enum values + literal-led console.log (FIXED 2026-07-29)
 
 Phase 29 stress batch (static fields / getters+setters / string enums). Test 1 passed; the other two

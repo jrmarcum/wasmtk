@@ -27,6 +27,27 @@
 > The batch itself is recorded as a single unit in `compiler-bugs.md` (post-mortems) and
 > `testing.md` (counts); the README only ever gets the per-phase, user-facing rows.
 
+## Working tree (2026-07-30, post-v1.11.9) — Phase 30 batch, 1 fix + 1 gap documented
+
+Branch `test/phase30-stress-2026-07-29`, **not merged, not released** (deno.json still v1.11.9).
+3 owner Phase 30 stress tests (namespaces / interface inheritance / shorthand properties) + 1
+regression test. Tests 2 and 3 passed as-written.
+
+**FIXED — namespace member references weren't rewritten inside the body.** `expandNamespaces`
+renamed the DECLARATIONS (`export const GRAVITY` → `PhysicsEngine_GRAVITY`) but left the body's
+bare `GRAVITY` pointing at a name that no longer existed, so `return mass * GRAVITY` aborted. It
+survived this long because every existing Phase 30 test qualifies its namespace constants from
+OUTSIDE (`MathUtils.PI`) — none read one from inside a namespace function. Regression
+`30_NamespaceInternalRefs` also pins the three guards (string literals, `obj.NAME` property access,
+already-prefixed tokens).
+
+**OPEN — string members in a namespace do not work** (pre-existing; verified on a clean tree with
+the fix stashed). `export const NAME: string` reads as `0`; a string-returning namespace function
+fails to instantiate. Numeric members are fine. Distinct feature gap, not a regression — see
+[compiler-bugs.md](compiler-bugs.md).
+
+Suite **395 → 399/399**; wast 12444/0; every other suite 0 failures.
+
 ## Release status (2026-07-29) — v1.11.9: operator-precedence fix
 
 **v1.11.9 — merged to `main` from `test/phase29-stress-2026-07-29` (commit `852c531`) and published

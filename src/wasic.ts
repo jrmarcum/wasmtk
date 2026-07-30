@@ -3977,6 +3977,12 @@ class WasicTranspiler {
       const body = src.slice(bodyStart, bodyEnd);
       this.namespaceDefs.add(nsName);
 
+      // Collect the namespace's own exported member names BEFORE renaming, so unqualified
+      // references to them from inside the namespace can be rewritten too (below).
+      const members = new Set<string>();
+      for (const mm of body.matchAll(/\bexport\s+function\s+(\w+)/g)) members.add(mm[1]!);
+      for (const mm of body.matchAll(/\bexport\s+(?:const|let)\s+(\w+)/g)) members.add(mm[1]!);
+
       // Replace `export function` → `function Name_`, `export const/let` → `const/let Name_`
       let transformed = body;
       transformed = transformed.replace(
@@ -3987,6 +3993,22 @@ class WasicTranspiler {
         /\bexport\s+(const|let)\s+(\w+)/g,
         (_m2, kw, vn) => `${kw} ${nsName}_${vn}`,
       );
+      // Rewrite UNQUALIFIED references to the namespace's own members. Inside the namespace a
+      // member is referred to by its bare name (`return mass * GRAVITY`), but the declaration has
+      // just been renamed to `PhysicsEngine_GRAVITY` — leaving the body pointing at a name that no
+      // longer exists ("Unsupported expression: GRAVITY"). Skips occurrences already prefixed
+      // (`PhysicsEngine_GRAVITY`), property accesses (`obj.GRAVITY`), and anything inside a string
+      // or template literal.
+      if (members.size > 0) {
+        const inStr = buildStringLiteralMask(transformed);
+        transformed = transformed.replace(/\b([A-Za-z_]\w*)\b/g, (name, _g1, offset: number) => {
+          if (!members.has(name)) return name;
+          if (inStr[offset]) return name; // literal content
+          const prev = offset > 0 ? transformed[offset - 1] : "";
+          if (prev === "." || prev === "_") return name; // obj.NAME / already-prefixed
+          return `${nsName}_${name}`;
+        });
+      }
       // Remove any remaining `export` keywords (e.g. re-exports)
       transformed = transformed.replace(/\bexport\s+/g, "");
 
