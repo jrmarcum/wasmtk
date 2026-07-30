@@ -54,7 +54,7 @@ Also corrected in memory: `hybrid_tests.ts` and `wasmmerge_guard_tests.ts` are `
 the documented `deno run` invocation executed nothing and exited 0; and the Go suites race each
 other, not just the wasi suite.
 
-## Working tree (2026-07-30) — `test/phase31-typedarray-stress-2026-07-30`
+## Working tree (2026-07-30) — Phase 31 TypedArray tests (branch deleted; rides on the Phase 19 branch)
 
 3 owner Phase 31 TypedArray stress tests, **all passing as written — the first batch of the series
 to surface no bug**: `31_TypedArraySubWordAccess` (Uint8/Int16 widths, `.length` vs `.byteLength`,
@@ -65,6 +65,12 @@ offset)`). Suite **400 → 403**; phase filter `"^31_"` 7/7.
 No `src/` change, so **no full-suite run** — that corollary to the regression gate was set by owner
 directive during this batch and is now recorded in INDEX.md, testing.md, workflow.md and CLAUDE.md.
 **No README row**: nothing user-facing changed (a passing stress test documents no new capability).
+
+**Branch deleted 2026-07-30.** `test/phase31-typedarray-stress-2026-07-30` was never pushed and
+never needed to exist — a batch with no `src/` fix has nothing to isolate. Its commit `4e32a7f5056`
+is an ancestor of the Phase 19 branch, so the three tests reach `main` with that merge. The rule
+this produced is at the top of [workflow.md](workflow.md): **branch only when a test fails and needs
+a fix.**
 
 ## Release status (2026-07-30) — v1.11.10: namespace members
 

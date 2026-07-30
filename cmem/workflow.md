@@ -27,16 +27,35 @@ Opening a batch needs only:
 Session bootstrap is ~9.5 KB (`CLAUDE.md` + `INDEX.md`), so starting fresh is cheap by design —
 keep it that way (see the note at the top of INDEX.md).
 
+## Branch only when there is a FIX to isolate (owner directive 2026-07-30)
+
+**A branch is for bug-fix work, not for adding tests.** Start the batch on `main`, add the tests,
+run the phase filter — and only cut a branch once a test actually FAILS and a `src/` fix is needed.
+If every test passes as written, **commit the new tests straight to `main`**: there is no `src/`
+change to isolate, nothing for review to gate, and no risk to quarantine.
+
+This is the same principle as the regression gate: **the CHANGE is what triggers the ceremony, not
+the batch.** A clean batch that gets its own branch just leaves an extra ref to merge and then
+delete — which is exactly what happened to `test/phase31-typedarray-stress-2026-07-30` (3 passing
+TypedArray tests, no `src/` edit, branched for nothing and deleted 2026-07-30).
+
+Corollary: **do not branch off another unmerged batch branch.** If a fix branch is warranted, cut it
+from `main`. The Phase 19 branch was cut from the still-unmerged Phase 31 tip to keep the
+fast-forward path linear — only necessary because Phase 31 should never have had a branch.
+
 ## The batch loop
 
-1. **Branch off `main` first.** Never commit a batch directly to `main`.
-   Naming used so far: `test/phase29-stress-2026-07-29`, `fix/stress-test-batch-2026-07-28`,
-   `chore/trim-session-bootstrap` — `<type>/<short-desc>-<date>`.
+1. **Start on `main`.** Cut a `<type>/<short-desc>-<date>` branch off `main` **at step 4**, the
+   moment a failure turns into a `src/` fix — see the directive above. Naming used so far:
+   `test/phase29-stress-2026-07-29`, `fix/stress-test-batch-2026-07-28`,
+   `chore/trim-session-bootstrap`.
 2. **Add the tests verbatim** as the owner supplied them, named `NN_DescriptiveLabel.ts` for the
    phase owning the core mechanic. Don't "improve" the owner's code — it is the specimen.
-3. **Run the phase filter first** (`"^29_"`). While fixing, stay in the **debug phase** — the phase
-   filter plus the tests that exercise the construct being changed (see "Debug phase" below). Save
-   the full suite for the regression phase, once the targeted set is green.
+3. **Run the phase filter first** (`"^29_"`). **All green and no `src/` edit → commit to `main` and
+   stop here** (steps 4–7 and 9 are bug-fix machinery). Otherwise branch now, and while fixing stay
+   in the **debug phase** — the phase filter plus the tests that exercise the construct being
+   changed (see "Debug phase" below). Save the full suite for the regression phase, once the
+   targeted set is green.
 4. **Bisect any failure to its minimal shape** with scratch probes before touching `src/`. Most
    failures this session were NOT about the feature under test — a getter/setter test exposed
    right-associative `*`/`/`, a namespace test exposed string members. Report what it *actually* is.
@@ -51,7 +70,7 @@ keep it that way (see the note at the top of INDEX.md).
 8. **Update memory** — `compiler-bugs.md` (root cause + fix + why it went untested),
    `design-decisions.md` (any new must-not-revert invariant), `testing.md` (counts),
    `roadmap.md` (working-tree entry), INDEX pointers; then README rows if user-relevant.
-9. **Commit and push** the branch.
+9. **Commit and push** the branch (a clean batch has already committed to `main` at step 3).
 
 ## Debug phase: run the AFFECTED tests, not the full suite
 

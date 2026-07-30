@@ -71,7 +71,7 @@ phase filter IS the whole gate. Full-suite runs cost >10 minutes and buy nothing
 
 | File | What it holds |
 | --- | --- |
-| [workflow.md](workflow.md) | **The working loop: branch → test → bisect → fix → gate → memory → commit → merge → bump → publish.** Commit conventions, context boundaries, and the traps that have bitten. **Read at the start of a stress-test batch or a release.** |
+| [workflow.md](workflow.md) | **The working loop: test → bisect → branch-on-fix → gate → memory → commit → merge → bump → publish.** **A branch is cut only when a test FAILS and needs a `src/` fix** — a clean batch commits straight to `main` (owner directive 2026-07-30). Commit conventions, context boundaries, and the traps that have bitten. **Read at the start of a stress-test batch or a release.** |
 | [overview.md](overview.md) | What wasmtk is; repo layout; the key source files |
 | [architecture.md](architecture.md) | wasic / modc / bindgen / hybrid; pluggable wabt+binaryen backends; build & merge pipeline; Canonical ABI alignment; the `wast` spec runner |
 | [testing.md](testing.md) | How to run every suite; **which suites a given change reaches** (impact map); current pass counts; runner gotchas |
