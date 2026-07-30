@@ -1116,13 +1116,23 @@ producer uses them. (WIT/bindgen for Rust output remains wasmtk's job and is pla
 The toolkit is developed incrementally. Core phases build out the `wasic` TypeScript compiler; later
 phases extend the toolchain with bundling and distribution capabilities.
 
+### ⚠️ Breaking Changes
+
+Changes that can require a source edit when upgrading. **Everything in the Feature Status table
+below is additive** — only entries listed here can break existing code. Each row states the exact
+replacement.
+
+| Version | What changed | How to migrate |
+| --- | --- | --- |
+| _next release_ | **`./utils` no longer re-exports `compileWasi` and `compileModule`.** Both functions are otherwise **unchanged** — same names, same `(path, outPath?)` signatures, same behaviour — and are still exported from their documented homes, `./wasic` and `./modc`. No other `./utils` export is affected: `VERSION`, `runWasi`, `callExport`, `showInfo`, `wasm2js`, `convertFile` and `bundleTs` all remain. | Change the import path only: `import { compileWasi } from "@jrmarcum/wasmtk/wasic";` and `import { compileModule } from "@jrmarcum/wasmtk/modc";` — these are the paths the [Programmatic API](#programmatic-api) table has always documented for them. **Why:** `./utils` is the CLI's internal helper barrel; it re-exported these two only so `main.ts` could use a single import site, and the export map published it as a public entrypoint anyway. Publishing one declaration from two entrypoints meant `deno doc` could document it only once, so the duplicate rendered undocumented on jsr.io. |
+
 ### Feature Status
 
 > **Legend:** ✅ shipped · ⏳ planned, or blocked on an upstream WASM proposal. **Incomplete items
 > (⏳ — to-do / planned / blocked) are always listed at the end of the table**, after every ✅ row.
 > Worked examples for each feature live in its command section above; deep implementation notes live
 > in [`cmem/`](cmem/). Test-count taglines in the table are historical snapshots — the current suite
-> is green (`tests/wasi/wasm_wasi` 400/400) on `jsr:@jrmarcum/wabt-ts` + `jsr:@jrmarcum/binaryen-ts`,
+> is green (`tests/wasi/wasm_wasi` 417/417) on `jsr:@jrmarcum/wabt-ts` + `jsr:@jrmarcum/binaryen-ts`,
 > with all 50 wasic phases, Stage 0/0.6/0.7, and the five Tier-1 stdlib capabilities
 > (Set/Map/Date/JSON/RegExp) shipped.
 

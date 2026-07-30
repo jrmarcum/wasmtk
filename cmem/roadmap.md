@@ -26,6 +26,17 @@
 > phases, the rows scatter — one under each affected phase — rather than clustering as a batch.
 > The batch itself is recorded as a single unit in `compiler-bugs.md` (post-mortems) and
 > `testing.md` (counts); the README only ever gets the per-phase, user-facing rows.
+>
+> **BREAKING CHANGES GET THEIR OWN TABLE (owner directive 2026-07-30).** A change that can require a
+> consumer to edit source — a removed/renamed export, a moved entrypoint, a changed signature or
+> default — does **NOT** go in the Feature Status table, where it would be invisible among hundreds
+> of additive rows. It goes in **`## wasmtk Toolkit Roadmap` → `### ⚠️ Breaking Changes`**, the table
+> placed **immediately above** `### Feature Status`. Columns:
+> `| Version | What changed | How to migrate |`. Rules: state the replacement **concretely** (the
+> exact import line / new call), say explicitly what is *not* affected so readers can bound the
+> blast radius, and give the reason. Use `_next release_` in the Version column while unreleased and
+> replace it with the real version at publish time. A breaking change may ALSO warrant a Feature
+> Status row if it ships alongside a feature — but the Breaking Changes row is mandatory.
 
 ## Working tree (2026-07-30) — Phase 34 type predicates, inline object-type targets
 
@@ -52,6 +63,32 @@ aborts the compile instead of reading garbage. Post-mortem in
 +2 regressions (`34_InlinePredicateTargetNarrowing`, `34_InlinePredicateUnresolvable`
 `@expect-fail: compile`). Suite **412 → 417**; phase filter `"^34_"` 9/9. Full gate run, since
 `src/wasic.ts` changed.
+
+### ⚠️ BREAKING (unreleased, same branch): `./utils` no longer re-exports the two compilers
+
+`src/utils.ts` had re-exported `compileWasi` (from `wasic.ts`) and `compileModule` (from `modc.ts`)
+since before the `src/` restructure, so `main.ts` could import every command from one site. Because
+`deno.json` publishes **every** module as a JSR entrypoint, that internal barrel republished the two
+declarations as public API — and `deno doc` documents a declaration only ONCE per run, so the second
+copy rendered undocumented on jsr.io (`percentageDocumentedSymbols` 100/102).
+
+Removed rather than worked around: `main.ts` now imports them from `./src/wasic.ts` / `./src/modc.ts`
+directly (the pattern it already used for `compileDyn`). Documented symbols **100/100** — note the
+denominator fell 102 → 100, i.e. the duplicate is gone, not papered over. Full rationale and the
+rejected wrapper approach are in
+[design-decisions.md](design-decisions.md) § JSR doc coverage.
+
+**Blast radius:** the two functions are otherwise untouched (same names, same `(path, outPath?)`
+signatures, same behaviour) and still exported from `./wasic` / `./modc`, which is where the README's
+Programmatic API table has always documented them. `wasmtk/utils` appears **0 times** in the README,
+and JSR reports **0 dependents**. `./utils` remains a published entrypoint and keeps `VERSION`,
+`runWasi`, `callExport`, `showInfo`, `wasm2js`, `convertFile`, `bundleTs`.
+
+**Open decision for the owner — the version number.** Strict semver makes a removed public export a
+**major** bump (2.0.0). The mitigating facts above (undocumented at that path, README points
+elsewhere, 0 JSR dependents) are the usual argument for treating it as a minor. **Not decided here.**
+Whatever is chosen, replace `_next release_` in the README's Breaking Changes table with the real
+version at publish time, and lead the CHANGELOG entry with the migration line.
 
 ## Release status (2026-07-30) — v1.11.12: intersection base-typed parameters
 

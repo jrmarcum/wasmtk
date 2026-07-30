@@ -766,40 +766,44 @@ silently break (all `src/wasic.ts`):
   entrypoints, `deno doc` collapses the re-export to a `kind: "reference"` node carrying no jsDoc,
   no matter what is written above it. **`deno doc --lint` never flags it** — use
   `deno doc --json <entrypoints>` and count `declarations[].jsDoc.doc` per exported symbol.
-- **FIXED 2026-07-30 by re-declaring both as documented pass-through wrappers** (now **102/102 =
-  100%**). `src/utils.ts` imports the implementations aliased (`compileWasi as compileWasiImpl`) and
-  re-declares each as a real `export async function …` that awaits the impl. Three candidate forms
-  were probed under a multi-entrypoint `deno doc` run; only two are credited, and they are not
-  equivalent:
-  - `/** … */ export { x } from "./m.ts"` → `kind: "reference"`, jsDoc **dropped**. Useless.
-  - `import {x as _x}; /** … */ export { x }` → also `reference`, jsDoc dropped. Useless.
-  - `/** … */ export const x: typeof _x = _x` → credited, but `kind` becomes **`variable`** — the
-    JSR page would stop rendering it as a function with parameters. **Rejected for that reason.**
-  - `/** … */ export async function x(…): Promise<void> { return await _x(…) }` → credited AND
-    stays `kind: "function"` with the original `(path, outPath)` signature. **This is the one used.**
+- **The precise rule (probed 2026-07-30): `deno doc` documents each underlying DECLARATION exactly
+  once per run, at whichever export it resolves FIRST; every other export of that same declaration
+  becomes a bare `kind: "reference"` with no jsDoc.** It is keyed on declaration identity, NOT on
+  module layout — swapping the argument order of two re-exporting entrypoints flips which one is
+  credited. Consequences, all measured:
+  - Moving the definition to the other module just relocates the `reference` (1/2 either way).
+  - A shared non-entrypoint `common.ts` that two entrypoints both re-export is **also 1/2**; adding
+    `common.ts` to the export map makes it 1/3. **No module reorganisation can fix this** — two
+    public exports of ONE declaration can only ever be documented once.
+  - A true CONSUMER (imports and uses, does **not** re-export) costs nothing and is not counted.
+- **FIXED 2026-07-30 by REMOVING the duplicate export, not by working around it** (now **100/100**,
+  and note the denominator fell 102 → 100 — the duplicate declaration is gone rather than papered
+  over). `src/utils.ts` no longer re-exports `compileWasi`/`compileModule`; `main.ts` imports them
+  from `./src/wasic.ts` and `./src/modc.ts` directly, the same pattern it already used for
+  `compileDyn`.
 
-  The implementations in `wasic.ts`/`modc.ts` are untouched, so `./wasic` and `./modc` consumers are
-  unaffected; only the `./utils` (and therefore `.`) entrypoint gains one call frame. **`main.ts`
-  imports both FROM `src/utils.ts`**, so these wrappers are in the hot path of every
-  `wasmtk wasic` / `wasmtk modc` invocation — a change here is NOT cosmetic and takes the full
-  regression gate (it was run: wasi 417/417 + every other suite green).
-- ⚠️ **The wrapper hand-duplicates the signature, so it CAN silently drift from the impl.** Probed
-  2026-07-30: if `compileWasi` in `wasic.ts` gains a new **optional** parameter, the `utils.ts`
-  wrapper keeps forwarding only `(path, outPath)` and **`deno check` stays clean** — TypeScript
-  treats an added optional param as compatible, so nothing errors and the new option is silently
-  unreachable through `./utils` and the CLI. No type-level guard fixes this: `const g: typeof impl =
-  wrapper` passes (fewer params are assignable), and the reverse only catches added *required*
-  params. **When you change the signature of `compileWasi`/`compileModule`, change the wrapper in
-  `src/utils.ts` too** — this is the same parallel-code-path trap as `wasic.ts`/`console_log.ts`,
-  just across a module boundary.
-  - The drift-proof alternative is `export const x: typeof _x = _x` (signature derived, cannot
-    drift) — rejected because it renders as `variable`, not `function`. A
-    `...args: Parameters<typeof _x>` wrapper is also drift-proof but renders `...args` instead of
-    named parameters, losing exactly the per-parameter docs this change was made to gain.
-- **This did not change the JSR score and was not expected to.** JSR's scoring doc says *"you do not
-  need to complete all factors to get a 100% score"*; the package already reported **100** at
-  98.04% documented. The wrapper is worth having because the two symbols now render with real
-  descriptions and parameter docs on jsr.io — do not justify similar work with the score number.
+  **Why this was the right fix rather than the wrapper that was tried first.** `src/utils.ts` is the
+  CLI's helper barrel — it has re-exported these since before the `src/` restructure so `main.ts`
+  could import every command from one place. But `deno.json` has published **every** module as a JSR
+  entrypoint since the first commit, so an internal convenience barrel became public API by
+  accident. The README's Programmatic API table documents `compileWasi` under **`./wasic`** and
+  `compileModule` under **`./modc`**; `wasmtk/utils` appears **0 times** in the README; and the
+  duplicate had exactly **one** consumer in the whole repo — `main.ts`. So the duplication bought
+  nothing and was never intended as public surface.
+- **Do NOT re-add the re-export to save an import in `main.ts`.** That is what created the problem.
+  If a future module needs these, import from `./wasic.ts` / `./modc.ts`.
+- **A pass-through wrapper (`export async function x(…) { return await _x(…) }`) also reaches 100%
+  and was implemented, then reverted.** Recorded so it is not re-attempted as a first resort: it is
+  credited and keeps `kind: "function"`, but it hand-duplicates the signature, so adding a new
+  **optional** param to an impl does NOT fail `deno check` — it silently stops being forwarded. No
+  type-level guard catches that (`const g: typeof impl = wrapper` passes, since fewer params are
+  assignable). It is the right tool only when the duplicate export must genuinely stay public;
+  removing the duplicate is strictly better when it need not. The `export const x: typeof _x = _x`
+  form is drift-proof but renders as `variable`, losing the function signature.
+- **None of this moved the JSR score, and it was never going to.** JSR's scoring doc states *"you do
+  not need to complete all factors to get a 100% score"*; the package already reported **100** at
+  98.04% documented. Justify this work as API hygiene and correct rendering on jsr.io — **not** with
+  the score number.
 - **A module JSDoc needs an explicit `@description` tag, or its description renders EMPTY.**
   `deno doc` treats everything after the first tag as that tag's value, so
   `/** @module foo` + bare prose yields a module with **no** description. 15 entrypoints used

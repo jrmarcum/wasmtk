@@ -19,8 +19,6 @@ import { join } from "@std/path";
 import {
   bundleTs,
   callExport,
-  compileModule,
-  compileWasi,
   convertFile,
   runWasi,
   showInfo,
@@ -28,6 +26,12 @@ import {
   wasm2js,
 } from "./src/utils.ts";
 import { rt } from "./src/rt.ts";
+// Imported from their defining modules, not re-exported through utils.ts — the same pattern as
+// compileDyn below. `./wasic` and `./modc` are the documented public homes for these two (see the
+// README's Programmatic API table); routing them through utils.ts published the same declaration
+// from two entrypoints for no benefit. See design-decisions.md § JSR doc coverage.
+import { compileWasi } from "./src/wasic.ts";
+import { compileModule } from "./src/modc.ts";
 import { compileDyn } from "./src/dync.ts";
 import { runJstyper } from "./src/jstyper.ts";
 import { runBindgen } from "./src/bindgen.ts";

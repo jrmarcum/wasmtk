@@ -77,7 +77,7 @@ phase filter IS the whole gate. Full-suite runs cost >10 minutes and buy nothing
 | [testing.md](testing.md) | How to run every suite; **which suites a given change reaches** (impact map); current pass counts; runner gotchas |
 | [compiler-bugs.md](compiler-bugs.md) | Live bug log — root cause + fix + regression test for every bug found. **Read before debugging anything.** |
 | [design-decisions.md](design-decisions.md) | Load-bearing invariants that must NOT be silently reverted. **Read before changing codegen.** |
-| [roadmap.md](roadmap.md) | Release status and phase status; the README roadmap-table convention |
+| [roadmap.md](roadmap.md) | Release status and phase status; the README roadmap-table convention. **A BREAKING change goes in its own `### ⚠️ Breaking Changes` table above Feature Status, never as an ordinary row** (owner directive 2026-07-30) |
 | [next-work.md](next-work.md) | Short "what to pick up next" list |
 | [capabilities.md](capabilities.md) | Tier-1 stdlib capability libraries (Set, Map, Date, JSON, RegExp) and virtual `wasmtk:<cap>` imports |
 | [polyglot-producers.md](polyglot-producers.md) | Go / Rust / Zig producers: CLI verbs, build invariants, mergeability rules, asyncify |
