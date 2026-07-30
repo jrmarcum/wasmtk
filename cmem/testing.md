@@ -93,9 +93,9 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 
 `go_merge_tests` was mis-classified as a Go-only outlier until this grep showed the `wasic` call.
 
-## Current pass counts (2026-07-28, wabt-ts 1.3.5 + binaryen-ts 1.4.3)
+## Current pass counts (2026-07-30, v2.0.0, wabt-ts 1.3.5 + binaryen-ts 1.4.3)
 
-> ### EVERY suite in the repo is green (2026-07-28) — full roster, all measured this session
+> ### EVERY suite in the repo is green (2026-07-30, re-measured on the v2.0.0 tree) — full roster
 >
 > | Suite | Result |
 > | --- | --- |

@@ -1,16 +1,37 @@
 # Next-work planning note
 
-> Actionable backlog as of **2026-07-08** (after v1.11.3 shipped: goroutine Go with no external
-> binaryen). Authoritative status lives in [roadmap.md](roadmap.md); this file is the short,
-> prioritized "what to pick up next" list. Prune items as they land.
+> Actionable backlog as of **2026-07-30** (after **v2.0.0** shipped — Phase 34 inline predicate
+> targets + the first breaking change). Authoritative status lives in [roadmap.md](roadmap.md); this
+> file is the short, prioritized "what to pick up next" list. Prune items as they land.
+
+## Open as of 2026-07-30 (v2.0.0)
+
+- 🔴 **JSR provenance is still missing — 11 releases now (v1.11.3 → v2.0.0).** The one thing that
+  needs an environment this machine does not have. **Deno is RULED OUT** (v2.0.0 was published on a
+  pinned Deno 2.9.1 and came out unattested anyway; pin reverted in `06e0b4f`). Also already
+  eliminated: `publish.yml` itself, `id-token: write`, the OIDC prerequisite step, the JSR↔GitHub
+  link, `--no-provenance`. **Remaining suspects: JSR-side or GitHub-side changes in the
+  2026-07-03 → 07-09 window.** Next step needs an **authenticated `gh`** (not installed here — the
+  Actions logs endpoint 403s unauthenticated): `gh run view <id> --log` on the v1.11.2 (attested)
+  vs v1.11.3 (not) runs, diffing what `deno publish` actually reported. Full elimination list in
+  [design-decisions.md](design-decisions.md). The "Verify provenance was recorded on JSR" step now
+  fails the publish job whenever it is missing, so this can no longer regress unnoticed —
+  **expect the v2.0.0 Actions run to be red for this reason; the package published fine.**
+- ⏳ **Declare a Deno floor in `deno.json`.** There is none today, so nothing validates a minimum
+  supported version and a release could silently start requiring a newer Deno — first signal would
+  be a user report. Cheap to add, and it would make the compatibility question decidable.
+- ⏳ **`docs/` and `cmem/*.md` are not `deno fmt`-clean.** `main.ts` + `src/` now are, and
+  `.gitattributes` keeps them that way; the markdown was deliberately left alone (bare `deno fmt`
+  mangles tables/code-fences — see [workflow.md](workflow.md)). If it is ever wanted, it needs its
+  own pass with `fmt.exclude` tuned, not a blanket run.
 
 ## Recommended next pickup (updated 2026-07-28)
 
 - **THE BIG TRACK: wasic modularization** — see [wasic-modularization-plan.md](wasic-modularization-plan.md).
   **Phase 0 = "look for code issues" audit, run as a loop to ZERO (HARD GATE)** before any module
   extraction. This is the agreed next major effort.
-- **✅ v1.11.7 PUBLISHED (2026-07-28).** The large producer/dync/README pass is committed and
-  published to JSR. See [roadmap.md](roadmap.md) § "v1.11.7 (2026-07-28)".
+- **✅ v2.0.0 PUBLISHED (2026-07-30)** — latest on JSR; supersedes the v1.11.7 note that used to sit
+  here. See [roadmap.md](roadmap.md) § "Release status — v2.0.0".
 - **Producer verbs unified + `--lang` auto-detect + Go browser removed — ✅ DONE (2026-07-28).** Same
   verbs across go/zig/rust (`init`=program, `initmod`=library, `build`=program→`.wasm`); `--lang`
   optional for run/build/modc (auto-detected); add/remove/list/fmt/clean need no `--lang`; Go

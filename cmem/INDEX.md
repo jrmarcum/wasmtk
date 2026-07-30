@@ -74,9 +74,9 @@ phase filter IS the whole gate. Full-suite runs cost >10 minutes and buy nothing
 | [workflow.md](workflow.md) | **The working loop: test → bisect → branch-on-fix → gate → memory → commit → merge → bump → publish.** **A branch is cut only when a test FAILS and needs a `src/` fix** — a clean batch commits straight to `main` (owner directive 2026-07-30). Commit conventions, context boundaries, and the traps that have bitten. **Read at the start of a stress-test batch or a release.** |
 | [overview.md](overview.md) | What wasmtk is; repo layout; the key source files |
 | [architecture.md](architecture.md) | wasic / modc / bindgen / hybrid; pluggable wabt+binaryen backends; build & merge pipeline; Canonical ABI alignment; the `wast` spec runner |
-| [testing.md](testing.md) | How to run every suite; **which suites a given change reaches** (impact map); current pass counts; runner gotchas |
+| [testing.md](testing.md) | How to run every suite; **which suites a given change reaches** (impact map); current pass counts; runner gotchas; the pre-publish checklist — including that **`deno doc --lint` is NOT a doc-coverage check** (parse `deno doc --json` instead) |
 | [compiler-bugs.md](compiler-bugs.md) | Live bug log — root cause + fix + regression test for every bug found. **Read before debugging anything.** |
-| [design-decisions.md](design-decisions.md) | Load-bearing invariants that must NOT be silently reverted. **Read before changing codegen.** |
+| [design-decisions.md](design-decisions.md) | Load-bearing invariants that must NOT be silently reverted. **Read before changing codegen** — also holds versioning (odometer sequencing; versions are a sequential counter, NOT a semver signal), the fmt/CRLF `.gitattributes` rule, and the JSR provenance elimination list |
 | [roadmap.md](roadmap.md) | Release status and phase status; the README roadmap-table convention. **A BREAKING change goes in its own `### ⚠️ Breaking Changes` table above Feature Status, never as an ordinary row** (owner directive 2026-07-30) |
 | [next-work.md](next-work.md) | Short "what to pick up next" list |
 | [capabilities.md](capabilities.md) | Tier-1 stdlib capability libraries (Set, Map, Date, JSON, RegExp) and virtual `wasmtk:<cap>` imports |

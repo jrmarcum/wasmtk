@@ -40,10 +40,12 @@
 
 ## Release status (2026-07-30) — v2.0.0: Phase 34 inline predicate targets + `./utils` slimmed
 
-**v2.0.0 — merged to `main` from `fix/phase34-inline-predicate-target-2026-07-30` (commits
-`300f712` → `ff93147`, six commits) via `--ff-only`.** Backend unchanged (wabt-ts 1.3.5 +
-binaryen-ts 1.4.3). The two sections below are the batches this release carries; they were working
--tree entries and are promoted here on release.
+**v2.0.0 is PUBLISHED to JSR** (`@jrmarcum/wasmtk@2.0.0` is `latest`) — merged to `main` from
+`fix/phase34-inline-predicate-target-2026-07-30` (commits `300f712` → `ff93147`, six commits) via
+`--ff-only`; branch deleted local + remote. Backend unchanged (wabt-ts 1.3.5 + binaryen-ts 1.4.3).
+The two sections below are the batches this release carries; they were working-tree entries and are
+promoted here on release. JSR now reports `percentageDocumentedSymbols: 1` (**100%**, up from
+0.98039216) and `allEntrypointsDocs: true`.
 
 **FIRST BREAKING RELEASE.** `./utils` no longer re-exports `compileWasi` / `compileModule` — see the
 Phase 34 section below and the README's `### ⚠️ Breaking Changes` table. Version chosen as `2.0.0`
@@ -55,10 +57,17 @@ every other suite 0 failures. `deno doc --lint` clean across 16 entrypoints, doc
 **100/100**, `deno publish --dry-run` Success on BOTH the local Deno (2.9.4) and the pinned CI Deno
 (2.9.1).
 
-**Provenance:** pinned `deno-version: v2.9.1` in `publish.yml` to test the Deno-version hypothesis —
-**this release is the experiment.** If v2.0.0 lands with a `rekorLogId`, the diagnosis holds and the
-pin stays until upstream fixes it; if not, Deno is eliminated. The new "Verify provenance was
-recorded on JSR" step fails the job either way rather than letting it pass silently.
+**Provenance — the experiment RAN and came back negative.** v2.0.0 was published with
+`deno-version` pinned to `v2.9.1` (the last Deno that ever produced an attested release) to test the
+Deno-version hypothesis. **It published unattested anyway** (`rekorLogId` null), so the clean
+2.9.1/2.9.2 correlation was coincidental and **Deno is ruled out**. The pin was reverted to floating
+`v2.x` in `06e0b4f` right after. Elimination list and remaining suspects in
+[design-decisions.md](design-decisions.md).
+
+**The verification step earned its place:** the v2.0.0 run shows `Publish to JSR → success` and
+`Verify provenance was recorded on JSR → failure`. This is the **first release that reports its own
+missing provenance** instead of passing silently — so **expect the v2.0.0 Actions run to be red**;
+that is the gate working, not a publish failure. The package published fine.
 
 ## Repo hygiene shipped in v2.0.0 — fmt-clean + LF pinned
 
