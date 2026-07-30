@@ -85,10 +85,15 @@ Measured on the 400-test corpus (2026-07-30):
 | string methods | `\.repeat(\|\.trim(\|\.charAt(` | 5 tests | seconds |
 | `for…of` | `for (const .* of ` | 7 tests | seconds |
 
-**When it degenerates, skip it.** `console\.log` matches 351/400 tests (87%) — for a change that
-broad (most of `console_log.ts`, or the binary-op loop) the targeted set isn't meaningfully cheaper
-than the full suite, so go straight to the full run. Rule of thumb: **>60 % of the corpus means
-don't bother filtering.**
+**Filter aggressively — excluding the majority is the whole win.** The saving is proportional to
+what you cut, so a filter that drops 400 → 200 still halves a 10-minute run and is worth building.
+Only skip filtering when the match is essentially the whole corpus and the saving is marginal:
+`console\.log` matches 351/400 (87%), so there the targeted run costs nearly as much as the full
+one — go straight to the full suite. Everything short of that, filter.
+
+**Start narrow, then widen.** In practice the fastest loop is: the failing stress tests alone while
+bisecting (seconds), then the construct filter once a fix exists, then the full gate. Don't jump
+straight to the broadest set — each widening is a checkpoint that tells you whether the fix held.
 
 Always include the batch's own phase filter alongside the construct filter — the failing stress
 tests are the primary signal, and a fix must not regress its own phase.
