@@ -84,11 +84,17 @@ Programmatic API table has always documented them. `wasmtk/utils` appears **0 ti
 and JSR reports **0 dependents**. `./utils` remains a published entrypoint and keeps `VERSION`,
 `runWasi`, `callExport`, `showInfo`, `wasm2js`, `convertFile`, `bundleTs`.
 
-**Open decision for the owner — the version number.** Strict semver makes a removed public export a
-**major** bump (2.0.0). The mitigating facts above (undocumented at that path, README points
-elsewhere, 0 JSR dependents) are the usual argument for treating it as a minor. **Not decided here.**
-Whatever is chosen, replace `_next release_` in the README's Breaking Changes table with the real
-version at publish time, and lead the CHANGELOG entry with the migration line.
+**Version DECIDED by the owner 2026-07-30: `2.0.0`** (up from 1.11.12). Versions are a sequential
+counter, **not** a semver compatibility signal — but this number was **deliberately advanced to a
+round value to mark the breaking change**, so a user seeing `2.0.0` has an obvious prompt to go read
+why. The owner may do the same for future breaking changes; it is a discretionary choice, not an
+automatic rule (full statement in design-decisions.md § versions carry no compatibility meaning).
+
+Because a round number can ALSO arise from an ordinary carry, the number cannot distinguish the two
+cases on its own — which is exactly why the README's `### ⚠️ Breaking Changes` table was created:
+**it tells users what just happened and why.** Every deliberate jump like this one must carry a row
+there. `deno.json`, `package.json` and `src/utils.ts VERSION` are at 2.0.0 and the table names it.
+The CHANGELOG entry still needs writing at release time and should lead with the migration line.
 
 ## Release status (2026-07-30) — v1.11.12: intersection base-typed parameters
 

@@ -1122,9 +1122,17 @@ Changes that can require a source edit when upgrading. **Everything in the Featu
 below is additive** — only entries listed here can break existing code. Each row states the exact
 replacement.
 
+> **Read this table, not the version number.** wasmtk version numbers are a sequential counter: each
+> component runs `0`–`9` and rolls over into the one on its left, so `1.2.9` is followed by `1.3.0`
+> and `1.9.9` by `2.0.0`. A change in the leading number can mean either of two things — the counter
+> simply rolled over (which happens about every 100 releases), or we **deliberately advanced to a
+> round number to mark a breaking change**, as with `2.0.0` below. The number alone cannot tell you
+> which; **this table can, and it is the only place breakage is announced.** If a release is not
+> listed here, it is safe to upgrade to.
+
 | Version | What changed | How to migrate |
 | --- | --- | --- |
-| _next release_ | **`./utils` no longer re-exports `compileWasi` and `compileModule`.** Both functions are otherwise **unchanged** — same names, same `(path, outPath?)` signatures, same behaviour — and are still exported from their documented homes, `./wasic` and `./modc`. No other `./utils` export is affected: `VERSION`, `runWasi`, `callExport`, `showInfo`, `wasm2js`, `convertFile` and `bundleTs` all remain. | Change the import path only: `import { compileWasi } from "@jrmarcum/wasmtk/wasic";` and `import { compileModule } from "@jrmarcum/wasmtk/modc";` — these are the paths the [Programmatic API](#programmatic-api) table has always documented for them. **Why:** `./utils` is the CLI's internal helper barrel; it re-exported these two only so `main.ts` could use a single import site, and the export map published it as a public entrypoint anyway. Publishing one declaration from two entrypoints meant `deno doc` could document it only once, so the duplicate rendered undocumented on jsr.io. |
+| **2.0.0** | **`./utils` no longer re-exports `compileWasi` and `compileModule`.** Both functions are otherwise **unchanged** — same names, same `(path, outPath?)` signatures, same behaviour — and are still exported from their documented homes, `./wasic` and `./modc`. No other `./utils` export is affected: `VERSION`, `runWasi`, `callExport`, `showInfo`, `wasm2js`, `convertFile` and `bundleTs` all remain. | Change the import path only: `import { compileWasi } from "@jrmarcum/wasmtk/wasic";` and `import { compileModule } from "@jrmarcum/wasmtk/modc";` — these are the paths the [Programmatic API](#programmatic-api) table has always documented for them. **Why:** `./utils` is the CLI's internal helper barrel; it re-exported these two only so `main.ts` could use a single import site, and the export map published it as a public entrypoint anyway. Publishing one declaration from two entrypoints meant `deno doc` could document it only once, so the duplicate rendered undocumented on jsr.io. |
 
 ### Feature Status
 

@@ -724,6 +724,57 @@ silently break (all `src/wasic.ts`):
   already-edited `deno.json` version (no increment); `bump` is the increment counterpart. `bump` is
   intentionally NOT wired into `deno task publish` (bumping stays a deliberate step). Don't add
   `dependencies` to `package.json`; don't use `nodeModulesDir: "auto"` (Windows junction failures).
+- 🔑 **VERSIONS CARRY NO COMPATIBILITY MEANING — they are a sequential counter (owner directive
+  2026-07-30).** The owner does **not** read version changes as "minor vs major" in the semver
+  sense; a release number states only *how many releases have happened*, never what changed in
+  them. Consequences, all binding:
+  - **Never infer breakage from a version number, and never tell a user to.** A leading-digit
+    change is AMBIGUOUS by construction — see the next bullet — so the number can never be the
+    answer on its own.
+  - **A round number may be reached two different ways (owner caveat 2026-07-30):** (a) the counter
+    simply carried, which happens about every 100 releases regardless of content, or (b) the owner
+    **deliberately advanced to a round number to mark a breaking change**, which is what
+    `1.11.12 → 2.0.0` was and which **may be done again** for a future breaking change. The
+    mechanism for (b) is `deno task bump major`. Because both produce an identical-looking number,
+    **the number is not self-describing** and must never be interpreted without the table.
+  - **The README's `### ⚠️ Breaking Changes` table is the ONLY signal of breakage, and the ONLY
+    thing that disambiguates (a) from (b).** That is precisely why the owner asked for it and why it
+    stands apart from Feature Status: it tells users *what just happened and why*. If a round number
+    ships with nothing breaking, the table simply has no row for it. Every deliberate (b) jump MUST
+    get a row — a jump with no row is indistinguishable from a carry and defeats the whole point.
+  - **Do not "correct" a version choice with semver reasoning.** `2.0.0` was not derived from a
+    rule that "a removed export requires a major"; it was the owner choosing a legible number for a
+    breaking release. The choice is discretionary — do not turn it into an automatic mapping from
+    change-kind to component, and do not assume the next breaking change must also land on a round
+    number.
+  - The `patch` / `minor` / `major` arguments to `deno task bump` are therefore just **positions to
+    increment** (rightmost / middle / leftmost), not statements about compatibility. Read them as
+    "carry one position left", not as semver intent.
+- **ODOMETER VERSION SEQUENCING (owner directive 2026-07-30).** The **minor and patch components
+  must never exceed 9.** Reaching 9 rolls that component to 0 and carries 1 into the component on
+  its left; `major` alone is unbounded (9 → 10 → 11 …):
+
+  | From | Bump | To |
+  | --- | --- | --- |
+  | `1.6.2` | patch | `1.6.3` |
+  | `1.2.9` | patch | `1.3.0` |
+  | `1.9.9` | patch | `2.0.0` |
+  | `0.9.9` | patch | `1.0.0` |
+  | `1.9.4` | minor | `2.0.0` |
+  | `9.9.9` | patch | `10.0.0` |
+
+  Implemented in `scripts/bump.ts` (`MAX_COMPONENT = 9`, carry applied patch-first so `x.9.9`
+  cascades all the way to `(x+1).0.0`). All of the above are covered by a boundary-case check that
+  was run against the logic before it shipped.
+- **This is deliberately NARROWER than semver**, which permits multi-digit components — `1.11.12`
+  is valid semver and this project published it (76 versions exist, several with a minor/patch above
+  9). So the rule is forward-only; it does not, and cannot, re-describe the published history.
+  **`bump` therefore REFUSES to run from a version whose minor or patch exceeds 9** rather than
+  guessing a carry (from `1.11.12`, is the next one `1.12.0`? `2.0.0`? `2.2.3`? — every answer is a
+  silent wrong release number). It exits non-zero **without writing**, telling the owner to set
+  `deno.json` by hand and run `deno task update-version`. That state was cleared on 2026-07-30 by
+  going `1.11.12` → **`2.0.0`**, so `bump` works normally from here; do not "helpfully" replace the
+  refusal with a fallback carry.
 - ⚠️ **The "fmt-clean" claim below is STALE — measured 2026-07-30, `deno fmt --check main.ts src/`
   FAILS on 8 of 21 files.** Two distinct causes, and they need different treatment:
   1. **CRLF line endings** — `src/utils.ts` and `src/zigwasic.ts` fail with *"Text differed by line
