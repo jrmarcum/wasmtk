@@ -775,20 +775,32 @@ silently break (all `src/wasic.ts`):
   `deno.json` by hand and run `deno task update-version`. That state was cleared on 2026-07-30 by
   going `1.11.12` → **`2.0.0`**, so `bump` works normally from here; do not "helpfully" replace the
   refusal with a fallback carry.
-- ⚠️ **The "fmt-clean" claim below is STALE — measured 2026-07-30, `deno fmt --check main.ts src/`
-  FAILS on 8 of 21 files.** Two distinct causes, and they need different treatment:
-  1. **CRLF line endings** — `src/utils.ts` and `src/zigwasic.ts` fail with *"Text differed by line
-     endings"* and no content diff at all. That is the repo-wide CRLF situation, not code style;
-     reformatting would rewrite every line of each file.
-  2. **Real content drift** — `src/bindgen.ts` (40 diff lines), `src/hybrid.ts` (16),
-     `src/wasic.ts` (6), `src/console_log.ts` (5), `src/wast.ts` (4).
-  3. **`src/wasm/mathlib_bytes.ts` must NEVER be formatted** — it is a generated 5-line file holding
-     one enormous byte array; `deno fmt` wants to explode it into ~9,000 lines. If the repo is ever
-     made fmt-clean, add it to a deno.json `fmt.exclude` first.
-
-  Nothing here blocks publishing (fmt is not CI-gated and not a JSR score factor), so this is
-  cleanup, not a release blocker. **Do not fix it as a side effect of an unrelated batch** — an
-  8-file reflow buried in a compiler-fix commit is unreviewable.
+- ✅ **`main.ts` + `src/` ARE fmt-clean again as of 2026-07-30, and the fix is now STABLE.** It had
+  drifted to 8 of 21 files failing. The reason the claim kept going stale is the important part:
+  - **`deno fmt` emits LF; this machine's git runs `core.autocrlf=true` and hands out CRLF on every
+    checkout.** They fight permanently. Formatting the tree fixes `deno fmt --check` only until the
+    next checkout re-converts to CRLF, at which point files fail with *"Text differed by line
+    endings"* and **no content diff at all**. Measured, not assumed: after formatting, deleting
+    `src/zigwasic.ts` and `git checkout`-ing it brought CRLF straight back and re-broke the check.
+  - **Settled with a `.gitattributes` carrying `*.ts text eol=lf`.** The blobs were ALREADY stored
+    as LF (verified: `git show HEAD:src/utils.ts` had 0 CRLF, the worktree copy had 523), so this
+    rewrites no history — it only stops the checkout filter converting them back. A fresh checkout
+    now yields LF and passes. **Do not remove this file**, and do not "fix" CRLF failures by
+    reformatting; reformatting treats the symptom and lasts until the next checkout.
+  - The 130 worktree `.ts` files that were still CRLF were converted in place; `git diff --numstat`
+    was **empty** afterwards, confirming zero content change (git had been normalising them all
+    along).
+  - **Real content drift existed too and is now fixed**: `src/bindgen.ts` (40 diff lines),
+    `src/hybrid.ts` (16), `src/wasic.ts` (6), `src/console_log.ts` (5), `src/wast.ts` (4).
+  - **`src/wasm/` is excluded from fmt via `deno.json` → `fmt.exclude`.** Both files there are
+    `AUTO-GENERATED` byte arrays; `src/wasm/mathlib_bytes.ts` is 5 lines holding one enormous array
+    that `deno fmt` wants to explode into ~9,000. The generators own those files' shape — never let
+    fmt fight them. Note `exclude` applies to the DIRECTORY form (`deno fmt main.ts src/`); passing
+    an excluded file explicitly still formats it.
+  - **Scope stays `deno fmt main.ts src/`** — never bare `deno fmt`, which would reflow the 214 KB
+    README and every `cmem/*.md` (mangling tables and code fences).
+  - Reformatting touched `wasic.ts`/`console_log.ts`, i.e. the compiler, so the full gate was run
+    after it (see testing.md). fmt is still not CI-gated and not a JSR score factor.
 - **Keep the published TypeScript (`main.ts` + `src/`) `deno fmt`-clean.** As of 2026-06-02 it
   passed `deno fmt --check main.ts src/` (one-time reflow to the deno.json fmt config: lineWidth
   100, arrow parens, semicolons). Format with the **scoped** `deno fmt main.ts src/` — do **NOT**
@@ -873,15 +885,32 @@ silently break (all `src/wasic.ts`):
   /`_TOKEN` reached the runner, `::warning::` if not) so any recurrence is visible in the run log.
   v1.7.0 published with `hasProvenance: true` (JSR score 100). Do not "fix" provenance by editing the
   publish/permissions YAML — it is already correct; check OIDC policy instead.
-- 🔴 **Provenance has been ABSENT again since v1.11.3 (found 2026-07-30) — 10 releases.** Bisected
-  against the JSR API (`api.jsr.io/scopes/jrmarcum/packages/wasmtk/versions/<v>` → `rekorLogId`):
-  **v1.11.2 (2026-07-03) is the last version with a Rekor entry** (`2053916008`); **v1.11.3
-  (2026-07-09) is the first without**, and every release since — including v1.11.12 — is `null`.
-  `.github/workflows/publish.yml` has not changed since 2026-06-15 (commit `e64595f`), i.e. it is
-  byte-identical to what produced provenance for v1.11.2, and `git diff v1.11.2..v1.11.3` touches
-  only `deno.json` deps. The JSR↔GitHub repo link is intact. So the cause is again environmental,
-  consistent with the entry above — the floating `deno-version: v2.x` in `setup-deno` is the prime
-  suspect, since it is the only input that moved on its own.
+- 🔴 **Provenance has been ABSENT since v1.11.3 (found 2026-07-30) — 10 releases. Cause traced to
+  the Deno version; `deno-version` is now PINNED to `v2.9.1`.** Bisected against the JSR API
+  (`api.jsr.io/scopes/jrmarcum/packages/wasmtk/versions/<v>` → `rekorLogId`): **v1.11.2 (2026-07-03)
+  is the last version with a Rekor entry** (`2053916008`); **v1.11.3 (2026-07-09) is the first
+  without**, and every release since — including v1.11.12 — is `null`.
+  `.github/workflows/publish.yml` had not changed since 2026-06-15 (commit `e64595f`), i.e. it was
+  byte-identical to what produced provenance for v1.11.2, `git diff v1.11.2..v1.11.3` touches only
+  `deno.json` deps, and the JSR↔GitHub repo link is intact — so nothing in the repo explained it.
+  **The workflow floated `deno-version: v2.x`, so every release picked up whatever Deno was newest
+  that day, and the history splits EXACTLY on a Deno release boundary:**
+
+  | Deno used | wasmtk releases | Provenance |
+  | --- | --- | --- |
+  | ≤ 2.9.1 (2.9.1 shipped 2026-07-01) | v1.7.0, v1.11.1, v1.11.2 | ✅ present |
+  | ≥ 2.9.2 (2.9.2 shipped 2026-07-08) | v1.11.3 … v1.11.12 (ten) | ❌ absent |
+
+  **This is CORRELATION, not a proven mechanism** — no Deno release note from 2.9.2 through 2.9.4
+  mentions provenance (2.9.4's only publish entry is `fix(publish): constrain generated source
+  rewrites`, unrelated), and a JSR- or GitHub-side change in the same window fits the data equally
+  well. It could not be confirmed from CI logs: the Actions logs endpoint returns 403
+  unauthenticated and `gh` is not installed on this machine.
+  **Pinned `deno-version: v2.9.1` (owner decision 2026-07-30)** as the cheapest test — one line,
+  revertible, decided by the very next release. The regression persists through 2.9.4, so pinning
+  forward was not an option. **If the release after the pin is attested, the diagnosis holds; if it
+  is not, Deno is eliminated and the next suspects are JSR and GitHub.** Unpin once upstream ships a
+  fix, and check provenance on the release that follows.
 - **The OIDC diagnostic step is NOT sufficient evidence of provenance — it gave 10 releases of false
   assurance.** It checks only the PREREQUISITE (are the OIDC env vars present), and the v1.11.12 run
   emitted no `::warning::` at all (verified via the check-runs annotations API — its one annotation

@@ -16,10 +16,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # PINNED (2026-07-30) to restore JSR provenance — do not float this back to `v2.x` without
+      # checking provenance afterwards. This used to read `deno-version: v2.x`, so every release
+      # picked up whatever Deno was newest that day, and the provenance history splits exactly on a
+      # Deno release boundary:
+      #
+      #   built on Deno <= 2.9.1  ->  provenance PRESENT   (v1.7.0, v1.11.1, v1.11.2)
+      #   built on Deno >= 2.9.2  ->  provenance ABSENT    (v1.11.3 … v1.11.12, ten releases)
+      #
+      # Deno 2.9.2 shipped 2026-07-08; wasmtk v1.11.2 published 07-03 (on 2.9.1, attested) and
+      # v1.11.3 on 07-09 (on 2.9.2, not attested). The regression persists through 2.9.4, so pinning
+      # forward is not an option. NOTE this is CORRELATION, not a proven cause — no Deno release note
+      # between 2.9.2 and 2.9.4 mentions provenance, and a JSR- or GitHub-side change in the same
+      # window would fit the data equally well. The "Verify provenance" step at the end of this job
+      # is what actually decides it: if a release built on 2.9.1 is attested, the diagnosis holds.
+      # UNPIN once upstream ships a fix, and confirm provenance on the release that follows.
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.x
+          deno-version: v2.9.1
 
       # Provenance requires a GitHub OIDC token. The `id-token: write` permission
       # above is what injects ACTIONS_ID_TOKEN_REQUEST_URL/_TOKEN into the runner.

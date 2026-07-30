@@ -138,8 +138,8 @@ import {
   NWRITTEN_OFFSET,
   parseConsoleLogArgs,
   SCRATCH_BASE,
-  setFuncTableLookup,
   setEnumStrVarResolver,
+  setFuncTableLookup,
   setInstanceofResolver,
   setNullishResolver,
   setStrCmpNeededCallback,
@@ -2566,9 +2566,7 @@ class WasicTranspiler {
         : undefined;
       // For struct array params (e.g. Person[]), preserve the struct type name for arr[i].field access
       const arrayStructElemType: string | undefined =
-        (arrElemMatch && this.structDefs.has(arrElemMatch[1]))
-          ? arrElemMatch[1]
-          : undefined;
+        (arrElemMatch && this.structDefs.has(arrElemMatch[1])) ? arrElemMatch[1] : undefined;
       // Detect struct param: a capitalized type name that isn't a known primitive, OR any
       // identifier already REGISTERED as a struct/class. The capitalization test alone is a
       // proxy that misses lower-case-initial type names — which `tsbundler` produces for every

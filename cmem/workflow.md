@@ -62,6 +62,17 @@ fast-forward path linear — only necessary because Phase 31 should never have h
 5. **Fix at the root, not the symptom.** Prefer deleting a special case over adding one (the
    `Ns.member` → `Ns_member` rewrite replaced two ad-hoc resolution branches and fixed a whole
    class of string bugs for free).
+
+   **Ask why the offending construct EXISTS before you work around it (lesson 2026-07-30).** The
+   JSR doc-coverage gap was first "fixed" by adding pass-through wrappers in `src/utils.ts` — a
+   second declaration to satisfy the metric, carrying a permanent signature-drift hazard. The
+   owner's question, *"why are there two separate modules exporting the same thing?"*, took ten
+   minutes of `git log` to answer and dissolved the problem: `./utils` was an internal CLI barrel
+   that was never public API, the duplicate had exactly ONE consumer (`main.ts`), and deleting the
+   re-export was a smaller diff than the workaround it replaced. **A workaround that is easy to
+   build is not evidence the underlying arrangement is correct.** When something needs working
+   around, spend one `git log -S` / consumer-grep on *why it is there* first — the answer is often
+   "by accident", and then the fix is removal.
 6. **Add a regression test** that pins the fix AND its guards — the shapes that were already
    correct, so a future "simplification" can't silently reintroduce the bug.
 7. **Regression phase — run the full gate** (see below), once the targeted set is green — **but only
@@ -206,8 +217,11 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 - **Verify a "new" failure against a clean tree** (`git stash` + `deno task install` + re-run)
   before attributing it to your change. `bundle_tests`/`StructImport` and the string-namespace
   failures were both confirmed pre-existing this way.
-- **Never run `deno fmt` broadly on the docs.** The repo is not fmt-clean (mostly CRLF), so it
-  reflows untouched prose — one run produced a 1606-line diff for a 60-line change and had to be
-  reverted.
+- **Never run bare `deno fmt`.** It would reflow the 214 KB README and every `cmem/*.md`, mangling
+  tables and code fences — one run produced a 1606-line diff for a 60-line change and had to be
+  reverted. **Always scope it: `deno fmt main.ts src/`.** (Updated 2026-07-30: `main.ts` + `src/`
+  ARE fmt-clean now, and `.gitattributes` `*.ts text eol=lf` keeps them that way across checkouts —
+  the old "the repo is not fmt-clean (mostly CRLF)" note no longer holds for code. The docs are
+  still not fmt-clean and must stay out of scope. See design-decisions.md.)
 - **Fix `src/wasic.ts` and `src/console_log.ts` together.** They hold parallel binary-op loops and
   parallel string handling; three bugs this session were half-fixed by changing only one.

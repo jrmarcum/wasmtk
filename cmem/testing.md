@@ -211,13 +211,73 @@ clean to hold the JSR doc-coverage score (see design-decisions.md), and provenan
 token to actually reach the runner (was environmentally gated through v1.6.5; v1.7.0 published
 2026-06-15 with `hasProvenance: true`, JSR score 100).
 
+🔴 **Provenance regressed AGAIN and is absent from v1.11.3 onward (found 2026-07-30).** Bisected via
+`api.jsr.io/scopes/jrmarcum/packages/wasmtk/versions/<v>` → `rekorLogId`: **v1.11.2 is the last
+version with one**, v1.11.3 the first without. **A green publish run is NOT evidence of provenance**
+— the OIDC diagnostic step passed on all 10 affected releases (the v1.11.12 run emitted no
+`::warning::` at all; its only annotation is an unrelated Node 20 notice, checked via the check-runs
+annotations API). Only JSR's `rekorLogId` is evidence. A **"Verify provenance was recorded on JSR"**
+step now runs LAST in `publish.yml` and fails the job when that field is null. **Traced to the Deno
+version and PINNED:** the workflow floated `deno-version: v2.x`, and the provenance history splits
+exactly on the Deno 2.9.1 → 2.9.2 boundary (2.9.2 shipped 2026-07-08; v1.11.2 published 07-03 on
+2.9.1 attested, v1.11.3 on 07-09 on 2.9.2 not attested; the regression persists through 2.9.4).
+`deno-version` is now pinned to **`v2.9.1`**. This is correlation, not a proven mechanism — see
+design-decisions.md. **The next release decides it:** if it is attested, the diagnosis holds; if not,
+Deno is eliminated. Confirming from CI logs would need an authenticated `gh` (not installed here —
+the Actions logs endpoint 403s unauthenticated).
+
+**⚠️ `deno doc --lint` is NOT a doc-coverage check (measured 2026-07-30).** It passed clean on all
+16 entrypoints while JSR reported `percentageDocumentedSymbols: 0.98039216`. It catches
+`private-type-ref` / `missing-explicit-type` / missing JSDoc on a *declaration*, but it is blind to
+two things that DO cost coverage — a re-exported symbol (`export { x } from …`, counted by JSR,
+documented by `deno doc` only once per declaration) and a module whose `@module` tag is followed by
+bare prose with no `@description` (renders an EMPTY module description). **To measure coverage for
+real, parse the JSON**, which is what the checklist line below does:
+
+```bash
+# true documented-symbol coverage + any entrypoint missing a module description
+deno doc --json <all 16 exports> | deno eval '
+const d=JSON.parse(await new Response(Deno.stdin.readable).text()); let tot=0,un=0,nm=0;
+for (const [f,v] of Object.entries(d.nodes)) { if(!(v.module_doc?.doc??"").trim()) nm++;
+  for (const s of (v.symbols??[])) for (const dec of (s.declarations??[]))
+    if(dec.declarationKind==="export"){tot++; if(!((dec.jsDoc?.doc??"").trim()))un++;} }
+console.log("no module description:",nm," documented:",(tot-un)+"/"+tot);'
+# expect: no module description: 0   documented: 100/100
+```
+
+⚠️ **CI publishes on a PINNED Deno (`v2.9.1`) while development happens on whatever is installed
+locally (2.9.4 as of 2026-07-30) — so you develop FORWARD and publish BACKWARD.** Source that uses
+an API added after the pinned version type-checks fine locally and then fails `deno publish` **in
+CI, after the tag has already been pushed** — the worst possible moment, since the tag exists but
+the release does not. **Mitigation, and it is mandatory while the pin is in place: run the dry-run
+under the PINNED version too, before tagging.** The pinned build is kept out of the way:
+
+```bash
+# one-time: fetch the pinned CI Deno (match the deno-version in publish.yml)
+curl -L -o deno291.zip https://github.com/denoland/deno/releases/download/v2.9.1/deno-x86_64-pc-windows-msvc.zip
+# then, before every release:
+/path/to/deno291/deno.exe publish --dry-run --allow-dirty    # MUST pass — this is what CI runs
+```
+
+Verified 2026-07-30 for the 2.0.0 tree: 2.9.1 gives `Success` on the dry-run **and** agrees with
+2.9.4 on `deno fmt --check` (19 files clean), so formatting is not version-sensitive between them.
+
+**The pin also buys something:** `deno.json` declares **no** Deno floor, so nothing else in the
+project ever validates a minimum version. Publishing on 2.9.1 means every release is proven to
+type-check there, which is a free compatibility floor for consumers. When the pin is eventually
+lifted, that floor check disappears with it.
+
 The full green pre-publish checklist (run before each release):
 
 ```bash
 deno publish --dry-run --allow-dirty   # THE gate: type-check + slow-types + package — must pass
-deno doc --lint <all 15 exports>       # clean — guards the JSR doc-coverage score (≥0.80 symbols)
-deno lint main.ts src/                 # clean (18 files)
-deno fmt  --check main.ts src/         # clean as of 2026-06-02 (see design-decisions.md)
+<pinned-deno> publish --dry-run --allow-dirty   # SAME gate on the pinned CI version — see above
+deno doc --lint <all 16 exports>       # clean — necessary but NOT sufficient, see the note above
+deno doc --json <all 16 exports> | …   # the REAL coverage check — expect 100/100, 0 missing modules
+deno lint main.ts src/                 # clean (21 files)
+deno fmt  --check main.ts src/         # clean as of 2026-07-30 — kept stable by .gitattributes
+                                       # (*.ts text eol=lf); src/wasm/ is fmt-excluded. NEVER run
+                                       # bare `deno fmt`. See design-decisions.md.
 deno run -A tests/wasi_tests.ts        # 336/336 as of 2026-06-23 (+18j..18q dynrt runtime/any; +18r..18z GC track P1-P5b + polish + hybrid allocator COMPLETE: auto-grow / free-list / registry / mark / shadow-stack / collect / payloads+auto-collect (bounded memory); +54..61 async). HARDENED 2026-06-07: diffs run-ts vs run-wasm OUTPUT, not just exit codes. No open bugs; 6 tests legitimately diverge and carry `// @allow-output-diff`. A test FAILS on `output-mismatch` unless it opts out.
 deno run -A tests/bindgen_tests.ts     # 119/119
 deno run -A tests/jstyper_tests.ts     # 73/73

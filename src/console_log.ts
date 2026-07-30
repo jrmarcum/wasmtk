@@ -1281,7 +1281,10 @@ function parseSingleArg(
   if (_nullishResolver && findTopLevelOp(token, "??") !== -1) {
     const nw = _nullishResolver(token, locals);
     if (nw !== undefined) {
-      return [{ kind: nw.type === "f64" || nw.type === "f32" ? "f64expr" : "i32expr", wat: nw.wat }];
+      return [{
+        kind: nw.type === "f64" || nw.type === "f32" ? "f64expr" : "i32expr",
+        wat: nw.wat,
+      }];
     }
   }
 

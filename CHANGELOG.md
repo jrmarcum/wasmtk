@@ -3,6 +3,65 @@
 All notable, user-facing changes to `wasmtk`. Versions follow the `deno.json` version and the
 published [`@jrmarcum/wasmtk`](https://jsr.io/@jrmarcum/wasmtk) JSR package.
 
+## 2.0.0 — Type predicates with inline object types; `./utils` slims down (2026-07-30)
+
+### ⚠️ Breaking — one import path changed
+
+`@jrmarcum/wasmtk/utils` no longer re-exports `compileWasi` and `compileModule`. If you imported
+either from there, change the path:
+
+```ts
+// before
+import { compileWasi, compileModule } from "@jrmarcum/wasmtk/utils";
+
+// after
+import { compileWasi } from "@jrmarcum/wasmtk/wasic";
+import { compileModule } from "@jrmarcum/wasmtk/modc";
+```
+
+Nothing else changes: same names, same `(path, outPath?)` signatures, same behaviour. These are the
+paths the README's Programmatic API table has always documented for them. `./utils` is otherwise
+untouched and still exports `VERSION`, `runWasi`, `callExport`, `showInfo`, `wasm2js`, `convertFile`
+and `bundleTs`. If you import from `@jrmarcum/wasmtk/wasic` or `/modc` already, or use the CLI, this
+release needs nothing from you.
+
+> **On the version number:** wasmtk versions are a sequential counter — each component runs `0`–`9`
+> and rolls into the one on its left, so `1.2.9` is followed by `1.3.0`. A change in the leading
+> number can mean the counter simply rolled over *or*, as here, that we advanced deliberately to
+> flag a breaking change. The **Breaking Changes** table in the README is the only place breakage is
+> announced; if a release isn't listed there, it is safe to upgrade to.
+
+### Fixed
+
+- **A type predicate whose target is an inline object type now compiles.** Writing the target the
+  way a discriminated-union variant is normally spelled made the *entire function header* fail to
+  parse, so the predicate was never registered and every call to it died with a misleading
+  `Unknown function 'isSphere' — not declared in this module`:
+
+  ```ts
+  type Geometry = { type: "sphere"; r: f64 } | { type: "box"; w: f64; h: f64 };
+
+  function isSphere(g: Geometry): g is { type: "sphere"; r: f64 } {
+    return g.type === "sphere";
+  }
+  ```
+
+- **A narrowed field read could silently return 0.** Once such a predicate parsed, an inline target
+  matched no declared type, so narrowing was skipped and the body compiled against the un-narrowed
+  type. Over an interface hierarchy that produced a wrong number with no error — `s.radius` printed
+  `0` where TypeScript printed `5`. Inline targets are now resolved to the declared type holding
+  exactly those fields, so narrowing uses real offsets. Where no declared type matches *and* the
+  variable's own type lacks a named field, the compile now **aborts** with a diagnostic naming the
+  predicate, the variable and the missing fields, instead of emitting a plausible wrong value.
+
+### Documentation
+
+- Every exported symbol across all 16 entrypoints is documented (100%), and `wasmtk/wast`'s module
+  description — previously blank on jsr.io because its `@module` tag swallowed the prose — now
+  renders.
+- The README gained a **Breaking Changes** table, directly above Feature Status, so a change that
+  can require a source edit is never buried among additive rows.
+
 ## 1.11.12 — Intersection types: base-typed parameters are checked (2026-07-30)
 
 Passing an intersection value to a function that takes one of its constituent interfaces either

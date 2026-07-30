@@ -485,7 +485,9 @@ export async function runWast(
       // A NaN with a specific (non-canonical) payload cannot be passed through the JS number
       // boundary — V8 canonicalizes it — so any test that depends on the payload surviving the
       // call is untestable via the JS API (not a toolchain bug). Skip it.
-      if (/nan:0x/.test(a.list[1] as string)) throw new Error("__skip__: NaN payload arg cannot cross the JS boundary");
+      if (/nan:0x/.test(a.list[1] as string)) {
+        throw new Error("__skip__: NaN payload arg cannot cross the JS boundary");
+      }
       args.push(constToJs(a));
     }
     const fn = ex[field] as (...a: unknown[]) => unknown;

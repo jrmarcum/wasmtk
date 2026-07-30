@@ -38,6 +38,18 @@
 > replace it with the real version at publish time. A breaking change may ALSO warrant a Feature
 > Status row if it ships alongside a feature — but the Breaking Changes row is mandatory.
 
+## Working tree (2026-07-30) — repo hygiene: fmt-clean + LF pinned
+
+`main.ts` + `src/` are `deno fmt --check` clean again (was 8 of 21 files failing), and **the fix is
+stable across checkouts** — the previous attempts kept going stale because `deno fmt` emits LF while
+`core.autocrlf=true` hands out CRLF on every checkout. A `.gitattributes` with `*.ts text eol=lf`
+settles it; the blobs were already LF, so no history changed. `src/wasm/` (two `AUTO-GENERATED` byte
+arrays) is now excluded via `deno.json` → `fmt.exclude`. Real content drift was fixed in
+`bindgen.ts` (40 lines), `hybrid.ts` (16), `wasic.ts` (6), `console_log.ts` (5), `wast.ts` (4). 130
+worktree `.ts` files were converted CRLF→LF with **zero** content change. Full gate re-run, since
+`wasic.ts`/`console_log.ts` are the compiler. Detail in
+[design-decisions.md](design-decisions.md).
+
 ## Working tree (2026-07-30) — Phase 34 type predicates, inline object-type targets
 
 Branch `fix/phase34-inline-predicate-target-2026-07-30`, cut from `main` **after** test 3 failed,

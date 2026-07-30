@@ -136,7 +136,9 @@ function parseWitFuncs(body: string, keyword: "import" | "export"): WitFunc[] {
   let mm: RegExpExecArray | null;
   while ((mm = multiRe.exec(body)) !== null) {
     throw new Error(
-      `bindgen: WIT ${keyword} '${mm[1]}' has a multi-value/tuple return, which is not yet supported.`,
+      `bindgen: WIT ${keyword} '${
+        mm[1]
+      }' has a multi-value/tuple return, which is not yet supported.`,
     );
   }
   const re = new RegExp(
@@ -261,7 +263,9 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
   lines.push(`      const v = _wasiView(), mem = _wasiU8();`);
   lines.push(`      let written = 0, text = "";`);
   lines.push(`      for (let i = 0; i < iovsLen; i++) {`);
-  lines.push(`        const p = v.getInt32(iovs + i * 8, true), l = v.getInt32(iovs + i * 8 + 4, true);`);
+  lines.push(
+    `        const p = v.getInt32(iovs + i * 8, true), l = v.getInt32(iovs + i * 8 + 4, true);`,
+  );
   lines.push(`        text += new TextDecoder().decode(mem.subarray(p, p + l)); written += l;`);
   lines.push(`      }`);
   lines.push(`      const out = text.replace(/\\n$/, "");`);
@@ -274,24 +278,34 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
   lines.push(`      return 0;`);
   lines.push(`    },`);
   lines.push(`    clock_time_get(_id: number, _prec: number, timePtr: number): number {`);
-  lines.push(`      _wasiView().setBigInt64(timePtr, BigInt(Date.now()) * 1000000n, true); return 0;`);
+  lines.push(
+    `      _wasiView().setBigInt64(timePtr, BigInt(Date.now()) * 1000000n, true); return 0;`,
+  );
   lines.push(`    },`);
-  lines.push(`    proc_exit(code: number): number { throw new Error("wasm proc_exit(" + code + ")"); },`);
+  lines.push(
+    `    proc_exit(code: number): number { throw new Error("wasm proc_exit(" + code + ")"); },`,
+  );
   // Report zero environment/args so a module that queries sizes reads a valid
   // 0 rather than whatever garbage was in the out-param memory (the bare Proxy
   // no-op below would leave those pointers untouched).
   lines.push(`    environ_sizes_get(countPtr: number, bufSizePtr: number): number {`);
-  lines.push(`      const v = _wasiView(); v.setInt32(countPtr, 0, true); v.setInt32(bufSizePtr, 0, true); return 0;`);
+  lines.push(
+    `      const v = _wasiView(); v.setInt32(countPtr, 0, true); v.setInt32(bufSizePtr, 0, true); return 0;`,
+  );
   lines.push(`    },`);
   lines.push(`    args_sizes_get(countPtr: number, bufSizePtr: number): number {`);
-  lines.push(`      const v = _wasiView(); v.setInt32(countPtr, 0, true); v.setInt32(bufSizePtr, 0, true); return 0;`);
+  lines.push(
+    `      const v = _wasiView(); v.setInt32(countPtr, 0, true); v.setInt32(bufSizePtr, 0, true); return 0;`,
+  );
   lines.push(`    },`);
   lines.push(`  } as Record<string, (...a: number[]) => number>;`);
   // A Proxy answers any WASI function not in the subset with a success no-op,
   // so unlisted imports (fd_close, environ_get, …) don't fail instantiation.
   // Use an own-property check (not `k in t`) so a WASI name that happens to
   // collide with an Object.prototype member still resolves to the no-op stub.
-  lines.push(`  const _wasi = new Proxy(_wasiBase, { get: (t, k: string) => Object.prototype.hasOwnProperty.call(t, k) ? t[k] : () => 0 });`);
+  lines.push(
+    `  const _wasi = new Proxy(_wasiBase, { get: (t, k: string) => Object.prototype.hasOwnProperty.call(t, k) ? t[k] : () => 0 });`,
+  );
   lines.push(``);
 
   // Import object
@@ -324,7 +338,9 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
     }
     lines.push(`  const importObj = { env, wasi_snapshot_preview1: _wasi };`);
   } else {
-    lines.push(`  const importObj: Record<string, Record<string, unknown>> = { wasi_snapshot_preview1: _wasi };`);
+    lines.push(
+      `  const importObj: Record<string, Record<string, unknown>> = { wasi_snapshot_preview1: _wasi };`,
+    );
   }
 
   // Load raw bytes
@@ -372,7 +388,9 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
     lines.push(`    let f = exp[n];`);
     lines.push(`    if (f === undefined) {`);
     lines.push(`      const kn = _kebab(n);`);
-    lines.push(`      for (const k of Object.keys(exp)) { if (_kebab(k) === kn) { f = exp[k]; break; } }`);
+    lines.push(
+      `      for (const k of Object.keys(exp)) { if (_kebab(k) === kn) { f = exp[k]; break; } }`,
+    );
     lines.push(`    }`);
     lines.push(`    return (_exCache[n] = f);`);
     lines.push(`  };`);
@@ -568,7 +586,9 @@ function genLoadModule(parsed: ParsedWit, runtime: "deno" | "node" | "bun"): str
       // return). Guard the call so a hand-written .wit whose .wasm lacks it fails
       // gracefully (leaks the bump-alloc'd buffer) instead of throwing an opaque
       // "undefined is not a function".
-      lines.push(`      const _post = _ex("cabi_post_${wasmName}") as ((p: number) => void) | undefined;`);
+      lines.push(
+        `      const _post = _ex("cabi_post_${wasmName}") as ((p: number) => void) | undefined;`,
+      );
       lines.push(`      if (_post) _post(_r);`);
       lines.push(`      return _s;`);
       lines.push(`    },`);

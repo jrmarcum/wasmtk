@@ -133,8 +133,20 @@ export function analyzeSignature(
 const _WORD = /[A-Za-z0-9_$]/;
 /** Keywords after which a `/` starts a regex, not a division (`return /re/`, etc.). */
 const REGEX_PRECEDING_KEYWORDS = new Set([
-  "return", "typeof", "case", "in", "of", "do", "else", "yield", "await",
-  "void", "delete", "instanceof", "new", "throw",
+  "return",
+  "typeof",
+  "case",
+  "in",
+  "of",
+  "do",
+  "else",
+  "yield",
+  "await",
+  "void",
+  "delete",
+  "instanceof",
+  "new",
+  "throw",
 ]);
 
 /**
