@@ -1,5 +1,66 @@
 # Compiler bug log
 
+## A union field shared by two variants took the FIRST variant's type (FIXED 2026-07-30)
+
+Phase 19 stress batch (discriminated unions: super-struct layout / switch dispatch / chained
+`else if` narrowing). Tests 1 and 2 passed as written; test 3 failed at instantiation with
+`CompileError: … type error in return[0] (expected f64, got i32)`.
+
+**Root cause.** `parseDiscriminatedUnions` built the flat super-struct by walking the variants and
+skipping any field name it had already seen:
+
+```ts
+if (seenFieldNames.has(f.name)) continue;   // ← drops the LATER declaration outright
+```
+
+So for `{type:"intVal"; val: i32} | {type:"floatVal"; val: f64}` the first variant claimed `val` as
+a 4-byte i32 and the second variant's `f64` declaration was discarded. Two concrete failures fell
+out of that one line:
+
+- **Silent truncation on store.** `{type:"floatVal", val: 25.5}` was emitted into the data segment
+  as `\19\00\00\00` — the i32 `25`. The `.5` was gone before any code ran.
+- **Invalid WASM on load.** `return container.val` in the narrowed `floatVal` branch emitted
+  `(return (i32.load …))` inside `(func … (result f64))`, which V8 rejects at instantiate time.
+
+The second masked the first: the module never instantiated, so the truncation was invisible. Had
+both variants' fields happened to be 4 bytes wide the program would have run and quietly printed
+`25`.
+
+**Why it survived this long.** Every prior Phase 19 test gives each variant *distinct* field names
+— `19_VariantMaximumMemoryAlignment` has `code` vs `val1`/`val2`/`id`,
+`19_NestedDiscriminantUnions` has `operation` vs `errorCode`. With no name collision the
+`seen`-skip never fired, so the whole resolution path was untested. A shared field name is the
+natural way to write this union, which is why the owner's first probe of it broke immediately.
+
+**Fix.** Replaced the skip with a real resolution step, factored into
+`buildDuSuperStructFields` + `widenDuFieldType`. Pass 1 resolves each unique field name to ONE
+source type across all variants; pass 2 lays out offsets from the resolved types. Because `i32` and
+`f64` are both `number` aliases, TypeScript itself sees `val: number` in both variants — there is no
+conflict in the source language, only in wasic's representation, so the slot is **widened** to the
+type that can represent every variant (i32/f32 → f64, i32 → i64). `val` then lands at offset 8,
+8-byte aligned, with `f64.load` on both branches and `25.5` stored as real f64 bytes.
+
+**A collision that is not a numeric widening now throws at parse time** (e.g. `string` vs `f64`).
+It previously pushed a `diagnostics` entry — but diagnostics are only reported once the whole
+transpile SUCCEEDS, and a slot that cannot hold both variants crashes downstream first: the user saw
+`Transpile error: Offset is outside the bounds of the DataView`. Throwing from the parser is the
+only place the message can name the union, the field, and both types.
+
+**Deliberately NOT done.** Per-variant slots (each variant's `val` at its own offset, resolved by
+narrowing context) were rejected: field access is keyed by name against a single flat StructDef, so
+that would mean threading narrowing state through every field read — a large change to fix a case
+TypeScript does not even consider a conflict.
+
+**Bonus parity fix.** The two layout loops were duplicated (inline `{…} | {…}` blocks vs
+`type X = A | B` named variants) and had drifted: only the named-variant loop set `structType` for
+PascalCase field types, so an inline-block union with a nested struct field could not recurse in
+`allocStructData`. Collapsing both onto the shared helper fixed that for free.
+
+Regression: `19_UnionSharedFieldWidening` pins the fix **and its guards** — a field shared at the
+same type in every variant (must still collapse to one slot), the widening case, a field declared
+*after* the widened slot (alignment must survive), and the reversed declaration order (wide variant
+first, so widening cannot be order-dependent).
+
 ## Phase 31 TypedArray stress batch (2026-07-30) — NO BUGS FOUND
 
 Recorded because a clean batch is itself evidence. 3 owner stress tests, all passing as written on

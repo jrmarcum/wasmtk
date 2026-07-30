@@ -4,6 +4,26 @@ Invariants and codegen rules that are easy to break in a refactor and must NOT b
 reverted. The exhaustive list (with line numbers) is in the legacy `CLAUDE.md`; this is the
 high-value subset.
 
+## A discriminated-union field shared by several variants is RESOLVED, never skipped (added 2026-07-30)
+
+- **The union super-struct has ONE slot per field name, and its type must hold EVERY variant's
+  value.** `buildDuSuperStructFields` resolves each unique name across all variants first, then
+  lays out offsets from the resolved types. Do not go back to
+  `if (seen.has(f.name)) continue` — that silently gave the slot the FIRST variant's type, storing
+  `25.5` as the i32 `25` and emitting `i32.load` where an f64 was required. See compiler-bugs.md.
+- **Widening is only legal between numeric scalars** (`widenDuFieldType`: i32/f32 → f64, i32 → i64).
+  It is correct precisely because `i32`/`f64` are `number` aliases, so TypeScript sees one field
+  type and no conflict — wasic must not be narrower than the source language here. `i64` vs `f64`
+  does NOT widen: neither represents the other without loss.
+- **Any other collision throws from the PARSER, not via `diagnostics`.** Diagnostics are reported
+  only after a successful transpile, so a conflicting layout crashes downstream first and the
+  user sees `Offset is outside the bounds of the DataView`. The parser is the only place that can
+  name the union, the field, and both types.
+- **The layout code is shared by both union parser passes** — inline `{…} | {…}` blocks and
+  `type X = A | B` named variants. They were duplicated and had already drifted (only the named
+  pass set `structType`). Keep them on the one helper; this is the same parallel-code-path trap as
+  the binary-op loops below. Regression: `19_UnionSharedFieldWidening`.
+
 ## Namespace member references are rewritten inside the body (added 2026-07-30)
 
 - **`expandNamespaces` must rewrite BOTH the declarations and the bare references.** Renaming

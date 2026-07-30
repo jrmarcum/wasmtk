@@ -4212,6 +4212,108 @@ class WasicTranspiler {
   // -------------------------------------------------------------------------
   // Phase 32: discriminated union type parser
   // -------------------------------------------------------------------------
+  /** Source type names that denote a NUMERIC scalar (as opposed to a string/array/struct
+   *  pointer that also lowers to i32).  Only these may be widened when two variants declare
+   *  the same field name with different types — see buildDuSuperStructFields. */
+  private static readonly NUMERIC_SOURCE_TYPES = new Set([
+    "i32",
+    "int",
+    "f32",
+    "f64",
+    "i64",
+    "number",
+    "bigint",
+  ]);
+
+  /**
+   * Lays out the flat "super-struct" fields shared by every variant of a discriminated
+   * union: an i32 discriminant tag at offset 0, then each unique variant field in
+   * declaration order.
+   *
+   * When two variants declare the SAME field name, the slot must be able to hold BOTH
+   * variants' values.  Before 2026-07-30 the later declaration was silently dropped
+   * (`if (seen.has(name)) continue`), so `{type:"intVal"; val: i32} | {type:"floatVal";
+   * val: f64}` laid `val` out as a 4-byte i32: storing 25.5 truncated it to 25 and reading
+   * it back emitted `i32.load` where an f64 was required, producing invalid WASM.  Since
+   * `i32`/`f64` are both `number` aliases in TypeScript, the union's `val` IS `number` to
+   * the type-checker, so the slot is widened to the type that can represent every variant.
+   * A collision that is NOT a pure numeric widening (e.g. `f64` vs a `string` pointer) has
+   * no such representation, and throws rather than emitting silently-wrong codegen.
+   */
+  private buildDuSuperStructFields(
+    discName: string,
+    rawVariants: ReadonlyArray<{ fields: Array<{ name: string; type: string }> }>,
+    unionName: string,
+  ): StructField[] {
+    // Pass 1 — resolve each unique field name to a single source type across ALL variants.
+    const order: string[] = [];
+    const resolved = new Map<string, string>();
+    for (const rv of rawVariants) {
+      for (const f of rv.fields) {
+        if (f.name === discName) continue;
+        const prev = resolved.get(f.name);
+        if (prev === undefined) {
+          order.push(f.name);
+          resolved.set(f.name, f.type);
+          continue;
+        }
+        if (prev === f.type) continue;
+        const widened = this.widenDuFieldType(prev, f.type);
+        if (widened === null) {
+          // Throw rather than push a diagnostic: diagnostics are only reported once the whole
+          // transpile SUCCEEDS, and a slot that cannot hold both variants guarantees a
+          // downstream crash first (a f64 stored into a string slot surfaced only as
+          // "Offset is outside the bounds of the DataView"). Fail here, where we can say why.
+          throw new Error(
+            `Discriminated union '${unionName}': field '${f.name}' is declared as ` +
+              `'${prev}' in one variant and '${f.type}' in another. No single slot can hold ` +
+              `both — give the variants the same type, or use a distinct field name per variant.`,
+          );
+        }
+        resolved.set(f.name, widened);
+      }
+    }
+
+    // Pass 2 — lay the resolved fields out, aligning each to its own size.
+    const out: StructField[] = [{ name: discName, type: "i32", offset: 0, size: 4 }];
+    let offset = 4;
+    for (const fname of order) {
+      const srcType = resolved.get(fname)!;
+      const type = mapType(srcType) as WatType;
+      const size = (type === "f64" || type === "i64") ? 8 : 4;
+      if (offset % size !== 0) offset = Math.ceil(offset / size) * size;
+      const fe: StructField = { name: fname, type, offset, size };
+      // Set structType for PascalCase field types so allocStructData can recurse on nested literals
+      if (
+        type === "i32" && /^[A-Z]/.test(srcType) &&
+        !srcType.endsWith("[]") && !["Number", "Boolean", "String", "BigInt"].includes(srcType)
+      ) {
+        fe.structType = srcType;
+      }
+      out.push(fe);
+      offset += size;
+    }
+    return out;
+  }
+
+  /** Returns the source type that can represent BOTH `a` and `b` for a shared union field,
+   *  or null when no such widening exists (the caller then throws).
+   *  Only numeric scalars widen: i32/f32 → f64, i32 → i64.  `i64` vs `f64` does NOT widen —
+   *  neither represents the other without loss. */
+  private widenDuFieldType(a: string, b: string): string | null {
+    const N = WasicTranspiler.NUMERIC_SOURCE_TYPES;
+    if (!N.has(a.toLowerCase()) || !N.has(b.toLowerCase())) return null;
+    const ma = mapType(a) as WatType;
+    const mb = mapType(b) as WatType;
+    if (ma === mb) return a;
+    const rank: Record<string, number> = { i32: 0, f32: 1, f64: 2 };
+    if (ma in rank && mb in rank) return (rank[ma] > rank[mb]) ? a : b;
+    // i64 pairs: only i32 widens into it; i64-vs-f64 is a genuine conflict.
+    if (ma === "i64" && mb === "i32") return a;
+    if (mb === "i64" && ma === "i32") return b;
+    return null;
+  }
+
   /**
    * Detects `type Name = { disc: "lit1"; ...fields } | { disc: "lit2"; ...fields } | …`
    * declarations, builds a flat "super-struct" StructDef that holds all unique variant
@@ -4257,23 +4359,9 @@ class WasicTranspiler {
       if (!rawVariants.every((v) => v.disc === discName)) continue;
 
       // Build flat combined StructDef: i32 disc tag first, then all unique fields in order
-      const structFields: StructField[] = [];
-      structFields.push({ name: discName, type: "i32", offset: 0, size: 4 });
-      let offset = 4;
-      const seenFieldNames = new Set<string>([discName]);
-      for (const rv of rawVariants) {
-        for (const f of rv.fields) {
-          if (seenFieldNames.has(f.name)) continue;
-          seenFieldNames.add(f.name);
-          const type = mapType(f.type) as WatType;
-          const size = (type === "f64" || type === "i64") ? 8 : 4;
-          if (offset % size !== 0) offset = Math.ceil(offset / size) * size;
-          structFields.push({ name: f.name, type, offset, size });
-          offset += size;
-        }
-      }
-
-      const def: StructDef = { name, fields: structFields, totalSize: offset };
+      const structFields = this.buildDuSuperStructFields(discName, rawVariants, name);
+      const last = structFields[structFields.length - 1];
+      const def: StructDef = { name, fields: structFields, totalSize: last.offset + last.size };
       this.structDefs.set(name, def);
 
       const variants: DiscUnionVariant[] = rawVariants.map((rv, idx) => ({
@@ -4323,30 +4411,9 @@ class WasicTranspiler {
       const discNameN = rawVariantsN[0].disc;
       if (!rawVariantsN.every((v) => v.disc === discNameN)) continue;
 
-      const structFieldsN: StructField[] = [];
-      structFieldsN.push({ name: discNameN, type: "i32", offset: 0, size: 4 });
-      let offsetN = 4;
-      const seenN = new Set<string>([discNameN]);
-      for (const rv of rawVariantsN) {
-        for (const f of rv.fields) {
-          if (seenN.has(f.name)) continue;
-          seenN.add(f.name);
-          const typeN = mapType(f.type) as WatType;
-          const sizeN = (typeN === "f64" || typeN === "i64") ? 8 : 4;
-          if (offsetN % sizeN !== 0) offsetN = Math.ceil(offsetN / sizeN) * sizeN;
-          const feN: StructField = { name: f.name, type: typeN, offset: offsetN, size: sizeN };
-          // Set structType for PascalCase field types so allocStructData can recurse on nested literals
-          if (
-            typeN === "i32" && /^[A-Z]/.test(f.type) &&
-            !f.type.endsWith("[]") && !["Number", "Boolean", "String", "BigInt"].includes(f.type)
-          ) {
-            feN.structType = f.type;
-          }
-          structFieldsN.push(feN);
-          offsetN += sizeN;
-        }
-      }
-      const defN: StructDef = { name, fields: structFieldsN, totalSize: offsetN };
+      const structFieldsN = this.buildDuSuperStructFields(discNameN, rawVariantsN, name);
+      const lastN = structFieldsN[structFieldsN.length - 1];
+      const defN: StructDef = { name, fields: structFieldsN, totalSize: lastN.offset + lastN.size };
       this.structDefs.set(name, defN);
       const variantsN: DiscUnionVariant[] = rawVariantsN.map((rv, idx) => ({
         tag: rv.discVal,

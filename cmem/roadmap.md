@@ -27,6 +27,33 @@
 > The batch itself is recorded as a single unit in `compiler-bugs.md` (post-mortems) and
 > `testing.md` (counts); the README only ever gets the per-phase, user-facing rows.
 
+## Working tree (2026-07-30) — `test/phase19-union-stress-2026-07-30`
+
+3 owner Phase 19 discriminated-union stress tests: `19_DiscUnionSuperStructLayout` (super-struct
+layout + `if` narrowing across three variants), `19_SwitchCaseVariantDispatch` (`switch` on the
+discriminant, including a payload-free variant), `19_ElseIfNarrowingFieldCast` (chained `else if`
+narrowing + `as f64` on a narrowed field). Tests 1 and 2 passed as written.
+
+**FIXED — a field name shared by two variants took the FIRST variant's type.** The super-struct
+builder skipped any field name it had already seen, so
+`{type:"intVal"; val: i32} | {type:"floatVal"; val: f64}` laid `val` out as a 4-byte i32: `25.5`
+was written into the data segment as the i32 `25`, and the narrowed `floatVal` read emitted
+`i32.load` inside an `(result f64)` function — invalid WASM, rejected at instantiate. Shared fields
+are now resolved and numerically widened (i32/f32 → f64, i32 → i64), which is what the source
+language already means, since `i32`/`f64` are both `number` aliases. A non-widenable collision
+(`string` vs `f64`) now throws from the parser naming the union, the field and both types, instead
+of surfacing as `Offset is outside the bounds of the DataView`. The two duplicated layout loops were
+collapsed onto one helper, which also gave inline-block unions the `structType` propagation only the
+named-variant loop had. Regression `19_UnionSharedFieldWidening` pins the fix plus three guards
+(same-type sharing, a field after the widened slot, reversed declaration order).
+
+Suite **403 → 407**; phase filter `"^19_"` 7/7. Full gate run (a `src/wasic.ts` file changed): wasi
+**407/407**, wast 41 files / 12444 / 0 failed, every other suite 0 failures.
+
+Also corrected in memory: `hybrid_tests.ts` and `wasmmerge_guard_tests.ts` are `Deno.test`-based, so
+the documented `deno run` invocation executed nothing and exited 0; and the Go suites race each
+other, not just the wasi suite.
+
 ## Working tree (2026-07-30) — `test/phase31-typedarray-stress-2026-07-30`
 
 3 owner Phase 31 TypedArray stress tests, **all passing as written — the first batch of the series

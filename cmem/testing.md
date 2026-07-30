@@ -13,7 +13,18 @@ deno run ... tests/wasi_tests.ts tests/wasi/wasm_wasi "^18[c-g]_"  # all 5 capab
 # Separate runners:
 deno run ... tests/bindgen_tests.ts     # bindgen unit + integration
 deno run ... tests/jstyper_tests.ts     # jstyper unit
+
+# ⚠️ TWO suites are Deno.test-based and need `deno test`, NOT `deno run`:
+deno test --no-check --allow-read --allow-write --allow-run --allow-env \
+  tests/hybrid_tests.ts tests/wasmmerge_guard_tests.ts     # expect 12 passed (10 + 2)
 ```
+
+**`deno run` on those two exits 0 having executed NOTHING** — no output, no failures, a silent pass.
+Every other `tests/*_tests.ts` is a self-driving script with its own summary block; only
+`hybrid_tests.ts` and `wasmmerge_guard_tests.ts` register `Deno.test(...)` cases (verify with
+`grep -l "Deno.test(" tests/*_tests.ts`). `--no-check` is required: `hybrid_tests.ts:69` has a
+pre-existing `new Set(...)` inference error that fails type-checking but not the tests. (Found
+2026-07-30 — the Phase 19 gate ran them with `deno run` and got two empty results that looked green.)
 
 **CRITICAL:** the runner invokes the **globally installed** `wasmtk` (`WASMTK_BIN = "wasmtk"`).
 After editing anything in `src/` or `deno.json` you MUST reinstall before the suite reflects it.
@@ -88,7 +99,7 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 >
 > | Suite | Result |
 > | --- | --- |
-> | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **403 / 403** — 400 measured 2026-07-28 + the 3 Phase 31 TypedArray stress tests added 2026-07-30, verified green under `"^31_"` (7/7). No `src/` change, so per the corollary above the full suite was NOT re-run |
+> | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **407 / 407** — 403 + the Phase 19 union batch (3 owner stress tests + `19_UnionSharedFieldWidening`), 2026-07-30. Full suite RE-RUN this time: the batch forced a `src/wasic.ts` fix, so the gate applied |
 > | `wast_tests.ts` | **41 files, 12444 passed, 0 failed**, 3466 skipped — ALL CLEAN |
 > | `bindgen_tests.ts` | 142, 0 failed |
 > | `bundle_tests.ts` | **4 / 4** — `StructImport` fixed, no longer a standing failure |
@@ -116,6 +127,13 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 > unqualified references to a namespace's own members were never rewritten, and probing that
 > surfaced (and fixed) string-typed namespace members: **+1 `30_NamespaceStringMembers`**.
 > All post-mortems in compiler-bugs.md.
+>
+> **403 → 407 (2026-07-30):** +3 Phase 19 discriminated-union stress tests
+> (`19_DiscUnionSuperStructLayout`, `19_SwitchCaseVariantDispatch`, `19_ElseIfNarrowingFieldCast`)
+> +1 regression `19_UnionSharedFieldWidening`. Test 3 exposed that a field name shared by two
+> variants took the FIRST variant's type — `val: i32 | f64` laid out as 4-byte i32, truncating
+> `25.5` to `25` on store and emitting `i32.load` into an `(result f64)` function (invalid WASM).
+> Fixed by resolving/widening shared fields instead of skipping them. See compiler-bugs.md.
 >
 > **400 → 403 (2026-07-30):** +3 Phase 31 TypedArray stress tests
 > (`31_TypedArraySubWordAccess`, `31_TypedArrayLiteralInitializer`, `31_TypedArrayFillAndSet`).

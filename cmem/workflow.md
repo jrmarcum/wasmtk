@@ -115,12 +115,15 @@ Order that works:
 # 1. full wasi suite — backgrounded, it exceeds 10 minutes
 deno run --allow-read --allow-write --allow-run --allow-env tests/wasi_tests.ts tests/wasi/wasm_wasi
 
-# 2. every non-Go suite
-#    bindgen bundle merge go_merge dync_conformance dync_cross_runtime
-#    mod varscope wasmmerge_guard hybrid jstyper
+# 2. every non-Go suite — `deno run`, each prints its own summary
+#    bindgen bundle merge mod varscope jstyper dync_conformance dync_cross_runtime
 
-# 3. the Go suites — ALONE (see traps)
-#    go_bindgen go_asyncify
+# 2b. hybrid + wasmmerge_guard are Deno.test-based — `deno run` runs NOTHING and exits 0
+deno test --no-check --allow-read --allow-write --allow-run --allow-env \
+  tests/hybrid_tests.ts tests/wasmmerge_guard_tests.ts     # expect 12 passed
+
+# 3. the Go suites — ONE AT A TIME (see traps)
+#    go_bindgen go_merge go_asyncify
 
 # 4. wast_tests   → expect 41 files / 12444 assertions / 0 failed
 ```
@@ -170,6 +173,10 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
   makes a perfectly green run report a non-zero exit. Trust the runner's own summary.
 - **Do NOT run the Go suites concurrently with the wasi suite on Windows** — TinyGo's build races
   the OS file lock and yields spurious `os error 32` failures that look like real regressions.
+  **Widened 2026-07-30: the Go suites race EACH OTHER too.** Chained back-to-back in one
+  `for s in go_bindgen go_merge go_asyncify` loop, `go_asyncify` reported 10 passed / 2 failed; run
+  alone immediately afterwards it was 12/12 with no source change. Run them one at a time, and
+  re-run any Go failure alone before believing it.
 - **`deno doc --lint` must be clean across all 16 JSR entrypoints** or the JSR score drops below
   100. This has bitten twice: v1.11.4 scored 94 (missing `@module` tag), and v1.11.8 nearly shipped
   with an undocumented `scaffoldZigProject`.
