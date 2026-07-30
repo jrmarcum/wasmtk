@@ -27,6 +27,22 @@
 > The batch itself is recorded as a single unit in `compiler-bugs.md` (post-mortems) and
 > `testing.md` (counts); the README only ever gets the per-phase, user-facing rows.
 
+## Working tree (2026-07-30) — Phase 33 intersection-type stress batch
+
+3 owner Phase 33 intersection stress tests, **all three passing as written** (every printed value
+matched the owner's inline `// Expected:` annotations): `33_IntersectionMixedTypeMerge` (flat merge
+of an f64-first and an i32-second interface, read back through an exported function),
+`33_ChainedIntersectionIntDivide` (three-way `A & B & C` chain as a function parameter + integer
+divide over two merged fields), `33_IntersectionBasePointerParam` (an intersection value passed to a
+function typed with one of its CONSTITUENT interfaces). Suite **407 → 410**; phase filter `"^33_"`
+7/7. Committed straight to `main` — no `src/` change, so no full-suite run.
+
+**A follow-up probe on test 3's mechanic then found a real bug**: base-pointer passing is only sound
+when the base interface is the intersection's FIRST constituent. Reversing the declaration to
+`type Sprite = Renderable & Transform` made `getScaleArea(hero)` print `1.6` instead of `6` — silent
+wrong output, no error. Post-mortem + fix in [compiler-bugs.md](compiler-bugs.md) § "Phase 33
+intersection base-prefix".
+
 ## Release status (2026-07-30) — v1.11.11: discriminated-union shared variant fields
 
 **v1.11.11 — merged to `main` from `test/phase19-union-stress-2026-07-30` (commits `84bf88f` +

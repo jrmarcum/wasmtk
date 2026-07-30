@@ -99,7 +99,7 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 >
 > | Suite | Result |
 > | --- | --- |
-> | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **407 / 407** — 403 + the Phase 19 union batch (3 owner stress tests + `19_UnionSharedFieldWidening`), 2026-07-30. Full suite RE-RUN this time: the batch forced a `src/wasic.ts` fix, so the gate applied |
+> | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **410 / 410** — 407 + the Phase 33 intersection batch (3 owner stress tests), 2026-07-30. All three passed as written; the phase filter `"^33_"` was 7/7 |
 > | `wast_tests.ts` | **41 files, 12444 passed, 0 failed**, 3466 skipped — ALL CLEAN |
 > | `bindgen_tests.ts` | 142, 0 failed |
 > | `bundle_tests.ts` | **4 / 4** — `StructImport` fixed, no longer a standing failure |
@@ -127,6 +127,14 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 > unqualified references to a namespace's own members were never rewritten, and probing that
 > surfaced (and fixed) string-typed namespace members: **+1 `30_NamespaceStringMembers`**.
 > All post-mortems in compiler-bugs.md.
+>
+> **407 → 410 (2026-07-30):** +3 Phase 33 intersection-type stress tests
+> (`33_IntersectionMixedTypeMerge`, `33_ChainedIntersectionIntDivide`,
+> `33_IntersectionBasePointerParam`). All three passed as written, every printed value matching the
+> owner's inline `// Expected:` annotations, so the `"^33_"` filter (7/7) was the whole gate. **A
+> follow-up probe on test 3's mechanic did surface a bug** — base-pointer passing is only sound when
+> the base interface is the FIRST constituent of the intersection; see compiler-bugs.md § "Phase 33
+> intersection base-prefix".
 >
 > **403 → 407 (2026-07-30):** +3 Phase 19 discriminated-union stress tests
 > (`19_DiscUnionSuperStructLayout`, `19_SwitchCaseVariantDispatch`, `19_ElseIfNarrowingFieldCast`)
