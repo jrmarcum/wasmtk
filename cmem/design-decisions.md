@@ -901,16 +901,23 @@ silently break (all `src/wasic.ts`):
   | ≤ 2.9.1 (2.9.1 shipped 2026-07-01) | v1.7.0, v1.11.1, v1.11.2 | ✅ present |
   | ≥ 2.9.2 (2.9.2 shipped 2026-07-08) | v1.11.3 … v1.11.12 (ten) | ❌ absent |
 
-  **This is CORRELATION, not a proven mechanism** — no Deno release note from 2.9.2 through 2.9.4
-  mentions provenance (2.9.4's only publish entry is `fix(publish): constrain generated source
-  rewrites`, unrelated), and a JSR- or GitHub-side change in the same window fits the data equally
-  well. It could not be confirmed from CI logs: the Actions logs endpoint returns 403
-  unauthenticated and `gh` is not installed on this machine.
-  **Pinned `deno-version: v2.9.1` (owner decision 2026-07-30)** as the cheapest test — one line,
-  revertible, decided by the very next release. The regression persists through 2.9.4, so pinning
-  forward was not an option. **If the release after the pin is attested, the diagnosis holds; if it
-  is not, Deno is eliminated and the next suspects are JSR and GitHub.** Unpin once upstream ships a
-  fix, and check provenance on the release that follows.
+  ❌ **The Deno version was TESTED and RULED OUT — do not re-try it.** The split above looked
+  causal, so **v2.0.0 was published with `deno-version: v2.9.1` pinned** (2026-07-30) — the exact
+  version that produced attested releases a month earlier. **It published with no provenance
+  anyway** (`rekorLogId` null; the tag genuinely carried the pin, verified with
+  `git show v2.0.0:.github/workflows/publish.yml`). So the 2.9.1/2.9.2 correlation was coincidental.
+  The pin was reverted to floating `v2.x` immediately afterwards — it bought nothing and only cost
+  the 2.9.2–2.9.4 fixes. Corroborating: no Deno release note from 2.9.2 through 2.9.4 mentions
+  provenance at all (2.9.4's only publish entry is `fix(publish): constrain generated source
+  rewrites`, unrelated).
+
+  **Remaining suspects: JSR-side or GitHub-side changes in the 2026-07-03 → 07-09 window.** What is
+  already known-good and needs no re-checking: `publish.yml` (unchanged since 2026-06-15 and
+  byte-identical to what produced attested releases), `id-token: write`, the OIDC prerequisite step
+  (passes, no `::warning::`), the JSR↔GitHub repo link (intact), and the absence of
+  `--no-provenance`. **The next diagnostic needs an authenticated `gh`** (not installed here; the
+  Actions logs endpoint 403s unauthenticated): `gh run view <id> --log` on the v1.11.2 vs v1.11.3
+  runs. The "Verify provenance was recorded on JSR" step will detect a fix whenever one lands.
 - **The OIDC diagnostic step is NOT sufficient evidence of provenance — it gave 10 releases of false
   assurance.** It checks only the PREREQUISITE (are the OIDC env vars present), and the v1.11.12 run
   emitted no `::warning::` at all (verified via the check-runs annotations API — its one annotation

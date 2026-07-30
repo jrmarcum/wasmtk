@@ -217,14 +217,14 @@ version with one**, v1.11.3 the first without. **A green publish run is NOT evid
 — the OIDC diagnostic step passed on all 10 affected releases (the v1.11.12 run emitted no
 `::warning::` at all; its only annotation is an unrelated Node 20 notice, checked via the check-runs
 annotations API). Only JSR's `rekorLogId` is evidence. A **"Verify provenance was recorded on JSR"**
-step now runs LAST in `publish.yml` and fails the job when that field is null. **Traced to the Deno
-version and PINNED:** the workflow floated `deno-version: v2.x`, and the provenance history splits
-exactly on the Deno 2.9.1 → 2.9.2 boundary (2.9.2 shipped 2026-07-08; v1.11.2 published 07-03 on
-2.9.1 attested, v1.11.3 on 07-09 on 2.9.2 not attested; the regression persists through 2.9.4).
-`deno-version` is now pinned to **`v2.9.1`**. This is correlation, not a proven mechanism — see
-design-decisions.md. **The next release decides it:** if it is attested, the diagnosis holds; if not,
-Deno is eliminated. Confirming from CI logs would need an authenticated `gh` (not installed here —
-the Actions logs endpoint 403s unauthenticated).
+step now runs LAST in `publish.yml` and fails the job when that field is null — **it fired correctly
+on v2.0.0**, which is the first release to report its own missing provenance instead of passing
+silently. **The Deno version was tested and RULED OUT:** v2.0.0 was published with `deno-version`
+pinned to `v2.9.1` (the last version that ever produced provenance) and came out unattested anyway,
+so the clean-looking 2.9.1/2.9.2 split was coincidental. The pin has been reverted to `v2.x`.
+Remaining suspects are JSR-side and GitHub-side changes in the 2026-07-03 → 07-09 window; full
+elimination list in design-decisions.md. Confirming from CI logs needs an authenticated `gh` (not
+installed here — the Actions logs endpoint 403s unauthenticated).
 
 **⚠️ `deno doc --lint` is NOT a doc-coverage check (measured 2026-07-30).** It passed clean on all
 16 entrypoints while JSR reported `percentageDocumentedSymbols: 0.98039216`. It catches
@@ -245,33 +245,25 @@ console.log("no module description:",nm," documented:",(tot-un)+"/"+tot);'
 # expect: no module description: 0   documented: 100/100
 ```
 
-⚠️ **CI publishes on a PINNED Deno (`v2.9.1`) while development happens on whatever is installed
-locally (2.9.4 as of 2026-07-30) — so you develop FORWARD and publish BACKWARD.** Source that uses
-an API added after the pinned version type-checks fine locally and then fails `deno publish` **in
-CI, after the tag has already been pushed** — the worst possible moment, since the tag exists but
-the release does not. **Mitigation, and it is mandatory while the pin is in place: run the dry-run
-under the PINNED version too, before tagging.** The pinned build is kept out of the way:
+ℹ️ **`deno-version` in `publish.yml` floats at `v2.x`, so CI publishes on whatever Deno is newest
+that day.** It was briefly pinned to `v2.9.1` for the v2.0.0 release to test the provenance
+hypothesis; that was **ruled out** and the pin reverted (see design-decisions.md). **If it is ever
+pinned again, add a second dry-run under the pinned version to the checklist below** — otherwise
+development happens forward on a newer Deno while CI publishes backward, and source using a newer
+API would type-check locally then fail `deno publish` **in CI after the tag is already pushed**.
+The one-time fetch is
+`curl -L -o deno.zip https://github.com/denoland/deno/releases/download/vX.Y.Z/deno-x86_64-pc-windows-msvc.zip`.
+Measured 2026-07-30 while the pin was in place: 2.9.1 and 2.9.4 both give `Success` on the dry-run
+and **agree** on `deno fmt --check` (19 files), so formatting is not version-sensitive between them.
 
-```bash
-# one-time: fetch the pinned CI Deno (match the deno-version in publish.yml)
-curl -L -o deno291.zip https://github.com/denoland/deno/releases/download/v2.9.1/deno-x86_64-pc-windows-msvc.zip
-# then, before every release:
-/path/to/deno291/deno.exe publish --dry-run --allow-dirty    # MUST pass — this is what CI runs
-```
-
-Verified 2026-07-30 for the 2.0.0 tree: 2.9.1 gives `Success` on the dry-run **and** agrees with
-2.9.4 on `deno fmt --check` (19 files clean), so formatting is not version-sensitive between them.
-
-**The pin also buys something:** `deno.json` declares **no** Deno floor, so nothing else in the
-project ever validates a minimum version. Publishing on 2.9.1 means every release is proven to
-type-check there, which is a free compatibility floor for consumers. When the pin is eventually
-lifted, that floor check disappears with it.
+⚠️ **`deno.json` declares NO Deno floor**, so nothing in this project validates a minimum supported
+version. A release can silently start requiring a newer Deno than a consumer has, and the first
+signal would be a user report.
 
 The full green pre-publish checklist (run before each release):
 
 ```bash
 deno publish --dry-run --allow-dirty   # THE gate: type-check + slow-types + package — must pass
-<pinned-deno> publish --dry-run --allow-dirty   # SAME gate on the pinned CI version — see above
 deno doc --lint <all 16 exports>       # clean — necessary but NOT sufficient, see the note above
 deno doc --json <all 16 exports> | …   # the REAL coverage check — expect 100/100, 0 missing modules
 deno lint main.ts src/                 # clean (21 files)
