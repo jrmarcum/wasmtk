@@ -30,9 +30,6 @@
   this is recovery-of-coverage, not a bug to chase on our side.
 - 🔴 **Fix the `wast` runner's memory retention** — sized and argued in § "SCOPED: work opened by the
   2026-08-20 spec-corpus session" below. The only open item with a user-visible symptom.
-- 🔴 **Three Go suites cannot run here (TinyGo 0.41.1 caps at Go 1.26; Go 1.27 landed 2026-08-20)** —
-  environmental, hours old not long-standing, fix known. Puts a three-suite hole in the "entire
-  suite set" gate. Detail + the three ways out in the SCOPED section below.
 - ⏳ **Decide whether to pin `*.wast text eol=lf` in `.gitattributes`.** Deliberately NOT done on
   2026-08-20 — a repo-wide checkout-behaviour change shouldn't ride along inside a corpus sync. It
   is a one-liner whenever wanted; rationale in [design-decisions.md](design-decisions.md).
@@ -87,32 +84,28 @@ measurements in [compiler-bugs.md](compiler-bugs.md) § "wast runner memory".
 failure, and `--update-baseline` currently carries subprocess-chunking machinery that exists purely
 to work around it. Fixing it lets that machinery be deleted.
 
-### Go 1.27 vs TinyGo — S, fix is known, NOT long-standing
+### Go 1.27 vs TinyGo — ✅ RESOLVED 2026-08-20 (owner downgraded to Go 1.26.7)
 
-`go_merge` (0/1), `go_bindgen` (0/1), `go_asyncify` (0/12) fail with `requires go version 1.19
-through 1.26, got go1.27`.
+Was: `go_merge` (0/1), `go_bindgen` (0/1), `go_asyncify` (0/12) failing with `requires go version
+1.19 through 1.26, got go1.27`. **Now green: 7/7, 7/7, 12/12** — all matching their recorded
+baselines. The "entire suite set" gate has no hole on this machine again.
 
-**Dates matter here, so they are recorded.** Go **1.27.0 was installed on this machine 2026-08-20
-at 09:36** — the same day. So this is hours old, not a long-standing hole. (An earlier note called
-it "pre-existing": true only in the narrow sense that was actually verified — re-running `go_merge`
-with `src/wast.ts` reverted to HEAD reproduced it, proving it was not caused by that change. That
-test says nothing about *how long* it had been there, and the answer turns out to be one morning.)
+**Toolchain now pinned at Go 1.26.7 / TinyGo 0.41.1** (`tinygo version` confirms
+"using go version go1.26.7"). Keep them in step — this WILL recur:
 
-**TinyGo 0.41.1 is the newest RELEASE** (2026-04-22) and caps at Go 1.26 — so this is not a stale
-local install to upgrade away. Go 1.27 support landed on TinyGo's `dev` branch (`0.42.0-dev`) in
-"all: build/test using Go 1.27.0", dated **2026-08-20** — the same day again, and still unreleased.
-
-Three ways out, cheapest first:
-1. **Wait for TinyGo 0.42.0.** Support is already on `dev`; nothing to do but re-run the suites.
-2. **Point TinyGo at an older GOROOT.** Scoop's `versions` bucket tops out at `go124` (1.24.13) —
-   no `go125`/`go126` manifest exists — which is inside TinyGo 0.41.1's supported 1.19–1.26 range.
-   `scoop install go124` and set `GOROOT` for the Go suites only, leaving 1.27 as the default
-   toolchain. **This adds a second Go toolchain to the machine — an environment change, so it is
-   the owner's call, not something to do silently.**
-3. Build TinyGo from `dev`. Most work, least reason.
-
-Until one of those, **"ran the ENTIRE suite set" carries a three-suite asterisk on this machine** —
-including in the 2026-08-20 commit messages that claim it.
+- **TinyGo 0.41.1 is the newest RELEASE** (2026-04-22) and caps at **Go 1.26**. It was not a stale
+  install; no released TinyGo supported 1.27 at the time.
+- Go 1.27.0 had been installed 2026-08-20 09:36 and broke the three suites the same morning — this
+  was same-day breakage from a toolchain upgrade, never a long-standing environmental quirk.
+- **Go 1.27 support IS on TinyGo `dev`** (`0.42.0-dev`, commit "all: build/test using Go 1.27.0",
+  2026-08-20). **When 0.42.0 ships, Go 1.27 becomes safe again** — that is the moment to move
+  forward, not before.
+- Note for whoever hits this next: scoop's `versions` bucket has **no `go125`/`go126` manifest**
+  (it jumps `go124` 1.24.13 → `go` 1.27.0), so a scoop-only downgrade lands on 1.24.13. 1.26.7 came
+  from outside scoop.
+- **The Go suites are not Go-only coverage** — `go_merge` compiles a TypeScript driver with `wasic`
+  (see [testing.md](testing.md)), so leaving them red silently drops `wasic` coverage too. That is
+  the real cost of tolerating this, and the reason to fix it rather than wait it out.
 
 ### External / decisions — no work, just tracking
 
