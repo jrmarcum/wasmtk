@@ -926,6 +926,11 @@ wasmtk wast tests/module/wasm_wast/testsuite-main   # run a whole directory tree
 wasmtk wast file.wast --verbose               # show skip/toolchain-gap detail
 ```
 
+> **Known limitation (2026-08-20):** a directory run holds every file's instantiated modules for the
+> lifetime of the process, so running the full 288-file spec corpus in one go exhausts the V8 heap
+> (`Fatal JavaScript out of memory`). One file — `proposals/custom-descriptors/exact.wast` —
+> exhausts it on its own. Run a subtree, or a file at a time, until this is fixed.
+
 It splits the script into commands, assembles each module with the WABT backend, instantiates it on
 the host engine with the standard `spectest` imports + a `register` link registry, and executes the
 `assert_return` / `assert_trap` / `assert_invalid` / `assert_malformed` / `assert_unlinkable` /

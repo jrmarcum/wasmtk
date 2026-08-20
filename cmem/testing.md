@@ -100,7 +100,7 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 > | Suite | Result |
 > | --- | --- |
 > | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **417 / 417** — 412 + the Phase 34 type-predicate batch (3 owner stress tests; 2 passed as written, 1 exposed the inline-target bug) + 2 regressions, 2026-07-30. Full suite RE-RUN: the fix changed `src/wasic.ts`, so the gate applied |
-> | `wast_tests.ts` | **41 files, 12444 passed, 0 failed**, 3467 skipped — ALL CLEAN (corpus synced to upstream 2026-08-20; skip 3466→3467 is one new `loop.wast` assertion) |
+> | `wast_tests.ts` | **280 files, 27588 passed, 0 failed**, 37185 skipped — ALL CLEAN (rebuilt 2026-08-20 as a per-file baseline gate; was 41 files / 12444) |
 > | `bindgen_tests.ts` | 142, 0 failed |
 > | `bundle_tests.ts` | **4 / 4** — `StructImport` fixed, no longer a standing failure |
 > | `mod_tests.ts` · `merge_tests.ts` · `varscope_tests.ts` · `wasmmerge_guard_tests.ts` | 0 failed |
@@ -198,6 +198,49 @@ literals encoded as 0, fixed in wabt-ts 1.3.1). See compiler-bugs.md.
 
 Historical baseline under npm:wabt+npm:binaryen was 446/446 (2026-05-25); the per-phase historical
 counts in README are a record of when each phase first went green, not a live invariant.
+
+## `wast_tests` is a PER-FILE BASELINE gate (rebuilt 2026-08-20)
+
+**280 files, 27588 passing assertions, 0 failed** — up from 41 files / 12444, because the gate no
+longer needs a hand-curated file list. Expected pass counts live in **`tests/wast_baseline.json`**
+(tracked). Every baselined file must produce **exactly** its baseline: fewer → FAIL (coverage lost),
+more → FAIL (baseline stale, re-record deliberately), any execution failure → FAIL as before.
+
+**Why it changed.** The old gate asserted `failed === 0` plus one *global* floor
+(`totalPass >= 10000` against ~12444). It could not see a single file losing coverage. When the
+2026-08-20 corpus sync took `return_call.wast` from 44 passes to 12, the gate still printed
+ALL CLEAN — the loss was caught by hand-measuring before/after, not by the gate. A module that fails
+to assemble becomes SKIPs by design, so **silent coverage loss is indistinguishable from success**
+unless something pins the per-file number. The corpus could have shed ~2400 more passes unnoticed.
+
+- **A baseline of 0 is deliberate** — it pins a file the toolchain currently cannot assemble at all
+  (e.g. `ref_null.wast`, 0 pass / 34 skip). When the backend learns to encode `ref.null`, the gate
+  *says so* instead of absorbing the win silently.
+- **7 files with genuine execution failures are excluded, not pinned** (`load1`, `linking`,
+  `imports`, `annotations`, `type-equivalence`, `float_memory`, `linking0`). Pinning them would
+  freeze real bugs in as expected. They are reported each run as "not in the baseline".
+- **Re-record** (rewrites the tracked JSON — a reviewable act, not a side effect):
+  ```bash
+  deno run --allow-read --allow-write --allow-net --allow-run tests/wast_tests.ts --update-baseline
+  ```
+  Verified deterministic: two consecutive regenerations are byte-identical. `--allow-run` is
+  required because the rescan chunks across subprocesses (see the memory limitation below).
+
+## The `wast` runner leaks memory across files (OPEN, found 2026-08-20)
+
+**`wasmtk wast <dir>` over the full 288-file corpus dies** with `Fatal JavaScript out of memory:
+Ineffective mark-compacts near heap limit`. This is our bug, not the corpus's, and the directory
+form is the one README documents.
+
+- Memory climbs to ~1.9 GB within the first handful of files and then creeps ~1–6 MB per file.
+- **One file exhausts the heap on its own**: `proposals/custom-descriptors/exact.wast`.
+- A partial fix landed 2026-08-20: `src/wast.ts` used to call `await wabt()` **per file**, creating a
+  fresh WABT module that was never released; it is now a process-wide singleton (`getWabt()`). That
+  was real, but **not sufficient** — the dir run still OOMs, so the bulk of the retention is
+  elsewhere (most likely instantiated modules/memories, including the 64-bit memory tests).
+- Consequences today: the 280-file gate *does* fit in one process; a 288-file rescan does not, which
+  is why `--update-baseline` chunks across subprocesses and auto-discovers unrunnable files rather
+  than carrying a hand-maintained skip list.
 
 ## Vendored spec testsuite — provenance and re-sync (2026-08-20)
 

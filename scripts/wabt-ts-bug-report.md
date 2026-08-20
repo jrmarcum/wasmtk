@@ -71,10 +71,18 @@ rejecting it may be a genuine divergence. We have not confirmed that against a b
 
 ### Limits of our evidence — please sanity-check before acting
 
-- Everything above is from `jsr:@jrmarcum/wabt-ts@1.3.5` via the **`/compat`** entry point. We have
-  not tried the native API, and it is possible the native surface exposes a resolve step that makes
-  all of this a usage error on our side. **If so, tell us and we will fix our caller** — the compat
-  path is what `wasmtk wast` uses today.
+- ~~Everything above is from the `/compat` entry point; the native API might expose a resolve step
+  that makes this a usage error on our side.~~ **Checked (2026-08-20): it does not.** We re-ran every
+  case through the `./wat2wasm` tool export as well, and it reports **identical** errors — `ref.null
+  func` throws the same binary-writer error, and `ref.null $t` / `ref.null exn` /
+  `(module definition …)` return `result=1` with `binary.byteLength === 0` and the same messages.
+  Neither entry point exposes `resolveNames`. So this is not a caller mistake, and there is no
+  API-level workaround available to us.
+  - Note for whoever triages: `wat2wasm` **does not throw** on parse errors — it returns a result
+    code plus an empty `binary`. A caller checking only for a thrown exception will read a failed
+    assembly as success. (It caught us out while writing this report.)
+- Stack trace for the encode bug points at `src/writer/binary-writer.ts:609`,
+  `BodyWriter.onRefNullExpr`.
 - Our reading of upstream wabt is from the **source on GitHub, not a local build or a `wat2wasm`
   run**. Treat the parity claims as "please confirm", not as established.
 - We have not bisected which wabt-ts version introduced this. It may never have worked; our corpus

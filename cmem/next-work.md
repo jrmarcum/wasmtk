@@ -28,6 +28,16 @@
   upstream wabt**, so they need an upstream feature, not a wabt-ts release. Report filed at
   `scripts/wabt-ts-bug-report.md`. **Zero failures throughout — gate still clean at 12444/0/3467** —
   this is recovery-of-coverage, not a bug to chase on our side.
+- 🔴 **Fix the `wast` runner's memory retention.** `wasmtk wast <dir>` on the full corpus OOMs — a
+  documented README command that crashes. The per-file WABT instance was fixed 2026-08-20 and was
+  NOT enough; the remaining retention is most likely instantiated modules/memories. Details +
+  measurements in [compiler-bugs.md](compiler-bugs.md) § "wast runner memory". Until it is fixed,
+  README carries a known-limitation note and `--update-baseline` chunks across subprocesses.
+- 🔴 **Three Go suites cannot run on this machine: TinyGo rejects Go 1.27.** `go_merge` (0/1),
+  `go_bindgen` (0/1), `go_asyncify` (0/12) all fail with `requires go version 1.19 through 1.26, got
+  go1.27`. **Verified pre-existing** (identical failure with `src/wast.ts` reverted to HEAD), i.e.
+  environmental, not a code regression — but it means the "entire suite set" gate currently has a
+  three-suite hole here. Needs a Go downgrade or a newer TinyGo.
 - ⏳ **Decide whether to pin `*.wast text eol=lf` in `.gitattributes`.** Deliberately NOT done on
   2026-08-20 — a repo-wide checkout-behaviour change shouldn't ride along inside a corpus sync. It
   is a one-liner whenever wanted; rationale in [design-decisions.md](design-decisions.md).

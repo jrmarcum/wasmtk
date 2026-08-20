@@ -569,6 +569,25 @@ a non-canonical NaN payload can't survive the JS number boundary (V8 canonicaliz
 The runner also counts validation-assertion toolchain leniency (`assert_invalid`/`assert_malformed` that
 wabt+V8 fails to reject) as **skips**, not failures.
 
+### wast runner memory — OPEN as of 2026-08-20 (OURS, not a backend bug)
+
+`wasmtk wast <dir>` over the full 288-file spec corpus dies with `Fatal JavaScript out of memory:
+Ineffective mark-compacts near heap limit`. Heap reaches ~1.9 GB within the first few files, then
+creeps ~1–6 MB per file; `proposals/custom-descriptors/exact.wast` exhausts the heap **on its own**.
+
+**Partial fix landed (2026-08-20).** `runWast` called `await wabt()` per file — a fresh WABT module
+per file, never released — now a process-wide singleton via `getWabt()` in `src/wast.ts`. Measured:
+that alone did NOT stop the dir-run OOM, so most retention is elsewhere. Prime suspect is
+instantiated modules and their `WebAssembly.Memory` buffers (the 64-bit memory tests reserve large
+memories), which V8 does not reclaim promptly. **Do not assume the singleton fixed it** — it did
+not, and re-testing after a "fix" is the whole point here.
+
+Knock-ons to be aware of before touching this:
+- The 280-file `wast_tests` gate fits in one process; a full 288-file rescan does not. That is why
+  `--update-baseline` chunks across subprocesses.
+- An OOM **cannot be caught in-process**, so any single-process full-corpus scan is one bad file away
+  from losing all its results.
+
 ### wabt-ts `ref.null` + parser gaps — OPEN as of 2026-08-20 (wabt-ts 1.3.5)
 
 > **Corrected 2026-08-20 (same day).** The first version of this entry blamed

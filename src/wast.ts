@@ -382,6 +382,21 @@ export interface WastResult {
   failures: string[];
 }
 
+/**
+ * Lazily-created, PROCESS-WIDE WABT instance.
+ *
+ * This used to be `await wabt()` inside `runWast`, i.e. a brand-new WABT module per file, never
+ * released. One file was fine; a directory run was not. `wasmtk wast <dir>` over the 288-file spec
+ * corpus climbed past 4 GB and died with "Fatal JavaScript out of memory: Ineffective mark-compacts
+ * near heap limit" around the 18-second mark — and that directory form is the one the README
+ * documents. Reusing a single instance is also what wabt's own JS API expects: one module, many
+ * `parseWat` calls, each result `destroy()`ed by the caller (which `assemble` already does).
+ */
+let wabtModPromise: Promise<WabtModule> | null = null;
+function getWabt(): Promise<WabtModule> {
+  return (wabtModPromise ??= (wabt as unknown as () => Promise<WabtModule>)());
+}
+
 /** Run a single `.wast` file. Never throws — every command's outcome is tallied. */
 export async function runWast(
   path: string,
@@ -398,7 +413,7 @@ export async function runWast(
     return res;
   }
 
-  const wabtMod: WabtModule = await (wabt as unknown as () => Promise<WabtModule>)();
+  const wabtMod: WabtModule = await getWabt();
 
   let cur: WebAssembly.Instance | null = null;
   const named = new Map<string, WebAssembly.Instance>();
