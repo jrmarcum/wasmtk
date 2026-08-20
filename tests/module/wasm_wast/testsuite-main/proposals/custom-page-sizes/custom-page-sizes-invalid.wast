@@ -104,12 +104,12 @@
   (module
     (memory (import "m" "small-pages-memory") 0 (pagesize 65536))
   )
-  "memory types incompatible"
+  "incompatible import type"
 )
 
 (assert_unlinkable
   (module
     (memory (import "m" "large-pages-memory") 0 (pagesize 1))
   )
-  "memory types incompatible"
+  "incompatible import type"
 )
