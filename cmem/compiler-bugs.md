@@ -569,24 +569,44 @@ a non-canonical NaN payload can't survive the JS number boundary (V8 canonicaliz
 The runner also counts validation-assertion toolchain leniency (`assert_invalid`/`assert_malformed` that
 wabt+V8 fails to reject) as **skips**, not failures.
 
-### Parse gaps — OPEN as of 2026-08-20 (wabt-ts 1.3.5)
+### wabt-ts `ref.null` + parser gaps — OPEN as of 2026-08-20 (wabt-ts 1.3.5)
 
-Surfaced by refreshing the vendored spec corpus to upstream `65a43d2e` (2026-08-20). These are
-**parse**-level, not miscompiles: wabt-ts rejects the text outright, so `src/wast.ts` skips the module
-**and every action that depends on it**. No assertion fails, so the gate stays green — the only visible
-effect is a pass count draining into skips, which is exactly what a real regression looks like from a
-distance. Measure per file, not by total.
+> **Corrected 2026-08-20 (same day).** The first version of this entry blamed
+> "typed function references `(ref null $t)`" and said a wabt-ts bump would likely recover them. Both
+> were wrong, and the correction matters because it changes who owns the fix. `(ref null $t)` as a
+> **type** (param/result) assembles fine. Two of the three gaps are **parity with upstream wabt**, so
+> no wabt-ts bump will move them. And the biggest one was missed entirely.
 
-| Construct wabt-ts 1.3.5 rejects | Where | Effect |
-| --- | --- | --- |
-| `(ref null $t)` typed function references | `return_call.wast:95` | module rejected → 44 → **12** pass, +35 skip |
-| `(module definition …)` | `proposals/custom-page-sizes/memory_max{,_i64}.wast` | all modules rejected → 4 → **2** pass each |
+Surfaced by the 2026-08-20 corpus sync to upstream `65a43d2e`. None of these fail an assertion —
+`src/wast.ts` skips a module it cannot assemble, **and every action depending on it** — so the gate
+stays green while coverage silently drains into skips. That is exactly what a regression looks like
+from a distance: **measure per file, never by total.**
 
-`enable_all: true` is **already** set on `parseWat` (`src/wast.ts:441`) — these are missing features in
-the wabt-ts parser, not a flag we forgot to pass. Neither construct is anything `wasic` emits, so no
-wasmtk output path is affected. **Re-measure these three files on the next wabt-ts bump** — both are
-candidates to come back. Provenance + the full per-file manifest live in
-[testing.md](testing.md) § "Vendored spec testsuite".
+**1. `ref.null` cannot be encoded for ANY heap type — the big one (genuine wabt-ts bug).**
+Parses for most heap types, then throws in wabt-ts's own binary writer:
+`binary writer: unresolved name-var "funcref" for var — run resolveNames before encoding`.
+For `any`/`eq`/`i31`/`none`/`nofunc`/`noextern` the message names **`funcref`** — the *wrong* type —
+so the heap type looks like it is dropped at parse time and defaulted. `exn`/`struct`/`array` fail
+earlier, at parse. `ref.func $g` encodes fine, so it is specific to `ref.null`. The error tells the
+caller to run `resolveNames`, but **the `/compat` parse result exposes no such method**. Cost:
+`ref.null func|extern` appears in **27** corpus files; `ref_null.wast` is **0 pass / 34 skip** —
+entirely dead.
+
+**2. `ref.null $t` (concrete type index) — parity with upstream wabt, NOT a wabt-ts bug.**
+Upstream's `ParseRefKind` errors `ErrorExpected({"func","extern","exn"})`, i.e. abstract heap types
+only. This is the actual `return_call.wast:95` killer (col 45 = the `$t` operand, **not** the
+`(ref null $t)` result type). Cost: `return_call.wast` 44 → **12** pass, +35 skip.
+
+**3. `(module definition …)` — parity with upstream wabt, NOT a wabt-ts bug.** Upstream's parser has
+no `definition` handling either. Cost: `proposals/custom-page-sizes/memory_max{,_i64}.wast`
+4 → **2** pass each. 8 corpus files use the form.
+
+`enable_all: true` is **already** set on `parseWat` (`src/wast.ts:441`) — none of this is a flag we
+forgot to pass. None of these constructs are anything `wasic` emits, so no wasmtk output path is
+affected; the cost is spec-runner coverage only. Report written up for the wabt-ts team in
+`scripts/wabt-ts-bug-report.md` (§ "NEW — 2026-08-20"), including the limits of our evidence: it is
+all via `/compat`, and the upstream-parity claims are read from GitHub source, not a built binary.
+Provenance + the full per-file manifest: [testing.md](testing.md) § "Vendored spec testsuite".
 
 ---
 

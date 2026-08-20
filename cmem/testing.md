@@ -230,17 +230,20 @@ is upstream's own content, not local drift.** Upstream has not touched `proposal
 the 3 `"multiple tables"` assertions, fixed in the proposal repo but never propagated into the
 testsuite mirror. **Do not "fix" this locally** — it is an upstream propagation gap to file there.
 
-### Known wabt-ts parse gaps exposed by the 2026-08-20 sync
+### Known wabt-ts gaps exposed by the 2026-08-20 sync
 
 Not wasmtk bugs — the runner skips any module wabt cannot assemble, and its dependent actions with
 it. Each cost passes without costing a single failure:
 
-| File                                           | Pass Δ     | Construct wabt-ts 1.3.5 rejects                   |
-| ---------------------------------------------- | ---------- | ------------------------------------------------- |
-| `return_call.wast`                             | 44 → 12    | `(ref null $t)` typed function references (`:95`) |
-| `proposals/custom-page-sizes/memory_max*.wast` | 4 → 2 each | `(module definition …)`                           |
+| File | Pass Δ | Cause |
+| --- | --- | --- |
+| `return_call.wast` | 44 → 12 | `ref.null $t` (concrete type index) at `:95` — **parity with upstream wabt** |
+| `proposals/custom-page-sizes/memory_max*.wast` | 4 → 2 each | `(module definition …)` — **parity with upstream wabt** |
+| `ref_null.wast` (pre-existing, not from this sync) | 0 / 34 skip | `ref.null` cannot encode for **any** heap type — a genuine wabt-ts bug |
 
-Both are candidates to recover on the next wabt-ts bump — re-measure these three files after one.
+**Only the third is a wabt-ts bug**; the first two match upstream wabt's own parser, so a wabt-ts
+bump will not move them. Full analysis in [compiler-bugs.md](compiler-bugs.md) § "wabt-ts `ref.null`
++ parser gaps"; the report for the wabt-ts team is `scripts/wabt-ts-bug-report.md`.
 
 ## CI / pre-publish gate
 
