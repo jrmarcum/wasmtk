@@ -28,16 +28,10 @@
   upstream wabt**, so they need an upstream feature, not a wabt-ts release. Report filed at
   `scripts/wabt-ts-bug-report.md`. **Zero failures throughout — gate still clean at 12444/0/3467** —
   this is recovery-of-coverage, not a bug to chase on our side.
-- 🔴 **Fix the `wast` runner's memory retention.** `wasmtk wast <dir>` on the full corpus OOMs — a
-  documented README command that crashes. The per-file WABT instance was fixed 2026-08-20 and was
-  NOT enough; the remaining retention is most likely instantiated modules/memories. Details +
-  measurements in [compiler-bugs.md](compiler-bugs.md) § "wast runner memory". Until it is fixed,
-  README carries a known-limitation note and `--update-baseline` chunks across subprocesses.
-- 🔴 **Three Go suites cannot run on this machine: TinyGo rejects Go 1.27.** `go_merge` (0/1),
-  `go_bindgen` (0/1), `go_asyncify` (0/12) all fail with `requires go version 1.19 through 1.26, got
-  go1.27`. **Verified pre-existing** (identical failure with `src/wast.ts` reverted to HEAD), i.e.
-  environmental, not a code regression — but it means the "entire suite set" gate currently has a
-  three-suite hole here. Needs a Go downgrade or a newer TinyGo.
+- 🔴 **Fix the `wast` runner's memory retention** — sized and argued in § "SCOPED: work opened by the
+  2026-08-20 spec-corpus session" below. The only open item with a user-visible symptom.
+- 🔴 **Three Go suites cannot run here (TinyGo rejects Go 1.27)** — environmental, pre-existing,
+  but it puts a three-suite hole in the "entire suite set" gate. Detail in the SCOPED section below.
 - ⏳ **Decide whether to pin `*.wast text eol=lf` in `.gitattributes`.** Deliberately NOT done on
   2026-08-20 — a repo-wide checkout-behaviour change shouldn't ride along inside a corpus sync. It
   is a one-liner whenever wanted; rationale in [design-decisions.md](design-decisions.md).
@@ -45,6 +39,69 @@
   `.gitattributes` keeps them that way; the markdown was deliberately left alone (bare `deno fmt`
   mangles tables/code-fences — see [workflow.md](workflow.md)). If it is ever wanted, it needs its
   own pass with `fmt.exclude` tuned, not a blanket run.
+
+## SCOPED: work opened by the 2026-08-20 spec-corpus session
+
+Everything below came out of one session (corpus sync -> per-file baseline gate -> wabt-ts report).
+Sized S/M/L by *uncertainty*, not keystrokes. **Nothing here is a release blocker** — every suite
+that can run on this machine is green, and none of it touches `wasic` codegen.
+
+### The 15 execution failures the new gate made visible
+
+These live in the 7 files excluded from `tests/wast_baseline.json`. **They were never in the old
+41-file gate**, so they have been invisible the whole time, not newly broken. Triaged 2026-08-20:
+
+| # | Class | Files | What it actually is |
+| --- | --- | --- | --- |
+| **A** | knock-on (10) | `load1` 5, `linking` 4, `type-equivalence` 1 | A module fails to assemble, so a LATER assertion against a *different, still-valid* named instance reads state the failed module never wrote. e.g. `load1.wast`: `(module $M)` assembles, the second module (which populates it) does not, so `$M.read(20)` returns 0 instead of 1. Reported as `assert_return mismatch` — loud, and technically true, but the cause is a toolchain gap, not an engine bug. |
+| **B** | misclassification (2) | `imports` | `assert_invalid` the toolchain fails to reject is documented and counted as a SKIP everywhere else in the runner (see the note at the end of `runWast`), but these two land as FAILURES. An inconsistency in the runner, not a finding. |
+| **C** | runner bug (1) | `annotations` | `parse error: Invalid array length` — our own S-expr reader, not wabt. The only one here that is unambiguously our defect. |
+| **D** | unknown (1) | `float_memory` | Genuine `assert_return` mismatch: `(invoke "i32.load") -> 0x7fd00001` expected. NaN bit-pattern surviving a memory round-trip. **Not yet explained** — could be runner, wabt-ts, or a real JS-boundary limit like the existing `nan:0x` skip. |
+| **E** | unknown (1) | `linking0` | `assert_return action trapped: null function`. Probably class A, not confirmed. |
+
+- **A — S.** Decide the policy, then it is small. The honest fix is to mark a named instance
+  *poisoned* when a module it depends on fails, so downstream actions SKIP instead of producing a
+  wrong-value FAIL. **Counter-argument worth weighing before doing it:** a loud false alarm is safer
+  than a silent skip, and this whole session exists because skips hid a regression. Do not
+  reflexively convert these to skips — that is the same mistake in the other direction.
+- **B — S.** Make the classification consistent with the documented rule. Low risk, mechanical.
+- **C — S/M.** A real parser bug; size unknown until the malformed input is isolated.
+- **D — M.** Genuinely unknown. Must not be assumed to be a wabt-ts bug without a minimal repro —
+  the last two "wabt-ts bugs" this session turned out to be upstream-wabt parity.
+- **E — S.** Confirm it is class A, then it folds into A.
+
+**Doing A+B+C+E would let those files enter the baseline**, taking the gate from 280 files to ~286
+and closing the "8 corpus files not in the baseline" line the gate prints every run.
+
+### Runner memory retention (dir-run OOM) — L, and the only one with a user-visible symptom
+
+`wasmtk wast <dir>` over the full corpus OOMs; `proposals/custom-descriptors/exact.wast` exhausts
+the heap alone. README documents the crashing form, so this is the one item a user could hit.
+Partially fixed 2026-08-20 (per-file WABT instance -> singleton) and **measured insufficient**.
+Sized L because the remaining retention is not yet located — likely instantiated modules and their
+`WebAssembly.Memory` buffers, which is a lifetime redesign in `runWast`, not a one-liner. Full
+measurements in [compiler-bugs.md](compiler-bugs.md) § "wast runner memory".
+
+**Do this before A–E if any of it is done at all** — it is the only item with a user-facing
+failure, and `--update-baseline` currently carries subprocess-chunking machinery that exists purely
+to work around it. Fixing it lets that machinery be deleted.
+
+### Go 1.27 vs TinyGo — S, but not ours
+
+`go_merge` (0/1), `go_bindgen` (0/1), `go_asyncify` (0/12) fail with `requires go version 1.19
+through 1.26, got go1.27`. Verified pre-existing. **This is the one item that weakens a
+guarantee**: the binding "run the ENTIRE suite set" gate has a three-suite hole on this machine
+until it is resolved, so any recent claim of a full-suite pass carries that asterisk. Fix is
+environmental (downgrade Go, or a TinyGo that supports 1.27), not code.
+
+### External / decisions — no work, just tracking
+
+- **wabt-ts `ref.null`** — filed in `scripts/wabt-ts-bug-report.md`; waiting on them. The other two
+  gaps are upstream-wabt parity and will not move on a wabt-ts release.
+- **Upstream propagation gap** — the 3 `"multiple tables"` assertions are fixed in
+  `WebAssembly/threads` but never propagated into `WebAssembly/testsuite`. Filing it upstream is
+  optional and costs us nothing either way; **do not patch it locally** (see testing.md).
+- **`*.wast text eol=lf`** — one-line decision, deliberately deferred; see design-decisions.md.
 
 ## Recommended next pickup (updated 2026-07-28)
 
