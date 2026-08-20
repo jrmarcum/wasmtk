@@ -790,6 +790,14 @@ silently break (all `src/wasic.ts`):
   - The 130 worktree `.ts` files that were still CRLF were converted in place; `git diff --numstat`
     was **empty** afterwards, confirming zero content change (git had been normalising them all
     along).
+  - **`.wast` is NOT pinned, and that is a live trap (noted 2026-08-20).** `.gitattributes` covers
+    `*.ts` only. The vendored spec corpus under `tests/module/wasm_wast/testsuite-main/` is currently
+    LF in both the blob and the worktree, so nothing is broken — but `core.autocrlf=true` means git
+    warns it will hand out CRLF on the next checkout. That would silently break the byte-for-byte
+    diff against upstream that makes a corpus sync verifiable (see [testing.md](testing.md)
+    § "Vendored spec testsuite"). **If it ever bites, add `*.wast text eol=lf`** for exactly the
+    reason `*.ts` is pinned — do not fix it by rewriting the vendored files, which are upstream's
+    bytes and must stay that way.
   - **Real content drift existed too and is now fixed**: `src/bindgen.ts` (40 diff lines),
     `src/hybrid.ts` (16), `src/wasic.ts` (6), `src/console_log.ts` (5), `src/wast.ts` (4).
   - **`src/wasm/` is excluded from fmt via `deno.json` → `fmt.exclude`.** Both files there are

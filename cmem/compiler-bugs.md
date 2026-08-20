@@ -544,8 +544,9 @@ failure is a genuine `jsr:@jrmarcum/wabt-ts` (active backend) bug (V8 is spec-co
 bytes it yields the wrong result). None affect the wasmtk suite (375/375) — wasic doesn't emit these
 shapes. Report/prompt for the wabt-ts team: `scripts/wabt-ts-bug-report.md`.
 
-**✅ ALL 3 findings FIXED across wabt-ts 1.3.4 + 1.3.5 (2026-07-02). The whole core spec suite runs clean
-(gate: 41 files, 12444 exec assertions, 0 fail; suite 375/375 on 1.3.5).**
+**✅ ALL 3 EXECUTION findings FIXED across wabt-ts 1.3.4 + 1.3.5 (2026-07-02). The whole core spec suite
+runs clean (gate: 41 files, 12444 exec assertions, 0 fail; suite 375/375 on 1.3.5).** Two **parse** gaps
+opened later — see "Parse gaps" below. They cost skips, never failures, so the gate stays green.
 
 - ✅ **FIXED 1.3.4 — `br_if`/`br_table` with a branch value.** Was: dropped the value / yielded the
   condition, or emitted bytes V8 rejected ("expected 1 elements on the stack for branch").
@@ -567,6 +568,25 @@ a non-canonical NaN payload can't survive the JS number boundary (V8 canonicaliz
 
 The runner also counts validation-assertion toolchain leniency (`assert_invalid`/`assert_malformed` that
 wabt+V8 fails to reject) as **skips**, not failures.
+
+### Parse gaps — OPEN as of 2026-08-20 (wabt-ts 1.3.5)
+
+Surfaced by refreshing the vendored spec corpus to upstream `65a43d2e` (2026-08-20). These are
+**parse**-level, not miscompiles: wabt-ts rejects the text outright, so `src/wast.ts` skips the module
+**and every action that depends on it**. No assertion fails, so the gate stays green — the only visible
+effect is a pass count draining into skips, which is exactly what a real regression looks like from a
+distance. Measure per file, not by total.
+
+| Construct wabt-ts 1.3.5 rejects | Where | Effect |
+| --- | --- | --- |
+| `(ref null $t)` typed function references | `return_call.wast:95` | module rejected → 44 → **12** pass, +35 skip |
+| `(module definition …)` | `proposals/custom-page-sizes/memory_max{,_i64}.wast` | all modules rejected → 4 → **2** pass each |
+
+`enable_all: true` is **already** set on `parseWat` (`src/wast.ts:441`) — these are missing features in
+the wabt-ts parser, not a flag we forgot to pass. Neither construct is anything `wasic` emits, so no
+wasmtk output path is affected. **Re-measure these three files on the next wabt-ts bump** — both are
+candidates to come back. Provenance + the full per-file manifest live in
+[testing.md](testing.md) § "Vendored spec testsuite".
 
 ---
 

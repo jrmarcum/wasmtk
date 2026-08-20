@@ -20,6 +20,16 @@
 - ⏳ **Declare a Deno floor in `deno.json`.** There is none today, so nothing validates a minimum
   supported version and a release could silently start requiring a newer Deno — first signal would
   be a user report. Cheap to add, and it would make the compatibility question decidable.
+- ⏳ **Re-measure 3 spec files on the next wabt-ts bump.** The 2026-08-20 corpus sync to upstream
+  `65a43d2e` exposed two wabt-ts **parse** gaps (typed funcrefs `(ref null $t)`; `(module
+  definition …)`), which drained passes into skips in `return_call.wast` (44 → 12) and
+  `proposals/custom-page-sizes/memory_max{,_i64}.wast` (4 → 2 each). **Zero failures — the gate is
+  still clean at 12444/0/3467** — so this is recovery-of-coverage, not a bug to chase. Re-run those
+  three after any wabt-ts release and update the table in
+  [compiler-bugs.md](compiler-bugs.md) § "Parse gaps".
+- ⏳ **Decide whether to pin `*.wast text eol=lf` in `.gitattributes`.** Deliberately NOT done on
+  2026-08-20 — a repo-wide checkout-behaviour change shouldn't ride along inside a corpus sync. It
+  is a one-liner whenever wanted; rationale in [design-decisions.md](design-decisions.md).
 - ⏳ **`docs/` and `cmem/*.md` are not `deno fmt`-clean.** `main.ts` + `src/` now are, and
   `.gitattributes` keeps them that way; the markdown was deliberately left alone (bare `deno fmt`
   mangles tables/code-fences — see [workflow.md](workflow.md)). If it is ever wanted, it needs its

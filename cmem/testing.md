@@ -100,7 +100,7 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 > | Suite | Result |
 > | --- | --- |
 > | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **417 / 417** — 412 + the Phase 34 type-predicate batch (3 owner stress tests; 2 passed as written, 1 exposed the inline-target bug) + 2 regressions, 2026-07-30. Full suite RE-RUN: the fix changed `src/wasic.ts`, so the gate applied |
-> | `wast_tests.ts` | **41 files, 12444 passed, 0 failed**, 3466 skipped — ALL CLEAN |
+> | `wast_tests.ts` | **41 files, 12444 passed, 0 failed**, 3467 skipped — ALL CLEAN (corpus synced to upstream 2026-08-20; skip 3466→3467 is one new `loop.wast` assertion) |
 > | `bindgen_tests.ts` | 142, 0 failed |
 > | `bundle_tests.ts` | **4 / 4** — `StructImport` fixed, no longer a standing failure |
 > | `mod_tests.ts` · `merge_tests.ts` · `varscope_tests.ts` · `wasmmerge_guard_tests.ts` | 0 failed |
@@ -198,6 +198,49 @@ literals encoded as 0, fixed in wabt-ts 1.3.1). See compiler-bugs.md.
 
 Historical baseline under npm:wabt+npm:binaryen was 446/446 (2026-05-25); the per-phase historical
 counts in README are a record of when each phase first went green, not a live invariant.
+
+## Vendored spec testsuite — provenance and re-sync (2026-08-20)
+
+`tests/module/wasm_wast/testsuite-main/` is a **verbatim vendored copy** of
+[WebAssembly/testsuite](https://github.com/WebAssembly/testsuite) (the amalgamated mirror of
+`WebAssembly/spec/test/core` plus the per-proposal repos). It is a tracked INPUT fixture — only the
+`wast` runner reads it, so a corpus refresh reaches `wast_tests` and nothing else.
+
+- **Synced 2026-08-20 to upstream `main` @ `65a43d2e9464b6967c98b23c8493765c4d124f4e`.** The tree is
+  byte-identical to that commit; verify with a recursive diff against a fresh tarball before
+  assuming drift. There are **no local-only files** — never hand-edit anything under
+  `testsuite-main/`, or the next sync silently reverts it.
+- **Re-sync:** download `https://codeload.github.com/WebAssembly/testsuite/tar.gz/refs/heads/main`,
+  `cp -r` over the directory, then **measure per file** — a refresh legitimately adds AND retires
+  assertions, so a bare total is not enough to tell a corpus change from a regression.
+- **Line endings:** every `.wast` is LF in both the blob and the working tree, and `.gitattributes`
+  pins only `*.ts`. With this machine's `core.autocrlf=true`, git warns that `.wast` would become
+  CRLF on the next checkout. It has not bitten yet, but a CRLF working tree would break the
+  byte-for-byte upstream diff above. If it ever does, add `*.wast text eol=lf` for the same reason
+  `*.ts` is pinned (see design-decisions.md).
+
+### `proposals/threads/` is frozen upstream — NOT stale here (checked 2026-08-20)
+
+Recurring false alarm: `proposals/threads/{imports,memory}.wast` still assert `"multiple memories"`
+and `"multiple tables"` are invalid, which contradicts the core files in the same checkout. **That
+is upstream's own content, not local drift.** Upstream has not touched `proposals/threads/` since
+**2020-04-11** (generated from `threads@980c1bca` against `spec@484180ba`), and the live
+`WebAssembly/threads` repo — still active — _itself_ keeps the `"multiple memories"` assertions in
+`test/core/{imports,memory}.wast`. Refreshing changes nothing. The only genuinely retired ones are
+the 3 `"multiple tables"` assertions, fixed in the proposal repo but never propagated into the
+testsuite mirror. **Do not "fix" this locally** — it is an upstream propagation gap to file there.
+
+### Known wabt-ts parse gaps exposed by the 2026-08-20 sync
+
+Not wasmtk bugs — the runner skips any module wabt cannot assemble, and its dependent actions with
+it. Each cost passes without costing a single failure:
+
+| File                                           | Pass Δ     | Construct wabt-ts 1.3.5 rejects                   |
+| ---------------------------------------------- | ---------- | ------------------------------------------------- |
+| `return_call.wast`                             | 44 → 12    | `(ref null $t)` typed function references (`:95`) |
+| `proposals/custom-page-sizes/memory_max*.wast` | 4 → 2 each | `(module definition …)`                           |
+
+Both are candidates to recover on the next wabt-ts bump — re-measure these three files after one.
 
 ## CI / pre-publish gate
 
