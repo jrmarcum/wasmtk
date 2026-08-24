@@ -61,6 +61,13 @@ backwards from what we need. The design work below is still valid and the target
 confirming both the catch and `finally`-then-propagate paths). Only the encoder is missing. Filed in
 `scripts/wabt-ts-bug-report.md`; likely the same fix as the `ref.null` encode bug.
 
+**The recheck is one command, and the fixture is committed:** `scripts/eh_try_table_fixture.wat`
+(nested, both required forms). `wasmtime scripts/eh_try_table_fixture.wat` must exit **34** — 33
+from the tag param caught by the outer handler, +1 from the inner `finally` global. Then push it
+through wasic's `watToOptimisedWasm` path (wabt → binaryen `-Oz`) and run the RESULT: exit 34 there
+means the pipeline preserves `try_table` end to end and §A is unblocked. **Trust that, not the
+release notes.**
+
 1. **[M] Emitter: legacy `try` → `try_table`.** Two shapes only (`catch $__exn_tag`; and
    `catch_all`+`rethrow 0` → `catch_all_ref`+`throw_ref`). No `delegate`.
 2. **[S] Update the doc block at `src/wasic.ts` 107–113** — it documents the legacy shapes and will
