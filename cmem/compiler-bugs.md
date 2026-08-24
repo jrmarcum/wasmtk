@@ -661,6 +661,62 @@ Knock-ons to be aware of before touching this:
 - An OOM **cannot be caught in-process**, so any single-process full-corpus scan is one bad file away
   from losing all its results.
 
+### 2026-08-24 "look for code issues" audit — 5 passes, 9 fixed, 1 retracted
+
+Full trigger sweep. Grouped by what the defect actually was, because three of them are the SAME
+SHAPE in different files: a result that was computed correctly and then never reached the caller.
+
+**🔴 `console.log(a == b)` emitted an INVALID module and reported success.** `console_log.ts`'s
+boolean detection tested `/===|!==/` but never `==` / `!=`, so loose equality was not recognised as a
+boolean, fell through to the numeric path, and emitted an i32 comparison where an f64 was expected:
+`CompileError: expected type f64, found f64.eq of type i32`. wasic printed `✅ WASI … (3136 bytes)`
+first. **`wasic.ts` handles `==` correctly everywhere else** — verified `if (a == b)` and
+`const c: boolean = a != b` — so this was purely the `console_log.ts` half of the documented
+parallel-code-path pair ([design-decisions.md](design-decisions.md)). Fixed; all three engines agree.
+
+**🔴 `evalEnumExpr` silently returned 0.** An initializer that would not evaluate —
+`enum E { A = B }` with B unresolved — was caught and became `A = 0`, **silently colliding** with any
+other member at 0. Now pushes a `diagnostics` entry (traced through `warnings` → `aborted: true`, so
+it genuinely aborts) and reports the supported grammar. The adjacent non-finite case was fixed too:
+`NaN | 0` was also becoming 0.
+
+**⚠️ `wasmtk convert` / `wasm2js` printed ❌ and EXITED 0.** Both were `Promise<void>`; the catch
+logged and the CLI fell through to `break`. Any script or CI checking `$?` read a failed conversion
+as success. Widened to `Promise<boolean>` and checked at the call sites. **Isolated, not CLI-wide**
+— `wasic` on bad input exits 1 correctly, which is what pins it as a local hole.
+
+**⚠️ Zig producer: `report()` claimed success without checking the artifact.** The size read was in
+an ignoring catch, so a build that exited 0 without emitting a file was announced as `✅` with the
+size quietly missing. Now verifies the file exists and is non-empty. A failed binaryen `-Oz` was also
+swallowed; it now warns and labels the output `UNOPTIMISED`.
+
+**⚠️ `convertFile` rewrote the wrong path segment.** `String.replace` with a string pattern hits the
+FIRST occurrence, so `build.wat/out.wat` → `build.wasm/out.wat`. The sibling `wasm2js` 20 lines above
+already anchored with `/\.(wasm|wat)$/`. Anchored; verified through the CLI.
+
+**Gate holes found in the gate written the same day** — recorded because the audit's own new surface
+is the place it is least likely to look:
+- `unbuilt` was written into **159 baseline entries and never compared**. It matters most exactly
+  where the pass check is toothless: **71 files are pinned at pass == 0** (a zero cannot drop), 66 of
+  them with unbuilt > 0. `table_copy.wast` (pass 0, unbuilt 51) could have reached 100 silently.
+- The known-failing branch **short-circuited the pass check**: `linking.wast` is pinned at 4 failures
+  / 120 passes, and had its passes fallen to 50 with failures still 4, the `else if` chain printed
+  "KNOWN FAILING" and the gate went green. **An `else if` chain is the wrong shape for independent
+  invariants** — it reports the first and hides the rest. Now collected and reported together.
+
+**Low:** a ternary with two identical arms (`parseIntLit`), and two locals computed then
+`void`-discarded in `assemble()`. Removed.
+
+**🎓 RETRACTED — not a bug.** `/===|!==/` is a raw regex where every sibling operator uses
+`findTopLevelOp` (nesting- and string-literal-aware). Predicted a nested `===` would misclassify;
+tested `pick(1 === 1)` and it printed 10/20 correctly — an earlier branch catches call tokens first.
+**The inconsistency is real, the inferred bug is not.** Recorded so it is not "fixed" again.
+
+**Structural gap, flagged not fixed: `zigwasic.ts` (286 lines) and `rustwasic.ts` (64) have NO test
+suite**, while `zig`, `cargo` and `rustc` are all installed and working here and Zig fixtures sit in
+the corpus. Two of the findings above live in exactly that unguarded code. A small suite would have
+caught the `report()` bug automatically. See [next-work.md](next-work.md).
+
 ### `fd_write` short writes — ✅ FIXED 2026-08-24 (found by the multi-engine gate on run one)
 
 **Found by the new multi-engine gate on its very first full run** (`tests/engine_cross_check_tests.ts`),

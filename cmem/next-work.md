@@ -66,6 +66,24 @@ console.log(isPositive(5));   // isPositive() is invoked TWICE
   **every engine agrees on the wrong answer**, which is precisely the blind spot cross-engine
   testing cannot cover. Repro is in [compiler-bugs.md](compiler-bugs.md).
 
+## 🔴 Zig and Rust producers have NO test suite (found by the 2026-08-24 audit)
+
+`src/zigwasic.ts` (286 lines) and `src/rustwasic.ts` (64) are gated by **nothing**, while `zig`,
+`cargo` and `rustc` are all installed and working on this machine and Zig fixtures already sit in the
+corpus (`tests/wasi/wasm_wasi/1_fib-zig.zig`). Go has three suites; these have none.
+
+**This is not theoretical — two of the audit's findings were in that unguarded code**, and both are
+the kind a suite catches for free: `report()` announcing success without checking the artifact
+exists, and a failed `binaryen -Oz` swallowed silently. See [compiler-bugs.md](compiler-bugs.md).
+
+- **[S] `zig_tests.ts`** — skip-if-absent like the TinyGo gates. Build `1_fib-zig.zig` for both
+  targets (`library` and `wasi`), assert the artifact exists and is non-empty, and run the wasi one
+  (expect `Fibonacci(10) = 55`, verified by hand 2026-08-24). That alone would have caught both.
+- **[S] `rust_tests.ts`** — thinner: `rustwasic.ts` only delegates to `rsxtk`, so assert the
+  delegation and the not-found error path. Skip entirely when `rsxtk` is absent.
+- ⚠️ Add them to the impact map in [testing.md](testing.md) at the same time, or the suite set
+  grows without the "which suites does this change reach" table knowing about it.
+
 ## CORRECTIONS SCOPED — 2026-08-24 (while binaryen-ts + wabt-ts land their fixes)
 
 Everything wasmtk must change from the 2026-08-20/24 exchange, split by whether it is blocked on the

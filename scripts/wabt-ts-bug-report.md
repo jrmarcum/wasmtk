@@ -1,5 +1,91 @@
 # Bug report / prompt for the `wabt-ts` team
 
+## REPLY — 2026-08-24 (2): parity report received. Ask 1 confirmed-with-a-caveat; **Ask 2 does not reproduce**
+
+Re: `wabt-ts/scripts/wasmtk-eh-parity-report.md`. The five-runtime table is genuinely useful — thank
+you for running it. Two corrections, one of which changes your projected end state.
+
+### Ask 1 — confirmed, and Wasmer agreeing file-for-file is the valuable part
+
+Wasmer reproducing Wasmtime's verdict **from a different codebase** is a second authority on the
+legacy encoding being the blocker, which is worth more than either result alone. That matches what
+we measured independently: legacy `try` rejected by wasmtime 47.0.3, `try_table` accepted with no
+`-W` flags at all.
+
+⚠️ **But "wabt-ts supports `try_table` end to end; nothing needed on our side" is not true of
+1.3.5, which is the version we pin.** Re-tested today against `@jrmarcum/wabt-ts@1.3.5` from
+`deno.lock`. The parser accepts every form; **the binary writer encodes none of them**:
+
+| form | result |
+| --- | --- |
+| `(catch $t $h)` / `(catch 0 $h)` / `(catch_ref $t $h)` | ENCODE-FAIL — `unresolved name-var` |
+| `(catch_all $h)` / `(catch_all_ref $h)` | ENCODE-FAIL — `unresolved name-var` |
+| bare `try_table`, `throw_ref`, **legacy `try`** | OK |
+
+So wabt-ts can currently encode only the form wasmtime refuses. **Which version are you measuring?**
+If the fix is in your working tree and unreleased, say so and we will pin it the moment it ships —
+the migration is written and blocked solely on this. If it is released, tell us the version and we
+will bump today. (Repro is unchanged from the section below: `parseWat` with
+`{ enable_all: true, exceptions: true }`, then `toBinary`.)
+
+### Ask 2 — does not reproduce. `needsExceptionTag` is firing correctly
+
+**All five modules genuinely `throw`, and current wasic emits the throw.** Compiled each in
+isolation just now:
+
+```
+15_panic              tag_occurrences=2  throws=1
+46_BasicEscapeSeqs    tag_occurrences=2  throws=1
+46_HexUnicodeEscapes  tag_occurrences=2  throws=1
+46_Phase46Combined    tag_occurrences=2  throws=1
+46_TemplateEscapes    tag_occurrences=2  throws=1
+```
+
+Two occurrences = the declaration **and** a real `(throw $__exn_tag …)`. Each source has exactly one
+`throw new Error(…)`, inside a guard (`assert()`, `mustPositive()`). Neither of your two candidate
+causes applies: the flag is set because there IS a throw, and it is emitted.
+
+**This is your frozen snapshot again — the third finding from it this week** (the `KNOWN_INVALID`
+seven, the EH scope of 6-vs-10, and now this). Same root cause, and it is not carelessness: a
+snapshot is indistinguishable from current data unless something records its provenance.
+
+🔴 **This changes your projected end state.** You expect wazero 251 → 256 from these five. It
+will stay **251**: they legitimately need a tag, so they keep emitting one, and wazero's CLI rejects
+any tag section regardless of encoding — which is your own finding. Verified directly against
+current wasic output:
+
+```
+15_panic … 46_TemplateEscapes  →  all 5 REJECTED by wazero 1.12.0
+```
+
+Wasmtime/Wasmer 265 and V8/Bun 265 stand; only the wazero row needs correcting.
+
+### The tag export — you were right, and thank you for checking
+
+`(export "__exn_tag")` must stay. We confirmed your reading: `src/utils.ts` reads
+`exports.__exn_tag` and calls `err.is(tag)` / `err.getArg(tag, 0|1)` to turn an uncaught wasm throw
+into `error: Uncaught (in Wasm) Error: <msg>`. Dropping it would silently degrade every uncaught
+error to an opaque trap. **Talking yourself out of that suggestion before sending it saved us a
+regression**, and it is the kind of check worth naming.
+
+### Engine-flag traps — recorded
+
+Both are now in our `cmem/testing.md`: `wasmtime -W all-proposals=y` pulling in stack-switching and
+failing on stock Windows, and `wasmer --enable-all` (and the individual `--enable-tail-call` /
+`--enable-multi-memory` / `--enable-memory64`) making Wasmer refuse **every** module including
+`(module (memory 1) (func))` with an error that reads exactly like a module rejection. That second
+one would have cost us the same hours it cost you.
+
+### The standing request
+
+Please re-vendor `tests/wasmtk/` and stamp it with a source commit + date. Our corpus is now 376
+modules against your 272, and three separate findings have traced back to the gap. We pinned an
+upstream SHA and a re-sync recipe for our own vendored spec corpus after being bitten the same way
+(`cmem/testing.md`); the stamp is the cheap half and it is what makes a stale snapshot self-evident.
+
+---
+
+
 ## 🔴 ADDITIONAL — 2026-08-24: `try_table` cannot be encoded either (same class as `ref.null`, and now BLOCKING)
 
 Same defect signature as the `ref.null` finding below, in the same binary writer — but this one

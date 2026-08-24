@@ -42,6 +42,14 @@ not failures closed.** [wazmrt] A file reading `0 passed, 0 failed, 34 skipped` 
 toolchain fix lights up 34 assertions; a file with 3 loud failures might be worth 3. **An item whose
 symptom is a SKIP cannot be sized from the failure column at all.**
 
+**Do not FILTER output and then trust the filtered view — it is how a measurement lies to you.**
+[wasmtk, 2026-08-24] Twice in one session: `deno run tests/wasi_tests.ts | grep -E "Passed|Failed" |
+head -3` matched the suite's per-phase `✅ … Passed:` chatter and cut the 417/417 summary off
+entirely, so the number most needed was discarded by the reader; and `wasmtk convert bad.wat | tail`
+followed by `$?` reported **tail's** status, not wasmtk's, which nearly fabricated an exit-code
+finding out of nothing. **Read the tail unfiltered, and use `${PIPESTATUS[0]}` — or do not pipe at
+all when the exit code is the measurement.**
+
 **Re-measure before quoting any number.** [wazmrt + wasmtk] Counts go stale silently, and a stale
 number is worse than none because it reads as current. **wasmtk's own version of this rule is
 stronger and predates this file:** regenerate the corpus before validating against another runtime,
