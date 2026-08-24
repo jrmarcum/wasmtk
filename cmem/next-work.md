@@ -38,6 +38,23 @@
   mangles tables/code-fences — see [workflow.md](workflow.md)). If it is ever wanted, it needs its
   own pass with `fmt.exclude` tuned, not a blanket run.
 
+## 🔴 `fd_write` short writes ignored — output truncated on wasmtime (2026-08-24)
+
+**New, ours, and the top codegen item that is NOT blocked.** Found by the multi-engine gate on its
+first run. 37 corpus modules print differently on wasmtime; `console.log(<bool expr>)` loses its
+newline (`1_values` prints `falsetruefalse`, exactly 3 bytes short). WASI permits `fd_write` to
+short-write and wasmtime honestly reports `nwritten`; **we never read it back and never retry.** The
+old source comment blamed wasmtime — corrected in place.
+
+- **[M] Emit a retry loop around `fd_write`.** Gather mode only *mitigates* — one iovec is less
+  likely to short-write, not immune; a large enough single write still truncates.
+- **[S] Make `boolexpr` gatherable** by evaluating it ONCE into a temp local and using that local for
+  both the ptr and len selects. The current double-evaluation is why it was excluded, and it is
+  independently unsafe for a side-effecting expression.
+- ⚠️ **Check BOTH `src/wasic.ts` and `src/console_log.ts`** — the parallel-code-paths trap.
+- **Gate for the fix:** the 37 `differ` entries flip to `match`, which the engine gate reports as
+  IMPROVED and fails on until the baseline is re-recorded. That is the designed signal, not a bug.
+
 ## CORRECTIONS SCOPED — 2026-08-24 (while binaryen-ts + wabt-ts land their fixes)
 
 Everything wasmtk must change from the 2026-08-20/24 exchange, split by whether it is blocked on the
@@ -87,10 +104,16 @@ release notes.**
 - **`finally` must still run on the non-throwing path.** Semantics unchanged, but it moves to the
   `$done` side of the block instead of being emitted inline in `(do …)`.
 
-### B. Multi-engine gate — [S/M], ours, UNBLOCKED — now the thing to do first
+### B. Multi-engine gate — DONE 2026-08-24 (`tests/engine_cross_check_tests.ts`)
 
-**With §A blocked, this is the item to do now — and it was always the more valuable half.**
-It stops the bug *class*, not just this instance, and it does not need wabt-ts. The suite was **417/417
+**Built, and it immediately earned its keep.** 376 modules × 3 engines against a V8 baseline,
+per module/engine expectations in `tests/engine_baseline.json`, absent engines skipped. Modelled on
+`dync_cross_runtime_tests.ts` as planned — no new machinery invented.
+
+🎓 **On its FIRST full run it found a second, unrelated bug**: 37 modules produce different
+stdout on wasmtime and match everywhere else — `fd_write` short writes, ignored by our emitted
+code. That is the whole argument for the gate, demonstrated rather than asserted: two independent
+defects in one week that no V8-only test could reach. See [compiler-bugs.md](compiler-bugs.md). The suite was **417/417
 green** while all 10 modules were unrunnable on the primary WASI host, because our oracle is V8 and
 V8 still accepts legacy EH. Migrating without a second engine fixes the instance and leaves the
 blind spot exactly where it was.

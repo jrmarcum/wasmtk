@@ -79,6 +79,7 @@ batch, where all three tests passed first try and a full run was started needles
 | `hybrid_tests` | `src/hybrid.ts` parser/scanners (unit) | `src/hybrid.ts` |
 | `jstyper_tests` | `src/jstyper.ts` (unit; emits `.ts`, never compiles) | `src/jstyper.ts` |
 | `wast_tests` | `src/wast.ts` → `wabt` only | **any `wabt-ts` / `binaryen-ts` backend bump**, `src/wast.ts` |
+| `engine_cross_check_tests` | the built `.wasm` corpus → standalone engines | **any codegen change** (`src/wasic.ts`, `src/console_log.ts`), any backend bump, any WASI-ABI change. Run it after `wasi_tests` regenerates the corpus |
 | `varscope_tests` | `src/varscope.ts` | `src/varscope.ts` |
 | `wasmmerge_guard_tests` | `src/wasmmerge.ts` | `src/wasmmerge.ts` — **and wasic merge-path changes**, which call into it |
 | `mod_tests` | loads 36 **committed** `.wasm` fixtures under `tests/module/wasm_mod/`; no compile step | the loader, `src/utils.ts` |
@@ -102,6 +103,7 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 > | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **417 / 417** — 412 + the Phase 34 type-predicate batch (3 owner stress tests; 2 passed as written, 1 exposed the inline-target bug) + 2 regressions, 2026-07-30. Full suite RE-RUN: the fix changed `src/wasic.ts`, so the gate applied |
 > | `wast_tests.ts` | **280 files, 27588 passed, 0 failed**, 37185 skipped — ALL CLEAN (rebuilt 2026-08-20 as a per-file baseline gate; was 41 files / 12444) |
 > | `bindgen_tests.ts` | 142, 0 failed |
+> | `engine_cross_check_tests.ts` | **376 modules × 3 engines, on baseline** — the multi-engine gate (2026-08-24). V8 vs wasmtime/wasmer/wazero, byte-identical stdout. Baseline `tests/engine_baseline.json`. wasmtime: 317 match / 22 reject / **37 differ** — the 37 are the `fd_write` short-write bug, the 22 are legacy EH |
 > | `go_merge_tests.ts` · `go_bindgen_tests.ts` · `go_asyncify_tests.ts` | **7 / 7 · 7 / 7 · 12 / 12** — green on **Go 1.26.7 + TinyGo 0.41.1**. TinyGo 0.41.1 caps at Go 1.26; a Go 1.27 install breaks all three (`requires go version 1.19 through 1.26`). Keep the pair in step — Go 1.27 is safe only once TinyGo **0.42.0** ships (support is on `dev`). See [next-work.md](next-work.md) |
 > | `bundle_tests.ts` | **4 / 4** — `StructImport` fixed, no longer a standing failure |
 > | `mod_tests.ts` · `merge_tests.ts` · `varscope_tests.ts` · `wasmmerge_guard_tests.ts` | 0 failed |
@@ -242,6 +244,47 @@ form is the one README documents.
 - Consequences today: the 280-file gate *does* fit in one process; a 288-file rescan does not, which
   is why `--update-baseline` chunks across subprocesses and auto-discovers unrunnable files rather
   than carrying a hand-maintained skip list.
+
+## The multi-engine gate — `engine_cross_check_tests.ts` (added 2026-08-24)
+
+**Why it exists.** Every oracle this project owned was V8: `wasi_tests.ts` executes on V8 and
+`wasmtk wast` validates through host V8. One engine wearing two hats is one data point, not two, so a
+defect only a DIFFERENT engine could see was structurally unreachable. That is not hypothetical — it
+is how legacy EH stayed invisible at 417/417 for months, and the gate found a second, unrelated bug
+(`fd_write` short writes) on its first full run. See [best-practices.md](best-practices.md) §3.
+
+```bash
+deno run --allow-read --allow-run --allow-env --allow-write tests/engine_cross_check_tests.ts
+deno run … tests/engine_cross_check_tests.ts --filter "^15_"          # scope to a subset
+deno run … tests/engine_cross_check_tests.ts --update-baseline        # re-record deliberately
+```
+
+Runs every built `.wasm` on V8 (`wasmtk run`) and on each engine present, comparing stdout
+byte-for-byte. Per-module, per-engine expectations live in **`tests/engine_baseline.json`**; a module
+that regresses fails, and one that IMPROVES fails too until re-recorded — same discipline as
+`wast_tests`.
+
+**Baseline as recorded 2026-08-24** (376 modules):
+
+| engine | match | reject | differ |
+| --- | --- | --- | --- |
+| wasmtime 47.0.3 | 317 | 22 | **37** |
+| wasmer 7.2.1 | 353 | 23 | 0 |
+| wazero | 346 | 30 | 0 |
+
+- The **37 wasmtime-only `differ`** are all one bug: `fd_write` short writes
+  ([compiler-bugs.md](compiler-bugs.md)). They match on wasmer and wazero, which is what pins the
+  cause to a short-write path only wasmtime exercises.
+- The **rejects** are dominated by legacy EH (wasmtime) and by wasmer/wazero having no EH at all.
+- **Absent engines are skipped, never failed.** With no engine on PATH the gate exits 0 with a notice.
+
+⚠️ **Invoke engines as `<engine> run <file>`.** Not cosmetic: wazero answers a bare path with
+`invalid command`, which the gate would otherwise record as a legitimate `reject` for every module in
+the corpus. This bit during development and is the repo-wide convention (see
+`dync_cross_runtime_tests.ts`).
+
+⚠️ **Regenerate the corpus before trusting a run** — the standing rule below. A stale `.wasm` makes
+this gate compare against a compiler that no longer exists.
 
 ## Vendored spec testsuite — provenance and re-sync (2026-08-20)
 

@@ -1,0 +1,1882 @@
+{
+  "10b_DynamicArrayOperations": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "10b_DynamicArrays": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "10b_Rest_Spread": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "10c_DynamicArrayGrowth": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "11_StringOps": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "11_logging": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "11b_ExternalMapping": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "11c_ExternalMapping": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "12_ArrayMethods": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "12_Final_Integration_Stress": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "12_InterfaceTypes": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "12_LowercaseStructTypeName": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "13_RestAndSpread": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "13_SecureMatrixManagerIntegration": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "13_variadic-functions": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "13b_ZeroCostExceptions": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "14_Generics": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "15_ElseChainForms": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "15_Exceptions": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "15_IdiomaticCatch_Stress": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "15_LexicalShadowing_Stress": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "15_TestCase1-NestedEscalation": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "15_Trap-On-Error": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "15_panic": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "15_recover": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "16_DeepGenericConstraintResolution": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "16_GenericInterfaceMappingsAndClosures": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "16_MethodCallBinaryOp": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "16_NestedMonomorphization": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "17_ConstructorChainingAndFieldPrefixOffest": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "17_Cross-PolymorphicArrayStride": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "17_DeepHierarchyCTable": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "18_Multi-ScopeScaleAndMemoryLongevityTest": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "18_symbol_table": {
+    "wasmtime": "match",
+    "wasmer": "reject",
+    "wazero": "match"
+  },
+  "18zb_PrepassStringSafety": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "18zk_VarGateSafe": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "19_DiscUnionSuperStructLayout": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "19_ElseIfNarrowingFieldCast": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "19_NestedDiscriminantUnions": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "19_PolyMorphicUnionArrayMutation": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "19_SwitchCaseVariantDispatch": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "19_UnionSharedFieldWidening": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "19_VariantMaximumMemoryAlignment": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_FunctionSignatureMultiplexing": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_StaticGlobalInitialization": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_WasiStringBufferIntegrity": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_atomic-counters": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_channels": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_command-line-flags": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_context": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_directories": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_environment-variables": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_epoch": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_execing-processes": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_fib-rs": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_fib-rs-opt": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_fib-rs-test": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_fib-test": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_fib-zig": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_fib-zig-opt": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_fizzbuzz_wat": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_for": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_functions": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_goroutines": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_hello-world": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_helloWorld_wat": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_helloworld": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_http-client": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_if-else": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_print": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "1_reading-files": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_recursion": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_regular-expressions": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_select": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_sha1-hashes": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_sha256-hashes": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_signals": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_spawning-processes": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_strings-and-runes": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_switch": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_temporary-files-and-directories": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_tickers": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_time": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_time-formatting-parsing": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_timeouts": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_timers": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_values": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_variables": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_waitgroups": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_worker-pools": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "1_writing-files": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "20_EmptyRestAllocationAndSafety": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "20_NestedDestructuringAndOjectMix": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "20_RestBufferSplitting": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "21_HeterogeneousTypeOffset": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "21_NestedCompoundTuple": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "21_SkippedElementsAndGaps": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "22_CombinedStressTest": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "22_ConstEnumFoldingAndExponentCast": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "22_DoubleCastErasure": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "22_EnumObjectMemberCompoundMap": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "22_HeterogeneousAndMixedStringEnum": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "22_MultiplicativeAssociativity": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "22_NUmericEvaluationsAndFlagsShift": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "23_Tuples": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "24_NullUndefined": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "24_NullableTupleReturnAndFlags": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "25_LogicalAssignmentOperators": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "25_NullishOnlyNullFallback": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "25_NullishOps": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "25_NullishShortCircuitSideEffects": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "26_ArrayDestructuringDefaults": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "26_ForOf": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "26_ForOfBreakContinue": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "26_ForOfSingleLine": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "26_NestedForOfMatrix": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "27_CharCodeAndSubstringQuery": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "27_ConsoleLogBracketConcat": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "27_ConsoleLogStringCompare": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "27_StringMethodAssignFromArrayElem": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "27_StringMethods": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "27_StringSplitAndForOf": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "27_StringTrimPadReplace": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "27_base64-encoding": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "27_file-paths": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "27_line-filters": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "27_number-parsing": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "27_string-formatting": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "27_string-functions": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "27_tcp-server": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "27_text-templates": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "27_url-parsing": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "28_ArrayJoin": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "28_ArrayMutationsAndSort": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "28_ArrayPredicatesAndAt": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "28_ExtendedArrayMethods": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "28_maps": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "28_slices": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "29_ClassEnhancements": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "29_ClassEnhancementsCombined": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "29_GettersAndSetters": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "29_GettersSetters": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "29_StaticFields": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "29_StaticFieldsAndGlobals": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "29_StringEnumDispatch": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "29_StringEnums": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "30_InterfaceInheritance": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "30_InterfaceInheritanceExtends": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "30_Namespace": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "30_NamespaceAdvanced": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "30_NamespaceConstAndFunction": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "30_NamespaceInternalRefs": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "30_NamespaceStringMembers": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "30_Phase30Combined": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "30_ShorthandPropertyReturn": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "30_ShorthandProps": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "30_methods": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "30_sorting-by-functions": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "30_structs": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "31_Float64Array": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "31_Int32Array": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "31_Phase31Combined": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "31_TypedArrayAdvanced": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "31_TypedArrayFillAndSet": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "31_TypedArrayLiteralInitializer": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "31_TypedArraySubWordAccess": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "32_BasicDiscUnion": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "32_DiscUnionIfElse": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "32_DiscUnionMixed": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "32_Phase32Combined": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "33_BasicIntersection": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "33_ChainedIntersectionIntDivide": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "33_IntersectionBasePointerParam": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "33_IntersectionFunc": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "33_IntersectionMixedTypeMerge": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "33_IntersectionPrefixOk": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "33_IntersectionThreeWay": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "33_Phase33Combined": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "34_BasicTypePredicate": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "34_DiscUnionPredicateInlineTarget": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "34_InlinePredicateTargetNarrowing": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "34_Phase34Combined": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "34_TypePredicateBasicNarrowing": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "34_TypePredicateElseIfChains": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "34_TypePredicateFunc": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "34_TypePredicateNarrowing": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "35_BasicTypeof": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "35_KeyofBasic": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "35_Phase35Combined": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "35_TypeofInConditions": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "37_FlatArray": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "37_FlatMapArray": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "37_Phase37Combined": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "38_MathExpLog": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "38_MathHyperbolic": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "38_MathRandom": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "38_MathTrig": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "38_Phase38Combined": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "39_JstyperBasic": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "39_JstyperF64": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "39_JstyperMixed": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "39_Phase39Combined": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "3_enums": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "reject"
+  },
+  "40_BasicExternalDecl": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "40_ExternalInterfaceType": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "40_ExternalReturnValue": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "40_MultiMethodExternal": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "40_Phase40Combined": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "41_BasicWitGen": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "41_Phase41Combined": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "41_WitForWasi-p1": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "41_WitReturnTypes": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "41_WitWithExternalImports": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "42_BasicStringReturn": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "42_ChainedFieldAccess": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "42_Phase42Combined": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "42_StructFieldArg": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "42_struct-embedding": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "43_BasicStringArrParam": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "43_Phase43Combined": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "43_StringArrHigherOrder": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "43_StringArrReturn": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "43_collection-functions": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "44_defer": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "44_exit": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "45_random-numbers": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "46_BasicEscapeSeqs": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "reject"
+  },
+  "46_HexUnicodeEscapes": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "reject"
+  },
+  "46_Phase46Combined": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "reject"
+  },
+  "46_TemplateEscapes": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "reject"
+  },
+  "47_BasicClassInheritance": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "47_ClassMethodOverride": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "47_Phase47Combined": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "47_SuperConstructor": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "47_VirtualDispatch": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "48_ExponentAssign": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "48_LabeledContinue": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "48_NumberConstants": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "48_NumberPredicates": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "48_ObjectDestructDefault": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "48_Phase48Combined": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "48_SingleLineBraceIf": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "48_SwitchFallthrough": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "48_ToStringRadix": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "49_ArrayConcat": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "49_ChainedMethods": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "49_OptionalChaining": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "49_Phase49Combined": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "49_StringAt": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "51_AtCharCodeChain": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "51_BasicInstanceof": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "51_ClassInstanceArrayLiteral": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "51_InstanceofNarrowing": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "51_InstanceofNoInheritance": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "51_ModuleLevelClassInstance": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "51_NestedDestructuring": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "51_NestedTuple": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "51_ObjectSpread": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "51_ParamDestructuring": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "51_Phase51Combined": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "51_SingleLineClassBody": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "51_UtilityTypes": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "52_ArrayFromOf": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "52_ChainedAssignment": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "52_InOperator": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "52_Phase52Combined": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "52_StringFromCodePoint": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "52_VoidExpr": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "53_InterfaceInheritance": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "53_NumberParse": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "54_AsyncBasic": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "55_AsyncThen": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "56_AsyncReject": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "57_AsyncCatch": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "reject"
+  },
+  "58_AsyncPromiseVar": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "59_AsyncClosureCb": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5a_5b_ArrowFunctionsAndLexicalScope": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5b_DefaultParameters": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5c_OptionalParameters": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5e_ArrowFunctionsAsVariables": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5e_BasicArrowFunctions": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5e_ClosureComposition": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5e_ClosureToClosure": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5e_HigherOrderFunctions": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5e_IntegrationWithControlFlow": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5e_MixedSignatures": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5e_MultipleCaptures": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5e_NestedClosures": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5e_RecursiveArrow": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5e_SystematicTest": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5e_TheClosureChallenge": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5e_UpwardClosures": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5e_UpwardClosures2": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5e_VariableShadowing": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5e_VoidArrow": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5f_ClosureToClosureComposition": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5f_closures": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "5h_CapturedVariableMutation": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "60_AsyncAll": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "61_AsyncAllSettled": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "reject"
+  },
+  "62_GapEmptyArrayGrow": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "62_GapNumericCoercion": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "62_GapSingleLineLocals": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "62_GapStringCalls": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "62_GapStringLiteralBraces": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "63_GapConsoleLog2D": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "63_GapModuleGlobalArrayInFn": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "63_GapSingleLineLoopArray": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "64_ReportArrayFieldParam": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "64_ReportModuleTryCatch": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "64_ReportStringAppendSubscript": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "64_ReportThrowTemplate": {
+    "wasmtime": "reject",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
+  "65_ReportTrigLargeArg": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "66_Dragon4Formatting": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "67_TrigCorrectlyRounded": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6a_NumericArrays": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6a_command-line-arguments": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6a_command-line-subcommands": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6a_json": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6a_range": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6a_rate-limiting": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6a_sorting": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6b_SimpleStructs": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6b_custom-errors": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6b_errors": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6b_http-server": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6b_interfaces": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6b_multiple-return-values": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6b_mutexes": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6b_pointers": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6b_testing-and-benchmarking": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "reject"
+  },
+  "6b_xml": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6c_ObjectDestructuring": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6c_ObjectDestructuring2": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6d_ConsoleLogArrayArith": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6d_Multi-DimensionalArrays": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6d_Multi-DimensionalArrays2": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "6d_arrays": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "7a_MathIntrinsics": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "7a_constants": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "7b_ConsoleErrorWarn": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "9_ChainedNewAndMultiStmt": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "9_Classes": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_BigIntAndI64ConsoleLogging": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_BooleanAndLogicComparisons": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_BreakContinueLabels": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_ComplexLabeledBlock": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_ComprehensiveStringComparisons": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_ConstantsAndLiterals": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_DoWhileWithNestedIf-Else": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_EmptyAndNullChecks": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_EnumMappingAndConstantFolding": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_FloatingPointComparisonTest": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_I64ComparisonOperators": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_IntegerComparisonTest": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_LabeledBreakAndContinue": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_LexigraphicalComparisons": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_LoopVariations": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_Phase4Test": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_StressTest-ComplexLogicFlow": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_StringEqualityInequality": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_SwitchCase": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_SwitchInsideALoop": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_TruthinessAndBranching": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_UnsignedIntegerComparison": {
+    "wasmtime": "differ",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_complex": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_fib-ts-1": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_fib-ts-2": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_fib-ts-3": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_fib-ts-4": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_hello": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_math": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_negative": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_no-main": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_simple": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "core_variables": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  }
+}
