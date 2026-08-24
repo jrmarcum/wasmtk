@@ -105,11 +105,26 @@ async function scanExportFns(file: string): Promise<string[]> {
 }
 
 async function report(out: string, how: string): Promise<ZigResult> {
+  // The size read DOUBLES AS THE ARTIFACT CHECK. It used to be wrapped in an ignoring catch and the
+  // function reported ✅ + success:true regardless, so a build that exited 0 without emitting a file
+  // — or a write that failed partway — was announced as a success with the size silently omitted.
+  // Reporting success is a claim about the artifact; verify it rather than assume it. (2026-08-24
+  // audit. `zigwasic.ts` has no test suite, so nothing else would have caught this.)
   let size = 0;
   try {
     size = (await rt.readFile(out)).length;
-  } catch { /* ignore */ }
-  console.log(`✅ Zig → wasm (${how}): ${out}${size ? ` (${size} bytes)` : ""}`);
+  } catch (e) {
+    console.error(
+      `❌ wasmtk (zig): the build reported success but ${out} could not be read: ` +
+        `${e instanceof Error ? e.message : e}`,
+    );
+    return { success: false, error: `output missing after build: ${out}` };
+  }
+  if (size === 0) {
+    console.error(`❌ wasmtk (zig): the build reported success but ${out} is empty (0 bytes).`);
+    return { success: false, error: `empty output after build: ${out}` };
+  }
+  console.log(`✅ Zig → wasm (${how}): ${out} (${size} bytes)`);
   return { success: true, outputPath: out };
 }
 
@@ -169,8 +184,14 @@ export async function compileZig(input: string, opts: ZigCompileOptions = {}): P
         out,
         `wasm32-freestanding library${optimized ? " + binaryen-ts -Oz" : ""}`,
       );
-    } catch {
-      return await report(out, "wasm32-freestanding library");
+    } catch (e) {
+      // Optimisation is optional — an unoptimised library is still valid — but swallowing the error
+      // silently made a failed -Oz indistinguishable from one that was never attempted. Say so.
+      console.warn(
+        `  ⚠️  binaryen-ts -Oz failed, shipping the unoptimised module: ` +
+          `${e instanceof Error ? e.message : e}`,
+      );
+      return await report(out, "wasm32-freestanding library, UNOPTIMISED");
     }
   }
   return await report(out, "wasm32-wasi program");

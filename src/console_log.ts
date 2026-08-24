@@ -1298,6 +1298,15 @@ function parseSingleArg(
       findTopLevelOp(token, "&&") !== -1 ||
       findTopLevelOp(token, "||") !== -1 ||
       /===|!==/.test(token) ||
+      // LOOSE equality belongs here too. `wasic.ts` handles `a == b` / `a != b` everywhere else
+      // (`if (a == b)`, `const c: boolean = a != b`), but this list omitted them, so
+      // `console.log(a == b)` was not recognised as a boolean, fell through to the numeric path,
+      // and emitted an i32 comparison where an f64 was expected. wasic reported SUCCESS and wrote
+      // a module that would not instantiate: "expected type f64, found f64.eq of type i32".
+      // Exactly the parallel-code-path divergence cmem/design-decisions.md warns about.
+      // (`==` also matches inside `===`, which is harmless — both classify as boolexpr.)
+      findTopLevelOp(token, "==") !== -1 ||
+      findTopLevelOp(token, "!=") !== -1 ||
       findTopLevelOp(token, ">=") !== -1 ||
       findTopLevelOp(token, "<=") !== -1 ||
       findTopLevelOp(token, ">") !== -1 ||

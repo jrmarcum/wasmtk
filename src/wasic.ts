@@ -4005,8 +4005,29 @@ class WasicTranspiler {
     });
     try {
       const result = Function(`"use strict"; return (${sub});`)();
+      if (typeof result !== "number" || !Number.isFinite(result)) {
+        // A non-numeric or non-finite result is not a usable enum tag. Falling through to `| 0`
+        // would turn NaN/undefined into 0 — the same silent collision as the catch below.
+        this.diagnostics.push(
+          `Enum initializer '${expr.slice(0, 60)}' did not evaluate to a finite number ` +
+            `(got ${typeof result === "number" ? result : typeof result}).`,
+        );
+        return 0;
+      }
       return (result | 0);
     } catch {
+      // SILENT-WRONG → HARD DIAGNOSTIC (2026-08-24 audit). This used to `return 0` with no record,
+      // so an initializer referencing anything unresolved — `enum E { A = B }` where B is not a
+      // prior member — became `A = 0`, silently COLLIDING with whatever else is 0. Nothing in the
+      // output said so; the enum simply had two members with the same tag and comparisons went
+      // wrong at runtime. The value 0 is still returned so compilation can continue and report
+      // every bad initializer in one pass, but `diagnostics` now aborts the build.
+      this.diagnostics.push(
+        `Enum initializer '${
+          expr.slice(0, 60)
+        }' is not a compile-time constant this compiler can ` +
+          `evaluate. Supported: prior members, integer literals, ( ) and | & ^ << >> >>> + - * / %.`,
+      );
       return 0;
     }
   }

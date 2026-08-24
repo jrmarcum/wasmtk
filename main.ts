@@ -399,10 +399,12 @@ Options:
       await showInfo(target);
       break;
     case "wasm2js":
-      await wasm2js(target, outPath);
+      // Exit non-zero on failure. Both of these used to swallow the result, so a failed conversion
+      // printed an error and still exited 0 — invisible to any caller checking $?.
+      if (!(await wasm2js(target, outPath))) Deno.exit(1);
       break;
     case "convert":
-      await convertFile(target, outPath);
+      if (!(await convertFile(target, outPath))) Deno.exit(1);
       break;
     case "wast": {
       // Run the WebAssembly `.wast` spec-script assertions (a file or a directory tree).

@@ -457,7 +457,7 @@ export async function showInfo(path: string): Promise<void> {
  * Converts a WASM/WAT module into a standalone JS-based script.
  * @param path - Path to the module.
  */
-export async function wasm2js(path: string, outPath?: string): Promise<void> {
+export async function wasm2js(path: string, outPath?: string): Promise<boolean> {
   const out = outPath ?? path.replace(/\.(wasm|wat)$/, ".js");
   try {
     if (outPath) await rt.mkdir(dirname(outPath), { recursive: true });
@@ -468,8 +468,11 @@ export async function wasm2js(path: string, outPath?: string): Promise<void> {
       typeof result === "string" ? result : new TextDecoder().decode(result),
     );
     console.log(`✅ Success: ${out}`);
+    return true;
   } catch (err) {
+    // RETURN the failure; do not merely print it. See convertFile below for the full note.
     console.error(`❌ Conversion failed: ${err}`);
+    return false;
   }
 }
 
@@ -477,9 +480,13 @@ export async function wasm2js(path: string, outPath?: string): Promise<void> {
  * Toggles format between .wasm and .wat (plain wabt round-trip in both directions).
  * @param p - Path to the input file.
  */
-export async function convertFile(p: string, outPath?: string): Promise<void> {
+export async function convertFile(p: string, outPath?: string): Promise<boolean> {
   const isWat = p.endsWith(".wat");
-  const out = outPath ?? (isWat ? p.replace(".wat", ".wasm") : p.replace(".wasm", ".wat"));
+  // ANCHORED. `String.replace` with a string pattern hits the FIRST occurrence, so a path whose
+  // DIRECTORY carries the extension rewrote the wrong segment: `build.wat/out.wat` became
+  // `build.wasm/out.wat`. `wasm2js` 20 lines above already anchors with `/\.(wasm|wat)$/`; this
+  // one did not. (2026-08-24 audit — `utils.ts` has no direct test suite.)
+  const out = outPath ?? (isWat ? p.replace(/\.wat$/, ".wasm") : p.replace(/\.wasm$/, ".wat"));
   if (outPath) await rt.mkdir(dirname(outPath), { recursive: true });
 
   try {
@@ -505,8 +512,15 @@ export async function convertFile(p: string, outPath?: string): Promise<void> {
       await rt.writeTextFile(out, wat);
       console.log(`✅ Converted to ${out}`);
     }
+    return true;
   } catch (err) {
+    // RETURN the failure, do not just print it. Both of these were `Promise<void>`: the error was
+    // logged and the CLI fell straight through to `break`, so `wasmtk convert broken.wat` printed
+    // ❌ and still EXITED 0 — any script or CI checking $? read it as success. The sibling verbs
+    // (`wasic`, `build`, …) already exit 1, so this was an isolated hole, not a CLI-wide one.
+    // (2026-08-24 audit.)
     console.error(`❌ Conversion failed: ${err}`);
+    return false;
   }
 }
 
