@@ -120,7 +120,24 @@ export function parseSexprs(src: string): SexpList[] {
       }
       if (src[i] === "(") list.push(readList());
       else if (src[i] === '"') list.push(readString());
-      else list.push(readAtom());
+      else {
+        // FORWARD-PROGRESS GUARANTEE. `readAtom` stops at `;` without consuming it (because `;;`
+        // opens a comment), and `skipTrivia` only consumes `;;` and `(;` — so a LONE `;` inside a
+        // list advanced neither, and this loop pushed "" forever until the array hit its maximum
+        // length. That surfaced as `parse error: Invalid array length` on `annotations.wast:14`
+        // (`(@a , ; ] [ …`), after allocating ~1.9 GB that was never released — on its own the
+        // single largest contributor to the runner's memory growth across a directory run.
+        // Rather than special-case `;`, assert progress: any character that `readAtom` cannot
+        // consume is taken as a one-character atom, so the loop can never stall on a future one.
+        const before = i;
+        const atom = readAtom();
+        if (i === before) {
+          list.push(src[i]);
+          i++;
+        } else {
+          list.push(atom);
+        }
+      }
     }
     return { list, start, end: i };
   }

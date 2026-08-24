@@ -27,6 +27,10 @@
     "pass": 99,
     "skip": 32
   },
+  "annotations.wast": {
+    "pass": 63,
+    "skip": 10
+  },
   "array.wast": {
     "pass": 3,
     "skip": 51
