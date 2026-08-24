@@ -168,7 +168,10 @@ function parseIntLit(lit: string): bigint {
     neg = true;
     s = s.slice(1);
   }
-  const v = s.startsWith("0x") || s.startsWith("0X") ? BigInt(s) : BigInt(s);
+  // `BigInt()` accepts the 0x/0X prefix directly, so no branch is needed. This was a ternary
+  // with two IDENTICAL arms until the 2026-08-24 audit — harmless, but it read as though the
+  // hex case were handled specially and invited someone to "fix" the wrong half.
+  const v = BigInt(s);
   return neg ? -v : v;
 }
 
@@ -362,9 +365,20 @@ function watStrToJs(token: string): string {
   return new TextDecoder().decode(decodeWatString([token]));
 }
 
-/** The standard `spectest` host module the spec testsuite imports. */
+/**
+ * The standard `spectest` host module the spec testsuite imports.
+ *
+ * These VALUES ARE PART OF THE CONTRACT, not placeholders — the corpus asserts them directly.
+ * `global_f32`/`global_f64` were `0` here until 2026-08-24 and the spec defines them as **666.6**,
+ * which is why `imports.wast` reported two `assert_return mismatch` failures against `get-5`/`get-6`.
+ * A wrong host value is indistinguishable from a codegen bug in the failure output, so it read as
+ * ours for as long as it stood.
+ *
+ * `spectest.unknown` is imported 9 times by the corpus and is DELIBERATELY ABSENT — those are
+ * `assert_unlinkable` cases that require the import to fail to resolve. Never add it.
+ */
 function spectestImports(): WebAssembly.ModuleImports {
-  return {
+  const imports: Record<string, unknown> = {
     print: () => {},
     print_i32: () => {},
     print_i64: () => {},
@@ -374,11 +388,24 @@ function spectestImports(): WebAssembly.ModuleImports {
     print_f64_f64: () => {},
     global_i32: new WebAssembly.Global({ value: "i32", mutable: false }, 666),
     global_i64: new WebAssembly.Global({ value: "i64", mutable: false }, 666n),
-    global_f32: new WebAssembly.Global({ value: "f32", mutable: false }, 0),
-    global_f64: new WebAssembly.Global({ value: "f64", mutable: false }, 0),
+    global_f32: new WebAssembly.Global({ value: "f32", mutable: false }, 666.6),
+    global_f64: new WebAssembly.Global({ value: "f64", mutable: false }, 666.6),
     table: new WebAssembly.Table({ initial: 10, maximum: 20, element: "anyfunc" }),
     memory: new WebAssembly.Memory({ initial: 1, maximum: 2 }),
   };
+  // Proposal-gated exports. Constructed defensively: a host engine that does not implement the
+  // feature throws here, and the RIGHT outcome then is that the import stays absent (so dependent
+  // modules skip) rather than the whole spectest module failing to build and taking every file
+  // with it.
+  try {
+    imports.shared_memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  } catch { /* threads unsupported by this engine — leave absent */ }
+  try {
+    imports.table64 = new WebAssembly.Table(
+      { initial: 10, maximum: 20, element: "anyfunc", index: "i64" } as WebAssembly.TableDescriptor,
+    );
+  } catch { /* table64 unsupported by this engine — leave absent */ }
+  return imports as WebAssembly.ModuleImports;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -395,6 +422,14 @@ export interface WastResult {
   failed: number;
   /** Number of commands skipped (unsupported directive or unhandled command kind). */
   skipped: number;
+  /**
+   * Modules in this file the toolchain could not ASSEMBLE. Report this alongside pass/fail/skip:
+   * a file whose modules do not build is not healthy just because its failure count is small, and
+   * every failure after the first one is likely a CASCADE from it rather than an independent
+   * verdict. Rank remediation by THIS number, not by the failure count — 11 of the 12 failures in
+   * the corpus today come from four unassemblable modules.
+   */
+  modulesFailed: number;
   /** Human-readable messages for each failed command (one entry per failure). */
   failures: string[];
 }
@@ -419,7 +454,14 @@ export async function runWast(
   path: string,
   opts: { verbose?: boolean; maxFailures?: number } = {},
 ): Promise<WastResult> {
-  const res: WastResult = { file: path, passed: 0, failed: 0, skipped: 0, failures: [] };
+  const res: WastResult = {
+    file: path,
+    passed: 0,
+    failed: 0,
+    skipped: 0,
+    modulesFailed: 0,
+    failures: [],
+  };
   const src = await rt.readTextFile(path);
   let cmds: SexpList[];
   try {
@@ -436,9 +478,19 @@ export async function runWast(
   const named = new Map<string, WebAssembly.Instance>();
   const registry: Record<string, WebAssembly.ModuleImports> = { spectest: spectestImports() };
 
+  // Set once any module in this file fails to assemble. Every later failure is then reported as a
+  // CASCADE rather than a bare wrong-answer, because that distinction is knowable HERE and nowhere
+  // downstream: a scorer looking at `assert_return mismatch` cannot tell "the engine computed the
+  // wrong value" from "a module that should have populated this state never built". Conflating the
+  // two is what made these read as codegen bugs. They still FAIL — loudly, by design — they are
+  // just now labelled with what actually happened.
+  let sawUnassemblableModule = false;
   const fail = (msg: string) => {
     res.failed++;
-    if (res.failures.length < (opts.maxFailures ?? 25)) res.failures.push(msg);
+    const tagged = sawUnassemblableModule
+      ? `[cascade: a module in this file did not assemble] ${msg}`
+      : msg;
+    if (res.failures.length < (opts.maxFailures ?? 25)) res.failures.push(tagged);
   };
 
   // Build the import object a module needs from the registry (+ spectest).
@@ -450,10 +502,6 @@ export async function runWast(
 
   // Assemble a `(module …)` node to bytes. Supports `(module binary …)` + text. Throws on failure.
   function assemble(mod: SexpList): Uint8Array {
-    const kind = typeof mod.list[1] === "string" ? mod.list[1] : "";
-    const nameIdx = typeof mod.list[1] === "string" && (mod.list[1] as string).startsWith("$")
-      ? 1
-      : -1;
     const bkIdx = mod.list.findIndex((x) => x === "binary");
     const qkIdx = mod.list.findIndex((x) => x === "quote");
     if (bkIdx !== -1) {
@@ -468,8 +516,6 @@ export async function runWast(
     } else {
       text = src.slice(mod.start, mod.end);
     }
-    void kind;
-    void nameIdx;
     const parsed = wabtMod.parseWat(path, text, { enable_all: true });
     try {
       const { buffer } = parsed.toBinary({});
@@ -548,6 +594,8 @@ export async function runWast(
             // Skip it and its dependent actions rather than failing the whole file.
             cur = null;
             res.skipped++;
+            res.modulesFailed++;
+            sawUnassemblableModule = true;
             if (opts.verbose) {
               res.failures.push(`skip module: ${e instanceof Error ? e.message : e}`);
             }
@@ -604,7 +652,15 @@ export async function runWast(
         case "assert_exhaustion": {
           const action = cmd.list[1];
           if (!isList(action) || (head(action) !== "invoke" && head(action) !== "get")) {
+            // The argument is a MODULE, not an action: `assert_trap` on instantiation. We do not
+            // run it — but the spec says instantiation gets part-way before trapping, so its
+            // element segments ARE applied and later assertions depend on that state. Skipping it
+            // silently is what made `linking0.wast` report a bare "null function" trap that read
+            // like an engine bug. Count it with the unbuilt modules and arm the cascade tag, so the
+            // failure it causes says where it came from.
             res.skipped++;
+            res.modulesFailed++;
+            sawUnassemblableModule = true;
             break;
           }
           try {
@@ -708,16 +764,22 @@ export async function runWastPath(
  */
 export async function wastCli(target: string, opts: { verbose?: boolean } = {}): Promise<number> {
   const results = await runWastPath(target, { verbose: opts.verbose, maxFailures: 6 });
-  let tp = 0, tf = 0, ts = 0;
+  let tp = 0, tf = 0, ts = 0, tm = 0;
   const multi = results.length > 1;
   for (const r of results) {
     tp += r.passed;
     tf += r.failed;
     ts += r.skipped;
+    tm += r.modulesFailed;
     const base = r.file.split(/[\\/]/).pop();
-    if (multi && r.failed === 0 && !opts.verbose) continue; // only surface files with failures in dir mode
-    const tag = r.failed > 0 ? "❌" : "✓";
-    console.log(`${tag} ${base}: pass=${r.passed} fail=${r.failed} skip=${r.skipped}`);
+    // Surface a file whose MODULES did not build even when it reports no failures — that file is
+    // not healthy, it is dark, and it is invisible in all three of the usual columns.
+    if (multi && r.failed === 0 && r.modulesFailed === 0 && !opts.verbose) continue;
+    const tag = r.failed > 0 ? "❌" : (r.modulesFailed > 0 ? "⚠" : "✓");
+    console.log(
+      `${tag} ${base}: pass=${r.passed} fail=${r.failed} skip=${r.skipped}` +
+        (r.modulesFailed > 0 ? ` unbuilt-modules=${r.modulesFailed}` : ""),
+    );
     for (const m of r.failures.slice(0, 6)) {
       console.log("    " + m.replace(/\s+/g, " ").slice(0, 140));
     }
@@ -725,9 +787,18 @@ export async function wastCli(target: string, opts: { verbose?: boolean } = {}):
   console.log(
     `\n${
       tf === 0 ? "✅" : "❌"
-    } wast: ${results.length} file(s) — ${tp} passed, ${tf} failed, ${ts} skipped` +
+    } wast: ${results.length} file(s) — ${tp} passed, ${tf} failed, ${ts} skipped, ${tm} unbuilt modules` +
       (tf > 0 ? "  (execution assertion failures)" : ""),
   );
+  if (tm > 0) {
+    console.log(
+      `   ${tm} module(s) could not be ASSEMBLED — read this alongside the other three. A file whose\n` +
+        "   modules do not build is not healthy just because its failure count is small, and failures\n" +
+        "   after the first unbuilt module are tagged [cascade] because they are knock-on, not\n" +
+        "   independent verdicts. RANK REMEDIATION BY THIS NUMBER: one unbuilt module typically\n" +
+        "   accounts for several failures and many skips at once.",
+    );
+  }
   if (ts > 0) {
     console.log(
       "   skipped = assertions using features/value-types out of scope (v128/ref, unsupported\n" +

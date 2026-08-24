@@ -13,10 +13,11 @@
  * assemble is counted as a skip by design — which means silent coverage loss looks exactly like
  * success. The corpus could have shed ~2400 more passes without a peep.
  *
- * So: every baselined file must produce EXACTLY its baseline pass count.
- *   - fewer  → FAIL. Coverage was lost (toolchain regression, or a corpus refresh retiring tests).
- *   - more   → FAIL. Good news, but the baseline is now stale — re-record it deliberately.
- *   - failed > 0 → FAIL, as before. An execution failure is always a real bug.
+ * So: every baselined file must produce EXACTLY its baseline pass count AND failure count.
+ *   - fewer passes → FAIL. Coverage lost (toolchain regression, or a refresh retiring tests).
+ *   - more passes  → FAIL. Good news, but the baseline is stale — re-record it deliberately.
+ *   - failure count changed in EITHER direction → FAIL. A new failure is a regression; a vanished
+ *     one is a win that must be re-recorded rather than silently pocketed.
  *
  * A baseline of 0 is meaningful and intentional: it pins a file whose modules the toolchain cannot
  * currently assemble at all (e.g. `ref_null.wast` — wabt-ts 1.3.5 cannot encode `ref.null` for any
@@ -27,10 +28,20 @@
  *
  *   deno run --allow-read --allow-write --allow-net --allow-run tests/wast_tests.ts --update-baseline
  *
- * That rescans the WHOLE corpus and records every file that runs with `failed === 0`. Files with
- * genuine execution failures are deliberately left out of the baseline rather than pinned, so they
- * stay visible as known-bad instead of being frozen in as expected. `--allow-run` is needed because
- * the rescan chunks across subprocesses — see the comment above `--update-baseline` for why.
+ * That rescans the WHOLE corpus. `--allow-run` is needed because it chunks across subprocesses —
+ * see the comment above `--update-baseline` for why.
+ *
+ * KNOWN-FAILING FILES ARE PINNED, NOT EXCLUDED (owner decision 2026-08-24: they fail LOUDLY).
+ * They were previously left out of the baseline entirely, which made them invisible: they could
+ * gain failures, lose passes, or go completely dark and nothing said so. Each is now pinned at its
+ * exact failure count and printed in RED on every run. The gate still exits 0 while they sit at
+ * their pinned counts — a gate that can never pass is not a gate — but the summary reports the
+ * failure total rather than claiming everything is clean.
+ *
+ * Read `unbuilt-modules` next to the failure count. Nearly every known failure is a CASCADE from a
+ * module the toolchain could not assemble, tagged `[cascade]` by the runner. Rank remediation by
+ * the module count, not the failure count: `type-equivalence.wast` shows 1 failure and **13**
+ * unbuilt modules.
  *
  *   deno run --allow-read --allow-net tests/wast_tests.ts
  */
@@ -46,7 +57,7 @@ const red = (s: string) => `\x1b[31m${s}\x1b[39m`;
 const yellow = (s: string) => `\x1b[33m${s}\x1b[39m`;
 const dim = (s: string) => `\x1b[90m${s}\x1b[39m`;
 
-type Entry = { pass: number; skip: number };
+type Entry = { pass: number; skip: number; fail?: number; unbuilt?: number };
 
 /** Every `.wast` in the corpus, as forward-slashed paths relative to SUITE, sorted. */
 async function corpusFiles(): Promise<string[]> {
@@ -63,11 +74,11 @@ async function corpusFiles(): Promise<string[]> {
 if (Deno.args[0] === "--scan-chunk") {
   const [, startS, countS, outPath] = Deno.args;
   const files = (await corpusFiles()).slice(Number(startS), Number(startS) + Number(countS));
-  const acc: Record<string, { pass: number; skip: number; failed: number }> = {};
+  const acc: Record<string, { pass: number; skip: number; failed: number; unbuilt: number }> = {};
   for (const rel of files) {
     try {
       const r = await runWast(join(SUITE, rel), { maxFailures: 0 });
-      acc[rel] = { pass: r.passed, skip: r.skipped, failed: r.failed };
+      acc[rel] = { pass: r.passed, skip: r.skipped, failed: r.failed, unbuilt: r.modulesFailed };
     } catch {
       // A file that throws is simply absent from this chunk's output.
     }
@@ -92,7 +103,8 @@ if (Deno.args.includes("--update-baseline")) {
   const CHUNK = 20;
   const self = new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
   const tmp = await Deno.makeTempDir();
-  const merged: Record<string, { pass: number; skip: number; failed: number }> = {};
+  const merged: Record<string, { pass: number; skip: number; failed: number; unbuilt: number }> =
+    {};
   const unrunnable: string[] = [];
 
   async function scan(start: number, count: number): Promise<boolean> {
@@ -140,12 +152,17 @@ if (Deno.args.includes("--update-baseline")) {
   for (const rel of files) {
     const r = merged[rel];
     if (!r) continue;
+    // Files WITH failures used to be excluded here, which made them invisible to the gate: they
+    // could gain failures, lose passes, or go entirely dark and nothing would say so. They are now
+    // PINNED WITH THEIR FAILURE COUNT and reported in red on every run — loud, and unable to drift.
+    const e: Entry = { pass: r.pass, skip: r.skip };
     if (r.failed > 0) {
+      e.fail = r.failed;
       withFailures++;
-      console.log(yellow(`  excluded (${r.failed} execution failure(s)): ${rel}`));
-      continue;
+      console.log(yellow(`  pinned WITH ${r.failed} failure(s): ${rel}`));
     }
-    next[rel] = { pass: r.pass, skip: r.skip };
+    if (r.unbuilt > 0) e.unbuilt = r.unbuilt;
+    next[rel] = e;
   }
   await Deno.writeTextFile(BASELINE, JSON.stringify(next, null, 2) + "\n");
   const totalPass = Object.values(next).reduce((a, b) => a + b.pass, 0);
@@ -155,7 +172,9 @@ if (Deno.args.includes("--update-baseline")) {
     ),
   );
   console.log(
-    dim(`  excluded: ${withFailures} with execution failures, ${unrunnable.length} unrunnable`),
+    dim(
+      `  ${withFailures} file(s) pinned WITH failures (loud, not excluded); ${unrunnable.length} unrunnable`,
+    ),
   );
   Deno.exit(0);
 }
@@ -190,34 +209,54 @@ for (const rel of names) {
   totalFail += r.failed;
   totalSkip += r.skipped;
 
-  if (r.failed > 0) {
+  // Check all THREE dimensions independently and collect every mismatch.
+  //
+  // This was an if/else chain until an audit on 2026-08-24 found two holes in it, both of the same
+  // shape the per-file rework exists to close — a coverage collapse that no column reports:
+  //
+  //   1. The known-failing branch SHORT-CIRCUITED the pass check. `linking.wast` is pinned at 4
+  //      failures / 120 passes; had its passes fallen to 50 with failures still 4, the chain
+  //      printed "KNOWN FAILING" and the gate went green.
+  //   2. `unbuilt` was recorded into 159 entries and NEVER COMPARED. It matters most exactly where
+  //      the pass check is toothless: 71 files are pinned at pass == 0, so their pass count cannot
+  //      drop, and 66 of those have unbuilt > 0. `table_copy.wast` (pass 0, unbuilt 51) could have
+  //      gone to 100 unbuilt modules silently.
+  //
+  // An `else if` chain is the wrong shape for independent invariants: it reports the first and
+  // hides the rest. Collect, then report.
+  const wantFail = want.fail ?? 0;
+  const wantUnbuilt = want.unbuilt ?? 0;
+  const drift: string[] = [];
+  if (r.failed !== wantFail) drift.push(`failures ${wantFail} → ${r.failed}`);
+  if (r.passed !== want.pass) drift.push(`passes ${want.pass} → ${r.passed}`);
+  if (r.modulesFailed !== wantUnbuilt) {
+    drift.push(`unbuilt modules ${wantUnbuilt} → ${r.modulesFailed}`);
+  }
+
+  if (drift.length > 0) {
+    // Any movement is a hard fail, in either direction: a regression must not pass, and an
+    // improvement must be re-recorded deliberately rather than silently pocketed.
     badFiles++;
-    console.log(red(`  ✗ ${rel} — ${r.failed} execution failure(s), pass=${r.passed}`));
+    drifted.push(rel);
+    console.log(red(`  ✗ ${rel} — OFF BASELINE: ${drift.join(", ")}`));
     for (const m of r.failures.slice(0, 3)) {
       console.log("      " + m.replace(/\s+/g, " ").slice(0, 120));
     }
-  } else if (r.passed < want.pass) {
-    badFiles++;
-    drifted.push(rel);
+  } else if (wantFail > 0) {
+    // Known-failing and exactly on its pins. Loud by policy (owner decision 2026-08-24): printed in
+    // red every run, never quietly excluded and never converted to skips.
     console.log(
-      red(`  ✗ ${rel} — LOST COVERAGE: pass=${r.passed}, baseline=${want.pass}`) +
-        dim(`  (skip ${want.skip}→${r.skipped})`),
+      red(`  ✗ ${rel} — KNOWN FAILING: ${r.failed} failure(s) (pinned)`) +
+        dim(`  pass=${r.passed} skip=${r.skipped} unbuilt-modules=${r.modulesFailed}`),
     );
-    console.log(
-      "      " +
-        dim(
-          "a module that no longer assembles turns its assertions into skips — check the toolchain",
-        ),
-    );
-  } else if (r.passed > want.pass) {
-    badFiles++;
-    drifted.push(rel);
-    console.log(
-      yellow(`  ⚠ ${rel} — GAINED COVERAGE: pass=${r.passed}, baseline=${want.pass}`) +
-        dim(`  (skip ${want.skip}→${r.skipped})`),
-    );
+    for (const m of r.failures.slice(0, 2)) {
+      console.log("      " + dim(m.replace(/\s+/g, " ").slice(0, 118)));
+    }
   } else {
-    console.log(green(`  ✓ ${rel}`) + `  pass=${r.passed} skip=${r.skipped}`);
+    console.log(
+      green(`  ✓ ${rel}`) + `  pass=${r.passed} skip=${r.skipped}` +
+        (r.modulesFailed > 0 ? dim(` unbuilt-modules=${r.modulesFailed}`) : ""),
+    );
   }
 }
 
@@ -246,7 +285,16 @@ if (drifted.length) {
   );
 }
 if (badFiles === 0) {
-  console.log(green(`  ✅ ALL CLEAN`));
+  // Never print "ALL CLEAN" while known failures stand — that phrasing is what the whole per-file
+  // rework exists to prevent. On baseline is the honest claim; the failure total stays in view.
+  if (totalFail > 0) {
+    console.log(
+      green(`  ✅ ON BASELINE`) +
+        red(` — ${totalFail} known failure(s) still standing, listed above`),
+    );
+  } else {
+    console.log(green(`  ✅ ALL CLEAN`));
+  }
   Deno.exit(0);
 } else {
   console.log(red(`  ❌ ${badFiles} file(s) failing or off-baseline`));

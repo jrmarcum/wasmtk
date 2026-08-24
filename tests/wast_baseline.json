@@ -5,11 +5,13 @@
   },
   "address0.wast": {
     "pass": 0,
-    "skip": 92
+    "skip": 92,
+    "unbuilt": 1
   },
   "address1.wast": {
     "pass": 0,
-    "skip": 127
+    "skip": 127,
+    "unbuilt": 1
   },
   "address64.wast": {
     "pass": 238,
@@ -21,7 +23,8 @@
   },
   "align0.wast": {
     "pass": 0,
-    "skip": 5
+    "skip": 5,
+    "unbuilt": 1
   },
   "align64.wast": {
     "pass": 99,
@@ -29,35 +32,43 @@
   },
   "annotations.wast": {
     "pass": 63,
-    "skip": 10
+    "skip": 10,
+    "unbuilt": 7
   },
   "array.wast": {
     "pass": 3,
-    "skip": 51
+    "skip": 51,
+    "unbuilt": 7
   },
   "array_copy.wast": {
     "pass": 4,
-    "skip": 31
+    "skip": 31,
+    "unbuilt": 1
   },
   "array_fill.wast": {
     "pass": 3,
-    "skip": 27
+    "skip": 27,
+    "unbuilt": 1
   },
   "array_init_data.wast": {
     "pass": 2,
-    "skip": 44
+    "skip": 44,
+    "unbuilt": 2
   },
   "array_init_elem.wast": {
     "pass": 3,
-    "skip": 33
+    "skip": 33,
+    "unbuilt": 3
   },
   "array_new_data.wast": {
     "pass": 13,
-    "skip": 13
+    "skip": 13,
+    "unbuilt": 3
   },
   "array_new_elem.wast": {
     "pass": 0,
-    "skip": 24
+    "skip": 24,
+    "unbuilt": 5
   },
   "binary-gc.wast": {
     "pass": 1,
@@ -81,39 +92,48 @@
   },
   "block.wast": {
     "pass": 166,
-    "skip": 57
+    "skip": 57,
+    "unbuilt": 1
   },
   "br.wast": {
     "pass": 20,
-    "skip": 77
+    "skip": 77,
+    "unbuilt": 1
   },
   "br_if.wast": {
     "pass": 30,
-    "skip": 89
+    "skip": 89,
+    "unbuilt": 1
   },
   "br_on_cast.wast": {
     "pass": 6,
-    "skip": 31
+    "skip": 31,
+    "unbuilt": 3
   },
   "br_on_cast_fail.wast": {
     "pass": 6,
-    "skip": 31
+    "skip": 31,
+    "unbuilt": 3
   },
   "br_on_non_null.wast": {
     "pass": 1,
-    "skip": 10
+    "skip": 10,
+    "unbuilt": 2
   },
   "br_on_null.wast": {
     "pass": 1,
-    "skip": 8
+    "skip": 8,
+    "unbuilt": 2
   },
   "br_table.wast": {
     "pass": 24,
-    "skip": 162
+    "skip": 162,
+    "unbuilt": 1
   },
   "bulk.wast": {
     "pass": 65,
-    "skip": 44
+    "skip": 44,
+    "unbuilt": 5
   },
   "bulk64.wast": {
     "pass": 65,
@@ -121,19 +141,23 @@
   },
   "call.wast": {
     "pass": 18,
-    "skip": 73
+    "skip": 73,
+    "unbuilt": 1
   },
   "call_indirect.wast": {
     "pass": 35,
-    "skip": 136
+    "skip": 136,
+    "unbuilt": 2
   },
   "call_indirect64.wast": {
     "pass": 0,
-    "skip": 2
+    "skip": 2,
+    "unbuilt": 1
   },
   "call_ref.wast": {
     "pass": 7,
-    "skip": 25
+    "skip": 25,
+    "unbuilt": 1
   },
   "comments.wast": {
     "pass": 3,
@@ -141,7 +165,8 @@
   },
   "const.wast": {
     "pass": 310,
-    "skip": 118
+    "skip": 118,
+    "unbuilt": 52
   },
   "conversions.wast": {
     "pass": 576,
@@ -153,35 +178,43 @@
   },
   "custom/branch_hint.wast": {
     "pass": 0,
-    "skip": 4
+    "skip": 4,
+    "unbuilt": 1
   },
   "custom/custom_annot.wast": {
     "pass": 0,
-    "skip": 17
+    "skip": 17,
+    "unbuilt": 3
   },
   "custom/name_annot.wast": {
     "pass": 0,
-    "skip": 7
+    "skip": 7,
+    "unbuilt": 4
   },
   "data.wast": {
     "pass": 20,
-    "skip": 26
+    "skip": 26,
+    "unbuilt": 26
   },
   "data0.wast": {
     "pass": 0,
-    "skip": 4
+    "skip": 4,
+    "unbuilt": 4
   },
   "data1.wast": {
     "pass": 0,
-    "skip": 14
+    "skip": 14,
+    "unbuilt": 14
   },
   "data_drop0.wast": {
     "pass": 0,
-    "skip": 11
+    "skip": 11,
+    "unbuilt": 1
   },
   "elem.wast": {
     "pass": 26,
-    "skip": 79
+    "skip": 79,
+    "unbuilt": 45
   },
   "endianness.wast": {
     "pass": 68,
@@ -201,7 +234,8 @@
   },
   "extern.wast": {
     "pass": 0,
-    "skip": 18
+    "skip": 18,
+    "unbuilt": 1
   },
   "f32.wast": {
     "pass": 2045,
@@ -229,7 +263,8 @@
   },
   "fac.wast": {
     "pass": 0,
-    "skip": 8
+    "skip": 8,
+    "unbuilt": 1
   },
   "float_exprs.wast": {
     "pass": 788,
@@ -237,23 +272,33 @@
   },
   "float_exprs0.wast": {
     "pass": 0,
-    "skip": 14
+    "skip": 14,
+    "unbuilt": 1
   },
   "float_exprs1.wast": {
     "pass": 0,
-    "skip": 3
+    "skip": 3,
+    "unbuilt": 1
   },
   "float_literals.wast": {
     "pass": 51,
-    "skip": 127
+    "skip": 127,
+    "unbuilt": 1
+  },
+  "float_memory.wast": {
+    "pass": 83,
+    "skip": 0,
+    "fail": 1
   },
   "float_memory0.wast": {
     "pass": 0,
-    "skip": 30
+    "skip": 30,
+    "unbuilt": 2
   },
   "float_memory64.wast": {
     "pass": 0,
-    "skip": 90
+    "skip": 90,
+    "unbuilt": 6
   },
   "float_misc.wast": {
     "pass": 454,
@@ -265,23 +310,28 @@
   },
   "func.wast": {
     "pass": 65,
-    "skip": 109
+    "skip": 109,
+    "unbuilt": 3
   },
   "func_ptrs.wast": {
     "pass": 5,
-    "skip": 31
+    "skip": 31,
+    "unbuilt": 3
   },
   "global.wast": {
     "pass": 44,
-    "skip": 72
+    "skip": 72,
+    "unbuilt": 2
   },
   "i16x8_relaxed_q15mulr_s.wast": {
     "pass": 0,
-    "skip": 3
+    "skip": 3,
+    "unbuilt": 1
   },
   "i31.wast": {
     "pass": 1,
-    "skip": 69
+    "skip": 69,
+    "unbuilt": 5
   },
   "i32.wast": {
     "pass": 459,
@@ -289,7 +339,8 @@
   },
   "i32x4_relaxed_trunc.wast": {
     "pass": 0,
-    "skip": 1
+    "skip": 1,
+    "unbuilt": 1
   },
   "i64.wast": {
     "pass": 415,
@@ -297,15 +348,22 @@
   },
   "i8x16_relaxed_swizzle.wast": {
     "pass": 0,
-    "skip": 6
+    "skip": 6,
+    "unbuilt": 1
   },
   "id.wast": {
     "pass": 0,
-    "skip": 1
+    "skip": 1,
+    "unbuilt": 1
   },
   "if.wast": {
     "pass": 105,
-    "skip": 136
+    "skip": 136,
+    "unbuilt": 1
+  },
+  "imports.wast": {
+    "pass": 127,
+    "skip": 17
   },
   "imports0.wast": {
     "pass": 6,
@@ -313,11 +371,13 @@
   },
   "imports1.wast": {
     "pass": 0,
-    "skip": 5
+    "skip": 5,
+    "unbuilt": 1
   },
   "imports2.wast": {
     "pass": 10,
-    "skip": 5
+    "skip": 5,
+    "unbuilt": 1
   },
   "imports3.wast": {
     "pass": 8,
@@ -325,7 +385,8 @@
   },
   "imports4.wast": {
     "pass": 0,
-    "skip": 12
+    "skip": 12,
+    "unbuilt": 4
   },
   "inline-module.wast": {
     "pass": 0,
@@ -333,7 +394,8 @@
   },
   "instance.wast": {
     "pass": 0,
-    "skip": 20
+    "skip": 20,
+    "unbuilt": 8
   },
   "int_exprs.wast": {
     "pass": 89,
@@ -341,7 +403,8 @@
   },
   "int_literals.wast": {
     "pass": 12,
-    "skip": 39
+    "skip": 39,
+    "unbuilt": 1
   },
   "labels.wast": {
     "pass": 28,
@@ -349,7 +412,8 @@
   },
   "left-to-right.wast": {
     "pass": 0,
-    "skip": 96
+    "skip": 96,
+    "unbuilt": 1
   },
   "legacy/rethrow.wast": {
     "pass": 8,
@@ -365,35 +429,61 @@
   },
   "legacy/try_delegate.wast": {
     "pass": 3,
-    "skip": 23
+    "skip": 23,
+    "unbuilt": 1
+  },
+  "linking.wast": {
+    "pass": 120,
+    "skip": 12,
+    "fail": 4,
+    "unbuilt": 10
+  },
+  "linking0.wast": {
+    "pass": 2,
+    "skip": 1,
+    "fail": 1,
+    "unbuilt": 1
   },
   "linking1.wast": {
     "pass": 0,
-    "skip": 13
+    "skip": 13,
+    "unbuilt": 6
   },
   "linking2.wast": {
     "pass": 0,
-    "skip": 10
+    "skip": 10,
+    "unbuilt": 2
   },
   "linking3.wast": {
     "pass": 1,
-    "skip": 11
+    "skip": 11,
+    "unbuilt": 5
   },
   "load.wast": {
     "pass": 59,
-    "skip": 38
+    "skip": 38,
+    "unbuilt": 1
   },
   "load0.wast": {
     "pass": 0,
-    "skip": 3
+    "skip": 3,
+    "unbuilt": 1
+  },
+  "load1.wast": {
+    "pass": 0,
+    "skip": 11,
+    "fail": 5,
+    "unbuilt": 1
   },
   "load2.wast": {
     "pass": 0,
-    "skip": 38
+    "skip": 38,
+    "unbuilt": 1
   },
   "load64.wast": {
     "pass": 59,
-    "skip": 38
+    "skip": 38,
+    "unbuilt": 1
   },
   "local_get.wast": {
     "pass": 35,
@@ -405,31 +495,38 @@
   },
   "local_set.wast": {
     "pass": 33,
-    "skip": 20
+    "skip": 20,
+    "unbuilt": 1
   },
   "local_tee.wast": {
     "pass": 42,
-    "skip": 56
+    "skip": 56,
+    "unbuilt": 1
   },
   "loop.wast": {
     "pass": 39,
-    "skip": 82
+    "skip": 82,
+    "unbuilt": 1
   },
   "memory-multi.wast": {
     "pass": 0,
-    "skip": 6
+    "skip": 6,
+    "unbuilt": 2
   },
   "memory.wast": {
     "pass": 69,
-    "skip": 10
+    "skip": 10,
+    "unbuilt": 1
   },
   "memory64-imports.wast": {
     "pass": 30,
-    "skip": 20
+    "skip": 20,
+    "unbuilt": 20
   },
   "memory64.wast": {
     "pass": 52,
-    "skip": 11
+    "skip": 11,
+    "unbuilt": 4
   },
   "memory_copy.wast": {
     "pass": 4417,
@@ -437,11 +534,13 @@
   },
   "memory_copy0.wast": {
     "pass": 0,
-    "skip": 29
+    "skip": 29,
+    "unbuilt": 1
   },
   "memory_copy1.wast": {
     "pass": 0,
-    "skip": 14
+    "skip": 14,
+    "unbuilt": 1
   },
   "memory_copy64.wast": {
     "pass": 4417,
@@ -453,7 +552,8 @@
   },
   "memory_fill0.wast": {
     "pass": 0,
-    "skip": 16
+    "skip": 16,
+    "unbuilt": 1
   },
   "memory_fill64.wast": {
     "pass": 89,
@@ -461,7 +561,8 @@
   },
   "memory_grow.wast": {
     "pass": 0,
-    "skip": 49
+    "skip": 49,
+    "unbuilt": 2
   },
   "memory_grow64.wast": {
     "pass": 45,
@@ -473,7 +574,8 @@
   },
   "memory_init0.wast": {
     "pass": 0,
-    "skip": 13
+    "skip": 13,
+    "unbuilt": 1
   },
   "memory_init64.wast": {
     "pass": 221,
@@ -493,15 +595,18 @@
   },
   "memory_size0.wast": {
     "pass": 0,
-    "skip": 8
+    "skip": 8,
+    "unbuilt": 1
   },
   "memory_size1.wast": {
     "pass": 0,
-    "skip": 15
+    "skip": 15,
+    "unbuilt": 1
   },
   "memory_size2.wast": {
     "pass": 0,
-    "skip": 21
+    "skip": 21,
+    "unbuilt": 1
   },
   "memory_size3.wast": {
     "pass": 2,
@@ -509,7 +614,8 @@
   },
   "memory_size_import.wast": {
     "pass": 0,
-    "skip": 5
+    "skip": 5,
+    "unbuilt": 1
   },
   "memory_trap.wast": {
     "pass": 180,
@@ -517,11 +623,13 @@
   },
   "memory_trap0.wast": {
     "pass": 0,
-    "skip": 14
+    "skip": 14,
+    "unbuilt": 1
   },
   "memory_trap1.wast": {
     "pass": 0,
-    "skip": 168
+    "skip": 168,
+    "unbuilt": 1
   },
   "memory_trap64.wast": {
     "pass": 170,
@@ -529,7 +637,8 @@
   },
   "names.wast": {
     "pass": 3,
-    "skip": 480
+    "skip": 480,
+    "unbuilt": 1
   },
   "nop.wast": {
     "pass": 87,
@@ -541,11 +650,13 @@
   },
   "proposals/custom-descriptors/array_new_exact.wast": {
     "pass": 0,
-    "skip": 1
+    "skip": 1,
+    "unbuilt": 1
   },
   "proposals/custom-descriptors/binary-descriptors.wast": {
     "pass": 3,
-    "skip": 2
+    "skip": 2,
+    "unbuilt": 2
   },
   "proposals/custom-descriptors/binary.wast": {
     "pass": 105,
@@ -553,43 +664,53 @@
   },
   "proposals/custom-descriptors/br_on_cast.wast": {
     "pass": 5,
-    "skip": 31
+    "skip": 31,
+    "unbuilt": 3
   },
   "proposals/custom-descriptors/br_on_cast_desc_eq.wast": {
     "pass": 23,
-    "skip": 99
+    "skip": 99,
+    "unbuilt": 5
   },
   "proposals/custom-descriptors/br_on_cast_desc_eq_fail.wast": {
     "pass": 23,
-    "skip": 99
+    "skip": 99,
+    "unbuilt": 5
   },
   "proposals/custom-descriptors/br_on_cast_fail.wast": {
     "pass": 5,
-    "skip": 31
+    "skip": 31,
+    "unbuilt": 3
   },
   "proposals/custom-descriptors/descriptors.wast": {
     "pass": 50,
-    "skip": 7
+    "skip": 7,
+    "unbuilt": 7
   },
   "proposals/custom-descriptors/exact-casts.wast": {
     "pass": 0,
-    "skip": 111
+    "skip": 111,
+    "unbuilt": 3
   },
   "proposals/custom-descriptors/exact-func-import.wast": {
     "pass": 4,
-    "skip": 23
+    "skip": 23,
+    "unbuilt": 11
   },
   "proposals/custom-descriptors/ref_cast_desc_eq.wast": {
     "pass": 16,
-    "skip": 93
+    "skip": 93,
+    "unbuilt": 3
   },
   "proposals/custom-descriptors/ref_get_desc.wast": {
     "pass": 12,
-    "skip": 26
+    "skip": 26,
+    "unbuilt": 7
   },
   "proposals/custom-descriptors/struct_new_desc.wast": {
     "pass": 19,
-    "skip": 25
+    "skip": 25,
+    "unbuilt": 8
   },
   "proposals/custom-page-sizes/binary.wast": {
     "pass": 107,
@@ -597,19 +718,23 @@
   },
   "proposals/custom-page-sizes/custom-page-sizes-invalid.wast": {
     "pass": 21,
-    "skip": 1
+    "skip": 1,
+    "unbuilt": 1
   },
   "proposals/custom-page-sizes/custom-page-sizes.wast": {
     "pass": 1,
-    "skip": 43
+    "skip": 43,
+    "unbuilt": 12
   },
   "proposals/custom-page-sizes/memory_max.wast": {
     "pass": 2,
-    "skip": 4
+    "skip": 4,
+    "unbuilt": 4
   },
   "proposals/custom-page-sizes/memory_max_i64.wast": {
     "pass": 2,
-    "skip": 4
+    "skip": 4,
+    "unbuilt": 4
   },
   "proposals/threads/atomic.wast": {
     "pass": 294,
@@ -621,7 +746,7 @@
   },
   "proposals/threads/imports.wast": {
     "pass": 88,
-    "skip": 24
+    "skip": 23
   },
   "proposals/threads/memory.wast": {
     "pass": 62,
@@ -629,7 +754,8 @@
   },
   "proposals/wide-arithmetic/wide-arithmetic.wast": {
     "pass": 8,
-    "skip": 101
+    "skip": 101,
+    "unbuilt": 2
   },
   "ref.wast": {
     "pass": 4,
@@ -637,67 +763,83 @@
   },
   "ref_as_non_null.wast": {
     "pass": 1,
-    "skip": 5
+    "skip": 5,
+    "unbuilt": 1
   },
   "ref_cast.wast": {
     "pass": 0,
-    "skip": 45
+    "skip": 45,
+    "unbuilt": 2
   },
   "ref_eq.wast": {
     "pass": 6,
-    "skip": 83
+    "skip": 83,
+    "unbuilt": 1
   },
   "ref_func.wast": {
     "pass": 3,
-    "skip": 12
+    "skip": 12,
+    "unbuilt": 2
   },
   "ref_is_null.wast": {
     "pass": 2,
-    "skip": 19
+    "skip": 19,
+    "unbuilt": 1
   },
   "ref_null.wast": {
     "pass": 0,
-    "skip": 34
+    "skip": 34,
+    "unbuilt": 2
   },
   "ref_test.wast": {
     "pass": 0,
-    "skip": 71
+    "skip": 71,
+    "unbuilt": 2
   },
   "relaxed_dot_product.wast": {
     "pass": 0,
-    "skip": 11
+    "skip": 11,
+    "unbuilt": 1
   },
   "relaxed_laneselect.wast": {
     "pass": 0,
-    "skip": 12
+    "skip": 12,
+    "unbuilt": 1
   },
   "relaxed_madd_nmadd.wast": {
     "pass": 0,
-    "skip": 19
+    "skip": 19,
+    "unbuilt": 2
   },
   "relaxed_min_max.wast": {
     "pass": 0,
-    "skip": 25
+    "skip": 25,
+    "unbuilt": 1
   },
   "return.wast": {
     "pass": 20,
-    "skip": 64
+    "skip": 64,
+    "unbuilt": 1
   },
   "return_call.wast": {
     "pass": 12,
-    "skip": 35
+    "skip": 35,
+    "unbuilt": 1
   },
   "return_call_indirect.wast": {
     "pass": 27,
-    "skip": 52
+    "skip": 52,
+    "unbuilt": 1
   },
   "return_call_ref.wast": {
     "pass": 12,
-    "skip": 36
+    "skip": 36,
+    "unbuilt": 2
   },
   "select.wast": {
     "pass": 30,
-    "skip": 126
+    "skip": 126,
+    "unbuilt": 2
   },
   "simd_address.wast": {
     "pass": 10,
@@ -721,7 +863,8 @@
   },
   "simd_const.wast": {
     "pass": 188,
-    "skip": 313
+    "skip": 313,
+    "unbuilt": 55
   },
   "simd_conversions.wast": {
     "pass": 48,
@@ -905,7 +1048,8 @@
   },
   "simd_memory-multi.wast": {
     "pass": 0,
-    "skip": 1
+    "skip": 1,
+    "unbuilt": 1
   },
   "simd_select.wast": {
     "pass": 0,
@@ -917,7 +1061,8 @@
   },
   "simd_store.wast": {
     "pass": 9,
-    "skip": 18
+    "skip": 18,
+    "unbuilt": 1
   },
   "simd_store16_lane.wast": {
     "pass": 3,
@@ -941,123 +1086,153 @@
   },
   "stack.wast": {
     "pass": 5,
-    "skip": 1
+    "skip": 1,
+    "unbuilt": 1
   },
   "start.wast": {
     "pass": 13,
-    "skip": 2
+    "skip": 2,
+    "unbuilt": 1
   },
   "start0.wast": {
     "pass": 0,
-    "skip": 9
+    "skip": 9,
+    "unbuilt": 1
   },
   "store.wast": {
     "pass": 58,
-    "skip": 10
+    "skip": 10,
+    "unbuilt": 1
   },
   "store0.wast": {
     "pass": 0,
-    "skip": 5
+    "skip": 5,
+    "unbuilt": 1
   },
   "store1.wast": {
     "pass": 4,
-    "skip": 5
+    "skip": 5,
+    "unbuilt": 1
   },
   "store2.wast": {
     "pass": 0,
-    "skip": 23
+    "skip": 23,
+    "unbuilt": 1
   },
   "struct.wast": {
     "pass": 2,
-    "skip": 28
+    "skip": 28,
+    "unbuilt": 6
   },
   "switch.wast": {
     "pass": 1,
-    "skip": 27
+    "skip": 27,
+    "unbuilt": 1
   },
   "table-sub.wast": {
     "pass": 2,
-    "skip": 1
+    "skip": 1,
+    "unbuilt": 1
   },
   "table.wast": {
     "pass": 10,
-    "skip": 23
+    "skip": 23,
+    "unbuilt": 6
   },
   "table64.wast": {
     "pass": 2,
-    "skip": 12
+    "skip": 12,
+    "unbuilt": 12
   },
   "table_copy.wast": {
     "pass": 0,
-    "skip": 1726
+    "skip": 1726,
+    "unbuilt": 51
   },
   "table_copy64.wast": {
     "pass": 0,
-    "skip": 1726
+    "skip": 1726,
+    "unbuilt": 51
   },
   "table_copy_mixed.wast": {
     "pass": 3,
-    "skip": 1
+    "skip": 1,
+    "unbuilt": 1
   },
   "table_fill.wast": {
     "pass": 9,
-    "skip": 36
+    "skip": 36,
+    "unbuilt": 1
   },
   "table_fill64.wast": {
     "pass": 9,
-    "skip": 71
+    "skip": 71,
+    "unbuilt": 1
   },
   "table_get.wast": {
     "pass": 5,
-    "skip": 11
+    "skip": 11,
+    "unbuilt": 1
   },
   "table_get64.wast": {
     "pass": 0,
-    "skip": 11
+    "skip": 11,
+    "unbuilt": 1
   },
   "table_grow.wast": {
     "pass": 8,
-    "skip": 47
+    "skip": 47,
+    "unbuilt": 7
   },
   "table_grow64.wast": {
     "pass": 0,
-    "skip": 22
+    "skip": 22,
+    "unbuilt": 1
   },
   "table_init.wast": {
     "pass": 67,
-    "skip": 723
+    "skip": 723,
+    "unbuilt": 40
   },
   "table_init64.wast": {
     "pass": 67,
-    "skip": 819
+    "skip": 819,
+    "unbuilt": 43
   },
   "table_set.wast": {
     "pass": 7,
-    "skip": 19
+    "skip": 19,
+    "unbuilt": 1
   },
   "table_set64.wast": {
     "pass": 0,
-    "skip": 19
+    "skip": 19,
+    "unbuilt": 1
   },
   "table_size.wast": {
     "pass": 2,
-    "skip": 37
+    "skip": 37,
+    "unbuilt": 1
   },
   "table_size64.wast": {
     "pass": 0,
-    "skip": 37
+    "skip": 37,
+    "unbuilt": 1
   },
   "tag.wast": {
     "pass": 4,
-    "skip": 2
+    "skip": 2,
+    "unbuilt": 2
   },
   "throw.wast": {
     "pass": 3,
-    "skip": 10
+    "skip": 10,
+    "unbuilt": 1
   },
   "throw_ref.wast": {
     "pass": 2,
-    "skip": 13
+    "skip": 13,
+    "unbuilt": 1
   },
   "token.wast": {
     "pass": 25,
@@ -1069,23 +1244,34 @@
   },
   "traps0.wast": {
     "pass": 0,
-    "skip": 15
+    "skip": 15,
+    "unbuilt": 1
   },
   "try_table.wast": {
     "pass": 13,
-    "skip": 51
+    "skip": 51,
+    "unbuilt": 4
   },
   "type-canon.wast": {
     "pass": 0,
-    "skip": 2
+    "skip": 2,
+    "unbuilt": 2
+  },
+  "type-equivalence.wast": {
+    "pass": 0,
+    "skip": 17,
+    "fail": 1,
+    "unbuilt": 13
   },
   "type-rec.wast": {
     "pass": 11,
-    "skip": 15
+    "skip": 15,
+    "unbuilt": 11
   },
   "type-subtyping.wast": {
     "pass": 44,
-    "skip": 75
+    "skip": 75,
+    "unbuilt": 46
   },
   "type.wast": {
     "pass": 2,
@@ -1093,7 +1279,8 @@
   },
   "unreachable.wast": {
     "pass": 0,
-    "skip": 64
+    "skip": 64,
+    "unbuilt": 1
   },
   "unreached-invalid.wast": {
     "pass": 120,
@@ -1105,7 +1292,8 @@
   },
   "unwind.wast": {
     "pass": 0,
-    "skip": 50
+    "skip": 50,
+    "unbuilt": 1
   },
   "utf8-custom-section-id.wast": {
     "pass": 176,
