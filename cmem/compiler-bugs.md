@@ -753,7 +753,7 @@ local and use that local for both selects.
 
 **And the parallel path was fixed too, differently and on purpose.** `internalizeDynrtHostImports` in `src/wasic.ts` splices its own `__host_print` with an inline single-iovec `fd_write`; it now carries its **own** inline loop rather than calling the shared helper, because it is injected into an already-merged module that need not contain `$__fd_write_all`. Verified by `dync_cross_runtime_tests.ts` 3/3.
 
-**Measured result:** `1_values` on wasmtime 58 → 61 bytes, matching V8/wasmer/wazero exactly. The engine gate went **0 regressed, 37 improved** — every one of the 37 `differ` entries flipped to `match`, and nothing else moved. Full suite green: wasi 417/417, wast 281 files 27651/0, all polyglot suites.
+**Measured result:** `1_values` on wasmtime 58 → 61 bytes, matching V8/wasmer/wazero exactly. The engine gate went **0 regressed, 37 improved** — every one of the 37 `differ` entries flipped to `match`, and nothing else moved. Full suite green AT THAT COMMIT: wasi 417/417, wast 281 files 27651/0, all polyglot suites. (The wast figure moved to 287 / 27983 / 12 pinned later the same day when known failures were pinned rather than excluded — quoted here as-of, not as current.)
 
 ⚠️ **Parallel code paths:** `src/wasic.ts` and `src/console_log.ts` each own their own string
 handling ([design-decisions.md](design-decisions.md)). Check BOTH for `fd_write` emission before

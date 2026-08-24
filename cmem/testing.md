@@ -101,9 +101,9 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 > | Suite | Result |
 > | --- | --- |
 > | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **417 / 417** — 412 + the Phase 34 type-predicate batch (3 owner stress tests; 2 passed as written, 1 exposed the inline-target bug) + 2 regressions, 2026-07-30. Full suite RE-RUN: the fix changed `src/wasic.ts`, so the gate applied |
-> | `wast_tests.ts` | **280 files, 27588 passed, 0 failed**, 37185 skipped — ALL CLEAN (rebuilt 2026-08-20 as a per-file baseline gate; was 41 files / 12444) |
+> | `wast_tests.ts` | **287 files, 27983 passed, 37252 skipped** — ON BASELINE, with **12 known failures PINNED** in 5 files (loud by owner decision 2026-08-24, not excluded). Rebuilt 2026-08-20 as a per-file baseline gate; was 41 files / 12444. Read `unbuilt-modules` beside the failure count |
 > | `bindgen_tests.ts` | 142, 0 failed |
-> | `engine_cross_check_tests.ts` | **376 modules × 3 engines, on baseline** — the multi-engine gate (2026-08-24). V8 vs wasmtime/wasmer/wazero, byte-identical stdout. Baseline `tests/engine_baseline.json`. wasmtime: 317 match / 22 reject / **37 differ** — the 37 are the `fd_write` short-write bug, the 22 are legacy EH |
+> | `engine_cross_check_tests.ts` | **376 modules × 3 engines = 1128 pairs, ALL ON BASELINE** — the multi-engine gate (2026-08-24). V8 vs wasmtime/wasmer/wazero, byte-identical stdout. Baseline `tests/engine_baseline.json`. wasmtime **354 match / 22 reject / 0 differ** (the 37 `differ` it found on run one were the `fd_write` short-write bug, fixed the same day); the 22 rejects are legacy EH |
 > | `go_merge_tests.ts` · `go_bindgen_tests.ts` · `go_asyncify_tests.ts` | **7 / 7 · 7 / 7 · 12 / 12** — green on **Go 1.26.7 + TinyGo 0.41.1**. TinyGo 0.41.1 caps at Go 1.26; a Go 1.27 install breaks all three (`requires go version 1.19 through 1.26`). Keep the pair in step — Go 1.27 is safe only once TinyGo **0.42.0** ships (support is on `dev`). See [next-work.md](next-work.md) |
 > | `bundle_tests.ts` | **4 / 4** — `StructImport` fixed, no longer a standing failure |
 > | `mod_tests.ts` · `merge_tests.ts` · `varscope_tests.ts` · `wasmmerge_guard_tests.ts` | 0 failed |
@@ -204,7 +204,7 @@ counts in README are a record of when each phase first went green, not a live in
 
 ## `wast_tests` is a PER-FILE BASELINE gate (rebuilt 2026-08-20)
 
-**280 files, 27588 passing assertions, 0 failed** — up from 41 files / 12444, because the gate no
+**287 files, 27983 passing assertions, 12 known failures pinned** — up from 41 files / 12444, because the gate no
 longer needs a hand-curated file list. Expected pass counts live in **`tests/wast_baseline.json`**
 (tracked). Every baselined file must produce **exactly** its baseline: fewer → FAIL (coverage lost),
 more → FAIL (baseline stale, re-record deliberately), any execution failure → FAIL as before.

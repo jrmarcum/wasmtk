@@ -26,7 +26,7 @@
   (cannot encode for any heap type; `ref_null.wast` is 0 pass / 34 skip) is a genuine wabt-ts bug and
   worth re-measuring after a bump. `ref.null $t` and `(module definition …)` are **parity with
   upstream wabt**, so they need an upstream feature, not a wabt-ts release. Report filed at
-  `scripts/wabt-ts-bug-report.md`. **Zero failures throughout — gate still clean at 12444/0/3467** —
+  `scripts/wabt-ts-bug-report.md`. **Zero failures introduced — gate on baseline at 287 files / 27983 / 12 pinned** —
   this is recovery-of-coverage, not a bug to chase on our side.
 - 🔴 **Fix the `wast` runner's memory retention** — sized and argued in § "SCOPED: work opened by the
   2026-08-20 spec-corpus session" below. The only open item with a user-visible symptom.
@@ -240,7 +240,10 @@ These live in the 7 files excluded from `tests/wast_baseline.json`. **They were 
   the last two "wabt-ts bugs" this session turned out to be upstream-wabt parity.
 - **E — S.** Confirm it is class A, then it folds into A.
 
-**Doing A+B+C+E would let those files enter the baseline**, taking the gate from 280 files to ~286
+**Superseded 2026-08-24:** the failing files are now PINNED in the baseline rather than excluded, so
+the gate already covers them (287 files). Fixing the remaining causes would flip their pinned counts
+to 0 — which the gate reports as drift and refuses until re-recorded. What is left is `float_memory`
+(1, the only independent failure) and the cascades behind ~25 unbuilt modules. Was: taking the gate from 280 files to ~286
 and closing the "8 corpus files not in the baseline" line the gate prints every run.
 
 ### Runner memory retention (dir-run OOM) — L, and the only one with a user-visible symptom
