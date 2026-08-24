@@ -131,6 +131,7 @@ import {
   emitConsoleLog,
   type FuncLookup,
   getArrPrintHelperWat,
+  getFdWriteAllWat,
   getHelperWat,
   getJoinHelperWat,
   IOV_BASE,
@@ -468,10 +469,24 @@ function internalizeDynrtHostImports(wat: string): string {
     wat = wat.replace(printRe, "");
     const fn = printM[1];
     defs.push(
+      // Loops on SHORT WRITES. WASI lets fd_write write fewer bytes than asked and report the
+      // true count in *nwritten; wasmtime does exactly that. This used to `(drop …)` the result,
+      // which silently truncated any print the host did not complete in one go. Deliberately
+      // self-contained: this function is spliced into an already-merged module that need not
+      // carry $__fd_write_all.
       `  (func ${fn} (param $ptr i32) (param $len i32)\n` +
-        `    (i32.store (i32.const ${IOV_BASE}) (local.get $ptr))\n` +
-        `    (i32.store (i32.const ${IOV_BASE + 4}) (local.get $len))\n` +
-        `    (drop (call $fd_write (i32.const 1) (i32.const ${IOV_BASE}) (i32.const 1) (i32.const ${NWRITTEN_OFFSET}))))`,
+        `    (local $n i32)\n` +
+        `    (block $done\n` +
+        `      (loop $again\n` +
+        `        (br_if $done (i32.eqz (local.get $len)))\n` +
+        `        (i32.store (i32.const ${IOV_BASE}) (local.get $ptr))\n` +
+        `        (i32.store (i32.const ${IOV_BASE + 4}) (local.get $len))\n` +
+        `        (br_if $done (call $fd_write (i32.const 1) (i32.const ${IOV_BASE}) (i32.const 1) (i32.const ${NWRITTEN_OFFSET})))\n` +
+        `        (local.set $n (i32.load (i32.const ${NWRITTEN_OFFSET})))\n` +
+        `        (br_if $done (i32.eqz (local.get $n)))\n` +
+        `        (local.set $ptr (i32.add (local.get $ptr) (local.get $n)))\n` +
+        `        (local.set $len (i32.sub (local.get $len) (local.get $n)))\n` +
+        `        (br $again))))`,
     );
   }
   if (callM) {
@@ -14949,6 +14964,9 @@ class WasicTranspiler {
       parts.push(this.getStringOpHelperWat());
     }
     if (this.needsStringExtHelpers) parts.push(this.getStringExtHelperWat());
+    // $__fd_write_all is gated on the SAME flag as the `$fd_write` import above, so the helper
+    // exists in every module that can call it and in no module that cannot.
+    if (this.hasConsoleLog) parts.push(getFdWriteAllWat());
     if (this.needsNumericHelpers) parts.push(getHelperWat());
     if (this.needsArrPrintHelper) parts.push(getArrPrintHelperWat());
     if (this.needsJoinHelper) parts.push(getJoinHelperWat());

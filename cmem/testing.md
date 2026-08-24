@@ -268,13 +268,15 @@ that regresses fails, and one that IMPROVES fails too until re-recorded — same
 
 | engine | match | reject | differ |
 | --- | --- | --- | --- |
-| wasmtime 47.0.3 | 317 | 22 | **37** |
+| wasmtime 47.0.3 | **354** | 22 | **0** |
 | wasmer 7.2.1 | 353 | 23 | 0 |
 | wazero | 346 | 30 | 0 |
 
-- The **37 wasmtime-only `differ`** are all one bug: `fd_write` short writes
-  ([compiler-bugs.md](compiler-bugs.md)). They match on wasmer and wazero, which is what pins the
-  cause to a short-write path only wasmtime exercises.
+- **First recorded with 37 wasmtime-only `differ`** — all one bug, `fd_write` short writes, found by
+  this gate's first run and **fixed the same day** ([compiler-bugs.md](compiler-bugs.md)). They
+  matched on wasmer and wazero, which is what pinned the cause to a short-write path only wasmtime
+  exercises. The fix produced `0 regressed, 37 improved`, the gate failed as designed until the
+  baseline was re-recorded, and wasmtime `match` went 317 → 354.
 - The **rejects** are dominated by legacy EH (wasmtime) and by wasmer/wazero having no EH at all.
 - **Absent engines are skipped, never failed.** With no engine on PATH the gate exits 0 with a notice.
 

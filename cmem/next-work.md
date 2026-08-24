@@ -38,22 +38,30 @@
   mangles tables/code-fences — see [workflow.md](workflow.md)). If it is ever wanted, it needs its
   own pass with `fmt.exclude` tuned, not a blanket run.
 
-## 🔴 `fd_write` short writes ignored — output truncated on wasmtime (2026-08-24)
+## `fd_write` short writes — ✅ FIXED 2026-08-24 (and it opened one new item)
 
-**New, ours, and the top codegen item that is NOT blocked.** Found by the multi-engine gate on its
-first run. 37 corpus modules print differently on wasmtime; `console.log(<bool expr>)` loses its
-newline (`1_values` prints `falsetruefalse`, exactly 3 bytes short). WASI permits `fd_write` to
-short-write and wasmtime honestly reports `nwritten`; **we never read it back and never retry.** The
-old source comment blamed wasmtime — corrected in place.
+**Fixed.** `$__fd_write_all` loops until every iovec is drained (bailing on errno and on zero
+progress); both `console_log.ts` call sites rerouted, and the `dync` `__host_print` path given its
+own inline loop since it is spliced post-merge. Engine gate: **0 regressed, 37 improved** — every
+`differ` flipped to `match`. Full suite green. Detail in [compiler-bugs.md](compiler-bugs.md).
 
-- **[M] Emit a retry loop around `fd_write`.** Gather mode only *mitigates* — one iovec is less
-  likely to short-write, not immune; a large enough single write still truncates.
-- **[S] Make `boolexpr` gatherable** by evaluating it ONCE into a temp local and using that local for
-  both the ptr and len selects. The current double-evaluation is why it was excluded, and it is
-  independently unsafe for a side-effecting expression.
-- ⚠️ **Check BOTH `src/wasic.ts` and `src/console_log.ts`** — the parallel-code-paths trap.
-- **Gate for the fix:** the 37 `differ` entries flip to `match`, which the engine gate reports as
-  IMPROVED and fails on until the baseline is re-recorded. That is the designed signal, not a bug.
+### 🔴 Follow-on, NOT fixed: `console.log(<bool expr>)` evaluates its argument twice
+
+Found in the same code while fixing the above, and **worse in kind** — it changes program
+semantics, not just output. `boolexpr` interpolates its WAT into both the ptr store and the len
+store, so a `bool`-returning CALL runs twice:
+
+```ts
+console.log(isPositive(5));   // isPositive() is invoked TWICE
+```
+
+- **[S/M] Evaluate once into a temp i32 local**, use it for both selects. This is the same knot as
+  the gather-mode exclusion — fixing it makes `boolexpr` gatherable for free. Needs a spare local
+  plumbed through the emitter, which is why it was not folded into the `fd_write` change.
+- ⚠️ Only a **call** returning `bool` is observably affected; pure comparisons are not. That is why
+  a corpus of mostly-pure predicates never surfaced it, and why the engine gate did not either —
+  **every engine agrees on the wrong answer**, which is precisely the blind spot cross-engine
+  testing cannot cover. Repro is in [compiler-bugs.md](compiler-bugs.md).
 
 ## CORRECTIONS SCOPED — 2026-08-24 (while binaryen-ts + wabt-ts land their fixes)
 

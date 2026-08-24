@@ -661,6 +661,73 @@ Knock-ons to be aware of before touching this:
 - An OOM **cannot be caught in-process**, so any single-process full-corpus scan is one bad file away
   from losing all its results.
 
+### `fd_write` short writes — ✅ FIXED 2026-08-24 (found by the multi-engine gate on run one)
+
+**Found by the new multi-engine gate on its very first full run** (`tests/engine_cross_check_tests.ts`),
+which is exactly the class of defect it was built for: 37 corpus modules produce **different stdout on
+wasmtime than on V8** — and match on wasmer and wazero, so V8-only testing could never see it.
+
+**The bug is OURS, and the source comment blamed the wrong side.** `console_log.ts` carried
+*"wasmtime 43 only processes the first iov"* as the justification for gather mode. Measured on
+wasmtime 47.0.3 with a two-iovec fixture (`iov[0]`=2 bytes, `iov[1]`=1 byte):
+
+| engine | bytes out | `nwritten` reported |
+| --- | --- | --- |
+| wasmtime 47.0.3 | 2 of 3 | **2** — honest short write |
+| wasmer 7.2.1 | 3 of 3 | 3 |
+
+WASI explicitly permits `fd_write` to write fewer bytes than requested; the caller must loop.
+**wasic never reads `nwritten` back** — it is stored at `NWRITTEN_OFFSET` (128) and no emitted code
+ever loads it, and no emitted path retries. So a short write silently truncates.
+
+**Visible symptom:** `console.log(<boolean expression>)` loses its trailing newline on wasmtime.
+`1_values` prints `falsetruefalse` instead of three lines — output is **exactly 3 bytes short**, one
+per lost newline. `boolexpr` is the shape that shows it because it is deliberately excluded from
+gather mode (the WAT expression would be evaluated twice — once for the ptr select, once for the len
+select — which is unsafe for a side-effecting expression), so its newline lands in a second iovec.
+
+**Gather mode MITIGATES, it does not fix.** One iovec makes a short write less likely, not
+impossible; a large enough single write can still truncate. The fix is a retry loop around
+`fd_write`, and the natural way to also make `boolexpr` gatherable is to evaluate it ONCE into a temp
+local and use that local for both selects.
+
+**THE FIX (2026-08-24).** A `$__fd_write_all` helper that loops until every iovec is drained, advancing `ptr` and shrinking `len` in place on a partial write. It bails on a non-zero errno and on **zero progress** — the second guard matters: a runtime reporting success while writing nothing would otherwise spin forever. Emitted whenever `hasConsoleLog` is set, i.e. gated on exactly the same flag as the `$fd_write` import, so the helper exists in every module that can call it and no module that cannot.
+
+**Both call sites were rerouted** (gather mode and per-iov mode). Note the per-iov path was the one showing the symptom, but the gather path had the same latent defect — one iovec is less likely to short-write, never immune.
+
+**And the parallel path was fixed too, differently and on purpose.** `internalizeDynrtHostImports` in `src/wasic.ts` splices its own `__host_print` with an inline single-iovec `fd_write`; it now carries its **own** inline loop rather than calling the shared helper, because it is injected into an already-merged module that need not contain `$__fd_write_all`. Verified by `dync_cross_runtime_tests.ts` 3/3.
+
+**Measured result:** `1_values` on wasmtime 58 → 61 bytes, matching V8/wasmer/wazero exactly. The engine gate went **0 regressed, 37 improved** — every one of the 37 `differ` entries flipped to `match`, and nothing else moved. Full suite green: wasi 417/417, wast 281 files 27651/0, all polyglot suites.
+
+⚠️ **Parallel code paths:** `src/wasic.ts` and `src/console_log.ts` each own their own string
+handling ([design-decisions.md](design-decisions.md)). Check BOTH for `fd_write` emission before
+calling this fixed — there are two `nwrittenOffset` call sites in `console_log.ts` alone
+(~3040, ~3177).
+
+### `console.log(<bool expr>)` evaluates its argument TWICE (OPEN, 2026-08-24)
+
+Found while fixing `fd_write` above — same code region, unrelated defect, and **worse in kind**: it changes program semantics rather than output formatting.
+
+`console_log.ts` emits a `boolexpr` segment as two stores, and interpolates the argument's WAT into **both**:
+
+```wat
+(i32.store (i32.const iovPtr) (if (result i32) <EXPR> (then trueOff) (else falseOff)))
+(i32.store (i32.const iovLen) (if (result i32) <EXPR> (then 4)      (else 5)))
+```
+
+So any side effect in `<EXPR>` happens twice. Reproduced:
+
+```ts
+let calls: number = 0;
+function isPositive(n: number): boolean { calls = calls + 1; return n > 0; }
+console.log(isPositive(5));
+console.log(calls);          // prints 2 — should be 1
+```
+
+This is also **why `boolexpr` is excluded from gather mode** (the exclusion comment says so), so the two are the same knot: evaluate the expression ONCE into a temp i32 local, use that local for both selects, and `boolexpr` becomes gatherable at the same time. Needs a spare local plumbed through the emitter, which is why it was not folded into the `fd_write` change.
+
+⚠️ Pure `boolexpr` shapes (comparisons, `instanceof`, `f64.ne`) are unaffected in OBSERVABLE terms — only a **call** returning `bool` shows it, which is why a corpus of mostly-pure predicates never surfaced it.
+
 ### wabt-ts cannot ENCODE `try_table` — blocks the EH migration (OPEN, 2026-08-24)
 
 Found while closing a caveat the binaryen-ts team raised (they asked which side should fix the

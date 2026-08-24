@@ -185,6 +185,15 @@ that already exists, or as DONE when it is not.
 **Say which claims are live and which are as-triaged.** [wazmrt] Per-item counts are accurate when
 written and stale as soon as the next item lands. Mark them.
 
+**A write that truncates BEFORE it can fail will eat the file.** [wasmtk, 2026-08-24] Editing a
+`cmem` file with `open(path, "w").write(text)` truncates on open, so an encoding error raised by
+`write()` leaves **zero bytes** — `next-work.md` went from 347 lines to 0 because a string held an
+emoji as a surrogate pair. Nothing was lost only because the content was still in `HEAD` and
+`git checkout HEAD -- <file>` restored it. **Encode first, write to a temp, then `os.replace`.**
+The general form: any edit whose failure mode is *destructive rather than a no-op* needs the
+destructive step to happen last. ⚠️ This is sharper for `cmem/` than for source — project memory
+is often the only copy of a decision, and an uncommitted memory edit has no other home.
+
 **Name the blast radius of a guarantee you cannot currently meet.** [wasmtk, 2026-08-20] When three
 Go suites could not run, the useful record was not "3 suites red" but "'ran the ENTIRE suite set'
 carries a three-suite asterisk on this machine, including in today's commit messages".

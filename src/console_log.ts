@@ -2803,7 +2803,19 @@ export function emitConsoleLog(
 
   // Step 3: decide emit strategy.
   // Gather mode consolidates ALL output into scratch (SCRATCH_BASE...) and emits a
-  // single fd_write iov — needed because wasmtime 43 only processes the first iov.
+  // single fd_write iov.
+  //
+  // ⚠️ CORRECTED 2026-08-24 — the previous note here read "needed because wasmtime 43 only
+  // processes the first iov", which blamed the wrong side and would send the next reader to file a
+  // wasmtime bug. Measured on wasmtime 47.0.3 with a two-iovec fixture: it writes iov[0] only AND
+  // REPORTS `nwritten = 2` of the 3 requested. That is a SHORT WRITE, which WASI explicitly permits;
+  // wasmtime is telling the truth. **The defect is ours — we never read `nwritten` back** (it is
+  // stored at NWRITTEN_OFFSET and no emitted code ever loads it) and no emitted path retries, so any
+  // short write silently truncates output.
+  //
+  // Gather mode therefore MITIGATES rather than fixes: one iovec makes a short write less likely,
+  // not impossible — a large enough single write can still be truncated. The real fix is a retry
+  // loop around fd_write. See cmem/compiler-bugs.md § "fd_write short writes".
   // strvar uses memory.copy into scratch; boolvar uses conditional memory.copy.
   // boolexpr (arbitrary WAT) stays in per-iov mode (evaluated multiple times would be unsafe).
   const gatherable = (s: LogSegment) =>
@@ -3033,11 +3045,11 @@ export function emitConsoleLog(
 
     // Single fd_write — iov[0].ptr is scratchBase, iov[0].len is the cursor value
     statements.push(
-      `${indent}(drop (call $fd_write`,
+      `${indent}(call $__fd_write_all`,
       `${indent}  (i32.const ${fd})`,
       `${indent}  (i32.const ${iovBase})`,
       `${indent}  (i32.const 1)`,
-      `${indent}  (i32.const ${nwrittenOffset})))`,
+      `${indent}  (i32.const ${nwrittenOffset}))`,
     );
   } else {
     // ── Per-iov mode (single active segment, or strvar/bool segments) ─────────
@@ -3170,11 +3182,11 @@ export function emitConsoleLog(
     }
 
     statements.push(
-      `${indent}(drop (call $fd_write`,
+      `${indent}(call $__fd_write_all`,
       `${indent}  (i32.const ${fd})`,
       `${indent}  (i32.const ${iovBase})`,
       `${indent}  (i32.const ${activeSegs.length})`,
-      `${indent}  (i32.const ${nwrittenOffset})))`,
+      `${indent}  (i32.const ${nwrittenOffset}))`,
     );
   }
 
@@ -3193,6 +3205,63 @@ export function emitConsoleLog(
  * $__f64_to_str: integer part + up to 6 significant decimal digits (trailing zeros stripped).
  *   Note: values outside the i32 range for the integer part will be clamped.
  */
+/**
+ * WAT for `$__fd_write_all` — an `fd_write` that honours SHORT WRITES.
+ *
+ * WASI permits `fd_write` to write fewer bytes than requested and report the true count in
+ * `*nwritten`. Measured 2026-08-24: wasmtime 47.0.3 writes `iov[0]` only and reports
+ * `nwritten = 2` of 3 requested; wasmer 7.2.1 writes all 3. Both are conforming.
+ *
+ * Every emitted call used to be `(drop (call $fd_write …))` — the result and `nwritten` were
+ * discarded — so on wasmtime any output split across more than one iovec silently truncated. The
+ * visible symptom was `console.log(<bool expr>)` losing its trailing newline (37 corpus modules).
+ *
+ * The loop drains the iovec array in place, advancing `ptr` and shrinking `len` on a partial write.
+ * It bails on a non-zero errno and on zero progress — the latter matters, because a runtime that
+ * reports success while writing nothing would otherwise spin forever.
+ *
+ * Emitted whenever `hasConsoleLog` is set, i.e. exactly when `$fd_write` is imported.
+ */
+export function getFdWriteAllWat(): string {
+  return `
+  ;; ── fd_write that honours short writes ────────────────────────────────────
+  (func $__fd_write_all (param $fd i32) (param $iov i32) (param $cnt i32) (param $nw i32)
+    (local $n i32)
+    (local $len i32)
+    (block $done
+      (loop $again
+        (br_if $done (i32.eqz (local.get $cnt)))
+        ;; non-zero errno: no progress is possible, stop. (The previous code dropped the
+        ;; result entirely, so bailing here is no quieter than what it replaced.)
+        (br_if $done
+          (call $fd_write (local.get $fd) (local.get $iov) (local.get $cnt) (local.get $nw)))
+        (local.set $n (i32.load (local.get $nw)))
+        ;; zero bytes written would spin forever
+        (br_if $done (i32.eqz (local.get $n)))
+        ;; consume $n bytes across the iovec array, in place
+        (block $consumed
+          (loop $eat
+            (br_if $consumed (i32.eqz (local.get $cnt)))
+            (br_if $consumed (i32.eqz (local.get $n)))
+            (local.set $len (i32.load (i32.add (local.get $iov) (i32.const 4))))
+            (if (i32.ge_u (local.get $n) (local.get $len))
+              (then
+                ;; this iovec is fully written — move to the next
+                (local.set $n (i32.sub (local.get $n) (local.get $len)))
+                (local.set $iov (i32.add (local.get $iov) (i32.const 8)))
+                (local.set $cnt (i32.sub (local.get $cnt) (i32.const 1))))
+              (else
+                ;; partial: advance ptr, shrink len, and re-issue
+                (i32.store (local.get $iov)
+                  (i32.add (i32.load (local.get $iov)) (local.get $n)))
+                (i32.store (i32.add (local.get $iov) (i32.const 4))
+                  (i32.sub (local.get $len) (local.get $n)))
+                (local.set $n (i32.const 0))))
+            (br $eat)))
+        (br $again))))
+`;
+}
+
 export function getHelperWat(): string {
   return `
   ;; ── i32 → decimal string ──────────────────────────────────────────────────
