@@ -38,6 +38,29 @@
   mangles tables/code-fences — see [workflow.md](workflow.md)). If it is ever wanted, it needs its
   own pass with `fmt.exclude` tuned, not a blanket run.
 
+## 🔴 wasic emits LEGACY exception handling — Wasmtime cannot run it (2026-08-24)
+
+**The largest open item, and the only one that breaks real user output.** Every TS
+`try`/`catch`/`finally` compiles to the superseded legacy EH proposal; `wasmtime 47.0.3` rejects all
+10 affected modules at compile time, and there is **no `-W legacy-exceptions` flag** to work around
+it. Reported by the wabt-ts side, confirmed here against regenerated artifacts. Full detail:
+[compiler-bugs.md](compiler-bugs.md) § "wasic emits LEGACY exception handling".
+
+- **[M] Migrate the emitter to `try_table` / `throw_ref`** — `src/wasic.ts` lines 14749 / 14756 /
+  14772+14774. Only **two** shapes (`catch`, and `catch_all`+`rethrow 0`), no `delegate`. Not a
+  mechanical swap: in `try_table` a catch clause is a **branch target**, so handler bodies move out
+  of the try into an enclosing block and the tag's params arrive as that block's results.
+- **[S] Add Wasmtime to the EH gate — do this WITH the migration, not after.** This is the part
+  that matters beyond the bug: **the suite was 417/417 green the whole time this was broken**,
+  because our oracle is V8 and V8 still accepts legacy EH. Migrating without adding a second engine
+  fixes the instance and leaves the blind spot. `wasmtk wast` has the same V8-only shape.
+- Caveat (measured by them): **Wasmer 7.2.1 runs neither form** — no EH support in any backend. The
+  migration fixes Wasmtime and does not change Wasmer. Not a reason to defer.
+
+**Their `KNOWN_INVALID` list of 7 "invalid" modules is stale — do NOT chase it.** All 7 run clean on
+Wasmtime from current `wasic`. Their corpus copy is 272 `.wat` vs our 373. Reply sent in
+`scripts/wabt-ts-bug-report.md`; fix is on their side.
+
 ## SCOPED: work opened by the 2026-08-20 spec-corpus session
 
 Everything below came out of one session (corpus sync -> per-file baseline gate -> wabt-ts report).

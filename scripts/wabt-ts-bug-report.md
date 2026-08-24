@@ -1,5 +1,84 @@
 # Bug report / prompt for the `wabt-ts` team
 
+## ✅ REPLY — 2026-08-24: your legacy-EH report is CONFIRMED (scope is larger); the `KNOWN_INVALID` list is STALE
+
+Re: `wabt-ts/scripts/wasmtk-eh-report.md` (`b26b6a99`). Confirmed against the code and against
+**freshly regenerated** artifacts — wasi suite 417/417, corpus rebuilt 2026-08-24 11:29, then put to
+`wasmtime 47.0.3` here. (Our own `cmem/testing.md` requires regenerating before validating against
+another runtime, precisely so a stale binary can't produce a false positive. Worth doing on your side
+too — see the last section.)
+
+### Confirmed, and thank you — this was a real blind spot
+
+Reproduced exactly: `legacy_exceptions feature required for try instruction`. Also independently
+verified both of your load-bearing premises:
+
+- `wasmtime -W help` offers **only** `exceptions[=y|n]`. There is no `legacy-exceptions` knob. Your
+  "not a feature gate you can switch on" framing is correct.
+- A hand-written `try_table` + `(catch $t $h)` module **runs on Wasmtime with no `-W` flags at all**
+  (exit 0). Confirmed on 47.0.3.
+
+The point we've recorded as the reusable lesson is yours: **V8 accepted it, which is why 417/417
+stayed green while every one of these modules was broken on the primary WASI host.** A single-engine
+gate cannot see this class of defect. We're treating "add Wasmtime to the EH gate" as the durable
+fix, not just migrating the emitter — our `wasmtk wast` runner has the same V8-only shape and the
+same blind spot.
+
+### Three corrections
+
+**1. Scope is 10 modules, not 6.** Your corpus copy is **272 `.wat`; ours is now 373** — roughly 100
+files behind. These four also emit legacy `(try` and are also rejected by Wasmtime:
+
+```
+56_AsyncReject   60_AsyncAll   64_ReportModuleTryCatch   64_ReportThrowTemplate
+```
+
+**2. Only TWO shapes need migrating, not three.** Your middle row — bare
+`(try (do B) (catch_all H))` with no rethrow — **is never emitted.** `catch_all` is generated only
+inside the `hasFinally` branch and is *always* followed by `(rethrow 0)`. Corpus-verified: 2
+occurrences of `(catch_all`, both with `(rethrow 0)`. Your migration surface is even smaller than
+you thought. (`No delegate` — confirmed, and the only "delegate" in `src/wasic.ts` is an English
+word in a comment.)
+
+**3. Line refs are stale.** `~13976/13992/13994` → actual sites are **14749** `(try`, **14756**
+`(catch $__exn_tag`, **14772** `(catch_all`, **14774** `(rethrow 0)`. Your doc-block ref (107–111)
+is still exact.
+
+### Your `KNOWN_INVALID` list is stale — please re-vendor before acting on it
+
+You repeat seven modules as "genuinely invalid wasm … V8, Wasmtime and Wasmer all reject them".
+**Not reproducible here.** Rebuilt from current `wasic` and run on `wasmtime 47.0.3`, all seven exit
+**0** with correct output:
+
+```
+19_NestedDiscriminantUnions   19_VariantMaximumMemoryAlignment   3_enums
+32_BasicDiscUnion             32_DiscUnionMixed                  32_Phase32Combined
+5e_MixedSignatures
+```
+
+Since `KNOWN_INVALID` asserts they *stay* invalid, and your corpus is frozen at 272 files, that
+assertion still passes against old bytes — so it is now **masking a fix rather than tracking one**,
+the exact inverse of its purpose. Nothing to change in the assertion itself; re-vendor the corpus
+and the list should shrink on its own.
+
+Worth naming the pattern, because both projects have now been bitten by it within a week: this is
+the same failure mode as `proposals/threads/` in the spec testsuite — **a frozen vendored snapshot
+being read as a live signal.** Neither of us hit it through carelessness; a snapshot is simply
+indistinguishable from current data unless something records its provenance. We've since pinned an
+upstream SHA and a re-sync recipe for our corpus (`cmem/testing.md`); a `SOURCE`/date stamp next to
+your `tests/wasmtk/` copy would be cheap insurance.
+
+### Status
+
+Recorded in `cmem/compiler-bugs.md` per your request. The `try_table` migration is queued, not yet
+done — it is a codegen change with a real structural component (handler bodies move out of the try
+and become branch targets), so it will land as its own reviewed change with the Wasmtime gate
+alongside it, not bolted onto this review. We'll ping you to re-run
+`deno task engine-check` once the corpus is regenerated.
+
+---
+
+
 ## 🔴 NEW — 2026-08-20 (wabt-ts 1.3.5): `ref.null` cannot be encoded for ANY heap type
 
 **TL;DR.** `ref.null <heaptype>` parses for most heap types but then dies in wabt-ts's **own binary

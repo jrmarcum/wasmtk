@@ -569,6 +569,79 @@ a non-canonical NaN payload can't survive the JS number boundary (V8 canonicaliz
 The runner also counts validation-assertion toolchain leniency (`assert_invalid`/`assert_malformed` that
 wabt+V8 fails to reject) as **skips**, not failures.
 
+### wasic emits LEGACY exception handling — Wasmtime cannot run it (OPEN, 2026-08-24)
+
+Reported by the **wabt-ts** side (`wabt-ts/scripts/wasmtk-eh-report.md`, commit `b26b6a99`) and
+**confirmed here against freshly regenerated artifacts** (wasi suite 417/417, corpus rebuilt
+2026-08-24 11:29, `wasmtime 47.0.3`).
+
+**Every TypeScript `try`/`catch`/`finally` compiles to the superseded legacy EH proposal.**
+Wasmtime rejects all of it at compile time:
+
+```
+Invalid input WebAssembly code: legacy_exceptions feature required for try instruction
+```
+
+**This is not a feature flag.** `wasmtime -W` offers only `exceptions[=y|n]` — the *standard*
+proposal (`try_table`/`exnref`). There is no `legacy-exceptions` knob in any configuration.
+Verified: `wasmtime -W help | grep exception` returns that one line.
+
+**Why it hid for so long, and the reusable lesson: our gate's oracle is V8, and V8 still accepts
+legacy EH.** The wasmtk suite is 417/417 green with every one of these modules broken on the
+primary WASI host. A single-engine gate cannot see this class of defect at all. **`wasmtk wast`
+has the same shape** — it validates through host V8 (see architecture.md), so the same blind spot
+applies there. Adding Wasmtime to the EH tests is the durable fix, not just migrating the emitter.
+
+**Scope — 10 modules, not the 6 first reported** (their corpus copy is 272 `.wat`; ours is now 373,
+so their snapshot is ~100 files behind). All 10 confirmed REJECTED by Wasmtime:
+
+```
+15_Exceptions   15_IdiomaticCatch_Stress   15_LexicalShadowing_Stress
+15_TestCase1-NestedEscalation   15_recover   18_Multi-ScopeScaleAndMemoryLongevityTest
+56_AsyncReject   60_AsyncAll   64_ReportModuleTryCatch   64_ReportThrowTemplate
+```
+
+**Emission sites** (`src/wasic.ts`; the report's ~13976/13992/13994 are stale):
+
+| line | emits | migrate to |
+| --- | --- | --- |
+| 14749 | `(try (do …))` | `try_table` inside an enclosing block |
+| 14756 | `(catch $__exn_tag …)` | `(catch $__exn_tag $h)` — handler becomes a BRANCH TARGET |
+| 14772 + 14774 | `(catch_all …)` + `(rethrow 0)` | `(catch_all_ref $h)` + `throw_ref` |
+
+**Only TWO shapes need migrating, not three.** The report's middle row — a bare
+`(try (do B) (catch_all H))` with no rethrow — **is never emitted**: `catch_all` is generated only
+inside the `hasFinally` branch and *always* followed by `(rethrow 0)`. Corpus-verified: 2
+occurrences of `(catch_all`, both with `(rethrow 0)`. **No `delegate` is emitted anywhere**
+(confirmed — the only "delegate" in `src/wasic.ts` is an English word in a comment at :10691).
+
+**The structural change**, which is where the work actually is: in legacy `try` a catch clause is an
+inline handler; in `try_table` it is a *branch target*. Handler bodies move OUT of the try into an
+enclosing block, and the tag's params arrive as that block's results. Worked examples for both
+shapes are in the report.
+
+**Caveat carried over, measured by them:** Wasmer 7.2.1 runs *neither* form — with `--enable-all` it
+reports "No backends support the required features" for legacy and `try_table` alike. Migrating
+fixes Wasmtime and does not change Wasmer. Not a reason to defer; Wasmtime is the host WASI names.
+
+### The wabt-ts `KNOWN_INVALID` list is STALE — do not act on it (checked 2026-08-24)
+
+The same report repeats seven modules as "genuinely invalid wasm … V8, Wasmtime and Wasmer all
+reject them". **Not reproducible here.** Against artifacts regenerated from current `wasic`, all
+seven RUN CLEAN on `wasmtime 47.0.3` — exit 0, correct output:
+
+```
+19_NestedDiscriminantUnions   19_VariantMaximumMemoryAlignment   3_enums
+32_BasicDiscUnion             32_DiscUnionMixed                  32_Phase32Combined
+5e_MixedSignatures
+```
+
+Their `KNOWN_INVALID` asserts these *stay* invalid, which was meant to make the list shrink as wasic
+is fixed. Because their corpus copy is frozen at 272 files, the assertion still passes against old
+bytes — so it is now doing the opposite of its purpose: **masking a fix rather than tracking one.**
+Same failure mode as the `proposals/threads/` false alarm (see testing.md): a stale vendored
+snapshot read as a live signal. Fix is on their side — re-vendor the corpus.
+
 ### wast runner memory — OPEN as of 2026-08-20 (OURS, not a backend bug)
 
 `wasmtk wast <dir>` over the full 288-file spec corpus dies with `Fatal JavaScript out of memory:
