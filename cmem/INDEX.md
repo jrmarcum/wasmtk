@@ -14,6 +14,10 @@ every session start expensive. Trimmed back; earlier revisions are in git.)
 1. Read this index. 2. Open only the topic files the task needs. 3. Record what you learn in the
 matching topic file, then refresh its one-line pointer below.
 
+**Method lessons go in [best-practices.md](best-practices.md), not in the topic file.** When a pass
+produces a lesson that would apply to a completely different subsystem, add it there **and** leave
+the detail in its home file.
+
 **Doing a stress-test batch or a release? Read [workflow.md](workflow.md) first** — it holds the
 established loop (branch → test → bisect → fix → full gate → memory → commit → merge → bump →
 publish) and the traps that have already cost time.
@@ -71,6 +75,7 @@ phase filter IS the whole gate. Full-suite runs cost >10 minutes and buy nothing
 
 | File | What it holds |
 | --- | --- |
+| [best-practices.md](best-practices.md) | **METHOD, not findings — how to work here so the same class of defect does not recur.** Adopted 2026-08-24 from the sibling **wazmrt** project, which pioneered the format; imported rules are marked [wazmrt], ones this project paid for are marked [wasmtk]. **Read before a conformance pass, an audit, a backend bump, or any change to a producer/consumer pair.** The load-bearing one: *a round-trip proves agreement with yourself* — a V8-only oracle held the wasi suite at 417/417 while every `try`/`catch` module was unrunnable on wasmtime |
 | [workflow.md](workflow.md) | **The working loop: test → bisect → branch-on-fix → gate → memory → commit → merge → bump → publish.** **A branch is cut only when a test FAILS and needs a `src/` fix** — a clean batch commits straight to `main` (owner directive 2026-07-30). Commit conventions, context boundaries, and the traps that have bitten. **Read at the start of a stress-test batch or a release.** |
 | [overview.md](overview.md) | What wasmtk is; repo layout; the key source files |
 | [architecture.md](architecture.md) | wasic / modc / bindgen / hybrid; pluggable wabt+binaryen backends; build & merge pipeline; Canonical ABI alignment; the `wast` spec runner |
