@@ -45,7 +45,7 @@ progress); both `console_log.ts` call sites rerouted, and the `dync` `__host_pri
 own inline loop since it is spliced post-merge. Engine gate: **0 regressed, 37 improved** — every
 `differ` flipped to `match`. Full suite green. Detail in [compiler-bugs.md](compiler-bugs.md).
 
-### 🔴 Follow-on, NOT fixed: `console.log(<bool expr>)` evaluates its argument twice
+### ✅ FIXED 2026-08-24: `console.log(<bool expr>)` evaluated its argument twice
 
 Found in the same code while fixing the above, and **worse in kind** — it changes program
 semantics, not just output. `boolexpr` interpolates its WAT into both the ptr store and the len
@@ -55,9 +55,12 @@ store, so a `bool`-returning CALL runs twice:
 console.log(isPositive(5));   // isPositive() is invoked TWICE
 ```
 
-- **[S/M] Evaluate once into a temp i32 local**, use it for both selects. This is the same knot as
-  the gather-mode exclusion — fixing it makes `boolexpr` gatherable for free. Needs a spare local
-  plumbed through the emitter, which is why it was not folded into the `fd_write` change.
+- **Fixed with a single statement-form `if`** — both stores inside each arm, operand evaluated
+  once. **No temp local was needed**; the earlier note claiming it required one plumbed through
+  the emitter was wrong, and the simpler shape is also strictly better WAT.
+- The gather branch had it worse (THREE evaluations) and got the same restructure, which is what
+  let `boolexpr` join `gatherable`/`strBoolKinds`. `console.log(x > 0)` now inlines its newline
+  into one iovec. **The exclusion and the bug were one knot, not two.**
 - ⚠️ Only a **call** returning `bool` is observably affected; pure comparisons are not. That is why
   a corpus of mostly-pure predicates never surfaced it, and why the engine gate did not either —
   **every engine agrees on the wrong answer**, which is precisely the blind spot cross-engine

@@ -704,7 +704,7 @@ handling ([design-decisions.md](design-decisions.md)). Check BOTH for `fd_write`
 calling this fixed — there are two `nwrittenOffset` call sites in `console_log.ts` alone
 (~3040, ~3177).
 
-### `console.log(<bool expr>)` evaluates its argument TWICE (OPEN, 2026-08-24)
+### `console.log(<bool expr>)` evaluated its argument TWICE — ✅ FIXED 2026-08-24
 
 Found while fixing `fd_write` above — same code region, unrelated defect, and **worse in kind**: it changes program semantics rather than output formatting.
 
@@ -725,6 +725,34 @@ console.log(calls);          // prints 2 — should be 1
 ```
 
 This is also **why `boolexpr` is excluded from gather mode** (the exclusion comment says so), so the two are the same knot: evaluate the expression ONCE into a temp i32 local, use that local for both selects, and `boolexpr` becomes gatherable at the same time. Needs a spare local plumbed through the emitter, which is why it was not folded into the `fd_write` change.
+
+**THE FIX — and it needed no temp local, contrary to the first write-up here.** Restructuring to a
+single **statement-form** `if` with both stores inside each arm evaluates the operand exactly once:
+
+```wat
+;; was: two value-form ifs, operand interpolated twice
+(i32.store (i32.const iovPtr) (if (result i32) <EXPR> (then trueOff) (else falseOff)))
+(i32.store (i32.const iovLen) (if (result i32) <EXPR> (then 4)      (else 5)))
+
+;; now: one if, both stores per arm
+(if <EXPR>
+  (then (i32.store (i32.const iovPtr) (i32.const trueOff))
+        (i32.store (i32.const iovLen) (i32.const 4)))
+  (else (i32.store (i32.const iovPtr) (i32.const falseOff))
+        (i32.store (i32.const iovLen) (i32.const 5))))
+```
+
+**The same restructure was applied to the GATHER branch, which was worse — THREE evaluations**
+(`srcExpr`, `lenExpr`, and `lenExpr` again for the cursor bump). Harmless for `boolvar`, fatal for
+an arbitrary expression. Everything now duplicated across the arms is pure: `destExpr` is a constant
+or an `i32.load`, and offsets/lengths are compile-time constants.
+
+**That unlocked the second half.** `boolexpr` joined `gatherable` and `strBoolKinds`, so
+`console.log(x > 0)` now gathers and absorbs its trailing newline into a single iovec instead of
+emitting two. The exclusion comment and the double-eval bug were **one knot, not two** — the
+exclusion existed *because* of the multiple evaluation.
+
+**Verified:** the counter repro prints `1` (was `2`), and wasmtime/wasmer/wazero all agree.
 
 ⚠️ Pure `boolexpr` shapes (comparisons, `instanceof`, `f64.ne`) are unaffected in OBSERVABLE terms — only a **call** returning `bool` shows it, which is why a corpus of mostly-pure predicates never surfaced it.
 

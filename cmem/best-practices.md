@@ -75,6 +75,13 @@ redesign". It was two discrete bugs: an infinite loop in our own S-expr reader o
 ours fixed, 287 files peak at **52 MB**. There is no creep. Write the guess down as a guess, and
 delete it the moment measurement lands.
 
+**…and the same applies to a prediction about the FIX, not just the cause.** [wasmtk, 2026-08-24]
+The `boolexpr` double-evaluation was filed as needing "a spare local plumbed through the emitter",
+which is why it was deferred out of the `fd_write` change as too invasive. It needed **no local at
+all** — one statement-form `if` with both stores inside each arm evaluates the operand once, and is
+simpler WAT than what it replaced. A cost estimate written before opening the code deferred a
+20-line fix on the strength of an imagined one. Size it when you look, not when you file it.
+
 **A partial fix that measures as insufficient must be recorded as partial, loudly.** [wasmtk]
 Hoisting the per-file WABT instance to a process-wide singleton was correct and did not stop the OOM.
 Recording it as "the fix" would have sent the next reader looking in the wrong place; recording it as

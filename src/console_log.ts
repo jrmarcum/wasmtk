@@ -2790,7 +2790,9 @@ export function emitConsoleLog(
 
   // Step 2: detect a standalone trailing "\n" so we can absorb it inline.
   const numericKinds = new Set(["i32var", "i64var", "f64var", "i32expr", "i64expr", "f64expr"]);
-  const strBoolKinds = new Set(["strvar", "boolvar", "strcall", "strexpr"]);
+  // `boolexpr` joined this set on 2026-08-24: gather mode evaluates the operand exactly once
+  // now, so an arbitrary bool expression is safe to gather and can absorb a trailing newline.
+  const strBoolKinds = new Set(["strvar", "boolvar", "boolexpr", "strcall", "strexpr"]);
   const trailingLitNL = merged.length >= 2 &&
     merged[merged.length - 1].kind === "literal" &&
     (merged[merged.length - 1] as { kind: "literal"; text: string }).text === "\n";
@@ -2817,11 +2819,12 @@ export function emitConsoleLog(
   // not impossible — a large enough single write can still be truncated. The real fix is a retry
   // loop around fd_write. See cmem/compiler-bugs.md § "fd_write short writes".
   // strvar uses memory.copy into scratch; boolvar uses conditional memory.copy.
-  // boolexpr (arbitrary WAT) stays in per-iov mode (evaluated multiple times would be unsafe).
+  // boolexpr USED to stay in per-iov mode because gather evaluated the operand three times, which
+  // is unsafe for arbitrary WAT. The bool branch now evaluates it exactly once, so it can gather.
   const gatherable = (s: LogSegment) =>
     s.kind === "literal" || numericKinds.has(s.kind) || s.kind === "strvar" ||
-    s.kind === "boolvar" || s.kind === "arrptr" || s.kind === "joinarr" || s.kind === "strcall" ||
-    s.kind === "strexpr";
+    s.kind === "boolvar" || s.kind === "boolexpr" || s.kind === "arrptr" || s.kind === "joinarr" ||
+    s.kind === "strcall" || s.kind === "strexpr";
   const arrptrKinds = new Set(["arrptr", "joinarr"]);
   // Single strvar/boolvar/arrptr/joinarr/strcall/strexpr segments also use gather so the newline can be inlined.
   const useGather = activeSegs.every(gatherable) &&
@@ -2901,31 +2904,39 @@ export function emitConsoleLog(
             `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.load (i32.const ${cursorAddr})) ${lenWat}))`,
           );
         }
-      } else if (seg.kind === "boolvar") {
-        // Bool variable — copy "true"/"false" bytes into scratch via $__str_gather, advance cursor
+      } else if (seg.kind === "boolvar" || seg.kind === "boolexpr") {
+        // Bool — copy "true"/"false" bytes into scratch via $__str_gather, advance cursor.
+        //
+        // ONE `if`, gather + cursor bump inside each arm, so the operand is evaluated EXACTLY ONCE.
+        // The previous shape built `srcExpr` and `lenExpr` as separate value-form `if`s and used
+        // `lenExpr` twice — THREE evaluations. Harmless for `boolvar` (`local.get` is pure), fatal
+        // for `boolexpr`, which is why `boolexpr` was excluded from gather mode entirely. Evaluating
+        // once is what lets it in (see `gatherable` below), so the exclusion and the double-eval bug
+        // were one knot, not two.
+        //
+        // Everything duplicated across the arms is pure: `destExpr` is a constant or an i32.load,
+        // and the offsets/lengths are compile-time constants.
         needsStrGather = true;
         const [trueOff] = allocString("true");
         const [falseOff] = allocString("false");
-        const val = `(local.get $${seg.name})`;
+        const val = seg.kind === "boolvar" ? `(local.get $${seg.name})` : seg.wat;
         const destExpr = runtimeCursor
           ? `(i32.add (i32.const ${scratchBase}) (i32.load (i32.const ${cursorAddr})))`
           : `(i32.const ${scratchBase + compileCursor})`;
-        const srcExpr =
-          `(if (result i32) ${val} (then (i32.const ${trueOff})) (else (i32.const ${falseOff})))`;
-        const lenExpr = `(if (result i32) ${val} (then (i32.const 4)) (else (i32.const 5)))`;
+        const bump = (len: number) =>
+          runtimeCursor
+            ? `(i32.store (i32.const ${cursorAddr}) (i32.add (i32.load (i32.const ${cursorAddr})) (i32.const ${len})))`
+            : `(i32.store (i32.const ${cursorAddr}) (i32.add (i32.const ${compileCursor}) (i32.const ${len})))`;
         statements.push(
-          `${indent}(call $__str_gather ${srcExpr} ${lenExpr} ${destExpr})`,
+          `${indent}(if ${val}`,
+          `${indent}  (then`,
+          `${indent}    (call $__str_gather (i32.const ${trueOff}) (i32.const 4) ${destExpr})`,
+          `${indent}    ${bump(4)})`,
+          `${indent}  (else`,
+          `${indent}    (call $__str_gather (i32.const ${falseOff}) (i32.const 5) ${destExpr})`,
+          `${indent}    ${bump(5)}))`,
         );
-        if (!runtimeCursor) {
-          statements.push(
-            `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.const ${compileCursor}) ${lenExpr}))`,
-          );
-          runtimeCursor = true;
-        } else {
-          statements.push(
-            `${indent}(i32.store (i32.const ${cursorAddr}) (i32.add (i32.load (i32.const ${cursorAddr})) ${lenExpr}))`,
-          );
-        }
+        runtimeCursor = true;
       } else if (seg.kind === "arrptr") {
         // Array pointer — write "[ elem, ... ]" into scratch via helper
         needsArrPrintHelper = true;
@@ -3085,9 +3096,21 @@ export function emitConsoleLog(
         const [trueOff] = allocString("true");
         const [falseOff] = allocString("false");
         const val = seg.kind === "boolvar" ? `(local.get $${seg.name})` : seg.wat;
+        // ONE `if`, both stores inside each arm — so ${val} is evaluated EXACTLY ONCE.
+        //
+        // This used to be two value-form `(if (result i32) ${val} …)` stores, which interpolated the
+        // operand twice. For `boolvar` that is harmless (`local.get` is pure), but `boolexpr` is
+        // arbitrary WAT: `console.log(isPositive(5))` called isPositive TWICE, so any side effect in
+        // a bool-returning function happened twice. That is a semantic bug, not a formatting one, and
+        // no engine could have caught it — they all agree on the wrong answer.
         statements.push(
-          `${indent}(i32.store (i32.const ${iovPtr}) (if (result i32) ${val} (then (i32.const ${trueOff})) (else (i32.const ${falseOff}))))`,
-          `${indent}(i32.store (i32.const ${iovLen}) (if (result i32) ${val} (then (i32.const 4)) (else (i32.const 5))))`,
+          `${indent}(if ${val}`,
+          `${indent}  (then`,
+          `${indent}    (i32.store (i32.const ${iovPtr}) (i32.const ${trueOff}))`,
+          `${indent}    (i32.store (i32.const ${iovLen}) (i32.const 4)))`,
+          `${indent}  (else`,
+          `${indent}    (i32.store (i32.const ${iovPtr}) (i32.const ${falseOff}))`,
+          `${indent}    (i32.store (i32.const ${iovLen}) (i32.const 5))))`,
         );
         lastNumericScratch = -1;
         lastNumericIovLen = -1;
