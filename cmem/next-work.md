@@ -38,6 +38,80 @@
   mangles tables/code-fences — see [workflow.md](workflow.md)). If it is ever wanted, it needs its
   own pass with `fmt.exclude` tuned, not a blanket run.
 
+## CORRECTIONS SCOPED — 2026-08-24 (while binaryen-ts + wabt-ts land their fixes)
+
+Everything wasmtk must change from the 2026-08-20/24 exchange, split by whether it is blocked on the
+sibling projects. **Nothing below is blocked on them except §C** — the largest item (EH migration)
+is entirely ours and can start now.
+
+### A. `try_table` migration — [M/L], ours, start now, highest value
+
+Detail in [compiler-bugs.md](compiler-bugs.md). `src/wasic.ts` 14749 / 14756 / 14772+14774.
+
+1. **[M] Emitter: legacy `try` → `try_table`.** Two shapes only (`catch $__exn_tag`; and
+   `catch_all`+`rethrow 0` → `catch_all_ref`+`throw_ref`). No `delegate`.
+2. **[S] Update the doc block at `src/wasic.ts` 107–113** — it documents the legacy shapes and will
+   be actively wrong the moment the emitter changes.
+
+**Three risks, priced rather than assumed:**
+
+- **Nesting is real, and it is the main risk.** `try_table` catch clauses are branch targets, so each
+  nesting level needs its own uniquely-labelled enclosing block — legacy inline handlers needed no
+  labels at all. 4 corpus modules carry multiple `(try`: `15_Exceptions` (3), `56_AsyncReject`,
+  `15_LexicalShadowing_Stress`, `15_TestCase1-NestedEscalation` (2 each). The depth-tracking at
+  ~14820–14835 exists precisely because nested `try`/`catch`/`finally` parsing is fiddly; expect the
+  label generation to need the same care.
+- **Two of the ten affected modules are async** (`56_AsyncReject`, `60_AsyncAll`). `try` inside an
+  async function interacts with the asyncify pass — **verify those two specifically**; do not assume
+  the sync cases generalise.
+- **`finally` must still run on the non-throwing path.** Semantics unchanged, but it moves to the
+  `$done` side of the block instead of being emitted inline in `(do …)`.
+
+### B. Multi-engine gate — [S/M], ours, do it WITH §A not after
+
+**This is the item that stops the class of bug, not just this instance.** The suite was **417/417
+green** while all 10 modules were unrunnable on the primary WASI host, because our oracle is V8 and
+V8 still accepts legacy EH. Migrating without a second engine fixes the instance and leaves the
+blind spot exactly where it was.
+
+**Do not invent machinery — the pattern already exists.** `tests/dync_cross_runtime_tests.ts` already
+does skip-if-absent cross-runtime execution with byte-identical-stdout comparison against a
+`deno run` JS baseline, over `wasmtime`/`wasmer`/`wazero`. Model the EH gate on it directly.
+
+- Installed here 2026-08-24: `wasmtime 47.0.3`, `wasmer 7.2.1`, `wazero`.
+- **Wasmer cannot be part of an EH gate** — 7.2.1 supports no EH in any backend (legacy *or*
+  `try_table`), so it must be skipped for these modules specifically or it fails everything.
+- `wasmtk wast` (`src/wast.ts`) has the **same V8-only shape**; extending the same idea there is the
+  natural follow-on, and is what its `--runtime <cmd>` hook was structured for (architecture.md).
+
+### C. BLOCKED on the sibling releases — prep only
+
+Nothing to build; this is a checklist so the bump is mechanical when it lands.
+
+- **wabt-ts** — expected to fix `ref.null` (cannot encode for ANY heap type). The two *parity* gaps
+  (`ref.null $t`, `(module definition …)`) will **NOT** move on a wabt-ts release; they need
+  upstream wabt. Do not expect them.
+- **binaryen-ts** — **nothing from this exchange implicates it.** No wasmtk-side correction is
+  pending; a version bump plus the regression gate is the whole job. Do not manufacture work to
+  match the other side's activity.
+
+**Bump procedure, and one thing that WILL look like a failure but is not:**
+
+1. Update the pin in `deno.json`, then **`deno task install`** (mandatory — suites invoke the global
+   binary).
+2. Run the wast gate. **EXPECT IT TO GO RED with `GAINED COVERAGE`.** That is the gate working as
+   designed, not a regression: `ref_null.wast` is pinned at 0 precisely so a fix announces itself.
+   Any file that IMPROVES fails until the baseline is re-recorded.
+3. Re-record deliberately, then diff the baseline to see exactly what the backend fixed:
+   `deno run --allow-read --allow-write --allow-net --allow-run tests/wast_tests.ts --update-baseline`
+4. Full suite set — a backend bump reaches everything (impact map in testing.md).
+5. Regenerate the corpus **before** any cross-engine claim (testing.md rule), then re-run §B.
+
+### D. `wast` runner + its 15 failures — unchanged, independent of all the above
+
+Sizes and the class-A policy question are in the SCOPED section below. Unaffected by either sibling
+release. The runner OOM remains the only item with a user-visible symptom.
+
 ## 🔴 wasic emits LEGACY exception handling — Wasmtime cannot run it (2026-08-24)
 
 **The largest open item, and the only one that breaks real user output.** Every TS
