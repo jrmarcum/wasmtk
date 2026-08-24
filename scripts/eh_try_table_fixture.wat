@@ -18,7 +18,7 @@
 ;;                                          with a handler clause (parses fine, dies in the binary
 ;;                                          writer). See cmem/compiler-bugs.md.
 ;;
-;; RECHECK WHEN wabt-ts SHIPS ITS FIX — this is the gate on the whole migration:
+;; RECHECK WHEN **wabt-ts 1.4.0** SHIPS (owner, 2026-08-24) — the gate on the whole migration:
 ;;   wasmtime scripts/eh_try_table_fixture.wat            # expect exit 34 (sanity)
 ;;   then assemble it through wabt-ts + binaryen -Oz (wasic's watToOptimisedWasm path) and run the
 ;;   RESULT under wasmtime. Exit 34 there means the pipeline preserves try_table end-to-end and the

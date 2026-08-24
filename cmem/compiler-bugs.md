@@ -836,6 +836,9 @@ The numeric-tag case fails on the **branch label** `"$h"`, not the tag — so it
 alone. Same class as the `ref.null` encode bug below: same message, same writer, and `resolveNames`
 is exposed on neither `/compat` nor `wat2wasm`. **Plausibly one fix for both.**
 
+**Expected to be fixed in wabt-ts 1.4.0** (owner, 2026-08-24). Verify with the encoder probe BEFORE
+re-recording anything — see [next-work.md](next-work.md) § "THE NEXT BUMP IS wabt-ts 1.4.0".
+
 **Why it blocks us:** wasic's pipeline is WAT text → **wabt** → binary → binaryen
 (`watToOptimisedWasm`, `src/wasic.ts:205–240`). wabt is unavoidable, so wasic cannot emit
 `try_table` until this is fixed — and legacy is what wasmtime refuses. We can currently produce

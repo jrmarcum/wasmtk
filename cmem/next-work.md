@@ -170,17 +170,48 @@ Nothing to build; this is a checklist so the bump is mechanical when it lands.
   pending; a version bump plus the regression gate is the whole job. Do not manufacture work to
   match the other side's activity.
 
-**Bump procedure, and one thing that WILL look like a failure but is not:**
+### ⏳ THE NEXT BUMP IS **wabt-ts 1.4.0** (owner, 2026-08-24)
 
-1. Update the pin in `deno.json`, then **`deno task install`** (mandatory — suites invoke the global
-   binary).
-2. Run the wast gate. **EXPECT IT TO GO RED with `GAINED COVERAGE`.** That is the gate working as
-   designed, not a regression: `ref_null.wast` is pinned at 0 precisely so a fix announces itself.
-   Any file that IMPROVES fails until the baseline is re-recorded.
-3. Re-record deliberately, then diff the baseline to see exactly what the backend fixed:
+Named so the recheck is mechanical rather than rediscovered. Pin is currently `^1.3.5` in
+`deno.json`; `deno.lock` resolves 1.3.5. **1.4.0 is expected to carry the `ref.null` and `try_table`
+encoder fixes** — both filed in `scripts/wabt-ts-bug-report.md`, and both plausibly one fix (same
+message, same binary writer, same unusable "run resolveNames" advice).
+
+**Step 0 — PROVE THE ENCODER BEFORE ANYTHING ELSE.** Do not bump, re-record and then discover it did
+not land; the two probes are seconds and they gate everything after them:
+
+```bash
+# a) does try_table encode at all? every handler form must say OK, not ENCODE-FAIL
+#    (catch $t $h / catch 0 $h / catch_ref / catch_all / catch_all_ref)
+# b) does ref.null encode for every heap type?
+# Both probe shapes are recorded in scripts/wabt-ts-bug-report.md.
+
+# c) the acceptance test for the whole EH migration — committed, one command:
+wasmtime scripts/eh_try_table_fixture.wat        # must exit 34
+# then push that fixture through wasic's watToOptimisedWasm path (wabt → binaryen -Oz)
+# and run the RESULT. Exit 34 there means the pipeline preserves try_table end to end
+# and §A is unblocked. TRUST THAT, NOT THE RELEASE NOTES.
+```
+
+If (a) still fails, **§A stays blocked and nothing else about the bump matters** — say so plainly
+rather than proceeding. The wabt-ts side asserted "nothing needed on our side" once already while
+1.3.5 could not encode a single handler form; that claim is worth re-measuring, not re-trusting.
+
+**Bump procedure, and two things that WILL look like failures and are not:**
+
+1. Update the pin in `deno.json` (`^1.3.5` → `^1.4.0`), then **`deno task install`** (mandatory —
+   the suites invoke the global binary, and reinstalling MID-RUN silently invalidates a run).
+2. Run the wast gate. **EXPECT IT TO GO RED**, in either or both of two ways:
+   - `GAINED COVERAGE` — `ref_null.wast` is pinned at **0 passes** precisely so a fix announces
+     itself; any file that improves fails until re-recorded.
+   - `OFF BASELINE: failures N → M` — the 12 known failures are pinned at their exact counts now, so
+     a backend fix that clears a cascade also trips the gate. **Both are the gate working.**
+3. Re-record deliberately, then **diff the baseline** — that diff is the measurement of what 1.4.0
+   actually fixed, and it is the number worth reporting back to them:
    `deno run --allow-read --allow-write --allow-net --allow-run tests/wast_tests.ts --update-baseline`
 4. Full suite set — a backend bump reaches everything (impact map in testing.md).
-5. Regenerate the corpus **before** any cross-engine claim (testing.md rule), then re-run §B.
+5. Regenerate the corpus **before** any cross-engine claim (testing.md rule), then re-run the engine
+   gate and re-record `tests/engine_baseline.json` if it moved.
 
 ### D. `wast` runner + its 15 failures — unchanged, independent of all the above
 
