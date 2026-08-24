@@ -661,6 +661,48 @@ Knock-ons to be aware of before touching this:
 - An OOM **cannot be caught in-process**, so any single-process full-corpus scan is one bad file away
   from losing all its results.
 
+### wabt-ts cannot ENCODE `try_table` — blocks the EH migration (OPEN, 2026-08-24)
+
+Found while closing a caveat the binaryen-ts team raised (they asked which side should fix the
+legacy-EH problem; see `scripts/binaryen-ts-report.md`). **This inverts the plan recorded earlier
+the same day**, which had the `try_table` migration as startable-now.
+
+**wabt-ts 1.3.5 encodes legacy `(try …)` fine and cannot encode ANY `try_table` carrying a handler.**
+The parser accepts every form; the binary writer rejects them:
+
+```
+binary writer: unresolved name-var "$__exn_tag" for var — run resolveNames before encoding
+  at BodyWriter.beginTryTableExpr (wabt-ts/src/writer/binary-writer.ts:407)
+```
+
+| form | result |
+| --- | --- |
+| `(catch $t $h)` / `(catch 0 $h)` / `(catch_ref $t $h)` | ENCODE-FAIL |
+| `(catch_all $h)` / `(catch_all_ref $h)` | ENCODE-FAIL |
+| `try_table` with no handler; `throw_ref` alone; legacy `try` | OK |
+
+The numeric-tag case fails on the **branch label** `"$h"`, not the tag — so it is not tag resolution
+alone. Same class as the `ref.null` encode bug below: same message, same writer, and `resolveNames`
+is exposed on neither `/compat` nor `wat2wasm`. **Plausibly one fix for both.**
+
+**Why it blocks us:** wasic's pipeline is WAT text → **wabt** → binary → binaryen
+(`watToOptimisedWasm`, `src/wasic.ts:205–240`). wabt is unavoidable, so wasic cannot emit
+`try_table` until this is fixed — and legacy is what wasmtime refuses. We can currently produce
+*only* the form the primary WASI host rejects.
+
+**The target shape is proven, so this is purely an encoder gap.** A nested fixture exercising both
+required forms — `(catch $tag $h)` and `(catch_all_ref $h)` + `throw_ref` for `finally` — runs
+correctly on `wasmtime 47.0.3` with **no `-W` flags**, exiting 34 = `l(33) + finally_ran(1)`, which
+proves the catch handler bound the tag params **and** the finally body ran before the exception
+propagated to the outer handler. Fixture: scratch `tt_fixture.wat`, shape reproduced in
+`scripts/binaryen-ts-report.md`.
+
+**Not verified, and it matters:** whether **binaryen-ts** can *emit* `try_table`. With wabt-ts unable
+to encode it and no `wasm-tools`/`wat2wasm` on this machine, there is no way to get a `try_table`
+binary *into* binaryen-ts locally. Asked them to confirm on their side. If binaryen-ts also cannot
+emit it, both proposed options need work there and the sequencing changes again — **do not assume
+the binaryen half is clear.**
+
 ### wabt-ts `ref.null` + parser gaps — OPEN as of 2026-08-20 (wabt-ts 1.3.5)
 
 > **Corrected 2026-08-20 (same day).** The first version of this entry blamed

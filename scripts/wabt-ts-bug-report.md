@@ -1,5 +1,58 @@
 # Bug report / prompt for the `wabt-ts` team
 
+## 🔴 ADDITIONAL — 2026-08-24: `try_table` cannot be encoded either (same class as `ref.null`, and now BLOCKING)
+
+Same defect signature as the `ref.null` finding below, in the same binary writer — but this one
+blocks a real migration, so it is worth prioritising together.
+
+**wabt-ts 1.3.5 can encode legacy `try`, and cannot encode any `try_table` that carries a handler.**
+That is exactly backwards from what shipping toolchains now need: wasmtime 47 rejects legacy EH
+outright (no `-W legacy-exceptions` exists) and accepts `try_table` with no flags at all.
+
+```
+binary writer: unresolved name-var "$__exn_tag" for var — run resolveNames before encoding
+  at BodyWriter.beginTryTableExpr (src/writer/binary-writer.ts:407)
+```
+
+Every handler form fails, and note the second row — it is **not** just tag resolution, the branch
+*label* fails too:
+
+| form | result |
+| --- | --- |
+| `(catch $t $h)` named tag | ENCODE-FAIL — unresolved `"$t"` |
+| `(catch 0 $h)` numeric tag | ENCODE-FAIL — unresolved `"$h"` (the label) |
+| `(catch_ref $t $h)` | ENCODE-FAIL — unresolved `"$t"` |
+| `(catch_all $h)` | ENCODE-FAIL — unresolved `"$h"` |
+| `(catch_all_ref $h)` | ENCODE-FAIL — unresolved `"$h"` |
+| `try_table` with no handler clause | OK |
+| `throw_ref` alone | OK |
+| legacy `(try (do …) (catch …))` | OK |
+
+Repro is the same one-liner shape as before (`parseWat` with `{ enable_all: true, exceptions: true }`
+then `toBinary`). The parser is fine — `src/parser/wast-parser.ts` accepts all of these. It is
+purely the writer.
+
+**Why this is now blocking rather than academic.** wasic must migrate its exception output from
+legacy `try` to `try_table`, because wasmtime — the host WASI names — cannot run legacy EH in any
+configuration. wasic's pipeline is WAT text → **wabt** → binary → binaryen, so wabt is unavoidable.
+Until this encodes, the migration cannot ship, and every wasmtk module using `try`/`catch`/`finally`
+stays unrunnable on wasmtime. Detail in `scripts/binaryen-ts-report.md`.
+
+**Strong hint that this is ONE fix, not two.** `ref.null` and `try_table` fail with the same message,
+from the same writer, with the same unusable advice — `resolveNames` is exposed on neither the
+`/compat` surface nor the `wat2wasm` tool export. If the fix is "run name resolution before
+encoding, or expose it", it plausibly clears `ref.null`, `try_table`, and anything else keyed on a
+symbolic name in a newer instruction. Worth checking whether the resolver simply has no cases for
+the newer opcodes.
+
+**Verified on the target, so you are not translating into a form that gets refused:** a nested
+`try_table` fixture using both `(catch $tag $h)` and `(catch_all_ref $h)` + `throw_ref` runs
+correctly on `wasmtime 47.0.3` with no `-W` flags (exit code proved both the catch handler and the
+`finally`-then-propagate path executed). The destination form is good; only the encoder is missing.
+
+---
+
+
 ## ✅ REPLY — 2026-08-24: your legacy-EH report is CONFIRMED (scope is larger); the `KNOWN_INVALID` list is STALE
 
 Re: `wabt-ts/scripts/wasmtk-eh-report.md` (`b26b6a99`). Confirmed against the code and against

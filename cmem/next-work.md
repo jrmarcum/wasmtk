@@ -41,12 +41,25 @@
 ## CORRECTIONS SCOPED — 2026-08-24 (while binaryen-ts + wabt-ts land their fixes)
 
 Everything wasmtk must change from the 2026-08-20/24 exchange, split by whether it is blocked on the
-sibling projects. **Nothing below is blocked on them except §C** — the largest item (EH migration)
-is entirely ours and can start now.
+sibling projects.
 
-### A. `try_table` migration — [M/L], ours, start now, highest value
+> **CORRECTED later on 2026-08-24.** This section first said "nothing is blocked on them except
+> §C — the EH migration is entirely ours and can start now." **That was wrong.** Closing a caveat
+> the binaryen-ts team raised turned up a hard blocker: **wabt-ts 1.3.5 cannot ENCODE `try_table`**
+> (it parses it, then fails in the binary writer — every handler form, see compiler-bugs.md).
+> wasic's pipeline is WAT → wabt → binary, so §A cannot ship until wabt-ts is fixed. §B is still
+> fully ours and startable.
+
+### A. `try_table` migration — [M/L], ⛔ BLOCKED on wabt-ts encode fix (was: "start now")
 
 Detail in [compiler-bugs.md](compiler-bugs.md). `src/wasic.ts` 14749 / 14756 / 14772+14774.
+
+**⛔ Blocked, and the block is NOT obvious — do not start and discover it.** wabt-ts 1.3.5 encodes
+legacy `try` fine and **cannot encode any `try_table` with a handler clause**, which is exactly
+backwards from what we need. The design work below is still valid and the target shape is proven
+(a nested fixture using both forms runs correctly on `wasmtime 47.0.3`, no `-W` flags, exit code
+confirming both the catch and `finally`-then-propagate paths). Only the encoder is missing. Filed in
+`scripts/wabt-ts-bug-report.md`; likely the same fix as the `ref.null` encode bug.
 
 1. **[M] Emitter: legacy `try` → `try_table`.** Two shapes only (`catch $__exn_tag`; and
    `catch_all`+`rethrow 0` → `catch_all_ref`+`throw_ref`). No `delegate`.
@@ -67,9 +80,10 @@ Detail in [compiler-bugs.md](compiler-bugs.md). `src/wasic.ts` 14749 / 14756 / 1
 - **`finally` must still run on the non-throwing path.** Semantics unchanged, but it moves to the
   `$done` side of the block instead of being emitted inline in `(do …)`.
 
-### B. Multi-engine gate — [S/M], ours, do it WITH §A not after
+### B. Multi-engine gate — [S/M], ours, UNBLOCKED — now the thing to do first
 
-**This is the item that stops the class of bug, not just this instance.** The suite was **417/417
+**With §A blocked, this is the item to do now — and it was always the more valuable half.**
+It stops the bug *class*, not just this instance, and it does not need wabt-ts. The suite was **417/417
 green** while all 10 modules were unrunnable on the primary WASI host, because our oracle is V8 and
 V8 still accepts legacy EH. Migrating without a second engine fixes the instance and leaves the
 blind spot exactly where it was.
@@ -88,7 +102,9 @@ does skip-if-absent cross-runtime execution with byte-identical-stdout compariso
 
 Nothing to build; this is a checklist so the bump is mechanical when it lands.
 
-- **wabt-ts** — expected to fix `ref.null` (cannot encode for ANY heap type). The two *parity* gaps
+- **wabt-ts** — now blocking TWO things: `ref.null` (cannot encode for ANY heap type) **and
+  `try_table` (cannot encode any handler form) — the latter gates §A entirely**. Same message, same
+  binary writer, plausibly one fix. The two *parity* gaps
   (`ref.null $t`, `(module definition …)`) will **NOT** move on a wabt-ts release; they need
   upstream wabt. Do not expect them.
 - **binaryen-ts** — **nothing from this exchange implicates it.** No wasmtk-side correction is
