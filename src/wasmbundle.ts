@@ -135,7 +135,12 @@ function getDataMaxEnd(wat: string): number {
   // Match both plain and wabt-indexed formats:
   //   (data (i32.const N) "...")
   //   (data (;N;) (i32.const N) "...")
-  const dataRe = /\(data\s+(?:\(;[^;]*;\)\s+)?\(i32\.const\s+(\d+)\)\s+"((?:[^"\\]|\\.)*)"\)/g;
+  // The offset's brackets are OPTIONAL: wabt printed `(i32.const N)` through 1.3.5 and
+  // switched to the unfolded `i32.const N` in wabt-ts 1.4.1. Requiring one bracketing made
+  // this return 0, so `dataOffset` never advanced, every module's data stacked at the same
+  // base, and $__heap_ptr was seated INSIDE static data — silent memory corruption.
+  const dataRe =
+    /\(data\s+(?:\(;[^;]*;\)\s+)?\(?\s*i32\.const\s+(\d+)\s*\)?\s+"((?:[^"\\]|\\.)*)"\s*\)/g;
   let m: RegExpExecArray | null;
   while ((m = dataRe.exec(wat)) !== null) {
     const base = parseInt(m[1]);

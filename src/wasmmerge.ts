@@ -327,6 +327,37 @@ function dataStringByteLength(body: string): number {
 }
 
 /**
+ * Matches the first `i32.const N` of a constant expression in EITHER bracketing: folded
+ * `(i32.const N)`, which wabt printed through 1.3.5, or unfolded `i32.const N`, which
+ * wabt-ts 1.4.1 switched to for global initialisers and data-segment offsets. Group 1 is
+ * set for the folded form, group 2 for the unfolded one.
+ *
+ * Every const-expression read or rewrite below MUST go through `constExprValue` /
+ * `replaceConstExpr`. A regex that hard-codes one bracketing silently no-ops when wabt's
+ * pretty-printer changes, and a silent no-op here is not a small error: the data-extent
+ * scan collapses to `dataHi === 0`, which disables `relocateDataPtrs` wholesale, so the
+ * merged library keeps its ORIGINAL addresses, overlaps the host's static data, and the
+ * module corrupts itself at run time (observed as an infinite loop, not a crash).
+ * See cmem/compiler-bugs.md.
+ */
+const CONST_EXPR_RE = /\(\s*i32\.const\s+(-?\d+)\s*\)|\bi32\.const\s+(-?\d+)\b/;
+
+/** First constant of a const-expression, either bracketing; null when there is none. */
+function constExprValue(text: string): number | null {
+  const m = text.match(CONST_EXPR_RE);
+  return m ? parseInt(m[1] ?? m[2]!) : null;
+}
+
+/** Rewrite the first const-expression, PRESERVING the bracketing wabt used. */
+function replaceConstExpr(text: string, fn: (n: number) => number): string {
+  return text.replace(CONST_EXPR_RE, (_m, folded?: string, flat?: string) => {
+    const isFolded = folded !== undefined;
+    const out = fn(parseInt(isFolded ? folded : flat!));
+    return isFolded ? `(i32.const ${out})` : `i32.const ${out}`;
+  });
+}
+
+/**
  * Parses a WAT module string (from wabt disassembly) and produces a
  * WatMergeResult containing the renamed, relocated fragments ready to be
  * spliced into the parent module.
@@ -616,9 +647,8 @@ export function mergeWasmWat(
   let dataHi = 0;
   for (const form of forms) {
     if (formKind(form) !== "data") continue;
-    const baseM = form.match(/\(i32\.const\s+(-?\d+)\)/);
-    if (!baseM) continue;
-    const base = parseInt(baseM[1]);
+    const base = constExprValue(form);
+    if (base === null) continue;
     const strM = form.match(/"((?:\\.|[^"\\])*)"/);
     const len = strM ? dataStringByteLength(strM[1]) : 0;
     if (base < dataLo) dataLo = base;
@@ -824,7 +854,7 @@ export function mergeWasmWat(
           // No allocator unification: a hand-written library carrying its OWN bump-allocator
           // free-pointer global (e.g. the Phase 18 `18_symbol_table.wasm`). Place it at the page-2
           // boundary (131072) to keep that private heap out of the main module's data + heap region.
-          renamed = renamed.replace(/\(i32\.const\s+\d+\)/, `(i32.const ${2 * 65536})`);
+          renamed = replaceConstExpr(renamed, () => 2 * 65536);
           hasMutableGlobals = true;
         }
       } else {
@@ -837,9 +867,7 @@ export function mergeWasmWat(
     // ── Data segments ────────────────────────────────────────────────────────
     if (kind === "data") {
       // Relocate the data segment's base address
-      const relocated = form.replace(/\(i32\.const\s+(\d+)\)/, (_, numStr) => {
-        return `(i32.const ${parseInt(numStr) + dataReloc})`;
-      });
+      const relocated = replaceConstExpr(form, (n) => n + dataReloc);
       dataParts.push(relocated);
       continue;
     }

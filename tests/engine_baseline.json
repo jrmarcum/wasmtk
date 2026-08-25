@@ -90,22 +90,22 @@
     "wazero": "match"
   },
   "15_Exceptions": {
-    "wasmtime": "reject",
+    "wasmtime": "match",
     "wasmer": "reject",
     "wazero": "reject"
   },
   "15_IdiomaticCatch_Stress": {
-    "wasmtime": "reject",
+    "wasmtime": "match",
     "wasmer": "reject",
     "wazero": "reject"
   },
   "15_LexicalShadowing_Stress": {
-    "wasmtime": "reject",
+    "wasmtime": "match",
     "wasmer": "reject",
     "wazero": "reject"
   },
   "15_TestCase1-NestedEscalation": {
-    "wasmtime": "reject",
+    "wasmtime": "match",
     "wasmer": "reject",
     "wazero": "reject"
   },
@@ -120,7 +120,7 @@
     "wazero": "reject"
   },
   "15_recover": {
-    "wasmtime": "reject",
+    "wasmtime": "match",
     "wasmer": "reject",
     "wazero": "reject"
   },
@@ -160,7 +160,7 @@
     "wazero": "match"
   },
   "18_Multi-ScopeScaleAndMemoryLongevityTest": {
-    "wasmtime": "reject",
+    "wasmtime": "match",
     "wasmer": "reject",
     "wazero": "reject"
   },
@@ -1360,7 +1360,7 @@
     "wazero": "match"
   },
   "56_AsyncReject": {
-    "wasmtime": "reject",
+    "wasmtime": "match",
     "wasmer": "reject",
     "wazero": "reject"
   },
@@ -1490,7 +1490,7 @@
     "wazero": "match"
   },
   "60_AsyncAll": {
-    "wasmtime": "reject",
+    "wasmtime": "match",
     "wasmer": "reject",
     "wazero": "reject"
   },
@@ -1545,7 +1545,7 @@
     "wazero": "match"
   },
   "64_ReportModuleTryCatch": {
-    "wasmtime": "reject",
+    "wasmtime": "match",
     "wasmer": "reject",
     "wazero": "reject"
   },
@@ -1555,7 +1555,7 @@
     "wazero": "match"
   },
   "64_ReportThrowTemplate": {
-    "wasmtime": "reject",
+    "wasmtime": "match",
     "wasmer": "reject",
     "wazero": "reject"
   },

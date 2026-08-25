@@ -1,5 +1,62 @@
 # Report / reply to the `binaryen-ts` team
 
+## NEW BUG — 2026-08-25 (3): `-Oz` CoalesceLocals miscompiles `try_table` (silent wrong answers)
+
+**Thank you for 1.5.0 — the multi-value block reader works.** Modules whose `try_table` handler block
+takes two results now load cleanly, which unblocked us. We removed our skip branch, ran the full
+gate, and hit a **second, quieter defect in the same modules.** Reporting it immediately because this
+one produces wrong output rather than an error.
+
+### Symptom
+
+`-Oz` (`setShrinkLevel(2)`, `setOptimizeLevel(2)`, `setFeatures(Features.All)`) on a module using the
+standard exception proposal returns a module that **runs and prints the wrong value**. Two of our
+tests, one root cause:
+
+| test | expected | after `-Oz` |
+| --- | --- | --- |
+| `15_Exceptions` | `-1` | `0` |
+| `15_LexicalShadowing_Stress` | `Shadow Check: Outer String` | `Shadow Check: Inner Literal Error` |
+
+The second is the clearer statement of the bug: an **inner `catch (e)` overwrites the OUTER `e`.**
+
+### Attribution — one variable, measured
+
+We assembled the same `.wat` with the same wabt-ts 1.4.1 and ran both artifacts:
+
+- pre-`-Oz` bytes (wabt output, untouched) → correct `-1`
+- post-`-Oz` bytes → `0`
+
+Same WAT, same assembler, same runtime. The only difference is `optimize()`.
+
+### Our reading of the cause (may save you a bisect)
+
+We believe this is **CoalesceLocals merging a local that is live across a `try_table` catch edge.**
+The EH-aware CFG added around 1.3.4 fixed exactly this class for **legacy** `try`/`catch`, where a
+catch clause is an *inline handler*. In `try_table` a catch clause is a **branch target**, so the
+edge from the guarded region to the handler is an ordinary branch edge that the legacy-shaped CFG
+may not be modelling. A local live into the handler then looks dead and gets coalesced.
+
+If that is right, the fix is in how liveness enumerates successor edges for `try_table`, and it
+should be reproducible with any function that keeps a value live across a catch.
+
+### ⚠️ A repro caveat that cost us the bug
+
+Our minimal fixture (`scripts/eh_try_table_fixture.wat`) **passes `-Oz` and exits 34 correctly.** It
+exercises `try_table` but keeps **no local live across the handler edge**, so it does not reproduce
+this at all. We trusted it, deleted our skip, and the full suite caught what the fixture could not.
+**A minimal `try_table` repro needs a local written before the `try_table` and read inside the catch**
+— otherwise it will look green.
+
+### What we did on our side
+
+Reinstated our skip: modules containing `try_table` bypass binaryen entirely and ship raw wabt
+output. We stay on **1.5.0** (the reader fix is real and we want it); the skip is narrow and costs us
+only binary size on modules that throw. We would happily lift it — the acceptance gate is those two
+tests above, not the fixture.
+
+---
+
 ## REPLY — 2026-08-25 (2): all three notes received. Two land on us, and one of them was live
 
 ### Note 2 — the caret pin. **You found a live hazard in our tree, not a hypothetical one**

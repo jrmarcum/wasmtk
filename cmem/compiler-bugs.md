@@ -642,7 +642,28 @@ bytes — so it is now doing the opposite of its purpose: **masking a fix rather
 Same failure mode as the `proposals/threads/` false alarm (see testing.md): a stale vendored
 snapshot read as a live signal. Fix is on their side — re-vendor the corpus.
 
-### wast runner memory — OPEN as of 2026-08-20 (OURS, not a backend bug)
+### wast runner memory — ✅ FIXED, verified 2026-08-25 (was OPEN; the diagnosis below was wrong)
+
+**A full 288-file directory run now completes in ONE process** — `37247 passed, 102 failed, 27275
+skipped, 162 unbuilt modules`, no OOM, totals identical to the chunked gate.
+`proposals/custom-descriptors/exact.wast`, which used to exhaust the heap on its own, reports
+`pass=20 fail=0 skip=16`.
+
+**Neither cause was the one predicted below.** It was two discrete bugs, not memory retention:
+
+1. **Ours** — an infinite loop in the S-expr reader on a lone `;` (`readAtom` stopped without
+   consuming it), which is what produced the ~1.9 GB. Fixed by taking any character `readAtom`
+   cannot consume as a one-character atom, so the loop cannot stall on a future one.
+2. **wabt-ts** — a `parseWat` blow-up on `(ref (exact any))`: **50 characters → 4 GB.** Fixed
+   upstream in **wabt-ts 1.4.1**, which is what let `exact.wast` back in.
+
+🎓 **The standing hypothesis was "instantiated modules and their `WebAssembly.Memory` buffers, which
+V8 does not reclaim promptly" — a lifetime redesign.** It was plausible, specific, written down, and
+completely wrong; there is no creep to fix. It survived because it was recorded in the same voice as
+a measurement. The text below is preserved as the record of that, not as guidance — **read it as a
+retracted hypothesis.**
+
+### (RETRACTED) wast runner memory — OPEN as of 2026-08-20 (OURS, not a backend bug)
 
 `wasmtk wast <dir>` over the full 288-file spec corpus dies with `Fatal JavaScript out of memory:
 Ineffective mark-compacts near heap limit`. Heap reaches ~1.9 GB within the first few files, then
@@ -842,6 +863,128 @@ file that had been DARK. Scoped in [next-work.md](next-work.md).
 ⚠️ **An earlier attempt — stripping `(type N)` inside `wasmmerge` — was treating the symptom**, and
 its side effect of making the regex match again is what made it look partly right. Reverted.
 **A regex over generated text is a coupling to a formatter, not to a format.**
+
+### ✅ LEGACY EH MIGRATED TO `try_table` — 2026-08-25, on wabt-ts 1.4.1
+
+**The headline defect of the whole exchange, and it is fixed.** Every TypeScript `try`/`catch`/
+`finally` now compiles to the STANDARD exception proposal. Measured on `15_Exceptions`: legacy
+`(try` = 0, `try_table` = 3, `rethrow` = 0, and **V8 and wasmtime produce byte-identical output** on
+a module wasmtime refused to load at all before.
+
+**Three emitted shapes**, each with uniquely-labelled blocks (`$__eh_done{N}` / `$__eh_tag{N}` /
+`$__eh_all{N}`, from a module-scoped counter) because a `try_table` catch clause is a BRANCH TARGET,
+not an inline handler — without unique labels an inner handler shadows an outer one:
+
+| source | emitted |
+| --- | --- |
+| `try/catch` | `(catch $__exn_tag $h)`; payload arrives as the block's `(result i32 i32)` |
+| `try/finally` | `(catch_all_ref $h)` + `throw_ref` — this is what replaces legacy `rethrow 0` |
+| `try/catch/finally` | tag handler runs catch-then-finally and rejoins; `catch_all_ref` runs finally then re-throws the ORIGINAL |
+
+**`$__exn_tag` keeps both params on purpose.** `src/utils.ts` reads `exports.__exn_tag` and calls
+`err.is(tag)` / `err.getArg(tag, 0|1)` to turn an uncaught throw into
+`error: Uncaught (in Wasm) Error: <msg>`. The binaryen-ts side specifically warned us not to break
+that, and they were right — dropping it would silently degrade every uncaught error to an opaque trap.
+
+#### ⚠️ The deliberate cost: `try_table` modules SKIP binaryen `-Oz`
+
+binaryen-ts 1.4.3's binary reader rejects a multi-value block type, and a two-param tag makes the
+handler block's type necessarily multi-value. `try_table` itself is fine in binaryen-ts; multi-value
+BLOCKS are the gap (multi-value function RESULTS are fine). So `watToOptimisedWasm` returns the raw
+wabt bytes when the WAT contains `try_table`.
+
+This narrowly reinstates a skip that existed for exception modules until 2026-06-08 (then for an
+unrelated `-Oz` CoalesceLocals bug). **Modules that throw are therefore larger.** The alternative was
+emitting legacy EH that wasmtime and wasmer both refuse to load, which is not a trade.
+**DELETE THAT BRANCH the moment binaryen-ts reads multi-value blocks** — acceptance test is
+`scripts/eh_try_table_fixture.wat` through the full pipeline, expecting exit 34.
+
+> **⚠️ THE SKIP STAYS — and the reason changed. Retracting an earlier "resolved" note in this file.**
+> binaryen-ts 1.5.0 does fix the READER (multi-value blocks load), the acceptance fixture passes
+> `-Oz` at exit 34, and on that evidence the skip was deleted. **The full gate then failed
+> `15_Exceptions` and `15_LexicalShadowing_Stress`** — so the skip was reinstated the same hour, now
+> for a *second, worse* defect.
+>
+> **1.5.0's OPTIMIZER silently miscompiles `try_table`.** `-Oz` CoalesceLocals merges a local that is
+> live across a catch EDGE, because binaryen's EH-aware CFG models legacy `try`/`catch` inline
+> handlers, not `try_table` — where a catch clause is a **branch target**. One cause, two symptoms:
+>
+> | test | expected | `-Oz` produced |
+> | --- | --- | --- |
+> | `15_Exceptions` | `-1` | `0` |
+> | `15_LexicalShadowing_Stress` | `Shadow Check: Outer String` | `Shadow Check: Inner Literal Error` |
+>
+> The second is the sharper one: an inner `catch (e)` overwrote the **outer** `e`. This is the same
+> class as the CoalesceLocals bug that kept exception modules off binaryen until 2026-06-08 — fixed
+> then *for legacy EH*. The `try_table` migration put us back outside what that CFG understands.
+>
+> 🔬 **Attribution is measured, not assumed.** Assembling `15_Exceptions.wat` with the SAME wabt and
+> running the pre-`-Oz` bytes prints the correct `-1`; the `-Oz` bytes print `0`. Same WAT, same
+> assembler, one variable.
+>
+> 🎓 **The acceptance fixture passed the whole time, and that is the lesson.**
+> `scripts/eh_try_table_fixture.wat` exercises `try_table` but has **no local live across a handler
+> edge**, so it cannot see this bug — yet it was treated as sufficient evidence to remove a safety
+> skip. A fixture built to prove a feature *works* is not a fixture that proves an optimiser is
+> *safe*. **The real gate for lifting this skip is `15_Exceptions` + `15_LexicalShadowing_Stress`,
+> and a fixture that keeps a value live across a catch edge should be added before the next attempt.**
+
+🎓 **How it got unblocked, which is the reusable part.** This sat recorded as "blocked on
+binaryen-ts" for a day. It was only half true: their reader genuinely cannot take the block, but the
+block is not mandatory *in the pipeline*. The note in `wasic.ts` saying exception modules once
+skipped binaryen is what reopened it. **Before accepting a blocker, ask whether the blocking
+component is on the critical path or merely on the current path.**
+
+### 🔥 wabt-ts 1.4.1 prints const-exprs UNFOLDED — six folded-only regexes silently no-opped (FIXED 2026-08-25)
+
+**The most dangerous bug of this batch, and it was OURS, not wabt's.** Found only because a full
+`wasi_tests` run *hung* — two processes burning 1146s and 540s of CPU. A hang, not a failure.
+
+**Symptom.** `main_func` / `main_funcs` in `tests/wasi/wasm_wasi_bundle/dynrt_eval_bundle/` built
+fine and then span forever. Neither module contains a single `try`/`catch`, which immediately
+exonerated the same-day `try_table` migration — **check whether the suspect code is even reachable
+from the failing input before you start bisecting it.**
+
+**Root cause.** wabt-ts 1.4.1 changed its pretty-printer to emit constant expressions unfolded:
+
+| | global initialiser |
+| --- | --- |
+| wabt-ts ≤ 1.3.5 | `(global $g (mut i32) (i32.const 0))` |
+| wabt-ts 1.4.1 | `(global $g (mut i32) i32.const 0)` |
+
+Both are valid WAT. We parse that text with regexes, and **six of them hard-coded the folded
+bracketing** (`\(i32\.const\s+(\d+)\)`). Every one silently matched nothing:
+
+- `getDataMaxEnd` (`src/wasmbundle.ts`) returned **0**, so `dataOffset` never advanced and every
+  merged module's data stacked at the same base.
+- The data-extent scan in `src/wasmmerge.ts` left `dataHi === 0`, whose guard disables
+  `relocateDataPtrs` **wholesale** — so no data pointer anywhere was relocated.
+- `src/wasic.ts` fell through to its `: 260 /* DATA_BASE fallback */`, under-advancing the heap.
+
+Net effect: `$__heap_ptr` was seated at 1366 instead of 2140 — **inside static data**. The allocator
+then handed out addresses over live constants, and the corrupted state showed up as an infinite
+loop. `relocateDataPtrs` itself was already bracket-agnostic; it never got the chance to run.
+
+**Fix.** `CONST_EXPR_RE` + `constExprValue` / `replaceConstExpr` in `src/wasmmerge.ts` match either
+bracketing and *preserve* the one wabt used; the other four sites take an optional-paren pattern.
+Verified by rebuilding on both versions and diffing: **zero numeric differences** between the 1.3.5
+and 1.4.1 output (the residual diff is bracketing plus `nop` padding 1.4.1 no longer emits).
+
+🎓 **The lesson is already written three lines above this entry** — "a regex over generated text is a
+coupling to a formatter, not to a format" — and we still shipped six of them. Restating it did not
+help; what helps is the mechanical rule now enforced in the code:
+
+> **Parsing wabt output: never require a bracketing you did not emit.** Read const-exprs through a
+> helper that accepts folded *and* unfolded and preserves what it found. A hard-coded bracketing does
+> not throw when the printer changes — it returns "nothing here", which every caller reads as a
+> legitimate empty result. Silent no-op → corrupt memory → hang, which is the worst failure ladder
+> we have. If a relocation scan finds **zero** segments in a module that has data, that is a bug,
+> not an empty set.
+
+⚠️ **`grep` for the sibling copies before declaring it fixed.** The first patch fixed three sites in
+`wasmmerge.ts`, and the module *still* failed — `heap_ptr` stayed at 1366 — because three more lived
+in `wasmbundle.ts` and `wasic.ts`. `grep -rn -F '\(i32\.const' src/*.ts` finds them all; it must come
+back empty. See the parallel-code-paths warning in `CLAUDE.md`.
 
 #### Blocker 2 of 3 — `duplicate local $alist` — ✅ FIXED 2026-08-25
 

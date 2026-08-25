@@ -798,6 +798,42 @@ silently break (all `src/wasic.ts`):
     § "Vendored spec testsuite"). **If it ever bites, add `*.wast text eol=lf`** for exactly the
     reason `*.ts` is pinned — do not fix it by rewriting the vendored files, which are upstream's
     bytes and must stay that way.
+  - **`wabt-ts` moved to an exact `1.4.1` pin on 2026-08-25** once the three malformations it exposed
+    were fixed. **The pin and the `try_table` migration are INSEPARABLE: 1.3.5 cannot encode
+    `try_table` at all** (every handler form is an ENCODE-FAIL), so the emitter change cannot land on
+    the old backend. Anyone reverting the pin must revert the emitter too, or the compiler emits WAT
+    its own assembler rejects. Still exact, not a caret — the constraint is correctness, not
+    compatibility.
+  - **`minimumDependencyAge: "PT1M"` STAYS — owner directive 2026-08-25. Do not "clean it up".**
+    Deno's default 24-hour guard exists to stop a freshly-published malicious version from being
+    pulled in unnoticed. That threat model does not describe this repo: **both backends are
+    first-party (`@jrmarcum/wabt-ts`, `@jrmarcum/binaryen-ts`), EXACT-pinned, and bumped deliberately
+    in lockstep with a full regression gate.** The versions we install are ones we asked for, in
+    response to bugs we reported. The guard's only effect here is to block a same-day backend fix for
+    a day — which is exactly what it did to 1.4.1 and 1.5.0.
+    - Use the ISO-8601 form. `"1h"` is **rejected**; `"PT1H"` / `"PT1M"` are accepted.
+    - The safety that actually protects this repo is the **exact pin plus the gate**, not the age
+      guard. Loosen either of those and this entry becomes wrong.
+  - **`binaryen-ts` is EXACT-pinned at `1.5.0` (2026-08-25), for the same reason and by the same
+    lesson.** It was `^1.4.3`; 1.5.0 is what *reads* the multi-value block a `try_table` handler
+    produces. The caret came off because a caret is exactly how 1.4.0 got in and regressed us —
+    **both backends are now exact pins. Neither may move without a full gate**, because both are code
+    generators whose *output text* we parse.
+    - 🔒 **`try_table` modules SKIP binaryen `-Oz` — do not remove that branch on a version bump
+      alone.** 1.5.0 fixed the reader and then silently miscompiled the same modules: `-Oz`
+      CoalesceLocals merges a local live across a `try_table` catch edge, so an inner `catch (e)`
+      can overwrite an outer `e`. Reading the module is not the same capability as optimising it,
+      and the version that gained the first did not gain the second. Full post-mortem in
+      [compiler-bugs.md](compiler-bugs.md); **the gate for lifting it is `15_Exceptions` +
+      `15_LexicalShadowing_Stress`, never the acceptance fixture alone.**
+  - 🔒 **INVARIANT — never require a bracketing you did not emit.** wabt prints const-exprs folded
+    (`(i32.const N)`) or unfolded (`i32.const N`) depending on version; 1.4.1 switched. Read them
+    only through `constExprValue` / `replaceConstExpr` in `src/wasmmerge.ts`, which accept either and
+    preserve what they found. This is enforced by grep, not by types:
+    **`grep -rn -F '\(i32\.const' src/*.ts` must come back empty.** A hard-coded bracketing does not
+    throw when the printer changes — it silently reports "no data segments", which collapses data
+    relocation and seats the heap inside static data. It cost a hung suite to find; see
+    compiler-bugs.md.
   - **`wabt-ts` is EXACT-pinned (`1.3.5`, no caret) as of 2026-08-25 — a CORRECTNESS pin, not a
     compatibility range.** 1.4.0 is a stricter validator that rejects three classes of malformed WAT
     we emit (see compiler-bugs.md), so it must not arrive by accident. It nearly did: with `^1.3.5`

@@ -4,6 +4,40 @@
 > targets + the first breaking change). Authoritative status lives in [roadmap.md](roadmap.md); this
 > file is the short, prioritized "what to pick up next" list. Prune items as they land.
 
+## Open as of 2026-08-25 — after the backend double-bump
+
+Both backends moved the same day: **wabt-ts → `1.4.1`, binaryen-ts → `1.5.0`, both EXACT pins**
+([design-decisions.md](design-decisions.md)). Three items fall out of it.
+
+- 🔴 **Re-record `tests/engine_baseline.json`.** The `try_table` migration means wasmtime now loads
+  every module that throws, so the gate reports `IMPROVED: reject → match — re-record` across the
+  `15_*` and `64_*` families. **Do it only after the full gate is green**, with
+  `tests/engine_cross_check_tests.ts --update-baseline`; wasmtime `reject` should fall from 22
+  toward 0. This is the gate behaving as designed — see [testing.md](testing.md).
+- 🔴 **Send the binaryen-ts `-Oz` / `try_table` miscompile report** — drafted and ready at the top of
+  `scripts/binaryen-ts-report.md`. `-Oz` CoalesceLocals merges a local live across a `try_table`
+  catch edge, so an inner `catch (e)` overwrites an outer `e`. **Until they ship a fix, throwing
+  modules must keep skipping binaryen** ([design-decisions.md](design-decisions.md)). The report
+  includes the repro caveat that cost us the bug: a fixture with no local live across the handler
+  edge passes `-Oz` cleanly, so a minimal repro **must** write a local before the `try_table` and
+  read it inside the catch.
+- 🟡 **Add a `try_table` fixture that keeps a local live across the catch edge.** The existing
+  `scripts/eh_try_table_fixture.wat` cannot see this bug class, and it was trusted to authorise
+  removing a safety skip. Until that fixture exists, the acceptance gate for the skip is
+  `15_Exceptions` + `15_LexicalShadowing_Stress`.
+- ✅ **`18_Multi-ScopeScaleAndMemoryLongevityTest` — MEASURED AND PASSING (2026-08-25).** The third
+  of the three malformations wabt-ts 1.4.0 exposed is resolved. It had survived **four invalid
+  measurements** — a scratch copy that lost its imports, a hand-run `wasmtk wasic` that is not the
+  suite pipeline, and a filtered suite run that excluded the very test which builds
+  `18_symbol_table` — before a full, unfiltered `wasi_tests` run finally read it: **417/417, 0
+  failed.** 🎓 The reusable part: this item cost four wrong answers because each shortcut *looked*
+  like a measurement. **When a test's setup is built by another test, only the full unfiltered suite
+  can measure it** — a filter silently removes the producer, not just the noise.
+- ⏳ **`ref.null` needs re-measuring against 1.4.1, and the old prediction about it was wrong.**
+  The note below says `ref.null $t` is "parity with upstream wabt, needs an upstream feature, not a
+  wabt-ts release" — **1.4.0 moved it anyway.** Re-run the `wast` gate's pinned files before
+  repeating any claim about what a wabt-ts release can and cannot fix.
+
 ## Open as of 2026-07-30 (v2.0.0)
 
 - 🔴 **JSR provenance is still missing — 11 releases now (v1.11.3 → v2.0.0).** The one thing that
@@ -28,8 +62,12 @@
   upstream wabt**, so they need an upstream feature, not a wabt-ts release. Report filed at
   `scripts/wabt-ts-bug-report.md`. **Zero failures introduced — gate on baseline at 287 files / 27983 / 12 pinned** —
   this is recovery-of-coverage, not a bug to chase on our side.
-- 🔴 **Fix the `wast` runner's memory retention** — sized and argued in § "SCOPED: work opened by the
-  2026-08-20 spec-corpus session" below. The only open item with a user-visible symptom.
+- ✅ **`wast` runner memory — DONE, verified 2026-08-25.** The full 288-file corpus now runs in one
+  process with no OOM (`37247 passed, 102 failed, 162 unbuilt modules`), and `exact.wast` runs too.
+  **There was no "memory retention" to fix** — the § below sized this as **L** ("likely instantiated
+  modules and their `WebAssembly.Memory` buffers … a lifetime redesign"). It was two discrete bugs:
+  our S-expr reader looping on a lone `;`, and a wabt-ts `parseWat` blow-up on `(ref (exact any))`
+  fixed in 1.4.1. Read that § as a retracted hypothesis, not a plan.
 - ⏳ **Decide whether to pin `*.wast text eol=lf` in `.gitattributes`.** Deliberately NOT done on
   2026-08-20 — a repo-wide checkout-behaviour change shouldn't ride along inside a corpus sync. It
   is a one-liner whenever wanted; rationale in [design-decisions.md](design-decisions.md).

@@ -1,13 +1,13 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@jrmarcum/binaryen-ts@^1.4.3": "1.4.3",
-    "jsr:@jrmarcum/wabt-ts@1.3.5": "1.3.5",
+    "jsr:@jrmarcum/binaryen-ts@1.5.0": "1.5.0",
+    "jsr:@jrmarcum/wabt-ts@1.4.1": "1.4.1",
     "jsr:@std/assert@*": "1.0.19",
     "jsr:@std/cli@1": "1.0.32",
-    "jsr:@std/fmt@*": "1.0.10",
+    "jsr:@std/fmt@*": "1.0.1",
     "jsr:@std/fmt@1.0.1": "1.0.1",
-    "jsr:@std/fs@*": "1.0.0",
+    "jsr:@std/fs@*": "1.0.1",
     "jsr:@std/fs@1.0.0": "1.0.0",
     "jsr:@std/fs@1.0.1": "1.0.1",
     "jsr:@std/fs@1.0.23": "1.0.23",
@@ -22,11 +22,11 @@
     "npm:wasm2js@0.2": "0.2.0"
   },
   "jsr": {
-    "@jrmarcum/binaryen-ts@1.4.3": {
-      "integrity": "ac599b731e5b320cbfe913f18e865da11f0e56e3b7364aa0294695bdf5c8edaa"
+    "@jrmarcum/binaryen-ts@1.5.0": {
+      "integrity": "9612ed606be8a53b413a832e0714865b048bd84e1b35b3f9c0e610a84f2546d1"
     },
-    "@jrmarcum/wabt-ts@1.3.5": {
-      "integrity": "2e99f9093a3777d362fa268eac5428f100b7c214ba97f3fbe7247af321eebfff"
+    "@jrmarcum/wabt-ts@1.4.1": {
+      "integrity": "9571c9b597783de36a3d7d1bf402154fa87ea6bb04e1e272a4e46f786f508f61"
     },
     "@std/assert@1.0.19": {
       "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
@@ -39,9 +39,6 @@
     },
     "@std/fmt@1.0.1": {
       "integrity": "ef76c37faa7720faa8c20fd8cc74583f9b1e356dfd630c8714baa716a45856ab"
-    },
-    "@std/fmt@1.0.10": {
-      "integrity": "90dfba288802ac6de82fb31d0917eb9e4450b9925b954d5e51fc29ac07419db5"
     },
     "@std/fs@1.0.0": {
       "integrity": "d72e4a125af7168d717a2ed1dca77a728b422b0d138fd20579e3fa41a77da943",
@@ -95,8 +92,8 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@jrmarcum/binaryen-ts@^1.4.3",
-      "jsr:@jrmarcum/wabt-ts@1.3.5",
+      "jsr:@jrmarcum/binaryen-ts@1.5.0",
+      "jsr:@jrmarcum/wabt-ts@1.4.1",
       "jsr:@std/cli@1",
       "jsr:@std/path@^1.1.2",
       "npm:wasm2js@0.2"

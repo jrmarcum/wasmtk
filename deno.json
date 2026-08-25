@@ -40,9 +40,9 @@
   "imports": {
     "@std/cli/parse-args": "jsr:@std/cli@^1.0.0/parse-args",
     "@std/path": "jsr:@std/path@^1.1.2",
-    "binaryen": "jsr:@jrmarcum/binaryen-ts@^1.4.3/compat",
+    "binaryen": "jsr:@jrmarcum/binaryen-ts@1.5.0/compat",
     "wasm2js": "npm:wasm2js@^0.2.0",
-    "wabt": "jsr:@jrmarcum/wabt-ts@1.3.5/compat"
+    "wabt": "jsr:@jrmarcum/wabt-ts@1.4.1/compat"
   },
   "tasks": {
     "dev": "deno run --watch main.ts",
@@ -54,6 +54,7 @@
     "publish": "deno run --allow-read --allow-write --allow-run --allow-env scripts/publish.ts"
   },
   "nodeModulesDir": "none",
+  "minimumDependencyAge": "PT1M",
   "fmt": {
     "useTabs": false,
     "lineWidth": 100,

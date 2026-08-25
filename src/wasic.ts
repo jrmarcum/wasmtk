@@ -218,6 +218,37 @@ async function watToOptimisedWasm(
     // now get full `-Oz` again. `fixTerminalFallthru`'s terminal-block `(unreachable)` case stays —
     // it's an independent V8-strict-validation fix, not part of the workaround.)
 
+    // ⚠️ SKIP BINARYEN FOR `try_table` MODULES (2026-08-25). This skip has now been imposed by TWO
+    // different binaryen-ts defects in one day, and the second is worse than the first:
+    //
+    //   1. 1.4.3's binary READER rejected the multi-value block type a `try_table` catch clause
+    //      necessarily produces (our tag is `(param i32 i32)`). That was a LOUD failure, and
+    //      binaryen-ts 1.5.0 fixed it.
+    //   2. 1.5.0's OPTIMIZER then silently miscompiles those same modules. `-Oz` CoalesceLocals
+    //      merges a local that is live across a `try_table` catch EDGE, because binaryen's EH-aware
+    //      CFG models legacy `try`/`catch` inline handlers — not `try_table`, where a catch clause
+    //      is a BRANCH TARGET. Two independent symptoms, one cause:
+    //        • `15_Exceptions` — a catch-path value reads back as `0` instead of `-1`
+    //        • `15_LexicalShadowing_Stress` — the inner `catch (e)` overwrites the OUTER `e`,
+    //          printing `Shadow Check: Inner Literal Error` for `Outer String`
+    //
+    // This is the same class as the CoalesceLocals bug that kept exception modules off binaryen
+    // until 2026-06-08 (fixed then, for LEGACY EH, by an EH-aware CFG). The `try_table` migration
+    // put us back outside what that CFG understands.
+    //
+    // 🔬 Attribution is measured, not assumed: assembling `15_Exceptions.wat` with the SAME wabt and
+    // running the pre-`-Oz` bytes prints the correct `-1`; the `-Oz` bytes print `0`. Same WAT, same
+    // assembler, one variable.
+    //
+    // ⚠️ `scripts/eh_try_table_fixture.wat` PASSES `-Oz` (exit 34) and did NOT catch this — it has no
+    // local live across a handler edge. **Do not use it alone to decide this skip can be lifted.**
+    // The real acceptance gate is `15_Exceptions` + `15_LexicalShadowing_Stress` in `wasi_tests`.
+    // The cost is a larger binary for modules that throw; correct-and-larger is not a trade.
+    if (watSource.includes("try_table")) {
+      await rt.writeFile(outPath, rawBytes);
+      return { success: true, outputPath: outPath, sizeBytes: rawBytes.length };
+    }
+
     // Step 2: Binaryen -Oz (shrinkLevel=2, optimizeLevel=2)
     const binMod = binaryen.readBinary(rawBytes);
     // Enable all features (incl. exceptions) so the optimizer preserves them.
@@ -1622,6 +1653,13 @@ class WasicTranspiler {
 
   // Set to true when any throw/try/catch is emitted; causes (tag $__exn_tag) to be emitted.
   private needsExceptionTag = false;
+  /**
+   * Monotonic id for `try_table` handler-block labels. In legacy `try`, a catch clause was an inline
+   * handler and needed no label at all; in `try_table` it is a BRANCH TARGET, so every nesting level
+   * needs its own unique labels or an inner handler shadows an outer one. Module-scoped rather than
+   * per-function so the names are unique even when a function is emitted more than once.
+   */
+  private ehSeq = 0;
 
   // Phase 38: set when any extended math helper (sin/cos/log/exp/…) is used.
   private needsMathLib38 = false;
@@ -14791,36 +14829,71 @@ class WasicTranspiler {
           this.stringVars.delete(internalCatchVar);
         }
 
-        out.push(`${indent}(try`);
-        out.push(`${indent}  (do`);
-        if (tryWat) out.push(tryWat);
-        if (hasFinally && finallyWat) out.push(finallyWat); // success path: run finally inline
-        out.push(`${indent}  )`);
+        // ── try_table (the STANDARD exception proposal) ───────────────────────────────────────
+        //
+        // Replaces the legacy `(try (do …) (catch …) (catch_all … (rethrow 0)))` form, which
+        // WASMTIME AND WASMER BOTH REJECT — and wasmtime is the host WASI names. V8 accepts legacy
+        // EH, which is the only reason a 417/417 suite coexisted with output no standalone runtime
+        // could load. See cmem/compiler-bugs.md.
+        //
+        // The structural difference: a legacy catch clause is an INLINE HANDLER; a `try_table` catch
+        // clause is a BRANCH TARGET. Handler bodies therefore move OUT of the try into an enclosing
+        // block, and the tag's `(param i32 i32)` arrives as that block's `(result i32 i32)`.
+        // `$__exn_tag` keeps both params, so `utils.ts`'s `err.getArg(tag, 0|1)` — which turns an
+        // uncaught throw into a readable message — keeps working unchanged.
+        const ehId = this.ehSeq++;
+        const done = `$__eh_done${ehId}`;
+        const hTag = `$__eh_tag${ehId}`;
+        const hAll = `$__eh_all${ehId}`;
+        // Binds the caught payload; len is pushed last so it pops first.
+        const bindPayload = (pad: string): string[] =>
+          internalCatchVar
+            ? [
+              `${pad}(local.set $${internalCatchVar}_len)`,
+              `${pad}(local.set $${internalCatchVar}_ptr)`,
+            ]
+            : [`${pad}(drop)`, `${pad}(drop)`];
 
-        if (hasCatch) {
-          out.push(`${indent}  (catch $__exn_tag`);
-          if (internalCatchVar) {
-            // Payload is (ptr i32, len i32); len is on top of stack.
-            out.push(`${indent}    (local.set $${internalCatchVar}_len)`);
-            out.push(`${indent}    (local.set $${internalCatchVar}_ptr)`);
-          } else {
-            out.push(`${indent}    (drop)`);
-            out.push(`${indent}    (drop)`);
-          }
+        if (hasCatch && hasFinally) {
+          // Both: the tag handler runs catch-then-finally and rejoins; the catch_all_ref handler
+          // runs finally and re-throws the ORIGINAL exception via throw_ref (this is what replaces
+          // legacy `rethrow 0`).
+          out.push(`${indent}(block ${done}`);
+          out.push(`${indent}  (block ${hAll} (result exnref)`);
+          out.push(`${indent}    (block ${hTag} (result i32 i32)`);
+          out.push(`${indent}      (try_table (catch $__exn_tag ${hTag}) (catch_all_ref ${hAll})`);
+          if (tryWat) out.push(tryWat);
+          if (finallyWat) out.push(finallyWat); // success path
+          out.push(`${indent}      )`);
+          out.push(`${indent}      (br ${done}))`);
+          out.push(...bindPayload(`${indent}    `));
           if (catchWat) out.push(catchWat);
-          if (hasFinally && finallyWat) out.push(finallyWat); // catch success path: run finally inline
-          out.push(`${indent}  )`);
+          if (finallyWat) out.push(finallyWat); // catch-success path
+          out.push(`${indent}    (br ${done}))`);
+          if (finallyWat) out.push(finallyWat); // exceptional path
+          out.push(`${indent}  (throw_ref))`);
+        } else if (hasCatch) {
+          out.push(`${indent}(block ${done}`);
+          out.push(`${indent}  (block ${hTag} (result i32 i32)`);
+          out.push(`${indent}    (try_table (catch $__exn_tag ${hTag})`);
+          if (tryWat) out.push(tryWat);
+          out.push(`${indent}    )`);
+          out.push(`${indent}    (br ${done}))`);
+          out.push(...bindPayload(`${indent}  `));
+          if (catchWat) out.push(catchWat);
+          out.push(`${indent})`);
+        } else {
+          // finally only — run it on both paths, re-throwing on the exceptional one.
+          out.push(`${indent}(block ${done}`);
+          out.push(`${indent}  (block ${hAll} (result exnref)`);
+          out.push(`${indent}    (try_table (catch_all_ref ${hAll})`);
+          if (tryWat) out.push(tryWat);
+          if (finallyWat) out.push(finallyWat); // success path
+          out.push(`${indent}    )`);
+          out.push(`${indent}    (br ${done}))`);
+          if (finallyWat) out.push(finallyWat); // exceptional path
+          out.push(`${indent}  (throw_ref))`);
         }
-
-        if (hasFinally) {
-          // catch_all re-runs finally then rethrows any non-tag exception
-          out.push(`${indent}  (catch_all`);
-          if (finallyWat) out.push(finallyWat);
-          out.push(`${indent}    (rethrow 0)`);
-          out.push(`${indent}  )`);
-        }
-
-        out.push(`${indent})`);
         continue;
       }
 
@@ -20326,7 +20399,12 @@ export async function compileWasiTs(
     const wat2 = mod2.toText({ foldExprs: false, inlineExport: false });
     mod2.destroy();
     // Advance dataOffset by the imported module's static footprint
-    const heapM = wat2.match(/\(global\s+\(;0;\)\s+\(mut i32\)\s+\(i32\.const\s+(\d+)\)\)/);
+    // Brackets around the initialiser are OPTIONAL — wabt-ts 1.4.1 prints const-exprs
+    // unfolded under `foldExprs: false`. Requiring `(i32.const N)` sent every module down
+    // the 260 fallback below, under-advancing dataOffset into an out-of-bounds heap.
+    const heapM = wat2.match(
+      /\(global\s+\(;0;\)\s+\(mut i32\)\s+\(?\s*i32\.const\s+(\d+)\s*\)?\s*\)/,
+    );
     dataOffset += heapM ? parseInt(heapM[1]) : 260 /* DATA_BASE fallback */;
   }
   // If any merged module has a mutable global placed at the page-2 boundary (131072),
@@ -20354,7 +20432,7 @@ export async function compileWasiTs(
   // the declared page count).
   if (wasmImports.length > 0 || transpiler.needsMathLib) {
     wat = wat.replace(
-      /\(global \$__heap_ptr \(mut i32\) \(i32\.const \d+\)\)/,
+      /\(global \$__heap_ptr \(mut i32\) \(?\s*i32\.const \d+\s*\)?\s*\)/,
       `(global $__heap_ptr (mut i32) (i32.const ${dataOffset}))`,
     );
     const requiredPages = Math.max(2, Math.ceil(dataOffset / 65536) + 1);
@@ -20503,7 +20581,12 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
     const mod2 = wabtMod2.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: false });
     const wat2 = mod2.toText({ foldExprs: false, inlineExport: false });
     mod2.destroy();
-    const heapM = wat2.match(/\(global\s+\(;0;\)\s+\(mut i32\)\s+\(i32\.const\s+(\d+)\)\)/);
+    // Brackets around the initialiser are OPTIONAL — wabt-ts 1.4.1 prints const-exprs
+    // unfolded under `foldExprs: false`. Requiring `(i32.const N)` sent every module down
+    // the 260 fallback below, under-advancing dataOffset into an out-of-bounds heap.
+    const heapM = wat2.match(
+      /\(global\s+\(;0;\)\s+\(mut i32\)\s+\(?\s*i32\.const\s+(\d+)\s*\)?\s*\)/,
+    );
     dataOffset2 += heapM ? parseInt(heapM[1]) : 260;
   }
 
@@ -20517,7 +20600,7 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
   // merged modules. Same logic as compileWasiTs — see comment there.
   if (wasmImports.length > 0 || transpiler.needsMathLib) {
     wat = wat.replace(
-      /\(global \$__heap_ptr \(mut i32\) \(i32\.const \d+\)\)/,
+      /\(global \$__heap_ptr \(mut i32\) \(?\s*i32\.const \d+\s*\)?\s*\)/,
       `(global $__heap_ptr (mut i32) (i32.const ${dataOffset2}))`,
     );
     const requiredPages = Math.max(2, Math.ceil(dataOffset2 / 65536) + 1);

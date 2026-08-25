@@ -116,6 +116,37 @@ Hoisting the per-file WABT instance to a process-wide singleton was correct and 
 Recording it as "the fix" would have sent the next reader looking in the wrong place; recording it as
 "real but NOT sufficient — most retention is elsewhere" is what kept the investigation open.
 
+**A hang is a MEASUREMENT before it is a mystery — read the CPU time.** [wasmtk, 2026-08-25] A
+process pinned near 100% CPU is spinning; one at ~0% is blocked on I/O. They are different bugs with
+disjoint suspect lists, and the check costs one command
+(`Get-Process deno | Select Id,CPU,StartTime`). **Paid for here:** a `wasi_tests` run appeared stuck;
+the two live processes showed 1146s and 540s of CPU against roughly the same wall-clock. That single
+reading killed the plausible "blocked waiting on stdin" theory outright and reframed it as a loop —
+which is what memory corruption looks like from the outside. Do not infer a hang's nature from where
+the log stopped.
+
+**Check whether the suspect code is REACHABLE from the failing input before bisecting it.**
+[wasmtk, 2026-08-25] The freshest, most invasive change is the intuitive culprit and it is often
+innocent. The `try_table` EH migration had landed hours before the hang, in the same pipeline — but
+`grep -c 'try\|catch'` on the two hanging modules returned **0**, and their WAT contained no
+`try_table`. One grep, before any bisect, moved the search to the actual variable (the backend bump).
+Reachability is cheaper than bisection and strictly more conclusive.
+
+**When a text-parsing fix is correct but the symptom persists, the bug has SIBLINGS — grep, don't
+re-derive.** [wasmtk, 2026-08-25] Three folded-only `(i32.const N)` regexes were fixed in
+`wasmmerge.ts`; the module still failed with the identical symptom. Three more lived in
+`wasmbundle.ts` and `wasic.ts`. The second round of debugging was pure waste — a single
+`grep -rn -F '\(i32\.const' src/*.ts` enumerated all six up front. This is the
+**parallel-code-paths** warning in `CLAUDE.md` in its most expensive form: when you fix a pattern,
+search for the pattern, and make the search's empty result the acceptance criterion.
+
+**Parsing generated text: a no-match must be distinguishable from a legitimate empty result.**
+[wasmtk, 2026-08-25] A regex that hard-codes a formatter's choices does not throw when the formatter
+changes — it returns "nothing found", which every caller reads as valid. Here that meant "this module
+has no data segments", which disabled relocation, seated the heap inside static data, and surfaced
+two layers away as an infinite loop. If a scan over a non-empty input yields zero matches, that is a
+defect signal, not a value.
+
 ## 3. Producer/consumer pairs — the recurring blind spot
 
 wasmtk sits in a three-project triangle with **wabt-ts** (assemble) and **binaryen-ts** (optimise),
@@ -196,6 +227,30 @@ in-process, so a single-process scan is one bad file away from losing every resu
 stalled on a lone `;` because `readAtom` stopped without consuming it. The fix was not "handle `;`" —
 it was "any character `readAtom` cannot consume is taken as a one-character atom", so the loop can
 never stall on a future one.
+
+**A fixture that proves a FEATURE works does not prove an OPTIMISER is safe — never lift a safety
+skip on one.** [wasmtk, 2026-08-25] `scripts/eh_try_table_fixture.wat` was written to show
+`try_table` survives the pipeline, and it does: exit 34 through full `-Oz`. On that evidence the
+binaryen skip for throwing modules was deleted — and the full gate immediately failed
+`15_Exceptions` and `15_LexicalShadowing_Stress`, because the fixture holds **no local live across a
+catch edge**, which is the only thing the bug touches. A skip exists to prevent a *class* of defect;
+the evidence for removing it must exercise that class, not the happy path the feature already owns.
+**Ask what the skip was protecting, then check the fixture actually reproduces it — a green fixture
+is not a green gate.**
+
+**Run gates in dependency order: a gate that reads a generated corpus must run AFTER the suite that
+regenerates it.** [wasmtk, 2026-08-25] `testing.md` says to run `engine_cross_check_tests` after
+`wasi_tests`; the first full-gate script ran it before. Its `0 regressed, 8 improved` was therefore
+measured against a corpus built by the *previous* compiler — a real-looking number that answered a
+question nobody asked. Ordering inside a gate script is load-bearing, not cosmetic.
+
+**Stopping a background suite kills the SHELL, not its children — verify the machine is idle before
+the next measurement.** [wasmtk, 2026-08-25] A hung `wasi_tests` run was stopped via the task
+harness; two orphaned `deno` processes kept spinning at ~98% CPU and were still there **30 minutes
+later**, at 2140s and 1533s of CPU, competing with every build and timing measurement taken in
+between. Nothing reported an error — the harness said the task was stopped, and it was. After killing
+a long run, list the process table and kill survivors by PID. On a gate whose failures are *timeouts*,
+a stray CPU hog is not just noise, it manufactures the symptom you are hunting.
 
 ## 5. Recording what you found
 

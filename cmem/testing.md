@@ -101,7 +101,7 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 > | Suite | Result |
 > | --- | --- |
 > | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **417 / 417** — 412 + the Phase 34 type-predicate batch (3 owner stress tests; 2 passed as written, 1 exposed the inline-target bug) + 2 regressions, 2026-07-30. Full suite RE-RUN: the fix changed `src/wasic.ts`, so the gate applied |
-> | `wast_tests.ts` | **287 files, 27983 passed, 37252 skipped** — ON BASELINE, with **12 known failures PINNED** in 5 files. On **wabt-ts 1.3.5**. ⚠️ A 1.4.0 bump was attempted 2026-08-25 and **REVERTED** — it takes this gate to 288 / 37247 / 102 pinned (+9264 passes) but regresses wasi to 378/417 and both dync suites to 0, because its stricter validation rejects malformed WAT we emit. See compiler-bugs.md |
+> | `wast_tests.ts` | **288 files, 37247 passing assertions** — ON BASELINE (re-recorded 2026-08-25), with **15 files pinned WITH failures** and **0 unrunnable**. On **wabt-ts 1.4.1**. The +9264 passes are the 1.4.0/1.4.1 bump landing after the three malformations it exposed were fixed: an earlier 1.4.0 attempt was reverted when it took wasi to 378/417 and both dync suites to 0. **The gain is mostly recovered COVERAGE, not new correctness** — 14 of the 15 newly-pinned files went `unbuilt → 0`, so modules that could not previously be assembled now run and expose real conformance gaps (`ref_cast`, `ref_test`, `br_on_cast`, `table_grow`, … — GC/ref-types). Those failures were always there; they were invisible. See compiler-bugs.md |
 > | `bindgen_tests.ts` | 142, 0 failed |
 > | `engine_cross_check_tests.ts` | **376 modules × 3 engines = 1128 pairs, ALL ON BASELINE** — the multi-engine gate (2026-08-24). V8 vs wasmtime/wasmer/wazero, byte-identical stdout. Baseline `tests/engine_baseline.json`. wasmtime **354 match / 22 reject / 0 differ** (the 37 `differ` it found on run one were the `fd_write` short-write bug, fixed the same day); the 22 rejects are legacy EH |
 > | `go_merge_tests.ts` · `go_bindgen_tests.ts` · `go_asyncify_tests.ts` | **7 / 7 · 7 / 7 · 12 / 12** — green on **Go 1.26.7 + TinyGo 0.41.1**. TinyGo 0.41.1 caps at Go 1.26; a Go 1.27 install breaks all three (`requires go version 1.19 through 1.26`). Keep the pair in step — Go 1.27 is safe only once TinyGo **0.42.0** ships (support is on `dev`). See [next-work.md](next-work.md) |
@@ -204,7 +204,8 @@ counts in README are a record of when each phase first went green, not a live in
 
 ## `wast_tests` is a PER-FILE BASELINE gate (rebuilt 2026-08-20)
 
-**287 files, 27983 passing assertions, 12 known failures pinned** — up from 41 files / 12444, because the gate no
+**288 files, 37247 passing assertions, 15 files pinned WITH failures, 0 unrunnable** (re-recorded
+2026-08-25 on wabt-ts 1.4.1; was 287 / 27983 / 12 on 1.3.5) — up from 41 files / 12444, because the gate no
 longer needs a hand-curated file list. Expected pass counts live in **`tests/wast_baseline.json`**
 (tracked). Every baselined file must produce **exactly** its baseline: fewer → FAIL (coverage lost),
 more → FAIL (baseline stale, re-record deliberately), any execution failure → FAIL as before.
@@ -235,6 +236,13 @@ unless something pins the per-file number. The corpus could have shed ~2400 more
 Ineffective mark-compacts near heap limit`. This is our bug, not the corpus's, and the directory
 form is the one README documents.
 
+> ✅ **FIXED — verified 2026-08-25. Everything in this bullet list is HISTORY; do not act on it.**
+> A full 288-file directory run now completes in one process: `37247 passed, 102 failed, 27275
+> skipped, 162 unbuilt modules`, no OOM, matching the chunked gate exactly. `exact.wast` reports
+> `pass=20 fail=0 skip=16`. The causes were an infinite loop in our S-expr reader on a lone `;` and a
+> wabt-ts `parseWat` blow-up on `(ref (exact any))` (fixed in wabt-ts 1.4.1) — **not** memory
+> retention. See [compiler-bugs.md](compiler-bugs.md).
+
 - Memory climbs to ~1.9 GB within the first handful of files and then creeps ~1–6 MB per file.
 - **One file exhausts the heap on its own**: `proposals/custom-descriptors/exact.wast`.
 - A partial fix landed 2026-08-20: `src/wast.ts` used to call `await wabt()` **per file**, creating a
@@ -244,6 +252,9 @@ form is the one README documents.
 - Consequences today: the 280-file gate *does* fit in one process; a 288-file rescan does not, which
   is why `--update-baseline` chunks across subprocesses and auto-discovers unrunnable files rather
   than carrying a hand-maintained skip list.
+  - ⚠️ **The chunking stays regardless** — an OOM cannot be caught in-process, so a single-process
+    full-corpus rescan is still one bad file away from losing every result. The fix removes the
+    symptom, not the reason for the design.
 
 ## The multi-engine gate — `engine_cross_check_tests.ts` (added 2026-08-24)
 
@@ -278,6 +289,22 @@ that regresses fails, and one that IMPROVES fails too until re-recorded — same
   exercises. The fix produced `0 regressed, 37 improved`, the gate failed as designed until the
   baseline was re-recorded, and wasmtime `match` went 317 → 354.
 - The **rejects** are dominated by legacy EH (wasmtime) and by wasmer/wazero having no EH at all.
+- 🔁 **SUPERSEDED 2026-08-25 by the `try_table` migration — the baseline MUST be re-recorded.** Every
+  module that threw now emits the standard exception proposal, so wasmtime loads modules it used to
+  refuse and the gate reports them as `IMPROVED: reject → match — re-record` (observed on
+  `15_TestCase1-NestedEscalation`, `15_recover`, `64_ReportModuleTryCatch`, `64_ReportThrowTemplate`,
+  …). **This is the gate working, not breaking** — it is the "design the gate so an IMPROVEMENT also
+  fails" rule in [best-practices.md](best-practices.md) paying out exactly as predicted.
+  **RE-RECORDED 2026-08-25**, `0 regressed` throughout. wasmtime `match` **354 → 364**, `reject`
+  **22 → 12** — **10** modules flipped `reject → match` (the `15_*` EH family, `60_AsyncAll`, the
+  `64_Report*` pair). The remaining 12 rejects are not EH-related. wasmer (353/23) and wazero
+  (346/30) are unchanged, as expected: neither implements EH at all, so an EH change cannot move
+  them.
+  - ⚠️ **It is 10, not the 8 first reported — and the discrepancy is the lesson.** The first run
+    executed BEFORE `wasi_tests` regenerated the corpus, so it graded artifacts built by the
+    *previous* compiler and undercounted by two. **Order is load-bearing:
+    `wasi_tests` → `engine_cross_check_tests` → `wast_tests`.** A cross-check gate reads a generated
+    corpus; running it early produces a real-looking number that answers the wrong question.
 - **Absent engines are skipped, never failed.** With no engine on PATH the gate exits 0 with a notice.
 
 ⚠️ **Invoke engines as `<engine> run <file>`.** Not cosmetic: wazero answers a bare path with
@@ -326,13 +353,21 @@ it. Each cost passes without costing a single failure:
 
 | File | Pass Δ | Cause |
 | --- | --- | --- |
-| `return_call.wast` | 44 → 12 | `ref.null $t` (concrete type index) at `:95` — **parity with upstream wabt** |
-| `proposals/custom-page-sizes/memory_max*.wast` | 4 → 2 each | `(module definition …)` — **parity with upstream wabt** |
-| `ref_null.wast` (pre-existing, not from this sync) | 0 / 34 skip | `ref.null` cannot encode for **any** heap type — a genuine wabt-ts bug |
+| File | Pass Δ | Cause | Status on wabt-ts 1.4.1 |
+| --- | --- | --- | --- |
+| `return_call.wast` | 44 → 12 | `ref.null $t` (concrete type index) at `:95` | ✅ **FIXED — now 45 pass / 0 fail**, one better than before the sync |
+| `proposals/custom-page-sizes/memory_max*.wast` | 4 → 2 each | `(module definition …)` | ✅ **FIXED** — folded into the +9264 re-record |
+| `ref_null.wast` (pre-existing, not from this sync) | 0 / 34 skip | `ref.null` cannot encode for **any** heap type | ❌ **STILL OPEN** — 0 pass / 32 skip on 1.4.1 |
 
-**Only the third is a wabt-ts bug**; the first two match upstream wabt's own parser, so a wabt-ts
-bump will not move them. Full analysis in [compiler-bugs.md](compiler-bugs.md) § "wabt-ts `ref.null`
-+ parser gaps"; the report for the wabt-ts team is `scripts/wabt-ts-bug-report.md`.
+⚠️ **The original verdict on this table was wrong, and the way it was wrong is worth keeping.** It
+read: *"Only the third is a wabt-ts bug; the first two match upstream wabt's own parser, so a wabt-ts
+bump will not move them."* **1.4.1 moved both.** The reasoning — "upstream wabt behaves the same, so
+this is parity, not a defect" — quietly assumed a downstream port cannot get ahead of its upstream.
+It can, and this one did. **Confirming that a behaviour matches upstream tells you where the
+behaviour came from, not whether anyone will fix it.** Re-measure such claims on every bump instead
+of carrying them forward as settled. Full analysis in [compiler-bugs.md](compiler-bugs.md) §
+"wabt-ts `ref.null` + parser gaps"; the report for the wabt-ts team is
+`scripts/wabt-ts-bug-report.md`.
 
 ## CI / pre-publish gate
 
