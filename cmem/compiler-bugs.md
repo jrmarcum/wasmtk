@@ -823,6 +823,42 @@ not parse, which is expected: that one really is upstream-wabt parity.
 (−9,977), unrunnable **1 → 0**, files **287 → 288**. Failures went 12 → 102, every one of them in a
 file that had been DARK. Scoped in [next-work.md](next-work.md).
 
+#### Blocker 1 of 3 — `unknown type` — ✅ FIXED 2026-08-25 (and it was not what it looked like)
+
+**The dangling `(type N)` was the symptom; matching a pretty-printer's exact output was the bug.**
+`internalizeDynrtHostImports` recognised its two host imports with regexes requiring
+`(func $x (param i32 i32))` EXACTLY. wabt-ts 1.3.5's `wasm2wat` emits that; **1.4.0 emits
+`(func $x (type 1) (param i32 i32))`**. Under 1.4.0 the patterns silently stopped matching, so:
+
+1. the host imports were never internalized — the module kept an `env.*` import it must not have
+   (and the dync portability invariant exists precisely to forbid that), and
+2. the un-removed line carried a `(type N)` indexing the SOURCE module's type section, which does
+   not survive the merge — hence `error: unknown type`.
+
+**Fix:** make the `(type N)` group optional and the whitespace flexible in both regexes. Verified on
+1.4.0: 0 `env` imports remain, the definition is present, the module assembles. No-op on 1.3.5
+(dync 3/3 unchanged).
+
+⚠️ **An earlier attempt — stripping `(type N)` inside `wasmmerge` — was treating the symptom**, and
+its side effect of making the regex match again is what made it look partly right. Reverted.
+**A regex over generated text is a coupling to a formatter, not to a format.**
+
+#### Blocker 1b — 1.4.0 dync output is EMPTY (OPEN, cause not established)
+
+With blocker 1 fixed the module assembles on 1.4.0 and still prints nothing. Same input yields a
+structurally IDENTICAL module — same section counts, 157 data segments, 34 globals — but **774 bytes
+less data**: `$__heap_ptr` starts at **2542** on 1.3.5 and **1768** on 1.4.0.
+
+**Two hypotheses tested and DISPROVEN — recorded so they are not retried:**
+- *Removing an import shifts the function index space.* No: every call in the merged WAT is
+  name-based (`grep -c '(call [0-9]'` = 0).
+- *The internalized print clobbers data by writing its iovec at 0/4/128.* No: data segments start at
+  **260** in both versions, so 0–259 is genuinely reserved scratch.
+
+**Live hypothesis, NOT confirmed:** data-segment contents are being measured in UTF-16 code units
+rather than UTF-8 bytes somewhere in `wasmmerge` — the same class as the `decodeWatString` bug fixed
+earlier the same day, in the OTHER string-handling path. Confirm before acting on it.
+
 ⚠️ **THE BUMP IS REVERTED — we are pinned at 1.3.5.** The figures above are what 1.4.0 WOULD give;
 they are NOT current. The wast gate was reported clean before the full suite finished — a premature
 claim — and when it finished it showed **wasi 417/417 → 378/417** with both dync suites at **0**.

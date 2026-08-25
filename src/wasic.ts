@@ -456,10 +456,19 @@ function injectDynrtMarshalExports(wat: string, transpiler: WasicTranspiler): st
  * Proven byte-identical stdout across wasmtime / wasmer / wazero (2026-07-09 hand-patch, now productized).
  */
 function internalizeDynrtHostImports(wat: string): string {
+  // The `(type N)` group is OPTIONAL and the whitespace is flexible ON PURPOSE. wabt-ts 1.3.5's
+  // `wasm2wat` emitted these imports WITHOUT a type index; 1.4.0 emits
+  // `(func $x (type 1) (param i32 i32))`. The old patterns required the exact 1.3.5 spelling, so
+  // under 1.4.0 they silently stopped matching: the host imports were never internalized, the module
+  // kept an `env.*` import it must not have, and it then failed to assemble because that copied
+  // `(type N)` indexes the SOURCE module's type section and does not survive the merge.
+  //
+  // Matching a pretty-printer's exact output IS the bug — a WAT writer is free to choose between
+  // these spellings. Tolerate both. (2026-08-25)
   const printRe =
-    /^[ \t]*\(import "env" "__host_print" \(func (\$[A-Za-z0-9_]+) \(param i32 i32\)\)\)[ \t]*\r?\n/m;
+    /^[ \t]*\(import "env" "__host_print" \(func (\$[A-Za-z0-9_]+)(?:\s+\(type\s+\d+\))?\s+\(param i32 i32\)\)\)[ \t]*\r?\n/m;
   const callRe =
-    /^[ \t]*\(import "env" "__host_call" \(func (\$[A-Za-z0-9_]+) \(param i32 i32\) \(result i32\)\)\)[ \t]*\r?\n/m;
+    /^[ \t]*\(import "env" "__host_call" \(func (\$[A-Za-z0-9_]+)(?:\s+\(type\s+\d+\))?\s+\(param i32 i32\)\s+\(result i32\)\)\)[ \t]*\r?\n/m;
   const printM = wat.match(printRe);
   const callM = wat.match(callRe);
   if (!printM && !callM) return wat;
