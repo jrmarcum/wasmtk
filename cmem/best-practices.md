@@ -33,14 +33,18 @@ ever goes down can be improved by running less. **Independently re-paid for here
 See [testing.md](testing.md).
 
 **Pass counts over a corpus you cannot fully run are UPPER BOUNDS, not measurements. Skips are not
-passes.** [wazmrt] Live figure here: the wast gate reads **27,651 passed / 37,185 skipped**. Any
-headline quoting the first and not the second is overstated by more than the number itself.
+passes.** [wazmrt] Live figure here: the wast gate reads **27,983 passed / 37,252 skipped** — this
+corpus still SKIPS MORE THAN IT RUNS. Any headline quoting the first and not the second is overstated
+by more than the number itself. (A wabt-ts 1.4.0 bump would cross those two at 37,247 / 27,275; it
+was attempted 2026-08-25 and reverted — see compiler-bugs.md.)
 
 **Read the SKIP column in the same row as the failure count — and rank work by ASSERTIONS UNBLOCKED,
 not failures closed.** [wazmrt] A file reading `0 passed, 0 failed, 34 skipped` is not healthy, it is
-*dark*: `ref_null.wast` is exactly that, because wabt-ts cannot encode `ref.null` at all. One
-toolchain fix lights up 34 assertions; a file with 3 loud failures might be worth 3. **An item whose
-symptom is a SKIP cannot be sized from the failure column at all.**
+*dark*. **Vindicated hard on 2026-08-25:** `ref_null.wast` sat at 0 passes / 34 skips because wabt-ts
+could not encode `ref.null` at all; the 1.4.0 fix moved the WHOLE CORPUS by **+9,264 passes and
+−9,977 skips**. One toolchain fix lit up ten thousand assertions, and it had been sitting behind a
+column nobody gates on. **An item whose symptom is a SKIP cannot be sized from the failure column at
+all.**
 
 **Do not FILTER output and then trust the filtered view — it is how a measurement lies to you.**
 [wasmtk, 2026-08-24] Twice in one session: `deno run tests/wasi_tests.ts | grep -E "Passed|Failed" |
@@ -56,6 +60,23 @@ stronger and predates this file:** regenerate the corpus before validating again
 or a stale artifact is a false positive ([testing.md](testing.md)). It earned its keep on 2026-08-24
 — regenerating first is what proved a sibling project's `KNOWN_INVALID` list stale rather than
 confirming it.
+
+**A CARET RANGE PLUS A LOCKFILE IS NOT A PIN — it is a pin until someone reloads.** [sibling
+project, then wasmtk the same day] Arrived as a report from the binaryen-ts side, and we were sitting
+in it: `deno.json` asked `^1.3.5` for wabt-ts, the lock held 1.3.5, and JSR had published 1.4.0 —
+which the caret accepts. Deleting one config line was enough to let a reload pull 1.4.0 in, and the
+`wast` gate went **156 files off-baseline** while `deno.json` still read "1.3.5". Harmless until then
+only by luck of timing.
+
+**The distinction that matters is WHY the constraint exists.** Most ranges express *compatibility*,
+and a lockfile is the right home for that. A few express *correctness* — "our code is bug-compatible
+with exactly this version" — and those belong in the **specifier**, where a reload cannot move them.
+Ours was the second kind written as the first: wabt-ts 1.4.0 is a stricter validator that regresses
+our suite, so `1.3.5` is now an EXACT pin (no caret) until the three malformations it exposes are
+fixed. `binaryen-ts` stays on a caret — that one really is a compatibility range.
+
+**The tell:** ask what `--reload` would do, then ask again imagining the next upstream release as
+already published. If the answers differ, the range is doing work a lock cannot.
 
 **Reinstall before testing.** [wasmtk] The suites invoke the globally-installed `wasmtk`, so after
 editing anything in `src/` or `deno.json` you MUST run `deno task install` or you are testing the old

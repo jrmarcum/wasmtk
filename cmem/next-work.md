@@ -84,6 +84,75 @@ exists, and a failed `binaryen -Oz` swallowed silently. See [compiler-bugs.md](c
 - ⚠️ Add them to the impact map in [testing.md](testing.md) at the same time, or the suite set
   grows without the "which suites does this change reach" table knowing about it.
 
+## SCOPED: the 102 pinned wast failures after wabt-ts 1.4.0 (2026-08-25)
+
+The 1.4.0 bump took the gate from 27,983 to **37,247 passing assertions** and dropped skips by
+~10,000. What surfaced with it is 102 failures in **15 files** — all previously DARK, none of them
+regressions. Pinned loudly per the standing policy; scoped here.
+
+**RANK BY ROOT CAUSE, NOT BY FILE COUNT.** 73 of the 102 are one family, and two of those files are
+byte-copies of two others (`proposals/custom-descriptors/br_on_cast*.wast`), so the *distinct* work
+is far smaller than the row count suggests:
+
+| # | class | files | root cause |
+| --- | --- | --- | --- |
+| **73** | GC casts | `ref_test` 32, `ref_cast` 11, `br_on_cast` 10, `br_on_cast_fail` 10, + 2 custom-descriptors copies @10 | **DIAGNOSED — ours.** See A below |
+| 11 | linking | `linking` 6, `linking3` 4, `linking0` 1 | not yet probed |
+| 6 | tables | `table_grow` 2, `table_grow64` 2, `table_get` 1, `table_get64` 1 | not yet probed |
+| 2 | misc | `names` 1, `ref_is_null` 1 | not yet probed |
+
+### A. GC casts — [S] DIAGNOSED, ours, and it is not what it looks like
+
+**The runner skips the SETUP CALL, so every assertion after it reads an empty table.**
+`ref_test.wast:101` is `(invoke "init" (ref.extern 0))`. `runAction` rejects any argument that is not
+a numeric const (`__skip__: unsupported arg type`), so `init` never runs, `$ta` indices 3–5 stay
+null, and all 32 assertions mismatch. Confirmed by construction:
+
+```
+BEFORE init: 0->2  3->2  5->2        <- what the gate sees
+AFTER  init: 0->2  3->0  5->0        <- exactly what the spec wants
+```
+
+- **Fix:** accept reference-typed invoke arguments. `(ref.extern N)` is an opaque host value — in JS
+  any value works, so pass `N` (or a distinct wrapper object per N if identity is ever compared).
+  `(ref.null extern|func|any…)` → `null`. That is the whole change; `constToJs`/`constType` in
+  `src/wast.ts` are the sites.
+- **Expected effect:** most of the 73. Re-measure per file rather than predicting a number.
+
+🎓 **METHOD NOTE — I nearly filed this against wabt-ts.** The first probe called
+`ref_test_null_data` directly under V8 *and* wasmtime, got 2 from both, and "two independent engines
+agreeing from the same bytes" pointed straight at an encode bug. It was wrong: **neither engine had
+`init` called either**, because I reproduced the runner's own omission in the probe. A third-party
+check only isolates the layer if the third party is given the SAME SETUP, not just the same bytes.
+
+### B. linking (11) — [M] not probed
+
+`linking0`/`linking` already carried cascade failures before the bump; `linking3` is new. Probe the
+same way and expect the same question: is a setup command being skipped, or is the module genuinely
+mis-linked? Check for `(register …)` ordering and for actions with non-numeric arguments first — that
+is now a known blind spot, not a hypothesis.
+
+### C. tables (6) — [S/M] not probed
+
+`table_grow`/`table_get` mismatches on `size`. **Suspect cross-module state**, since these files
+declare several modules and the runner keeps one `cur` instance plus a `named` map — but that is a
+hypothesis and has NOT been tested. Probe: dump the sequence of module instantiations and check
+whether the assertion targets the instance it names.
+
+### D. misc (2) — [S]
+
+`names.wast` is down to a single failure from 369 after the UTF-8 decode fix; whatever remains is
+one specific name. `ref_is_null` 1 is probably class A.
+
+### The probe recipe that works, in order
+
+1. **Find the assertion's setup.** Grep backwards from the failing line for `invoke` / `register` /
+   `module` — a skipped setup command explains more failures than a wrong opcode ever will.
+2. **Ask V8 directly, with the setup performed by hand.** If it then matches the spec, the runner is
+   the problem and the module is fine.
+3. **Only then ask a third engine**, and give it the same setup. Same bytes is not the same test.
+4. Re-measure per file; do not project a total.
+
 ## CORRECTIONS SCOPED — 2026-08-24 (while binaryen-ts + wabt-ts land their fixes)
 
 Everything wasmtk must change from the 2026-08-20/24 exchange, split by whether it is blocked on the

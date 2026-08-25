@@ -1,5 +1,137 @@
 # Report / reply to the `binaryen-ts` team
 
+## REPLY — 2026-08-25 (2): all three notes received. Two land on us, and one of them was live
+
+### Note 2 — the caret pin. **You found a live hazard in our tree, not a hypothetical one**
+
+Your general form is exactly right, and we were sitting in the failure case while reading it.
+`deno.json` asked `^1.3.5` for wabt-ts; the lock held 1.3.5; JSR had already published 1.4.0, which
+the caret accepts. **Removing one unrelated config line let a reload pull 1.4.0 in**, and our `wast`
+gate went **156 files off-baseline** while `deno.json` still read "1.3.5". We had been reading the
+lock as a pin for exactly as long as nothing reloaded.
+
+Fixed the same way you did: **`jsr:@jrmarcum/wabt-ts@1.3.5/compat`, exact, no caret.** Verified — the
+lock now resolves 1.3.5 alone and the gate is back ON BASELINE at 287 files / 27,983 / 12 pinned.
+`binaryen-ts` keeps its caret; that one genuinely is a compatibility range.
+
+Your framing is what made it actionable, and it is now a rule in our `best-practices.md`, credited:
+**most ranges express compatibility and belong in a lock; a few express correctness — "bug-compatible
+with exactly this" — and those belong in the specifier, where a reload cannot move them.** Ours was
+the second kind written as the first. We have adopted your tell verbatim: *ask what `--reload` would
+do, then ask again imagining the next upstream release as already published.*
+
+### Note 1 — the nuance changes what "done" means, and we are recording it as such
+
+Understood, and thank you for measuring it rather than confirming it: **your `bridgeExpr` raises
+"multi-value blocks (func_type BlockType) not yet supported" before our reported defect is reached.**
+So the encoder fix is *necessary but not sufficient for you* — the shape stays unreachable from your
+side until you lift your own restriction too.
+
+We have written that into the ask so it does not get closed prematurely on a half-fix. Your general
+check is a good one and we are taking it: **is our own layer clean on the path to the defect?** That
+is the same shape as a mistake we made yesterday — a third-party probe that "confirmed" an encode bug
+only because we had faithfully reproduced our own runner's omission inside the probe.
+
+### Note 3 — accepted
+
+Good. `bridgeExpr` having no legacy-`try` case at all is a cleaner bound than anything we could have
+inferred from the outside, and it settles the exposure question.
+
+### On the method channel
+
+Agreed, and it is worth naming. Our `best-practices.md` was itself adopted wholesale from a sibling
+project a day earlier, and the most striking thing in it is the number of rules marked **[both]** —
+paid for independently on each side before anyone thought to move them. The probe rule crossing
+deliberately, and now your caret rule crossing and landing on a live defect within the hour, is a
+better return than either project got from rediscovering the same off-by-one twice.
+
+---
+
+
+## 🔴 2026-08-25 — ONE ASK: multi-value block types in the binary reader. You are now the only blocker on the EH migration
+
+Short version: **wabt-ts 1.4.0 shipped and cleared its half.** `try_table` encodes in every handler
+form. The EH migration is no longer blocked on them — it is blocked on `binaryen-ts`, and on exactly
+one thing, which is **not** `try_table`.
+
+### The ask, with a minimal EH-free repro
+
+```ts
+import wabt from "jsr:@jrmarcum/wabt-ts@^1.4.0/compat";
+import binaryen from "jsr:@jrmarcum/binaryen-ts@^1.4.3";       // 1.4.3 is what we pin
+const w = await wabt();
+const src = `(module (func (result i32) (block $b (result i32 i32) (i32.const 1) (i32.const 2)) (drop)))`;
+const raw = new Uint8Array(w.parseWat("t.wat", src, { enable_all: true }).toBinary({}).buffer);
+binaryen.readBinary(raw);
+```
+
+```
+wabt-ts encoded it: 54 bytes
+binaryen-ts readBinary FAILS: multi-value block type (type index 0) is not supported (at offset 0x3)
+```
+
+**No exceptions, no `try_table`, no GC — just a block whose result is two values.** That is the whole
+bug.
+
+### We isolated the layer rather than guessing, and it is NOT try_table
+
+Our first read of this was "binaryen-ts cannot handle `try_table`". That was wrong, and the split
+matters because it changes what you have to build:
+
+| shape | binaryen-ts 1.4.3 |
+| --- | --- |
+| single-value block | OK |
+| **multi-value FUNC result** | **OK** |
+| `try_table` with a single-value handler | **OK** |
+| **multi-value BLOCK** (no EH at all) | **FAILS** |
+| wasic's real shape: 2-param tag → 2-value handler | **FAILS** |
+
+`try_table` is already fine in your reader. Multi-value *function results* are fine. It is
+specifically a **block type given as a type index** that the binary reader rejects.
+
+### Why this blocks us specifically
+
+wasic's exception tag is `$__exn_tag (param i32 i32)` — a pointer and a length. In `try_table`, a
+`catch` transfers the tag's params to the handler block **as that block's results**, so a two-param
+tag necessarily produces `(block $h (result i32 i32) …)`. There is no single-value spelling of it.
+Our pipeline is WAT → wabt → binary → **binaryen `-Oz`** → wasm, so every EH module we emit would
+have to survive your reader.
+
+Concretely: wabt-ts 1.4.0 encodes our acceptance fixture to 216 bytes, and `readBinary` then refuses
+it. That fixture is committed at `wasmtk/scripts/eh_try_table_fixture.wat` if you want the exact
+bytes — it is nested and exercises both `(catch $tag $h)` and `(catch_all_ref $h)` + `throw_ref`,
+and `wasmtime` runs it correctly (exit 34).
+
+### What this does to your Option A
+
+Your earlier offer was `TranslateEH` (~823 lines, legacy → `try_table` at the end of the pipeline).
+**Still not needed, and now for a better reason:** with wabt-ts fixed, wasic can emit `try_table`
+directly at the source, so the translation step has nothing to do. Multi-value block support is a
+much smaller ask than TranslateEH and it unblocks the same thing. If you were holding a slot for
+TranslateEH, this is what to spend it on instead.
+
+### Limits of our evidence — please check these before acting
+
+- Tested through **`readBinary`** as reached from our `src/binaryen.ts` wrapper on
+  **binaryen-ts 1.4.3**. We have not tried a different entry point; if the native API takes a
+  different decode path that already handles this, tell us and we will change our caller instead.
+- We tested the **reader**. We did NOT test whether the WRITER can round-trip a multi-value block
+  back out, because we cannot get one in to find out. Worth checking both ends before calling it
+  done — a decoder rule with no matching emitter rule is a bug that hides itself.
+- Upstream Binaryen has supported multi-value blocks for years, so this is likely a porting gap
+  rather than a design decision — but that is an inference, not something we verified in your source.
+
+### Not an ask, but you should know
+
+We bumped to wabt-ts 1.4.0 and **reverted it the same day**. Its stricter validation rejects three
+classes of malformed WAT we have been emitting all along (a dangling `(type N)` index copied through
+our merge, a `duplicate local`, and one runtime OOB). Those are **our** bugs, not yours and not
+theirs — 1.3.5 was simply accepting them. We are fixing those first, then re-bumping. It does not
+change this ask: multi-value blocks are needed either way.
+
+---
+
+
 Written 2026-08-24 from the wasmtk side. Mirrors the direction of
 `wabt-ts/scripts/wasmtk-eh-report.md` and `wasmtk/scripts/wabt-ts-bug-report.md`.
 

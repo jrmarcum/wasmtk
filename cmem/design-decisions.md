@@ -798,6 +798,23 @@ silently break (all `src/wasic.ts`):
     § "Vendored spec testsuite"). **If it ever bites, add `*.wast text eol=lf`** for exactly the
     reason `*.ts` is pinned — do not fix it by rewriting the vendored files, which are upstream's
     bytes and must stay that way.
+  - **`wabt-ts` is EXACT-pinned (`1.3.5`, no caret) as of 2026-08-25 — a CORRECTNESS pin, not a
+    compatibility range.** 1.4.0 is a stricter validator that rejects three classes of malformed WAT
+    we emit (see compiler-bugs.md), so it must not arrive by accident. It nearly did: with `^1.3.5`
+    the lockfile was the only thing holding 1.4.0 back, and one config change let a reload pull it
+    in — the `wast` gate went 156 files off-baseline while `deno.json` still said 1.3.5.
+    **Restore the caret once the three malformations are fixed and the bump is deliberate.**
+    `binaryen-ts` keeps its caret; that constraint really is about compatibility.
+  - **`deno.json` MUST STAY STRICT JSON — no JSONC comments (learned 2026-08-25).** Deno itself
+    accepts comments, but `scripts/sync-version.ts` reads the file with `JSON.parse`, and
+    `deno task install` chains `update-version` → that script. Adding one `//` comment to document a
+    setting broke `deno task install` outright. Document settings in `cmem/`, not inline.
+  - **`minimumDependencyAge: "PT1H"` (set 2026-08-25, owner decision).** Deno blocks JSR versions
+    younger than 24h by default as a supply-chain guard; wabt-ts 1.4.0 was 13h old and carried three
+    fixes we were blocked on. Deliberately **not `"0"`** — a zero-age publish is the case the guard
+    exists for, and an hour still catches a package pulled immediately after being compromised. The
+    value is an ISO-8601 duration or a count of minutes; `"1h"` is REJECTED (`expected minutes,
+    RFC3339 datetime, or ISO-8601 duration`).
   - **Real content drift existed too and is now fixed**: `src/bindgen.ts` (40 diff lines),
     `src/hybrid.ts` (16), `src/wasic.ts` (6), `src/console_log.ts` (5), `src/wast.ts` (4).
   - **`src/wasm/` is excluded from fmt via `deno.json` → `fmt.exclude`.** Both files there are

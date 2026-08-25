@@ -353,7 +353,21 @@ function decodeWatString(tokens: string[]): Uint8Array {
           i += 2;
         }
       } else {
-        bytes.push(s.charCodeAt(i));
+        // UTF-8 ENCODE, do not push the UTF-16 code unit. `charCodeAt` returns a value up to
+        // 0xFFFF and `new Uint8Array(bytes)` truncates anything above 0xFF, so every non-ASCII
+        // character in a WAT string was silently corrupted. `names.wast` exports a function named
+        // U+FEFF (raw EF BB BF in the source): we pushed 0xFEFF, it became 0xFF, and the export
+        // lookup missed. Astral characters are worse - a lone surrogate each. Encode the whole
+        // code point, and skip the low surrogate the loop would otherwise re-read.
+        // Surfaced 2026-08-25 by wabt-ts 1.4.0, which made these modules assemble for the first
+        // time; the bug itself predates it.
+        const cp = s.codePointAt(i)!;
+        if (cp < 0x80) {
+          bytes.push(cp);
+        } else {
+          for (const b of new TextEncoder().encode(String.fromCodePoint(cp))) bytes.push(b);
+          if (cp > 0xffff) i++; // consumed a surrogate PAIR
+        }
       }
     }
   }

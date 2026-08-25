@@ -1,5 +1,86 @@
 # Bug report / prompt for the `wabt-ts` team
 
+## 1.4.0 — 2026-08-25: three blockers CLEARED, ~10,000 assertions unblocked — but we REVERTED the bump (our bugs, not yours)
+
+Bumped the day it landed and measured before trusting anything. **All three things we filed are
+fixed**, and the effect on our spec-conformance corpus is the largest single jump it has ever had.
+
+### Probed BEFORE bumping, per our own checklist
+
+| form | 1.3.5 | **1.4.0** |
+| --- | --- | --- |
+| `try_table` `(catch $t $h)` / `(catch 0 $h)` / `(catch_ref …)` / `(catch_all …)` / `(catch_all_ref …)` | ENCODE-FAIL | **OK** (all five) |
+| `ref.null func` / `extern` / `exn` | ENCODE-FAIL / PARSE-FAIL | **OK** |
+| `ref.null $t` (concrete type index) | PARSE-FAIL | **OK** |
+| `proposals/custom-descriptors/exact.wast` (the 50-char → 4 GB OOM) | kills the process | **runs** |
+| `(module definition …)` | PARSE-FAIL | PARSE-FAIL (expected — upstream parity) |
+| legacy `try` (control) | OK | OK — no regression |
+
+### Measured corpus effect
+
+```
+passes      27,983 → 37,247    (+9,264)
+skips       37,252 → 27,275    (−9,977)
+unrunnable        1 → 0
+files           287 → 288
+```
+
+Passes and skips **crossed** — until 1.4.0 this corpus skipped more than it ran. Files that were
+pinned at 0 passes (`address0`, `address1`, `array_new_elem`, `ref_null` …) now run in full, and
+`unbuilt-modules` went to 0 corpus-wide.
+
+### 🎓 A retraction we owe you
+
+Our 2026-08-24 report classified **`ref.null` with a concrete type index** as parity with upstream
+wabt — whose `ParseRefKind` accepts only `func`/`extern`/`exn` — and said plainly that **no wabt-ts
+release would move it**. 1.4.0 moved it. We were wrong, and we only caught it because the checklist
+says to run the probe rather than trust the note. The `(module definition …)` half of that same
+claim did hold.
+
+### What surfaced with it — and it is ours, not yours
+
+The bump took our failures 12 → 470. **368 of those were a single latent bug in our own runner**,
+invisible until your fix made those modules assemble: our WAT string decoder pushed UTF-16 code
+units into a byte array, so every non-ASCII character was truncated. `names.wast` exports a function
+named U+FEFF; we produced `0xFF` and the lookup missed. Fixed — `names.wast` went 113/369 to
+**481 pass / 1 fail**.
+
+Of the 102 that remain, **73 are one class and also ours**: our runner skips
+`(invoke "init" (ref.extern 0))` because it cannot pass a reference-typed argument, so the setup
+never runs and every dependent assertion reads an empty table. Nothing for you in either.
+
+### ⚠️ WE REVERTED THE BUMP THE SAME DAY — and the reason is a compliment
+
+An earlier draft of this section said "verified" and stopped at the wast gate. That was premature:
+the wast numbers were real, but the FULL suite had not finished. When it did:
+
+```
+wasi                417/417 → 378/417   (39 failures)
+dync_conformance      3/3   → 0/3
+dync_cross_runtime    3/3   → 0/3
+```
+
+**None of that is a 1.4.0 defect.** Your stricter validation rejects three classes of malformed WAT
+we have been emitting all along, which 1.3.5 silently accepted:
+
+- **`unknown type`** — our merge copies import lines verbatim, carrying a `(type N)` index into the
+  SOURCE module's type section. That section does not survive the merge, so the reference dangles.
+  You are right to reject it.
+- **`duplicate local $alist`** — in our bundle path's generated library WAT.
+- one runtime `memory access out of bounds`, cause not yet established.
+
+We are fixing those on 1.3.5 first and will re-bump after. **No action for you** — recorded so the
+timeline reads correctly if you see us pinned at 1.3.5 for a few days, and because "the new validator
+caught three latent bugs in a consumer" is worth knowing about your own release.
+
+⚠️ **One note that cost us time and may cost you some.** Deno's default
+**`minimumDependencyAge` is 24h**, so `deno add` / `deno task install` refuses a JSR package younger
+than a day with an error that reads like a resolution failure. 1.4.0 was 13h old when we bumped. The
+setting takes ISO-8601 (`"PT1H"`) or minutes — `"1h"` is rejected.
+
+---
+
+
 ## REPLY — 2026-08-24 (2): parity report received. Ask 1 confirmed-with-a-caveat; **Ask 2 does not reproduce**
 
 Re: `wabt-ts/scripts/wasmtk-eh-parity-report.md`. The five-runtime table is genuinely useful — thank

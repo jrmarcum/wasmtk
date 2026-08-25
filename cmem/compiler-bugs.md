@@ -812,6 +812,55 @@ exclusion existed *because* of the multiple evaluation.
 
 ⚠️ Pure `boolexpr` shapes (comparisons, `instanceof`, `f64.ne`) are unaffected in OBSERVABLE terms — only a **call** returning `bool` shows it, which is why a corpus of mostly-pure predicates never surfaced it.
 
+### wabt-ts 1.4.0 — cleared THREE blockers, but the bump was REVERTED same-day (2026-08-25)
+
+Probed BEFORE bumping, per the recorded plan. All five `try_table` handler forms encode; `ref.null`
+encodes for every heap type; and `proposals/custom-descriptors/exact.wast` — the 50-character input
+that took `parseWat` to 4 GB and killed the process — now runs. `(module definition …)` still does
+not parse, which is expected: that one really is upstream-wabt parity.
+
+**Corpus effect, measured:** passes **27,983 → 37,247** (+9,264), skips **37,252 → 27,275**
+(−9,977), unrunnable **1 → 0**, files **287 → 288**. Failures went 12 → 102, every one of them in a
+file that had been DARK. Scoped in [next-work.md](next-work.md).
+
+⚠️ **THE BUMP IS REVERTED — we are pinned at 1.3.5.** The figures above are what 1.4.0 WOULD give;
+they are NOT current. The wast gate was reported clean before the full suite finished — a premature
+claim — and when it finished it showed **wasi 417/417 → 378/417** with both dync suites at **0**.
+1.4.0's stricter validation rejects three classes of malformed WAT we have always emitted:
+
+1. **`unknown type`** — `wasmmerge` copies import lines verbatim, carrying a `(type N)` index into
+   the SOURCE module's type section. That section does not survive the merge, so the index dangles.
+   1.3.5 accepted it. ⚠️ **An attempted fix (stripping the index) made it compile and then produced
+   EMPTY OUTPUT**, because removing `(type N)` made a regex in `internalizeDynrtHostImports` start
+   matching a line it had been skipping. Reverted — that coupling is not yet understood, and it is
+   the first thing to work out before retrying.
+2. **`duplicate local $alist`** in the bundle path's generated library WAT.
+3. a runtime `memory access out of bounds` in `18_Multi-Scope…`, cause unestablished.
+
+**These are OUR bugs.** Fix them on 1.3.5, where they are latent, rather than under a red suite —
+then re-bump. Order matters: fix, then bump.
+
+🎓 **RETRACTION — I told the wabt-ts team `ref.null $t` would not move.** The 2026-08-24 report
+classified `ref.null` with a CONCRETE type index as parity with upstream wabt (whose `ParseRefKind`
+accepts only `func`/`extern`/`exn`) and said no wabt-ts release would change it. 1.4.0 changed it.
+Running the probe rather than trusting my own note is what caught it. The `(module definition …)`
+half of that same claim did hold.
+
+### `decodeWatString` corrupted every non-ASCII character — ✅ FIXED 2026-08-25
+
+Pushed `s.charCodeAt(i)` into a `number[]` that becomes a `Uint8Array`, which truncates anything
+above `0xFF`. `names.wast` exports a function named **U+FEFF** (raw `EF BB BF` in the source): we
+pushed `0xFEFF`, it became `0xFF`, and the export lookup missed. Astral characters were worse — a
+lone surrogate each. **Fix:** encode the code point as UTF-8 via `TextEncoder`, and skip the low
+surrogate the loop would otherwise re-read.
+
+**`names.wast`: 113 pass / 369 fail → 481 pass / 1 fail.** 368 of the 470 failures the bump surfaced
+were this one bug.
+
+⚠️ **The bug PREDATES 1.4.0 entirely.** It was invisible because those modules never assembled — a
+latent defect of ours sitting behind a toolchain gap, which is exactly why a file reading
+`0 passed, N skipped` has to be treated as dark rather than healthy.
+
 ### wabt-ts cannot ENCODE `try_table` — blocks the EH migration (OPEN, 2026-08-24)
 
 Found while closing a caveat the binaryen-ts team raised (they asked which side should fix the
