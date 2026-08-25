@@ -843,6 +843,27 @@ file that had been DARK. Scoped in [next-work.md](next-work.md).
 its side effect of making the regex match again is what made it look partly right. Reverted.
 **A regex over generated text is a coupling to a formatter, not to a format.**
 
+#### Blocker 2 of 3 — `duplicate local $alist` — ✅ FIXED 2026-08-25
+
+`dynArrayMethod` in the dynrt library declares `const alist` in **four separate branches**.
+TypeScript scopes those independently; wasic hoists every declaration to a function local. Several
+registration paths feed `declaredLocals` and only the supplementary scan checked `locals` first, so
+the emitted WAT carried four `(local $alist i32)`. wabt-ts 1.3.5 tolerated duplicate local names;
+1.4.0 rejects them. **The malformation predates 1.4.0.**
+
+**Fix:** dedupe `declaredLocals` by name at emission, TYPE-AWARE. A repeat at the same type is pure
+redundancy and is dropped; a repeat at a DIFFERENT type is two distinct variables collapsing onto one
+slot, so it raises a `diagnostics` entry instead of silently keeping whichever came first. A blind
+dedupe would have converted a loud parse error into a silent miscompile.
+
+Measured: `dynrt_lib_modc.wat` 4 → 1, and a corpus-wide scan went from 3 affected functions
+(`$alist`, `$ln`, `$fn`) to **zero**.
+
+⚠️ **`bundle_tests` passed 4/4 while the malformation was still present** — it read a `.wat` from 16
+minutes earlier. The count only moved after the file was deleted and regenerated. The stale-artifact
+rule in [testing.md](testing.md) exists for exactly this, and it nearly banked a fix as verified on a
+test that never re-ran the compiler.
+
 #### Blocker 1b — 1.4.0 dync output is EMPTY (OPEN, cause not established)
 
 With blocker 1 fixed the module assembles on 1.4.0 and still prints nothing. Same input yields a

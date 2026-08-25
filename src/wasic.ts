@@ -18432,7 +18432,34 @@ class WasicTranspiler {
         }
       }
     }
-    const localDecls = declaredLocals
+    // DEDUPE BY NAME. WAT forbids two locals with the same name in one function, and several
+    // registration paths feed `declaredLocals` — only the supplementary scan above checks `locals`
+    // first. A source function that declares the same name in sibling BLOCKS (TypeScript scopes
+    // those independently; we hoist them all to function locals) therefore emitted the name twice.
+    // `dynArrayMethod` in the dynrt library declares `const alist` in four separate branches, and
+    // the emitted WAT carried four `(local $alist i32)`.
+    //
+    // wabt-ts 1.3.5 accepted duplicate local names; 1.4.0 correctly rejects them
+    // (`error: duplicate local $alist`), which is how this surfaced. The malformation predates it.
+    //
+    // A repeat at the SAME type is pure redundancy — drop it. A repeat at a DIFFERENT type is not
+    // redundancy, it is two distinct variables collapsing onto one slot, so it aborts rather than
+    // silently picking whichever came first.
+    const seenLocals = new Map<string, WatType>();
+    const uniqueLocals: Array<[string, WatType]> = [];
+    for (const [n, t] of declaredLocals) {
+      const prev = seenLocals.get(n);
+      if (prev === undefined) {
+        seenLocals.set(n, t);
+        uniqueLocals.push([n, t]);
+      } else if (watBaseType(prev) !== watBaseType(t)) {
+        this.diagnostics.push(
+          `Local '${n}' in '${fn.name}' is declared twice with different types ` +
+            `(${watBaseType(prev)} and ${watBaseType(t)}). Rename one — they would share a slot.`,
+        );
+      }
+    }
+    const localDecls = uniqueLocals
       .map(([n, t]) => `    (local $${n} ${watBaseType(t)})`)
       .join("\n");
 
