@@ -3,6 +3,44 @@
 All notable, user-facing changes to `wasmtk`. Versions follow the `deno.json` version and the
 published [`@jrmarcum/wasmtk`](https://jsr.io/@jrmarcum/wasmtk) JSR package.
 
+## 2.0.1 — Standard exception handling; merged backend; a silent memory-corruption fix (2026-08-27)
+
+No breaking changes. Three user-facing improvements and one important bug fix.
+
+### Exception handling now uses the STANDARD proposal — modules that throw run outside V8
+
+Every `try` / `catch` / `finally` compiles to `try_table` / `catch_all_ref` / `throw_ref` instead of
+the legacy `try` / `do` / `catch` / `rethrow` opcodes, **which Wasmtime and Wasmer both refuse to
+load**. If your program throws, its module was previously V8-only. It is not any more:
+
+- V8 and Wasmtime now produce byte-identical output on the exception corpus.
+- **10 modules that Wasmer rejected outright now load and run.**
+
+Uncaught errors still report `Uncaught (in Wasm) Error: <msg>` — the exception tag keeps its
+`(param i32 i32)` string payload.
+
+### Modules that throw are optimised again, and smaller
+
+A `-Oz` defect in the optimiser briefly forced throwing modules to ship unoptimised. Fixed upstream
+and verified here, so they are optimised once more: a representative exception module went
+**4534 → 1345 bytes**.
+
+### Fixed: merged modules could corrupt their own memory and hang
+
+A WAT printer change in the assembler moved constant expressions from `(i32.const 0)` to the
+unfolded `i32.const 0`. Six internal regexes required the folded form and silently matched nothing
+rather than failing, which disabled static-data relocation wholesale: a merged module's heap pointer
+was seated **inside** its own static data, so the allocator handed out addresses over live
+constants. **The symptom was an infinite loop, not a crash.** Affects anything using `wasmtk
+wasmbundle` or `.wasm` imports. If you saw a bundled module hang, this was it.
+
+### Backend: `@jrmarcum/wabt-ts` + `@jrmarcum/binaryen-ts` → `@jrmarcum/binaryang`
+
+The assembler and optimiser merged into one package. Internal only — no API change — but the
+`wasmtk wast` spec runner gained a large amount of coverage as a result: **27,983 → 37,247 passing
+assertions**, mostly modules that previously could not be assembled at all. A full 288-file spec-corpus
+directory run also now completes in a single process, where it used to exhaust the V8 heap.
+
 ## 2.0.0 — Type predicates with inline object types; `./utils` slims down (2026-07-30)
 
 ### ⚠️ Breaking — one import path changed
