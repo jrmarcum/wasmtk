@@ -1000,6 +1000,40 @@ silently break (all `src/wasic.ts`):
   v1.11.2 vs v1.11.3 runs (ids `30569718486` is v1.11.12; list with
   `gh run list --workflow=publish.yml`), comparing the resolved `deno-version`.
 
+- 🆕 **Three more suspects RULED OUT (2026-08-27), from the binaryang side.** Reported by the
+  binaryang merge, which published three packages from this same scope on the same day and hit — and
+  then did not hit — the same problem.
+
+  1. **A global JSR- or GitHub-side change is REFUTED.** That was the standing leading hypothesis
+     ("remaining suspects: JSR-side or GitHub-side changes in the 2026-07-03 → 07-09 window").
+     `binaryen-ts@1.5.1`, `wabt-ts@1.5.1` and `binaryang@1.5.1` all published **attested** on
+     2026-08-27 — `rekorLogId` 2618865672, 2618866200 and 2618802426. Provenance works on this
+     account, this scope and this workflow shape today. **Whatever this is, it is specific to
+     wasmtk.**
+  2. **`usesNpm` is not it.** The JSR version metadata reports `usesNpm: true` on **both** sides of
+     the boundary — v1.11.1 and v1.11.2 (attested) as well as v1.11.3 onward (not). The npm
+     dependency is not the discriminator.
+  3. **A cached/stale API read is not it either.** The absence was re-verified with cache-busted
+     requests: v1.11.2 returns `rekorLogId` 2053916008, and v1.11.3, v1.11.5, v1.11.12 and v2.0.0
+     all return null with `updatedAt == createdAt`. **The absence is real.**
+
+- 🆕 **The verify step could not have been believed — it did not cache-bust. FIXED.** The JSR version
+  endpoint is cached, and attestation is written a few seconds AFTER publish, so a plain re-read can
+  keep returning the pre-attestation record for minutes.
+
+  Measured on `wabt-ts@1.5.1`: **eight consecutive plain reads over ~3 minutes all returned null**,
+  while a single cache-busted read returned `rekorLogId` 2618866200, written 4 seconds after publish.
+  That release had provenance the whole time and was briefly reported as having none.
+
+  For wasmtk the bug has been **masked by a true negative** — the step failed, and provenance really
+  was absent — so it cost nothing so far. It would cost everything at exactly the wrong moment:
+  **when provenance starts working again, the uncached step could still report failure**, hiding the
+  fix. `publish.yml` now sends `Cache-Control: no-cache` and a unique `?cb=` per attempt.
+
+  **The tell, worth knowing without any tooling:** an attested version has `updatedAt` a few seconds
+  after `createdAt`. Equal timestamps mean not-yet-attested *or* never-attested, and only a
+  cache-busted read tells those two apart.
+
 ## Go producer (CLI / build invariants — set 2026-06-07)
 
 The Go command surface was deliberately shaped to mirror the TS commands' *meaning*. Do not silently

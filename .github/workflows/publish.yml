@@ -75,7 +75,14 @@ jobs:
           echo "Checking $URL"
           # JSR ingests asynchronously, so poll rather than reading once.
           for i in $(seq 1 12); do
-            BODY=$(curl -sf -H "Accept: application/json" "$URL" || true)
+            # The JSR version endpoint is CACHED, and attestation is written a few
+            # seconds AFTER publish, so a plain re-read can keep returning the
+            # pre-attestation record for minutes and report a FALSE negative on a
+            # release that did get provenance. Measured 2026-08-27 on
+            # wabt-ts@1.5.1: eight plain reads over ~3 minutes all returned null,
+            # while one cache-busted read showed rekorLogId 2618866200, written 4s
+            # after publish. Cache-bust, or this step cannot be believed.
+            BODY=$(curl -sf -H "Accept: application/json" -H "Cache-Control: no-cache" "${URL}?cb=${GITHUB_RUN_ID}-${i}" || true)
             REKOR=$(printf '%s' "$BODY" | deno eval 'const t=await new Response(Deno.stdin.readable).text(); try { console.log(JSON.parse(t).rekorLogId ?? "") } catch { console.log("") }' || true)
             if [ -n "$REKOR" ]; then
               echo "✅ Provenance recorded — Rekor log ID: $REKOR"
@@ -84,5 +91,5 @@ jobs:
             echo "  attempt $i: no provenance yet, retrying in 15s"
             sleep 15
           done
-          echo "::error::${PKG}@${VERSION} was published WITHOUT provenance (no Sigstore/Rekor entry). Known-absent since v1.11.3 — cause still unidentified. Already RULED OUT: the Deno version (v2.0.0 was published on a pinned Deno 2.9.1, the last version that ever produced provenance, and was still not attested). JSR requires publishing from GitHub Actions via the native OIDC integration; the OIDC step above passes, so check JSR-side or GitHub-side changes, and confirm deno publish was not passed --no-provenance. See cmem/design-decisions.md."
+          echo "::error::${PKG}@${VERSION} was published WITHOUT provenance (no Sigstore/Rekor entry). Known-absent since v1.11.3 — cause still unidentified. RULED OUT so far: the Deno version (v2.0.0 published on a pinned 2.9.1 and was still unattested); usesNpm (true on BOTH sides of the 1.11.2/1.11.3 boundary); a stale/cached API read (re-checked 2026-08-27 with cache-busting — the absence is real); and a global JSR- or GitHub-side change, because binaryen-ts, wabt-ts and binaryang all published ATTESTED from this same scope on 2026-08-27. Whatever this is, it is specific to wasmtk. The OIDC step above passes, so it is not the token prerequisite. See cmem/design-decisions.md."
           exit 1
