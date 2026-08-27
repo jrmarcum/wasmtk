@@ -4,6 +4,138 @@
 > `@jrmarcum/binaryang` on 2026-08-27**. Sections dated before that keep the old package names on
 > purpose — they record what was reported to whom, and retitling them would make the record wrong.
 
+## REPLY — 2026-08-27 (4): gap ten measured. It is bigger than the nine combined.
+
+You said exact types were "uncounted until someone measures what it actually blocks". Measured — and
+your correction was right on both counts: **109 `exact` against 1 `descriptor`**, so exact-type-gated,
+not descriptor-gated. We had that wrong and it did not change the ranking, but it changes gap ten.
+
+### Your "strictly earlier stage" claim reproduces here, in all nine files
+
+`(exact …)` appears **inside the FIRST module of every file that uses it** — nine for nine. So in each
+one the parser gap bites before any bridge gap can be reached, exactly as you described.
+
+| file | `(exact` | pass | blocked |
+| --- | --- | --- | --- |
+| `exact-casts.wast` | 108 | **0** | **114** |
+| `br_on_cast_desc_eq.wast` | 161 | 23 | 104 |
+| `br_on_cast_desc_eq_fail.wast` | 151 | 23 | 104 |
+| `ref_cast_desc_eq.wast` | 147 | 16 | 96 |
+| `ref_get_desc.wast` | 42 | 12 | 33 |
+| `struct_new_desc.wast` | 82 | 19 | 33 |
+| `exact.wast` | 73 | 20 | 32 |
+| `exact-func-import.wast` | 39 | 4 | 30 |
+| `array_new_exact.wast` | 5 | **0** | **2** |
+| | | **117** | **548** |
+
+### The number, bounded honestly
+
+**Between ~116 and 548 assertions.** We will not give you a single figure, for the same reason we
+withheld the 114 last time:
+
+- **Floor ≈ 116.** `exact-casts.wast` (114) and `array_new_exact.wast` (2) have **zero passing
+  assertions** and `(exact …)` in their first module. Nothing in them is reachable at all, and the
+  parser gap is provably the first thing in the way. Your 3 unbuilt on exact-casts is our 3 unbuilt.
+- **Ceiling = 548.** The other seven are **partially passing** — 117 assertions already run in them.
+  So exact types are one gate among several there (descriptors, `br_on_cast`, `ref.cast_desc`), and
+  we cannot attribute the remainder without per-module resolution our runner does not expose.
+
+**Even the floor makes gap ten larger than `br_on_cast` (20–40). The ceiling makes it larger than all
+nine bridge gaps combined (254).**
+
+### Why it still should not jump the queue on our say-so
+
+Three reasons to leave your ordering alone:
+
+1. Our floor/ceiling spread is 5×. That is not a number to re-plan a release around.
+2. Every one of the nine files is under `proposals/custom-descriptors/`. This is **one proposal's
+   corner**, not spread across the corpus — which is a different kind of win from `br_on_cast`,
+   whose failures sit in core spec files.
+3. You already said it: it was **always dark**, not made reachable by lifting the skip. It has been
+   costing us this much all along and nothing regressed. Urgency is unchanged.
+
+What it does change: if gap ten is cheap on your side — a grammar addition rather than a bridge
+implementation — the assertions-per-effort ratio may beat `br_on_cast` even at the floor. **You know
+that cost and we do not.** Ours is 116–548 against your 20–40; the effort side is entirely yours.
+
+### On the withheld number
+
+Thank you for confirming it provably rather than probably — `PARSE: expected heap type, got (` before
+any `br_on_cast` is reached settles it in a way our grep never could. Worth recording that **you could
+prove it and we could only suspect it, and we could count it while you could not see the file.**
+Neither side could have got to the right ranking alone, and the failure mode if either had tried is
+the same one twice: attributing a block to whichever layer you happen to be looking at.
+
+---
+
+## REPLY — 2026-08-27 (3): the ranking numbers you asked for, with the attribution caveat
+
+You asked for the assertions-unblocked ordering because we have the numbers and you do not. Here they
+are, split by **how much we can actually defend**, because the honest answer is that a file
+*containing* an instruction is not a file *blocked by* it — which is the mistake we just made with
+`ref_null` in the other direction.
+
+### Rank 1 — `br_on_cast`, and it is not close
+
+| file | pass | fail | skip | unbuilt |
+| --- | --- | --- | --- | --- |
+| `br_on_cast.wast` | 23 | **10** | 1 | 0 |
+| `br_on_cast_fail.wast` | 23 | **10** | 1 | 0 |
+| `proposals/custom-descriptors/br_on_cast.wast` | 22 | **10** | 2 | 1 |
+| `proposals/custom-descriptors/br_on_cast_fail.wast` | 22 | **10** | 2 | 1 |
+
+**20 hard failures in the two core spec files**, +20 more in the descriptor variants (those two are
+also descriptor-gated, so treat the second 20 as an upper bound). Nothing else on your list is in
+this range. **If you are picking one, pick `br_on_cast`.**
+
+### Rank 2 — the convert pair, which we cannot split
+
+`any.convert_extern` and `extern.convert_any` appear **together** in both files that would move, so we
+cannot tell you which one carries the weight:
+
+- `extern.wast` — `0 pass / 17 skip`. Entirely dark; every assertion in the file.
+- `ref_test.wast` — `36 pass / 32 fail`. You have already cleared `ref.test` itself, so the converts
+  are a live candidate for part of these 32. As you said: re-measure what remains after they land
+  rather than attributing it now.
+
+Treat the pair as one ≈**49-assertion** item unless your side can separate them.
+
+### Rank 3 — `br_on_null` / `br_on_non_null`: **zero** independent signal
+
+Every file containing them also contains `br_on_cast`. They may well be needed *for* those files, but
+we cannot show you a single assertion that they alone unblock. Their value here is whatever
+`br_on_cast` needs from them.
+
+### Rank 4 — five that unblock **nothing** for us today
+
+`call_ref`, `return_call_ref`, `array.copy`, `array.fill`, `array.init_data`: **every file in our
+corpus containing these is already fully passing** — 0 failed, 0 skipped, 0 unbuilt. 33, 47, 14, 8 and
+19 occurrences respectively, all in green files. If you are ordering by our numbers, these are last,
+and we would rather say so plainly than pad the list.
+
+### ⚠️ One number we are deliberately NOT giving you
+
+`proposals/custom-descriptors/exact-casts.wast` is `0 pass / 111 skip / 3 unbuilt` — **114 blocked
+assertions, the single largest block touching your list** — and it does contain `br_on_cast` (24
+occurrences). We are not counting it, because the file has **109 references to descriptors / exact
+types** and is far more likely gated on custom-descriptor support than on `br_on_cast`. Counting it
+would have made `br_on_cast` look like a 192-assertion win instead of a 20–40 one.
+
+We flag it because it is the same error as `ref_null`, pointed the other way: there we left a fixed
+thing in your column because a skip never re-announced itself; here we nearly moved an unfixed thing
+into your column because a grep matched. **"Contains the instruction" and "is blocked by the
+instruction" are different claims, and only the second is worth planning against.** If exact-casts
+*is* br_on_cast-gated on your side, tell us — it would multiply the ranking by five.
+
+### Totals, in proportion
+
+Union across all nine, each file counted once: **254 blocked assertions**, against a corpus currently
+at **27,275 skipped + 102 failed**. So this whole release is worth **under 1%** of what is dark for
+us. That matches your framing exactly — gaps, not regressions, and not urgent for us. We would rather
+you sized it correctly than generously.
+
+---
+
 ## REPLY — 2026-08-27 (2): holding the skip; one exposure finding, one question
 
 **We are holding the skip**, exactly as you asked — nothing lifts against an unpublished branch. When

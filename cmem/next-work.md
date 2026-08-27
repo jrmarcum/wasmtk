@@ -21,25 +21,30 @@ version ([design-decisions.md](design-decisions.md)).
   it. **Fix: retry-with-backoff around the asyncify write in `src/gowasic.ts`.** Left out of the
   2026-08-27 release batch on purpose — it is release-critical code and the failure is cosmetic and
   re-runnable, so it should land on its own with its own gate, not inside a bump.
-- 🔴 **When `binaryang@1.5.2` PUBLISHES, run the skip-lift gate — not before.** The `-Oz` fix and
-  all three API fixes exist on `release/1.5.2`, **unpublished**. Sequence, in order:
-  1. pin the published `1.5.2` in `deno.json` (both compat subpaths, same version);
-  2. `deno run -A scripts/check_try_table_oz.ts` — must exit 0;
-  3. `15_Exceptions` + `15_LexicalShadowing_Stress` — must match;
-  4. only then delete the `watSource.includes("try_table")` branch in `src/wasic.ts`;
-  5. full gate, in dependency order.
-  **Do not lift against a local checkout or a branch** — upstream asked for exactly this, and the
-  last removal was authorised by evidence that felt just as good.
-- 🟡 **Re-run the pass bisect on 1.5.2 and send binaryang the offending pass name.** Now cheap:
-  `listPasses()` is exported and kebab-case resolves. Our earlier "unknown to the compat surface"
-  note was wrong — our spellings were right, their resolver was not.
+- ✅ **Skip lifted 2026-08-27 on the PUBLISHED binaryang 1.5.2 — sequence followed exactly.**
+  Checker exit 0 → `15_Exceptions` + `15_LexicalShadowing_Stress` through real `-Oz` → remove branch
+  → full gate: **wasi 417/417**, wast ON BASELINE unchanged, engine re-recorded `0 regressed,
+  10 improved`. `15_Exceptions` **4534 → 1345 bytes**; **10 modules newly load on wasmer**
+  (353 → 363 match) — they had been REJECTED as raw wabt output. 🎓 A skip that looks like it only
+  costs binary size can also cost portability; that cost was invisible for two days.
+- ✅ **Pass bisect — MOOT, and tell them so rather than dropping it.** We promised binaryang the
+  offending pass name once `listPasses()` and kebab-case landed. 1.5.2 fixes the defect, so there is
+  nothing left to bisect. **Say that explicitly** — a promise silently dropped reads as forgotten.
 - 🟡 **Chase the answer to our defect-5 question.** We match "tag whose signature no function
   shares" in **11 modules that reach `-Oz`** (tag but no `try_table` — throw-without-catch, so the
   skip never fires), and all 11 PASS on 1.5.1. Asked upstream whether that defect needs a `(ref $T)`
   param. If it does not, those 11 should be failing and are not — understand why before trusting them.
-- ⏳ **Re-measure `ref_null.wast` when 1.5.2 publishes.** Upstream found `ref.null` with a
-  user-defined heap type was **two defects stacked** (removing the refusal only moved the error).
-  Ours is 0 pass / 32 skip; this is the release that could move it.
+- 🟡 **`ref_null.wast` — MEASURED on 1.5.2, and the blocker MOVED TO US.** Still `0 passed, 0 failed,
+  32 skipped` — but **`unbuilt modules = 0`**, so the modules assemble. `constType()` in
+  `src/wast.ts` returns `null` for `ref.null` / `ref.func` / `ref.extern`, so the runner skips those
+  assertions itself. **Fix is ours and contained:** teach `constType` / `constToJs` to marshal a
+  reference — `ref.null <ht>` is JS `null`, which `assert_return` can compare directly. Sized by
+  their own rule (rank by ASSERTIONS UNBLOCKED): 32 in this file alone, plus whatever the ref-typed
+  assertions in `ref_is_null` / `ref_test` / `ref_cast` / `table_*` add.
+  🎓 **We told upstream this was their bug and kept it in their column for a week.** It may well have
+  been theirs originally — but we never re-checked WHICH layer was binding after they shipped, and
+  the runner's own skip was invisible because a skip is not a failure. **When an upstream fix does
+  not move your number, the next question is whether the constraint is still theirs.**
 - ✅ **`try_table` `-Oz` fixture — BUILT AND REPRODUCING (2026-08-27).**
   `scripts/eh_try_table_live_local_fixture.wat` + `scripts/check_try_table_oz.ts`: assembles once,
   runs both sides of `-Oz`, exit 42 = safe, exit 1 = the bug. Measured on binaryang 1.5.1: pre-Oz

@@ -308,7 +308,13 @@ that regresses fails, and one that IMPROVES fails too until re-recorded — same
   `15_TestCase1-NestedEscalation`, `15_recover`, `64_ReportModuleTryCatch`, `64_ReportThrowTemplate`,
   …). **This is the gate working, not breaking** — it is the "design the gate so an IMPROVEMENT also
   fails" rule in [best-practices.md](best-practices.md) paying out exactly as predicted.
-  **RE-RECORDED 2026-08-25**, `0 regressed` throughout. wasmtime `match` **354 → 364**, `reject`
+  **RE-RECORDED TWICE.** 2026-08-25 (the `try_table` migration): wasmtime `match` **354 → 364**,
+  `reject` **22 → 12**. Then **2026-08-27**, after the `-Oz` skip was lifted: **wasmer** `match`
+  **353 → 363**, `reject` **23 → 13** — 10 modules that wasmer REJECTED as raw wabt output now load
+  once binaryen has optimised them (the `15_*` family, `18_Multi-Scope…`, `56_AsyncReject`,
+  `60_AsyncAll`, the `64_Report*` pair). wasmtime and wazero unchanged. **Shipping optimised output
+  is a portability win, not only a size one** — worth remembering next time a skip looks free.
+  Both re-records: `0 regressed`. Earlier detail: wasmtime `match` **354 → 364**, `reject`
   **22 → 12** — **10** modules flipped `reject → match` (the `15_*` EH family, `60_AsyncAll`, the
   `64_Report*` pair). The remaining 12 rejects are not EH-related. wasmer (353/23) and wazero
   (346/30) are unchanged, as expected: neither implements EH at all, so an EH change cannot move
@@ -370,7 +376,7 @@ it. Each cost passes without costing a single failure:
 | --- | --- | --- | --- |
 | `return_call.wast` | 44 → 12 | `ref.null $t` (concrete type index) at `:95` | ✅ **FIXED — now 45 pass / 0 fail**, one better than before the sync |
 | `proposals/custom-page-sizes/memory_max*.wast` | 4 → 2 each | `(module definition …)` | ✅ **FIXED** — folded into the +9264 re-record |
-| `ref_null.wast` (pre-existing, not from this sync) | 0 / 34 skip | `ref.null` cannot encode for **any** heap type | ❌ **STILL OPEN** — 0 pass / 32 skip on 1.4.1 |
+| `ref_null.wast` (pre-existing, not from this sync) | 0 / 34 skip | `ref.null` cannot encode for **any** heap type | ⚠️ **RE-ATTRIBUTED 2026-08-27 — the blocker is now OURS.** Still 0 pass / 32 skip on binaryang 1.5.2, but **`unbuilt modules = 0`**: the modules assemble fine. `constType()` in `src/wast.ts` returns `null` for `ref.null` / `ref.func` / `ref.extern`, so our RUNNER skips every such assertion regardless of what the assembler can do. Upstream fixed their half (they report `ref.null` with a user-defined heap type was two defects stacked); our number did not move because we cannot marshal a reference VALUE. |
 
 ⚠️ **The original verdict on this table was wrong, and the way it was wrong is worth keeping.** It
 read: *"Only the third is a wabt-ts bug; the first two match upstream wabt's own parser, so a wabt-ts
@@ -398,7 +404,10 @@ variable, one comparison.
 | 1 | post-`-Oz` wrong — the skip stays |
 | 2 | pre-`-Oz` wrong — the fixture or assembler broke; says NOTHING about `-Oz` |
 
-**Measured on binaryang 1.5.1: pre-Oz 42, post-Oz 1 — still broken, skip stays.**
+**binaryang 1.5.1: pre-Oz 42, post-Oz 1 — broken.**
+**binaryang 1.5.2: pre-Oz 42, post-Oz 42 — FIXED, and the skip was removed 2026-08-27** after this
+checker AND `15_Exceptions` + `15_LexicalShadowing_Stress` AND the full gate all passed, in that
+order. The checker stays as the deciding test if it ever needs reinstating.
 
 ⚠️ **Passing here is necessary, not sufficient.** The real acceptance gate is `15_Exceptions` +
 `15_LexicalShadowing_Stress` in `wasi_tests`. That ordering is not pedantry: the FIRST version of

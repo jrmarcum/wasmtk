@@ -40,9 +40,9 @@
   "imports": {
     "@std/cli/parse-args": "jsr:@std/cli@^1.0.0/parse-args",
     "@std/path": "jsr:@std/path@^1.1.2",
-    "binaryen": "jsr:@jrmarcum/binaryang@1.5.1/compat/binaryen",
+    "binaryen": "jsr:@jrmarcum/binaryang@1.5.2/compat/binaryen",
     "wasm2js": "npm:wasm2js@^0.2.0",
-    "wabt": "jsr:@jrmarcum/binaryang@1.5.1/compat/wabt"
+    "wabt": "jsr:@jrmarcum/binaryang@1.5.2/compat/wabt"
   },
   "tasks": {
     "dev": "deno run --watch main.ts",

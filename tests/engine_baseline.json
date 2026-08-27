@@ -91,22 +91,22 @@
   },
   "15_Exceptions": {
     "wasmtime": "match",
-    "wasmer": "reject",
+    "wasmer": "match",
     "wazero": "reject"
   },
   "15_IdiomaticCatch_Stress": {
     "wasmtime": "match",
-    "wasmer": "reject",
+    "wasmer": "match",
     "wazero": "reject"
   },
   "15_LexicalShadowing_Stress": {
     "wasmtime": "match",
-    "wasmer": "reject",
+    "wasmer": "match",
     "wazero": "reject"
   },
   "15_TestCase1-NestedEscalation": {
     "wasmtime": "match",
-    "wasmer": "reject",
+    "wasmer": "match",
     "wazero": "reject"
   },
   "15_Trap-On-Error": {
@@ -121,7 +121,7 @@
   },
   "15_recover": {
     "wasmtime": "match",
-    "wasmer": "reject",
+    "wasmer": "match",
     "wazero": "reject"
   },
   "16_DeepGenericConstraintResolution": {
@@ -161,7 +161,7 @@
   },
   "18_Multi-ScopeScaleAndMemoryLongevityTest": {
     "wasmtime": "match",
-    "wasmer": "reject",
+    "wasmer": "match",
     "wazero": "reject"
   },
   "18_symbol_table": {
@@ -1361,7 +1361,7 @@
   },
   "56_AsyncReject": {
     "wasmtime": "match",
-    "wasmer": "reject",
+    "wasmer": "match",
     "wazero": "reject"
   },
   "57_AsyncCatch": {
@@ -1491,7 +1491,7 @@
   },
   "60_AsyncAll": {
     "wasmtime": "match",
-    "wasmer": "reject",
+    "wasmer": "match",
     "wazero": "reject"
   },
   "61_AsyncAllSettled": {
@@ -1546,7 +1546,7 @@
   },
   "64_ReportModuleTryCatch": {
     "wasmtime": "match",
-    "wasmer": "reject",
+    "wasmer": "match",
     "wazero": "reject"
   },
   "64_ReportStringAppendSubscript": {
@@ -1556,7 +1556,7 @@
   },
   "64_ReportThrowTemplate": {
     "wasmtime": "match",
-    "wasmer": "reject",
+    "wasmer": "match",
     "wazero": "reject"
   },
   "65_ReportTrigLargeArg": {

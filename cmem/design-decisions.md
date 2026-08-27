@@ -837,7 +837,15 @@ silently break (all `src/wasic.ts`):
     produces. The caret came off because a caret is exactly how 1.4.0 got in and regressed us —
     **both backends are now exact pins. Neither may move without a full gate**, because both are code
     generators whose *output text* we parse.
-    - 🔒 **`try_table` modules SKIP binaryen `-Oz` — do not remove that branch on a version bump
+    - ✅ **The `try_table` `-Oz` skip is REMOVED (2026-08-27, binaryang 1.5.2).** Kept here because
+      the *rule* outlived the branch: **do not remove a safety skip on a version bump alone.** It was
+      removed only after our own gate said so — `check_try_table_oz.ts` exit 0, then `15_Exceptions`
+      + `15_LexicalShadowing_Stress` matching through real `-Oz`, then the full gate. Upstream asked
+      for exactly that re-verification rather than taking their release note. Payoff: 10 throwing
+      modules now ship optimised output (`15_Exceptions` 4534 → 1345 bytes) and **10 modules newly
+      LOAD on wasmer** (match 353 → 363). If it ever needs reinstating, the deciding test is
+      `check_try_table_oz.ts`, never `eh_try_table_fixture.wat`. Superseded detail:
+      🔒 **the old rule was — do not remove that branch on a version bump
       alone.** 1.5.0 fixed the reader and then silently miscompiled the same modules: `-Oz` drops a
       local's initialisation when the local is reassigned inside the `try_table` body (the pre-try
       store is dead only if the try COMPLETES). Reproduced in 161 bytes by

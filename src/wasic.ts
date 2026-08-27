@@ -218,39 +218,19 @@ async function watToOptimisedWasm(
     // now get full `-Oz` again. `fixTerminalFallthru`'s terminal-block `(unreachable)` case stays —
     // it's an independent V8-strict-validation fix, not part of the workaround.)
 
-    // ⚠️ SKIP BINARYEN FOR `try_table` MODULES (2026-08-25). This skip has now been imposed by TWO
-    // different binaryen-ts defects in one day, and the second is worse than the first:
+    // (HISTORY — a `try_table` skip lived here 2026-08-25 → 2026-08-27, imposed by two successive
+    // binaryen defects. First 1.4.3's binary READER rejected the multi-value block type a catch
+    // clause produces (our tag is `(param i32 i32)`); 1.5.0 fixed that and then its OPTIMIZER
+    // silently miscompiled the same modules, DROPPING a local's initialisation when the local is
+    // reassigned inside the `try_table` body — the pre-try store is dead only if the try COMPLETES.
+    // Fixed upstream in binaryang 1.5.2, and REMOVED ONLY AFTER our own gate said so, not on the
+    // release note: `scripts/check_try_table_oz.ts` exits 0, and `15_Exceptions` +
+    // `15_LexicalShadowing_Stress` match the TS reference through real `-Oz`.
     //
-    //   1. 1.4.3's binary READER rejected the multi-value block type a `try_table` catch clause
-    //      necessarily produces (our tag is `(param i32 i32)`). That was a LOUD failure, and
-    //      binaryen-ts 1.5.0 fixed it.
-    //   2. 1.5.0's OPTIMIZER then silently miscompiles those same modules. Measured:
-    //      `-Oz` DROPS a local's initialisation when the local is reassigned inside the `try_table`
-    //      body — the pre-try store is dead only if the try COMPLETES, and the CFG appears to lack
-    //      the mid-body → handler edge. **The pass is unidentified**: `vacuum` and `dce` alone are
-    //      safe, and `listPasses()` is not exposed on the compat surface, so we could not bisect.
-    //      (An earlier note here blamed CoalesceLocals. That was a guess; it is retracted.)
-    //      Two independent symptoms, one cause:
-    //        • `15_Exceptions` — a catch-path value reads back as `0` instead of `-1`
-    //        • `15_LexicalShadowing_Stress` — the inner `catch (e)` overwrites the OUTER `e`,
-    //          printing `Shadow Check: Inner Literal Error` for `Outer String`
-    //
-    // This is the same class as the CoalesceLocals bug that kept exception modules off binaryen
-    // until 2026-06-08 (fixed then, for LEGACY EH, by an EH-aware CFG). The `try_table` migration
-    // put us back outside what that CFG understands.
-    //
-    // 🔬 Attribution is measured, not assumed: assembling `15_Exceptions.wat` with the SAME wabt and
-    // running the pre-`-Oz` bytes prints the correct `-1`; the `-Oz` bytes print `0`. Same WAT, same
-    // assembler, one variable.
-    //
-    // ⚠️ `scripts/eh_try_table_fixture.wat` PASSES `-Oz` (exit 34) and did NOT catch this — it has no
-    // local live across a handler edge. **Do not use it alone to decide this skip can be lifted.**
-    // The real acceptance gate is `15_Exceptions` + `15_LexicalShadowing_Stress` in `wasi_tests`.
-    // The cost is a larger binary for modules that throw; correct-and-larger is not a trade.
-    if (watSource.includes("try_table")) {
-      await rt.writeFile(outPath, rawBytes);
-      return { success: true, outputPath: outPath, sizeBytes: rawBytes.length };
-    }
+    // ⚠️ If this ever needs reinstating, the test that decides it is `check_try_table_oz.ts`, NOT
+    // `eh_try_table_fixture.wat` — that one passes `-Oz` regardless because it keeps no local live
+    // across a catch edge, and trusting it is what caused this skip to be removed prematurely once
+    // already. See cmem/compiler-bugs.md.)
 
     // Step 2: Binaryen -Oz (shrinkLevel=2, optimizeLevel=2)
     const binMod = binaryen.readBinary(rawBytes);

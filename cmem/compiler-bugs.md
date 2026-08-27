@@ -899,7 +899,14 @@ emitting legacy EH that wasmtime and wasmer both refuse to load, which is not a 
 **DELETE THAT BRANCH the moment binaryen-ts reads multi-value blocks** — acceptance test is
 `scripts/eh_try_table_fixture.wat` through the full pipeline, expecting exit 34.
 
-> 🔒 **UPDATE 2026-08-27 — the fixes exist on `release/1.5.2`, UNPUBLISHED. The skip still stays.**
+> ✅ **CLOSED 2026-08-27 — fixed in the PUBLISHED binaryang 1.5.2; skip removed after our own gate.**
+> `check_try_table_oz.ts` exit 0 (pre-Oz 42 / post-Oz 42), `15_Exceptions` and
+> `15_LexicalShadowing_Stress` matching the TS reference through real `-Oz`, then the full gate:
+> **wasi 417/417**, wast ON BASELINE unchanged, engine re-recorded at `0 regressed, 10 improved`.
+> Payoff beyond correctness: 10 throwing modules ship optimised output (`15_Exceptions`
+> **4534 → 1345 bytes**) and **10 modules newly LOAD on wasmer** (353 → 363 match) — raw wabt output
+> was being rejected there. 🎓 **A skip that looks like it only costs size can also cost
+> portability.** The prior note, kept because the sequence is the point:
 > binaryang fixed the `-Oz` defect and closed our three API gaps (`listPasses()` exported, kebab-case
 > pass names resolving, unknown-pass error listing registered names). **None of it is published.**
 > Their own instruction, and the right one: do not lift against an unpublished branch — re-verify
