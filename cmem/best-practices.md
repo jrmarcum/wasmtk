@@ -33,10 +33,11 @@ ever goes down can be improved by running less. **Independently re-paid for here
 See [testing.md](testing.md).
 
 **Pass counts over a corpus you cannot fully run are UPPER BOUNDS, not measurements. Skips are not
-passes.** [wazmrt] Live figure here: the wast gate reads **27,983 passed / 37,252 skipped** — this
-corpus still SKIPS MORE THAN IT RUNS. Any headline quoting the first and not the second is overstated
-by more than the number itself. (A wabt-ts 1.4.0 bump would cross those two at 37,247 / 27,275; it
-was attempted 2026-08-25 and reverted — see compiler-bugs.md.)
+passes.** [wazmrt] Live figure here: the wast gate reads **37,247 passed / 27,275 skipped**
+(re-recorded 2026-08-25 on wabt-ts 1.4.1, now binaryang 1.5.1). **The two crossed over** — this
+corpus used to skip more than it ran (27,983 / 37,252 on 1.3.5). The prediction that a bump would
+cross them was right, and the bump LANDED — an earlier 1.4.0 attempt was reverted, 1.4.1 was not.
+Any headline quoting passes without skips is still overstated by more than the number itself.
 
 **Read the SKIP column in the same row as the failure count — and rank work by ASSERTIONS UNBLOCKED,
 not failures closed.** [wazmrt] A file reading `0 passed, 0 failed, 34 skipped` is not healthy, it is
@@ -71,9 +72,10 @@ only by luck of timing.
 **The distinction that matters is WHY the constraint exists.** Most ranges express *compatibility*,
 and a lockfile is the right home for that. A few express *correctness* — "our code is bug-compatible
 with exactly this version" — and those belong in the **specifier**, where a reload cannot move them.
-Ours was the second kind written as the first: wabt-ts 1.4.0 is a stricter validator that regresses
-our suite, so `1.3.5` is now an EXACT pin (no caret) until the three malformations it exposes are
-fixed. `binaryen-ts` stays on a caret — that one really is a compatibility range.
+Ours was the second kind written as the first. **Both backends are now EXACT pins**, and since
+2026-08-27 they are one package: `@jrmarcum/binaryang@1.5.1`, reached through `compat/wabt` and
+`compat/binaryen` at the same version. The caret came off binaryen-ts too — "that one really is a
+compatibility range" did not survive contact with an optimiser that silently miscompiles.
 
 **The tell:** ask what `--reload` would do, then ask again imagining the next upstream release as
 already published. If the answers differ, the range is doing work a lock cannot.
@@ -227,6 +229,29 @@ in-process, so a single-process scan is one bad file away from losing every resu
 stalled on a lone `;` because `readAtom` stopped without consuming it. The fix was not "handle `;`" —
 it was "any character `readAtom` cannot consume is taken as a one-character atom", so the loop can
 never stall on a future one.
+
+**A green baseline proves nothing about shapes the corpus does not contain — coverage of INPUTS is a
+separate axis from strictness of COMPARISON.** [binaryang → wasmtk, 2026-08-27] binaryang's 421-file
+byte-identical baseline was unchanged by every one of six real defects, "which is also why none of
+this was ever caught by it". A very strict comparison over a narrow corpus reads as reassurance it
+has not earned. **Ours has the identical blind spot:** the 417-module corpus contains no ref types,
+so it is structurally incapable of seeing four of those five defects no matter how green it reads.
+Before trusting a baseline, ask what shapes it *contains*, not how tightly it compares them.
+
+**When a lookup rejects your input, "my input is wrong" and "their lookup is wrong" are BOTH live —
+do not record the first as fact.** [wasmtk, 2026-08-27] We tried `runPasses(["coalesce-locals"])`,
+got `Unknown pass`, and wrote it down as "unknown to the compat surface" — phrasing that quietly
+blames our spelling. The spelling was right; their resolver was wrong (their compat layer emulates
+`npm:binaryen`, where kebab-case is what the docs specify). The cost was abandoning a pass bisect
+that would have named the defect in an afternoon. An error message is a claim by the other side, not
+a verdict on you.
+
+**Do not lift a safety measure on an upstream's word that it is fixed — wait for a version you can
+pin, then re-run your own gate.** [binaryang + wasmtk, 2026-08-27] Fixes existing on an unpublished
+branch are not a thing you can pin, roll back to, or hand a colleague. Upstream said this plainly
+themselves — *"we'd rather you re-verified than took this note's word for it"* — which is worth more
+than the fix. The prior removal of this same skip was authorised by evidence that felt equally
+solid.
 
 **A fixture that proves a FEATURE works does not prove an OPTIMISER is safe — never lift a safety
 skip on one.** [wasmtk, 2026-08-25] `scripts/eh_try_table_fixture.wat` was written to show

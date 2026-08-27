@@ -899,6 +899,46 @@ emitting legacy EH that wasmtime and wasmer both refuse to load, which is not a 
 **DELETE THAT BRANCH the moment binaryen-ts reads multi-value blocks** — acceptance test is
 `scripts/eh_try_table_fixture.wat` through the full pipeline, expecting exit 34.
 
+> 🔒 **UPDATE 2026-08-27 — the fixes exist on `release/1.5.2`, UNPUBLISHED. The skip still stays.**
+> binaryang fixed the `-Oz` defect and closed our three API gaps (`listPasses()` exported, kebab-case
+> pass names resolving, unknown-pass error listing registered names). **None of it is published.**
+> Their own instruction, and the right one: do not lift against an unpublished branch — re-verify
+> with `check_try_table_oz.ts` **plus** `15_Exceptions` + `15_LexicalShadowing_Stress` against a
+> version we can pin. Given what the last removal cost, a note saying "fixed" is not the same
+> evidence as our gate saying so.
+>
+> ⚠️ **Our pass spellings were RIGHT and we recorded them as wrong.** We wrote that
+> `coalesce-locals` et al. were "unknown to the compat surface" — which reads as our spelling being
+> at fault. It was their resolver: `compat/binaryen` emulates `npm:binaryen`, where kebab-case is
+> exactly what the docs tell you to write. 🎓 **When a lookup rejects your input, "my input is wrong"
+> and "their lookup is wrong" are both live hypotheses; we recorded the first as fact without
+> testing it.** Re-run the bisect on 1.5.2 and send them the offending pass name.
+>
+> ### 🚨 Exposure: we match their "tag whose signature no function shares" in 11 modules
+>
+> Their `-Oz` hunt turned up five more defects, all GC-shaped. **We emit zero ref-typed shapes** — no
+> `(ref $T)`, no `(ref null $T)`, no `ref.null` with a user-defined heap type anywhere in the
+> 417-module corpus — so four of the five are unreachable from wasic output *today*. That is a
+> consequence of wasic not emitting GC types yet, **not a guarantee**: the day it does, all five go
+> live at once.
+>
+> The fifth needs no ref types and **we are in its shape**. `$__exn_tag` is `(param i32 i32)` and no
+> function we emit shares that signature (nearest: `(param i32 i32 i32 i32)`). Critically, **the
+> `try_table` skip does not cover all of them**: a program that throws but never catches gets a tag
+> and NO `try_table`, so the skip does not fire and the module goes through `-Oz` normally. There are
+> **11 such modules** (`15_panic`, `15_Trap-On-Error`, `3_enums`,
+> `13_SecureMatrixManagerIntegration`, the four `46_*` escape tests, +3). All 11 **pass** output-diff
+> on 1.5.1. Asked upstream whether defect 5 requires a `(ref $T)` param or whether an unshared plain
+> signature suffices — if the latter, 11 modules should be failing and are not, which we would rather
+> understand than enjoy.
+>
+> 🎓 **A byte-identical baseline over a fixed corpus can only catch regressions in shapes the corpus
+> already contains.** Their 421-file byte baseline was unchanged by every one of these fixes, which is
+> exactly why it never caught them. Ours has the same blind spot from the same cause: no ref types in
+> the corpus means it is structurally incapable of seeing four of the five, however green it reads.
+> **Coverage of INPUTS is a separate axis from strictness of COMPARISON**, and a very strict
+> comparison over a narrow corpus reads as reassurance it has not earned.
+
 > **⚠️ THE SKIP STAYS — and the reason changed. Retracting an earlier "resolved" note in this file.**
 > binaryen-ts 1.5.0 does fix the READER (multi-value blocks load), the acceptance fixture passes
 > `-Oz` at exit 34, and on that evidence the skip was deleted. **The full gate then failed

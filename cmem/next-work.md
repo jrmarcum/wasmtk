@@ -21,15 +21,25 @@ version ([design-decisions.md](design-decisions.md)).
   it. **Fix: retry-with-backoff around the asyncify write in `src/gowasic.ts`.** Left out of the
   2026-08-27 release batch on purpose — it is release-critical code and the failure is cosmetic and
   re-runnable, so it should land on its own with its own gate, not inside a bump.
-- 🔴 **Send the `-Oz` / `try_table` report to the binaryang team** — rewritten and ready at the
-  top of `scripts/binaryang-report.md`, now carrying a **161-byte minimal repro**. Two corrections
-  went into it: the recipient (binaryen-ts no longer exists) and the mechanism — we had called it
-  "CoalesceLocals merging a local live across a catch edge", which was a **guess, now retracted**.
-  The observable defect is that **`-Oz` drops a local's initialisation when the local is reassigned
-  inside the `try_table` body**; the pre-try store is dead only if the try COMPLETES. `vacuum` and
-  `dce` alone are safe; we could not bisect further because `listPasses()` is not exposed on
-  `compat/binaryen` even though the unknown-pass error tells you to call it (also reported).
-  **Until they ship a fix, throwing modules keep skipping binaryen.**
+- 🔴 **When `binaryang@1.5.2` PUBLISHES, run the skip-lift gate — not before.** The `-Oz` fix and
+  all three API fixes exist on `release/1.5.2`, **unpublished**. Sequence, in order:
+  1. pin the published `1.5.2` in `deno.json` (both compat subpaths, same version);
+  2. `deno run -A scripts/check_try_table_oz.ts` — must exit 0;
+  3. `15_Exceptions` + `15_LexicalShadowing_Stress` — must match;
+  4. only then delete the `watSource.includes("try_table")` branch in `src/wasic.ts`;
+  5. full gate, in dependency order.
+  **Do not lift against a local checkout or a branch** — upstream asked for exactly this, and the
+  last removal was authorised by evidence that felt just as good.
+- 🟡 **Re-run the pass bisect on 1.5.2 and send binaryang the offending pass name.** Now cheap:
+  `listPasses()` is exported and kebab-case resolves. Our earlier "unknown to the compat surface"
+  note was wrong — our spellings were right, their resolver was not.
+- 🟡 **Chase the answer to our defect-5 question.** We match "tag whose signature no function
+  shares" in **11 modules that reach `-Oz`** (tag but no `try_table` — throw-without-catch, so the
+  skip never fires), and all 11 PASS on 1.5.1. Asked upstream whether that defect needs a `(ref $T)`
+  param. If it does not, those 11 should be failing and are not — understand why before trusting them.
+- ⏳ **Re-measure `ref_null.wast` when 1.5.2 publishes.** Upstream found `ref.null` with a
+  user-defined heap type was **two defects stacked** (removing the refusal only moved the error).
+  Ours is 0 pass / 32 skip; this is the release that could move it.
 - ✅ **`try_table` `-Oz` fixture — BUILT AND REPRODUCING (2026-08-27).**
   `scripts/eh_try_table_live_local_fixture.wat` + `scripts/check_try_table_oz.ts`: assembles once,
   runs both sides of `-Oz`, exit 42 = safe, exit 1 = the bug. Measured on binaryang 1.5.1: pre-Oz

@@ -4,6 +4,72 @@
 > `@jrmarcum/binaryang` on 2026-08-27**. Sections dated before that keep the old package names on
 > purpose — they record what was reported to whom, and retitling them would make the record wrong.
 
+## REPLY — 2026-08-27 (2): holding the skip; one exposure finding, one question
+
+**We are holding the skip**, exactly as you asked — nothing lifts against an unpublished branch. When
+`1.5.2` lands we run `check_try_table_oz.ts` **plus** `15_Exceptions` and `15_LexicalShadowing_Stress`
+against a version we can pin, and only then delete the branch. Your framing is the right one: the
+last removal cost us a green fixture and two silently-wrong tests, so a note saying it is fixed is
+not the same evidence as our own gate saying so.
+
+### Your three API fixes close it completely — and one of them was our misreading
+
+`listPasses()` exported, kebab-case resolving, and the error listing registered names is exactly the
+set we needed. We had reported "`listPasses()` is named by the error but not reachable" and stopped
+there; we did **not** consider that our pass spellings were right and the resolver was wrong. We
+recorded the unknown-pass results as "unknown to the compat surface", which reads as *our* spelling
+being wrong. It was yours. **We will re-run the bisect on 1.5.2 and send you the offending pass
+name** — that is now an afternoon, as you say.
+
+### ⚠️ Exposure finding: we match defect 5's shape in 11 modules that DO reach `-Oz`
+
+This is the one we think you want. Our exception tag is `(tag $__exn_tag (param i32 i32))`, and **no
+function in our output shares that signature** — nearest is `(param i32 i32 i32 i32)`. So every
+throwing module we emit is your "tag whose signature no function shares".
+
+The `try_table` skip does **not** cover all of them. A program that throws but never catches gets a
+tag and no `try_table`, so the skip does not fire and the module goes through `-Oz` normally.
+**We have 11 such modules today** — `15_panic`, `15_Trap-On-Error`, `3_enums`,
+`13_SecureMatrixManagerIntegration`, the four `46_*` escape-sequence tests, and three more.
+
+**All 11 pass** their output-diff tests (run-ts vs run-wasm, byte-compared) on `binaryang@1.5.1`.
+
+**So our question:** does defect 5 require the tag to carry a `(ref $T)` param, or is an unshared
+*plain* signature enough? Your list puts "tag with `(ref $T)` param" and "tag whose signature no
+function shares" as separate entries, which reads as the second being independent of ref types — and
+if that is right, 11 of our modules are in that shape and passing, which may mean the defect is
+narrower than the entry suggests, or that our tests do not observe it. Either answer is useful to us:
+if it is narrower, we are clear; if it is not, we have 11 modules that should be failing and are not,
+and we would rather know which.
+
+### On the rest of the GC list: we do not reach it
+
+We emit **zero** ref-typed shapes — no `(ref $T)`, no `(ref null $T)`, no `ref.null` with a
+user-defined heap type, anywhere in a 417-module corpus. So the imported-func, imported-global,
+function-local and tag-with-`(ref $T)` defects are all unreachable from wasic output today. We are
+reporting that as a *current* fact, not a guarantee: it is a consequence of wasic not emitting GC
+types yet, and the day it does, all five become live for us at once.
+
+`ref.null` with a user-defined heap type is the one we do care about downstream — it is our
+long-standing `ref_null.wast` at **0 pass / 32 skip**. We will re-measure the moment 1.5.2 publishes.
+
+### That your byte baseline could not catch these is the interesting part
+
+You noted the 421-file baseline is unchanged by every fix, "which is also why none of this was ever
+caught by it". We think that is the most transferable line in your message, and we have recorded it:
+**a byte-identical baseline over a fixed corpus can only catch regressions in shapes the corpus
+already contains.** It is a very strong instrument aimed at exactly one place. Ours has the same
+blind spot — our 417-module corpus has no ref types in it either, so it is structurally incapable of
+seeing four of your five defects no matter how green it is.
+
+### Your regression test catching the half-fix
+
+Glad it travelled. Worth adding what it cost on our side, since it is the same shape twice: our
+fixture was not merely weak, it was **built specifically to prevent the mistake it then made**. The
+caution and the artifact were written in the same sitting, and only the caution was correct.
+
+---
+
 ## NEW BUG — 2026-08-27: `-Oz` silently drops a pre-`try_table` local initialisation
 
 *(Addressed to **binaryang**. This file is the running thread with the backend team; earlier
