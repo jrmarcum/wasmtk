@@ -1028,6 +1028,42 @@ silently break (all `src/wasic.ts`):
   v1.11.2 vs v1.11.3 runs (ids `30569718486` is v1.11.12; list with
   `gh run list --workflow=publish.yml`), comparing the resolved `deno-version`.
 
+- ✅✅ **RESOLVED — v2.0.1 PUBLISHED WITH PROVENANCE (2026-08-27). Twelve releases of absence ended.**
+
+  Measured, cache-busted, at the version endpoint:
+
+  | version | `rekorLogId` | `updatedAt` > `createdAt` |
+  | --- | --- | --- |
+  | v1.11.2 | `2053916008` | yes — attested |
+  | v1.11.12 | **null** | no — not attested |
+  | v2.0.0 | **null** | no — not attested |
+  | **v2.0.1** | **`2620232142`** | **yes — ATTESTED** |
+
+  `createdAt 23:18:13.594` → `updatedAt 23:18:18.170`: **4.6 seconds**, exactly the attested-version
+  signature. JSR package score **100**. The boundary is now v1.11.3 → v2.0.0 absent, v2.0.1 present.
+
+  ⚠️ **WE DO NOT KNOW WHY IT CAME BACK, AND MUST NOT CLAIM WE FIXED IT.** The cache-bust we shipped
+  changes only how the result is READ, never how it is produced — and the absence on v1.11.3 /
+  v1.11.5 / v1.11.12 / v2.0.0 was itself re-verified with cache-busted reads, so it was real, not a
+  reporting artefact. Candidate causes, none confirmed:
+
+  1. **The dependency change.** v2.0.1 is the first release built on the merged
+     `@jrmarcum/binaryang` instead of `wabt-ts` + `binaryen-ts`. `usesNpm` stayed `true` across the
+     boundary, so npm is still not the discriminator.
+  2. **A JSR- or GitHub-side change** in the window since v2.0.0 — previously the leading hypothesis,
+     refuted only as an explanation for why *other* packages were fine, never as a cause of a fix.
+  3. Something else untracked.
+
+  🎓 **The lesson is the sequencing, not the outcome.** For ten releases a green publish run was
+  read as evidence of provenance; it never was. The verify step made absence visible, the cache-bust
+  made presence *believable*, and only then did a PASS mean anything. **v2.0.1 is the first release
+  where this answer could be trusted in either direction — and it is a pass.** Had the cache-bust not
+  landed first, this result would have been indistinguishable from the false negatives that preceded
+  it.
+
+  **Next:** watch v2.0.2. One attested release after twelve absent ones is a data point, not a trend
+  — if the cause is the dependency swap it will hold, and if it was environmental it may not.
+
 - 🆕 **Three more suspects RULED OUT (2026-08-27), from the binaryang side.** Reported by the
   binaryang merge, which published three packages from this same scope on the same day and hit — and
   then did not hit — the same problem.

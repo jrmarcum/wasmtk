@@ -73,10 +73,27 @@ version ([design-decisions.md](design-decisions.md)).
 
 ## Open as of 2026-07-30 (v2.0.0)
 
-- 🔴 **JSR provenance — v2.0.1 is the FIRST RELEASE WHOSE ANSWER CAN BE BELIEVED. Read it.**
-  **Unverified as of 2026-08-27:** the release published, but the Actions run's provenance step was
-  not read. **Do not record a result without checking `rekorLogId`**
-  (`api.jsr.io/scopes/jrmarcum/packages/wasmtk/versions/2.0.1`, cache-busted).
+- 🟡 **Rename the `binaryen` / `wabt` import-map aliases — raised by binaryang 2026-08-27
+  ("wasmtk's deps need proper names").** JSR's dependency listing is already correct
+  (`@jrmarcum/binaryang@1.5.2` at `compat/binaryen` + `compat/wabt`, `@std/*`, `npm:wasm2js` — all
+  used), so the critique lands on the **local aliases**, which still carry the names of two RETIRED
+  packages. `import wabt from "wabt"` reads as the `wabt` package and is not; worse, `"binaryen"` is
+  genuinely ambiguous because `src/binaryen.ts` still supports pointing it at the real `npm:binaryen`.
+  - Options: keep them as ROLE names (defensible — they name "the assembler" / "the optimiser", and
+    the facade documents it), or move to unmistakable aliases (`#wabt` / `#binaryen`, or
+    `@wasmtk/...`) so a bare specifier can never be confused with a published package.
+  - Cost is small — two `deno.json` lines plus ~6 import sites — but it touches `src/`, so it needs
+    a full gate and should NOT ride inside a release.
+  - ⚠️ Confirm the intent with binaryang before acting: their note is one line, and the reading
+    above is inferred. We checked the two other candidate meanings and both came back clean.
+- ✅ **JSR provenance — v2.0.1 IS ATTESTED. `rekorLogId 2620232142`.** Read 2026-08-27,
+  cache-busted; `updatedAt` 4.6s after `createdAt`; JSR score 100. **Twelve releases of absence
+  (v1.11.3 → v2.0.0) ended.** We do NOT know why — our cache-bust changes only how the result is
+  read, and the earlier absences were themselves confirmed with cache-busted reads. Leading
+  candidate: v2.0.1 is the first release built on the merged `binaryang` instead of wabt-ts +
+  binaryen-ts. **Watch v2.0.2** — one attested release after twelve is a data point, not a trend.
+  Full table and reasoning in [design-decisions.md](design-decisions.md).
+  Superseded note follows.
   - A **PASS** now means something it never did before — `publish.yml` sends `Cache-Control:
     no-cache` + a unique `?cb=` per attempt since 2026-08-27. Before that the step could report a
     false negative on a release that DID get provenance (binaryang measured eight plain reads over

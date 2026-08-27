@@ -64,10 +64,11 @@ What it carries, in the order a user would notice:
 Gate at release: **wasi 417/417 · wast ON BASELINE (288 files / 37,247) · engine ALL ON BASELINE**
 after a deliberate re-record (`0 regressed, 10 improved`).
 
-⚠️ **Provenance on v2.0.1 is UNVERIFIED as of this writing.** The publish was confirmed by the owner;
-the Actions run's provenance step was not read. **Do not record it as passing or failing without
-checking `rekorLogId`** — this release is the first since the cache-bust fix, so for the first time a
-PASS would be believable. See next-work.md.
+✅ **PROVENANCE IS BACK — v2.0.1 is ATTESTED (`rekorLogId 2620232142`), verified 2026-08-27.**
+`updatedAt` 4.6s after `createdAt`; JSR package score **100**. This ends **twelve releases** without
+provenance (v1.11.3 → v2.0.0). **Cause unknown — do not credit the cache-bust**, which only changed
+how the answer is read; the leading candidate is that v2.0.1 is the first release built on the merged
+`binaryang`. Watch v2.0.2 before calling it fixed. See design-decisions.md.
 
 ## Release status (2026-07-30) — v2.0.0: Phase 34 inline predicate targets + `./utils` slimmed
 
