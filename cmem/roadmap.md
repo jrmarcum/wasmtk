@@ -38,6 +38,37 @@
 > replace it with the real version at publish time. A breaking change may ALSO warrant a Feature
 > Status row if it ships alongside a feature — but the Breaking Changes row is mandatory.
 
+## Release status (2026-08-27) — v2.0.1: standard EH, merged backend, a memory-corruption fix
+
+**v2.0.1 is PUBLISHED to JSR.** Patch bump from v2.0.0, no breaking changes. Tagged `v2.0.1` and
+pushed from `main` at `ebebd4e1f60`; 30 commits shipped in one release.
+
+**Backend: `@jrmarcum/binaryang@1.5.1` → `1.5.2`** — wabt-ts and binaryen-ts MERGED into one package
+on 2026-08-27 (two compat subpaths, one exact version). See design-decisions.md.
+
+What it carries, in the order a user would notice:
+
+1. **Standard exception handling.** `try`/`catch`/`finally` now compiles to `try_table` /
+   `catch_all_ref` / `throw_ref` instead of legacy opcodes Wasmtime and Wasmer refuse to load.
+   Modules that throw were **V8-only** before. V8 and Wasmtime are now byte-identical, and **10
+   modules that Wasmer rejected outright now load** (engine gate: wasmer match 353 → 363).
+2. **Throwing modules are optimised again and smaller** — `15_Exceptions` **4534 → 1345 bytes** —
+   after the upstream `-Oz` defect was fixed in binaryang 1.5.2 and re-verified by OUR gate.
+3. **FIX: merged modules could corrupt their own memory and HANG.** Six regexes required wabt's
+   folded `(i32.const N)`; 1.4.1 switched to unfolded, they silently matched nothing, static-data
+   relocation was disabled wholesale and `$__heap_ptr` was seated INSIDE static data. Symptom was an
+   infinite loop, not a crash. Affects `wasmbundle` and `.wasm` imports.
+4. **Spec-runner coverage: 27,983 → 37,247 passing assertions**, mostly modules that previously could
+   not be assembled at all. A full 288-file corpus directory run now completes in one process.
+
+Gate at release: **wasi 417/417 · wast ON BASELINE (288 files / 37,247) · engine ALL ON BASELINE**
+after a deliberate re-record (`0 regressed, 10 improved`).
+
+⚠️ **Provenance on v2.0.1 is UNVERIFIED as of this writing.** The publish was confirmed by the owner;
+the Actions run's provenance step was not read. **Do not record it as passing or failing without
+checking `rekorLogId`** — this release is the first since the cache-bust fix, so for the first time a
+PASS would be believable. See next-work.md.
+
 ## Release status (2026-07-30) — v2.0.0: Phase 34 inline predicate targets + `./utils` slimmed
 
 **v2.0.0 is PUBLISHED to JSR** (`@jrmarcum/wasmtk@2.0.0` is `latest`) — merged to `main` from

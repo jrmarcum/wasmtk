@@ -73,7 +73,20 @@ version ([design-decisions.md](design-decisions.md)).
 
 ## Open as of 2026-07-30 (v2.0.0)
 
-- 🔴 **JSR provenance is still missing — 11 releases now (v1.11.3 → v2.0.0).** The one thing that
+- 🔴 **JSR provenance — v2.0.1 is the FIRST RELEASE WHOSE ANSWER CAN BE BELIEVED. Read it.**
+  **Unverified as of 2026-08-27:** the release published, but the Actions run's provenance step was
+  not read. **Do not record a result without checking `rekorLogId`**
+  (`api.jsr.io/scopes/jrmarcum/packages/wasmtk/versions/2.0.1`, cache-busted).
+  - A **PASS** now means something it never did before — `publish.yml` sends `Cache-Control:
+    no-cache` + a unique `?cb=` per attempt since 2026-08-27. Before that the step could report a
+    false negative on a release that DID get provenance (binaryang measured eight plain reads over
+    ~3 minutes returning null on an attested release).
+  - A **FAIL** is now a trustworthy negative, and three suspects are gone: a global JSR/GitHub change
+    is REFUTED (binaryen-ts, wabt-ts and binaryang all published attested from this scope on
+    2026-08-27), `usesNpm` is not the discriminator, and the absence is not a stale read. Next step
+    still needs an authenticated `gh`.
+  - The tell without tooling: an attested version has `updatedAt` a few seconds AFTER `createdAt`.
+  Historical framing follows — **12 releases now (v1.11.3 → v2.0.1).** The one thing that
   needs an environment this machine does not have. **Deno is RULED OUT** (v2.0.0 was published on a
   pinned Deno 2.9.1 and came out unattested anyway; pin reverted in `06e0b4f`). Also already
   eliminated: `publish.yml` itself, `id-token: write`, the OIDC prerequisite step, the JSR↔GitHub
