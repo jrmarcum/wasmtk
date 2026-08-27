@@ -6,7 +6,7 @@
  * module, then the existing wasmtk downstream takes over (`wasmtk run` hosts a WASI program on the TS
  * WASI host; `wasmtk mod` / bindgen / wasmmerge consume a library). No part of the wasic TypeScript
  * compiler is involved. Unlike the Go producer there is NO wasm-opt shim — `zig` runs its own
- * optimizer (`-O ReleaseSmall`); we additionally run binaryen-ts `-Oz` on the library output to strip
+ * optimizer (`-O ReleaseSmall`); we additionally run binaryen `-Oz` on the library output to strip
  * name/debug sections.
  *
  * Commands (wired in `main.ts` under `--lang=zig`):
@@ -130,7 +130,7 @@ async function report(out: string, how: string): Promise<ZigResult> {
 
 /**
  * Compiles Zig to a wasm module. `target` "library" → freestanding wasm library (exports, no WASI),
- * then binaryen-ts `-Oz`; "wasi" → a `wasm32-wasi` command runnable via `wasmtk run`.
+ * then binaryen `-Oz`; "wasi" → a `wasm32-wasi` command runnable via `wasmtk run`.
  */
 export async function compileZig(input: string, opts: ZigCompileOptions = {}): Promise<ZigResult> {
   if (!(await toolAvailable("zig", ["version"]))) {
@@ -174,7 +174,7 @@ export async function compileZig(input: string, opts: ZigCompileOptions = {}): P
     return { success: false, error: "zig build failed" };
   }
 
-  // Library output: shrink + strip name/debug sections with binaryen-ts -Oz (Rust path skips this;
+  // Library output: shrink + strip name/debug sections with binaryen -Oz (Rust path skips this;
   // a WASI program is left as zig emitted it so `wasmtk run` hosts the unmodified command).
   if (target === "library") {
     try {
@@ -182,13 +182,13 @@ export async function compileZig(input: string, opts: ZigCompileOptions = {}): P
       if (optimized) await rt.writeFile(out, bytes);
       return await report(
         out,
-        `wasm32-freestanding library${optimized ? " + binaryen-ts -Oz" : ""}`,
+        `wasm32-freestanding library${optimized ? " + binaryen -Oz" : ""}`,
       );
     } catch (e) {
       // Optimisation is optional — an unoptimised library is still valid — but swallowing the error
       // silently made a failed -Oz indistinguishable from one that was never attempted. Say so.
       console.warn(
-        `  ⚠️  binaryen-ts -Oz failed, shipping the unoptimised module: ` +
+        `  ⚠️  binaryen -Oz failed, shipping the unoptimised module: ` +
           `${e instanceof Error ? e.message : e}`,
       );
       return await report(out, "wasm32-freestanding library, UNOPTIMISED");

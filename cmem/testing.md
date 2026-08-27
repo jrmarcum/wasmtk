@@ -78,7 +78,7 @@ batch, where all three tests passed first try and a full run was started needles
 | --- | --- | --- |
 | `hybrid_tests` | `src/hybrid.ts` parser/scanners (unit) | `src/hybrid.ts` |
 | `jstyper_tests` | `src/jstyper.ts` (unit; emits `.ts`, never compiles) | `src/jstyper.ts` |
-| `wast_tests` | `src/wast.ts` → `wabt` only | **any `wabt-ts` / `binaryen-ts` backend bump** (next expected: **wabt-ts 1.4.0**), `src/wast.ts`. A bump makes this gate go RED by design — `GAINED COVERAGE` and/or `failures N → M` — see next-work.md |
+| `wast_tests` | `src/wast.ts` → `wabt` only | **any `binaryang` backend bump** (one package since 2026-08-27 — a bump moves the assembler AND the optimiser together), `src/wast.ts`. A bump makes this gate go RED by design — `GAINED COVERAGE` and/or `failures N → M` — see next-work.md |
 | `engine_cross_check_tests` | the built `.wasm` corpus → standalone engines | **any codegen change** (`src/wasic.ts`, `src/console_log.ts`), any backend bump, any WASI-ABI change. Run it after `wasi_tests` regenerates the corpus |
 | `varscope_tests` | `src/varscope.ts` | `src/varscope.ts` |
 | `wasmmerge_guard_tests` | `src/wasmmerge.ts` | `src/wasmmerge.ts` — **and wasic merge-path changes**, which call into it |
@@ -94,16 +94,16 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 
 `go_merge_tests` was mis-classified as a Go-only outlier until this grep showed the `wasic` call.
 
-## Current pass counts (2026-07-30, v2.0.0, wabt-ts 1.3.5 + binaryen-ts 1.4.3)
+## Current pass counts (2026-08-27, binaryang 1.5.1 — formerly wabt-ts 1.4.1 + binaryen-ts 1.5.0)
 
 > ### EVERY suite in the repo is green (2026-07-30, re-measured on the v2.0.0 tree) — full roster
 >
 > | Suite | Result |
 > | --- | --- |
 > | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **417 / 417** — 412 + the Phase 34 type-predicate batch (3 owner stress tests; 2 passed as written, 1 exposed the inline-target bug) + 2 regressions, 2026-07-30. Full suite RE-RUN: the fix changed `src/wasic.ts`, so the gate applied |
-> | `wast_tests.ts` | **288 files, 37247 passing assertions** — ON BASELINE (re-recorded 2026-08-25), with **15 files pinned WITH failures** and **0 unrunnable**. On **wabt-ts 1.4.1**. The +9264 passes are the 1.4.0/1.4.1 bump landing after the three malformations it exposed were fixed: an earlier 1.4.0 attempt was reverted when it took wasi to 378/417 and both dync suites to 0. **The gain is mostly recovered COVERAGE, not new correctness** — 14 of the 15 newly-pinned files went `unbuilt → 0`, so modules that could not previously be assembled now run and expose real conformance gaps (`ref_cast`, `ref_test`, `br_on_cast`, `table_grow`, … — GC/ref-types). Those failures were always there; they were invisible. See compiler-bugs.md |
+> | `wast_tests.ts` | **288 files, 37247 passing assertions** — ON BASELINE (re-recorded 2026-08-25), with **15 files pinned WITH failures** and **0 unrunnable**. On **binaryang 1.5.1** (was wabt-ts 1.4.1 before the 2026-08-27 merge). The +9264 passes are the 1.4.0/1.4.1 bump landing after the three malformations it exposed were fixed: an earlier 1.4.0 attempt was reverted when it took wasi to 378/417 and both dync suites to 0. **The gain is mostly recovered COVERAGE, not new correctness** — 14 of the 15 newly-pinned files went `unbuilt → 0`, so modules that could not previously be assembled now run and expose real conformance gaps (`ref_cast`, `ref_test`, `br_on_cast`, `table_grow`, … — GC/ref-types). Those failures were always there; they were invisible. See compiler-bugs.md |
 > | `bindgen_tests.ts` | 142, 0 failed |
-> | `engine_cross_check_tests.ts` | **376 modules × 3 engines = 1128 pairs, ALL ON BASELINE** — the multi-engine gate (2026-08-24). V8 vs wasmtime/wasmer/wazero, byte-identical stdout. Baseline `tests/engine_baseline.json`. wasmtime **354 match / 22 reject / 0 differ** (the 37 `differ` it found on run one were the `fd_write` short-write bug, fixed the same day); the 22 rejects are legacy EH |
+> | `engine_cross_check_tests.ts` | **376 modules × 3 engines = 1128 pairs, ALL ON BASELINE** — the multi-engine gate (2026-08-24). V8 vs wasmtime/wasmer/wazero, byte-identical stdout. Baseline `tests/engine_baseline.json`. **Re-recorded 2026-08-25 after the `try_table` migration: wasmtime 364 match / 12 reject / 0 differ** (was 354/22 — 10 modules flipped `reject → match` once EH stopped being legacy). The 37 `differ` on the very first run were the `fd_write` short-write bug, fixed the same day. wasmer 353/23 and wazero 346/30 are unchanged — neither implements EH, so an EH change cannot move them |
 > | `go_merge_tests.ts` · `go_bindgen_tests.ts` · `go_asyncify_tests.ts` | **7 / 7 · 7 / 7 · 12 / 12** — green on **Go 1.26.7 + TinyGo 0.41.1**. TinyGo 0.41.1 caps at Go 1.26; a Go 1.27 install breaks all three (`requires go version 1.19 through 1.26`). Keep the pair in step — Go 1.27 is safe only once TinyGo **0.42.0** ships (support is on `dev`). See [next-work.md](next-work.md) |
 > | `bundle_tests.ts` | **4 / 4** — `StructImport` fixed, no longer a standing failure |
 > | `mod_tests.ts` · `merge_tests.ts` · `varscope_tests.ts` · `wasmmerge_guard_tests.ts` | 0 failed |
@@ -170,7 +170,20 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 > ⚠️ **Do NOT run the Go suites concurrently with other suites on Windows.** Running
 > `go_asyncify_tests` alongside the full wasi suite produced 4 spurious failures — all `os error 32`
 > ("file is being used by another process") on `tests/go_fixtures/**/main.wasm`, i.e. the TinyGo
-> build / asyncify write racing the OS file lock, NOT assertion failures. Run alone it is 12/12.
+> build / asyncify write racing the OS file lock, NOT assertion failures.
+>
+> 🔁 **CORRECTION 2026-08-27 — "run alone it is 12/12" is NOT reliable.** Measured back-to-back with
+> nothing else running: run 1 **11/1** (`nested (re-entrant suspend)`, `os error 32` on
+> `writefile … nested/main.wasm`), run 2 **12/12**, same inputs. Concurrency with *other suites* is
+> not the only trigger — a **preceding run of this same suite** is enough, because handles from the
+> prior run's spawned processes are still closing. Practical rule: **let the machine settle between
+> Go-suite runs, and re-run once before believing an `os error 32` failure.** It is an OS race, never
+> an assertion failure — the tell is `os error 32` in the message and a passing assertion count
+> everywhere else.
+>
+> ⚠️ **This can fail a release gate.** If a publish run trips it, re-run rather than investigating
+> the Go producer. A retry-with-backoff around the asyncify write in `src/gowasic.ts` would remove it
+> for good; deliberately NOT done inside a release batch — see [next-work.md](next-work.md).
 >
 > **Runner note:** a full `tests/wasi/wasm_wasi` pass now exceeds 10 minutes on this machine; run it
 > backgrounded or with a raised timeout. Beware the shell idiom `… ; grep -c "FAILED"` as the last
@@ -368,6 +381,31 @@ behaviour came from, not whether anyone will fix it.** Re-measure such claims on
 of carrying them forward as settled. Full analysis in [compiler-bugs.md](compiler-bugs.md) §
 "wabt-ts `ref.null` + parser gaps"; the report for the wabt-ts team is
 `scripts/wabt-ts-bug-report.md`.
+
+## The `-Oz` safety check for `try_table` — `scripts/check_try_table_oz.ts` (added 2026-08-27)
+
+```bash
+deno run -A scripts/check_try_table_oz.ts
+```
+
+Decides whether the binaryen skip for throwing modules in `src/wasic.ts` may be lifted. Assembles
+`scripts/eh_try_table_live_local_fixture.wat` **once** and runs the result both sides of `-Oz` — one
+variable, one comparison.
+
+| exit | meaning |
+| --- | --- |
+| 0 | both sides 42 — the skip MAY be removed, then run the full gate |
+| 1 | post-`-Oz` wrong — the skip stays |
+| 2 | pre-`-Oz` wrong — the fixture or assembler broke; says NOTHING about `-Oz` |
+
+**Measured on binaryang 1.5.1: pre-Oz 42, post-Oz 1 — still broken, skip stays.**
+
+⚠️ **Passing here is necessary, not sufficient.** The real acceptance gate is `15_Exceptions` +
+`15_LexicalShadowing_Stress` in `wasi_tests`. That ordering is not pedantry: the FIRST version of
+this fixture passed `-Oz` cleanly while both of those tests were failing, because it kept a local
+live across the catch edge without ever **assigning it inside the try**. Only the assignment creates
+the dead-store reasoning the optimiser gets wrong. A fixture built to catch a bug can still be built
+to miss it.
 
 ## CI / pre-publish gate
 

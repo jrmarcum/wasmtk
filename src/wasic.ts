@@ -224,10 +224,13 @@ async function watToOptimisedWasm(
     //   1. 1.4.3's binary READER rejected the multi-value block type a `try_table` catch clause
     //      necessarily produces (our tag is `(param i32 i32)`). That was a LOUD failure, and
     //      binaryen-ts 1.5.0 fixed it.
-    //   2. 1.5.0's OPTIMIZER then silently miscompiles those same modules. `-Oz` CoalesceLocals
-    //      merges a local that is live across a `try_table` catch EDGE, because binaryen's EH-aware
-    //      CFG models legacy `try`/`catch` inline handlers — not `try_table`, where a catch clause
-    //      is a BRANCH TARGET. Two independent symptoms, one cause:
+    //   2. 1.5.0's OPTIMIZER then silently miscompiles those same modules. Measured:
+    //      `-Oz` DROPS a local's initialisation when the local is reassigned inside the `try_table`
+    //      body — the pre-try store is dead only if the try COMPLETES, and the CFG appears to lack
+    //      the mid-body → handler edge. **The pass is unidentified**: `vacuum` and `dce` alone are
+    //      safe, and `listPasses()` is not exposed on the compat surface, so we could not bisect.
+    //      (An earlier note here blamed CoalesceLocals. That was a guess; it is retracted.)
+    //      Two independent symptoms, one cause:
     //        • `15_Exceptions` — a catch-path value reads back as `0` instead of `-1`
     //        • `15_LexicalShadowing_Stress` — the inner `catch (e)` overwrites the OUTER `e`,
     //          printing `Shadow Check: Inner Literal Error` for `Outer String`

@@ -182,7 +182,7 @@ Options:
                                run/build/modc (auto-detected from .go/.zig/.rs or go.mod/Cargo.toml).
                                (add/remove/list/fmt/clean are Rust-only — no --lang needed.)
       --go-runtime=tinygo|std  (go)      Go backend: tinygo (default, small) or std go (large).
-                                         TinyGo without wasm-opt installed auto-uses binaryen-ts -Oz
+                                         TinyGo without wasm-opt installed auto-uses binaryen -Oz
                                          (goroutine-free code); goroutine code needs binaryen.
       --go-target=wasm-unknown (modc)    Build an alloc-free MERGEABLE leaf library (wasmmerge-able into a wasic/bundle build)
                                          (browser/syscall/js output is not produced — use the universal wasm loader)

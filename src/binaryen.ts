@@ -7,19 +7,27 @@
  *
  * Supported backends (switch by editing `deno.json` only):
  *
- *   "binaryen": "npm:binaryen@^116.0.0"                      // Emscripten WASM blob
- *   "binaryen": "jsr:@jrmarcum/binaryen-ts@^1.2.2/compat"    // JSR-native TS port
+ *   "binaryen": "npm:binaryen@^116.0.0"                            // Emscripten WASM blob
+ *   "binaryen": "jsr:@jrmarcum/binaryang@1.5.1/compat/binaryen"    // JSR-native TS port
+ *   "binaryen": "jsr:@jrmarcum/binaryen-ts@1.5.0/compat"           // SUPERSEDED — see below
+ *
+ * ⚠️ **`binaryen-ts` and `wabt-ts` merged into `@jrmarcum/binaryang` (2026-08-27).** One package now
+ * ships both TypeScript ports, so the two specifiers in `deno.json` point at ONE dependency at the
+ * SAME version — `compat/binaryen` here, `compat/wabt` for the `"wabt"` specifier. **They must be
+ * bumped together**; a version skew between the two halves is now a self-inflicted wound rather than
+ * a fact of life. The merged root export is deliberately empty (56 type names collide across the two
+ * retained IRs), so there is no "just import binaryang" shortcut — always take a compat subpath.
  *
  * Both packages expose the same surface (readBinary, Features, setShrinkLevel,
  * setOptimizeLevel, getExportInfo, getFunctionInfo, expandType, i32/i64/...);
  * they only differ in how that surface is reached from an import statement.
- * `npm:binaryen` ships a CommonJS default-export factory; `binaryen-ts/compat`
+ * `npm:binaryen` ships a CommonJS default-export factory; the JSR compat entry
  * is a pure ES-module namespace with no default export.
  *
  * `import * as ns from "binaryen"` works against both:
  *   - npm:binaryen      → ns is a namespace whose `.default` is the binaryen
  *                         factory object that owns readBinary, Features, etc.
- *   - binaryen-ts compat→ ns is the namespace and owns readBinary, Features,
+ *   - binaryang compat  → ns is the namespace and owns readBinary, Features,
  *                         etc. directly.
  *
  * This module unwraps `.default` when present and re-exports the result as the
@@ -36,7 +44,7 @@ const lib: any = (ns as any).default ?? ns;
 export default lib;
 
 /**
- * binaryen-ts `-Oz` over raw wasm bytes. Returns the optimized bytes, or the input unchanged on
+ * Binaryen `-Oz` over raw wasm bytes. Returns the optimized bytes, or the input unchanged on
  * failure. Shared by the native producers (Go/Zig) to shrink + strip name/debug sections from
  * toolchain output. (Rust's producer doesn't use this — rsxtk optimizes its own output.)
  */
@@ -59,13 +67,13 @@ export function binaryenOptimize(bytes: Uint8Array): { bytes: Uint8Array; optimi
 }
 
 /**
- * binaryen-ts Asyncify + `-Oz` over raw wasm bytes — the in-house replacement for
+ * Binaryen Asyncify + `-Oz` over raw wasm bytes — the in-house replacement for
  * `wasm-opt --asyncify -Oz`. Runs the Asyncify pass (which resolves TinyGo's
  * in-wasm `asyncify.*` control imports), then `-Oz`. Used by the Go producer so
  * goroutine code works with NO external binaryen. **Throws** on failure — an
  * un-asyncified goroutine module has unresolved `asyncify.*` imports and would
  * not instantiate, so the caller must surface a hard error rather than ship it.
- * Requires binaryen-ts ≥ 1.4.1 (which added the in-wasm asyncify-import mode).
+ * Requires the Binaryen port ≥ binaryen-ts 1.4.1 / binaryang 1.5.1 (in-wasm asyncify-import mode).
  */
 export function binaryenAsyncify(bytes: Uint8Array): Uint8Array {
   const m = lib.readBinary(bytes);

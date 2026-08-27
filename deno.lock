@@ -1,8 +1,7 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@jrmarcum/binaryen-ts@1.5.0": "1.5.0",
-    "jsr:@jrmarcum/wabt-ts@1.4.1": "1.4.1",
+    "jsr:@jrmarcum/binaryang@1.5.1": "1.5.1",
     "jsr:@std/assert@*": "1.0.19",
     "jsr:@std/cli@1": "1.0.32",
     "jsr:@std/fmt@*": "1.0.1",
@@ -22,11 +21,8 @@
     "npm:wasm2js@0.2": "0.2.0"
   },
   "jsr": {
-    "@jrmarcum/binaryen-ts@1.5.0": {
-      "integrity": "9612ed606be8a53b413a832e0714865b048bd84e1b35b3f9c0e610a84f2546d1"
-    },
-    "@jrmarcum/wabt-ts@1.4.1": {
-      "integrity": "9571c9b597783de36a3d7d1bf402154fa87ea6bb04e1e272a4e46f786f508f61"
+    "@jrmarcum/binaryang@1.5.1": {
+      "integrity": "734e9555985e9641c085fbb3e9f977ead4deed78480b71e19a8ac4cdfa757a22"
     },
     "@std/assert@1.0.19": {
       "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
@@ -92,8 +88,7 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@jrmarcum/binaryen-ts@1.5.0",
-      "jsr:@jrmarcum/wabt-ts@1.4.1",
+      "jsr:@jrmarcum/binaryang@1.5.1",
       "jsr:@std/cli@1",
       "jsr:@std/path@^1.1.2",
       "npm:wasm2js@0.2"

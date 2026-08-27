@@ -15,7 +15,8 @@ with no embedded JavaScript runtime. It also provides a complete toolkit for run
 and composing WASM modules from any source language.
 
 - **`wasic` compiler**: Compile a TypeScript subset directly to optimized `.wasm` via WAT, assembled
-  by [`@jrmarcum/wabt-ts`](https://jsr.io/@jrmarcum/wabt-ts) (JSR-native TypeScript port of wabt)
+  by [`@jrmarcum/binaryang`](https://jsr.io/@jrmarcum/binaryang) (JSR-native TypeScript ports of
+  wabt AND Binaryen in one package)
   and optimized via Binaryen `-Oz`. Supports 50 language phases including closures, generics,
   classes, inheritance, discriminated unions, TypedArrays, and more — all without an embedded JS
   runtime.
@@ -33,7 +34,7 @@ and composing WASM modules from any source language.
   (build a WASI module, optionally run it), and `modc` (→ a callable WASI library via
   `//go:wasmexport`). Output is always a WASI module — consume it in the browser with the universal
   wasm loader. When `wasm-opt` (binaryen) isn't installed, wasmtk optimizes TinyGo's output with the
-  in-house binaryen-ts Asyncify + `-Oz` pipeline instead — no external binaryen required, **including
+  in-house Binaryen Asyncify + `-Oz` pipeline instead — no external binaryen required, **including
   for goroutines**.
 - **Zig producer (`--lang=zig`)**: `init`/`modc`/`run` via the `zig` toolchain — a wasm library
   (freestanding, `export fn`) or a `wasm32-wasi` program. Same shape as Go.
@@ -154,9 +155,9 @@ program needs at runtime.
 Compiles a TypeScript or WAT source file to a **standalone WASI module** with no embedded JavaScript
 runtime. Two input paths are supported:
 
-- **`.ts`** — runs through the tsbundler import pre-pass, WasicTranspiler, `@jrmarcum/wabt-ts` (WAT
+- **`.ts`** — runs through the tsbundler import pre-pass, WasicTranspiler, `@jrmarcum/binaryang` (WAT
   → binary), and Binaryen `-Oz`
-- **`.wat`** — assembled directly by `@jrmarcum/wabt-ts` and optimized by Binaryen `-Oz` (no
+- **`.wat`** — assembled directly by `@jrmarcum/binaryang` and optimized by Binaryen `-Oz` (no
   transpiler step)
 
 ```bash
@@ -618,7 +619,7 @@ are pure functions callable from any WASM host (browser, Node.js, Deno, another 
 .ts source
   → tsbundler   (import resolution, module-prefix name mangling)
   → WasicTranspiler in library mode   (TypeScript → WAT, no _start, no proc_exit)
-  → @jrmarcum/wabt-ts wat2wasm   (WAT → raw WASM binary)
+  → @jrmarcum/binaryang wat2wasm (WAT → raw WASM binary)
   → Binaryen -Oz   (dead-code elimination, size optimisation)
   → .wasm library
 ```
@@ -949,7 +950,7 @@ Runs a file directly. Accepts four input formats:
 | Input   | Behavior                                                                                  |
 | ------- | ----------------------------------------------------------------------------------------- |
 | `.wasm` | Instantiates and executes the WASM module via the built-in WASI runtime                   |
-| `.wat`  | Assembled by `@jrmarcum/wabt-ts`, then executed as above                                  |
+| `.wat`  | Assembled by `@jrmarcum/binaryang`, then executed as above                                  |
 | `.ts`   | Passed through to the Deno/Bun runtime (`deno run -A` / `bun run`) — not compiled to WASM |
 | `.js`   | Same passthrough to the Deno/Bun runtime                                                  |
 
@@ -993,7 +994,7 @@ import { runHybrid } from "@jrmarcum/wasmtk/hybrid";
 | `compileWasi(path, outPath?)`                       | `./wasic`      | Compile `.ts` or `.wat` to a WASI standalone `.wasm`                                             |
 | `compileWasiTs(path, outPath?)`                     | `./wasic`      | TypeScript-only path — runs bundler + transpiler + optimizer                                     |
 | `compileLibTs(path, outPath?)`                      | `./wasic`      | TypeScript → WASM library (no `_start`, no WASI scaffolding)                                     |
-| `compileWat(path, outPath?)`                        | `./wasic`      | WAT-only path — `@jrmarcum/wabt-ts` parse + Binaryen `-Oz`                                       |
+| `compileWat(path, outPath?)`                        | `./wasic`      | WAT-only path — `@jrmarcum/binaryang` parse + Binaryen `-Oz`                                       |
 | `compileModule(path, outPath?)`                     | `./modc`       | Compile `.ts` to a WASM library via wasic transpiler                                             |
 | `compileDyn(path, outPath?)`                        | `./dync`       | Compile a fully-dynamic `.ts`/`.js` file to a self-contained WASI module via the own runtime     |
 | `bundleImports(entryPath)`                          | `./tsbundler`  | Resolve and merge relative imports into a single source string                                   |
@@ -1059,9 +1060,9 @@ wasmtk modc  mylib.go --go-target=wasm-unknown   # build an alloc-free MERGEABLE
 
 - **`tinygo`** (default) — small output. TinyGo runs binaryen's `wasm-opt` internally. If a real
   `wasm-opt` is on your `PATH` (or `$WASMOPT`), wasmtk lets TinyGo use it. If it's **not**
-  installed, wasmtk transparently substitutes a passthrough and runs the **in-house binaryen-ts
+  installed, wasmtk transparently substitutes a passthrough and runs the **in-house Binaryen
   Asyncify + `-Oz`** pipeline instead, so **no external binaryen is required — including for
-  goroutines** (binaryen-ts's asyncify pass resolves TinyGo's in-wasm `asyncify.*` control API). Set
+  goroutines** (Binaryen's asyncify pass resolves TinyGo's in-wasm `asyncify.*` control API). Set
   `WASMTK_GO_BINARYEN_ASYNCIFY=1` to force the in-house path even when a real `wasm-opt` is present.
 - **`std`** — uses the standard Go toolchain (`GOOS=wasip1 GOARCH=wasm go build`). No `wasm-opt`
   needed, but pulls in the full Go runtime/GC (large, multi-MB binaries).
@@ -1076,7 +1077,7 @@ planned — see the roadmap.
 ### `--lang=zig` — Zig Producer
 
 Compiles **Zig** through the same downstream as the other producers (shells to `zig`; no extra deps
-— `zig` self-optimizes, with a binaryen-ts `-Oz` pass on libraries). Same shape as Go:
+— `zig` self-optimizes, with a Binaryen `-Oz` pass on libraries). Same shape as Go:
 
 ```bash
 wasmtk init    --lang=zig myzig    # scaffold a WASI PROGRAM main.zig (pub fn main)
@@ -1147,7 +1148,7 @@ replacement.
 > (⏳ — to-do / planned / blocked) are always listed at the end of the table**, after every ✅ row.
 > Worked examples for each feature live in its command section above; deep implementation notes live
 > in [`cmem/`](cmem/). Test-count taglines in the table are historical snapshots — the current suite
-> is green (`tests/wasi/wasm_wasi` 417/417) on `jsr:@jrmarcum/wabt-ts` + `jsr:@jrmarcum/binaryen-ts`,
+> is green (`tests/wasi/wasm_wasi` 417/417) on `jsr:@jrmarcum/binaryang`,
 > with all 50 wasic phases, Stage 0/0.6/0.7, and the five Tier-1 stdlib capabilities
 > (Set/Map/Date/JSON/RegExp) shipped.
 
@@ -1189,7 +1190,7 @@ replacement.
 | ✅ | bug fix | `console.log` of array-returning calls | `console.log("scores:", getScores())` where `getScores(): i32[]` was printing the raw heap pointer; fix: `FuncLookup` now exposes `resultTsName`; `parseSingleArg` checks for `[]` suffix → new `arrptr` LogSegment; gather mode calls `$__write_i32arr_to_scratch` which loops the dynamic-array header and writes `[ a, b, c ]`; `getArrPrintHelperWat()` emits the WAT helper; `wasic.ts` tracks `needsArrPrintHelper` flag |
 | ✅ | 14 | Generics (monomorphization) | `function f<T>(x: T): T` — one concrete copy per distinct type; `interface Box<T> { value: T; }` → `Box_i32`, `Box_f64`, etc.; explicit type args (`f<i32>(x)`) and single-T literal inference (`f(42)` → `f_i32`); generic struct refs in function signatures rewritten automatically; source-level `expandGenerics()` pre-pass runs before all other parsing |
 | ✅ | 15 | Exception handling | `throw new Error("msg")` / `throw "lit"` / `throw strVar` → `(throw $__exn_tag ptr len)` — WASM exception tag carries a `(ptr i32, len i32)` string payload; catchable by any enclosing `try/catch`; `try/catch(e)/finally` via WAT exceptions proposal; `(tag $__exn_tag (param i32 i32))` declared once per module when any throw is emitted; `e` / `e.message` in catch bound as string locals; the WAT-to-binary assembler (`@jrmarcum/wabt-ts`) accepts the exception proposal opcodes by default — no per-call feature flag needed; `binMod.setFeatures(Features.All)` before Binaryen `-Oz` to preserve exception sections |
-| ✅ | 15 enhancement (2026-08-25) | Standard exception proposal — `try_table` replaces legacy EH | Every `try`/`catch`/`finally` now compiles to the **standardised** exception proposal (`try_table` / `catch_all_ref` / `throw_ref`) instead of the legacy `try`/`do`/`catch`/`rethrow` opcodes, which **Wasmtime and Wasmer both refuse to load** — modules that throw were previously V8-only. Three emitted shapes: `catch $__exn_tag` for `try/catch`; `catch_all_ref` + `throw_ref` for `try/finally` (this is what replaces legacy `rethrow 0`); and a combined form for `try/catch/finally` where the tag handler runs catch-then-finally and rejoins while `catch_all_ref` runs finally and re-throws the original. Each uses uniquely-numbered handler labels (`$__eh_done{N}` / `$__eh_tag{N}` / `$__eh_all{N}`) because a `try_table` catch clause is a **branch target**, not an inline handler — without unique labels an inner handler shadows an outer one. `$__exn_tag` keeps its `(param i32 i32)` string payload so an uncaught throw still reports `Uncaught (in Wasm) Error: <msg>` rather than an opaque trap. Requires wabt-ts `1.4.1` (1.3.5 cannot encode `try_table` at all) and binaryen-ts `1.5.0` (1.4.3's binary reader rejected the multi-value handler block outright). **Modules that throw deliberately skip Binaryen `-Oz` and ship the raw assembler output**: binaryen's EH-aware CFG models legacy inline handlers, not `try_table` branch targets, so `-Oz` CoalesceLocals merges a local that is live across a catch edge — an inner `catch (e)` could overwrite an outer `e`. Those modules are therefore somewhat larger; correctness is not traded for size. Verified byte-identical stdout on V8 and Wasmtime — engine gate `0 regressed, 8 improved`. Acceptance `scripts/eh_try_table_fixture.wat` (exit 34); stress tests `15_Exceptions`, `15_IdiomaticCatch_Stress`, `15_LexicalShadowing_Stress`, `15_TestCase1-NestedEscalation`, `15_recover`, `60_AsyncAll`, `64_ReportModuleTryCatch`, `64_ReportThrowTemplate` |
+| ✅ | 15 enhancement (2026-08-25) | Standard exception proposal — `try_table` replaces legacy EH | Every `try`/`catch`/`finally` now compiles to the **standardised** exception proposal (`try_table` / `catch_all_ref` / `throw_ref`) instead of the legacy `try`/`do`/`catch`/`rethrow` opcodes, which **Wasmtime and Wasmer both refuse to load** — modules that throw were previously V8-only. Three emitted shapes: `catch $__exn_tag` for `try/catch`; `catch_all_ref` + `throw_ref` for `try/finally` (this is what replaces legacy `rethrow 0`); and a combined form for `try/catch/finally` where the tag handler runs catch-then-finally and rejoins while `catch_all_ref` runs finally and re-throws the original. Each uses uniquely-numbered handler labels (`$__eh_done{N}` / `$__eh_tag{N}` / `$__eh_all{N}`) because a `try_table` catch clause is a **branch target**, not an inline handler — without unique labels an inner handler shadows an outer one. `$__exn_tag` keeps its `(param i32 i32)` string payload so an uncaught throw still reports `Uncaught (in Wasm) Error: <msg>` rather than an opaque trap. Requires wabt-ts `1.4.1` (1.3.5 cannot encode `try_table` at all) and binaryen-ts `1.5.0` (1.4.3's binary reader rejected the multi-value handler block outright). **Modules that throw deliberately skip Binaryen `-Oz` and ship the raw assembler output**: `-Oz` drops a local's initialisation when that local is reassigned inside the `try_table` body — the pre-try store is only dead if the try completes, so a value that must survive the throw reads back as 0. Reproduced in 161 bytes by `scripts/check_try_table_oz.ts`, which is the gate for lifting the skip. Those modules are therefore somewhat larger; correctness is not traded for size. Verified byte-identical stdout on V8 and Wasmtime — engine gate `0 regressed, 8 improved`. Acceptance `scripts/eh_try_table_fixture.wat` (exit 34); stress tests `15_Exceptions`, `15_IdiomaticCatch_Stress`, `15_LexicalShadowing_Stress`, `15_TestCase1-NestedEscalation`, `15_recover`, `60_AsyncAll`, `64_ReportModuleTryCatch`, `64_ReportThrowTemplate` |
 | ✅ | stress tests (2026-05-22) | Phase 15 exception handling stress tests | Three edge-case stress tests added: `15_TestCase1-NestedEscalation` — three-level nested try/catch escalation with accumulating trace score; `15_LexicalShadowing_Stress` — `catch (e)` shadowing an outer string variable `e`, inner catch re-throws, outer catch verifies the shadow did not pollute the outer scope; `15_IdiomaticCatch_Stress` — `throw new Error("msg")` caught and converted via `instanceof Error ? e.message : String(e)` ternary and bare `String(e)`, verifying both conversion idioms |
 | ✅ | bug fix (2026-05-24) | `expandGenerics` regex — array return types in generic functions | `restMatch` regex in `expandGenerics()` (`src/wasic.ts` line 2153) changed from `[\w<>, ]+?` to `[\w\[\]<>, ]+?` — adds `[` and `]` to the character class so generic functions with array return types (e.g. `mapArray<T, U>(arr: T[], fn: (x: T) => U): U[]`) are correctly recognized during template extraction. Without the fix, any generic with an array return type was silently skipped — the call site was left as raw TypeScript which emitted comparison operators instead of the intended WAT function call |
 | ✅ | stress tests (2026-05-24) | Phase 16 generic monomorphization stress tests | Three edge-case stress tests added: `16_NestedMonomorphization` — concrete monomorphized classes `BoxI32`/`BoxF64` with local temporaries to prevent greedy `dotCallExprMatch` from consuming method arguments; `16_GenericInterfaceMappingsAndClosures` — non-capturing named function passed as bare function reference via `funcTypeVars` call_indirect path (capturing closures incompatible with this path); `16_DeepGenericConstraintResolution` — Phase 47 class inheritance (`Item` → `HeavyItem`) with `super()` + `override getWeight()` replacing unsupported `class Scale<T extends Measurable>` |
@@ -1296,10 +1297,14 @@ replacement.
   callee-allocated string returns paired with a `cabi_post_<name>` release export — a WASI-P1 core
   module + sidecar `.wit`; only the P2 Component-Model container is deferred (see
   [`cmem/polyglot-producers.md`](cmem/polyglot-producers.md)).
-- **Backends.** wasmtk runs on the dual JSR TypeScript toolchain `jsr:@jrmarcum/wabt-ts` +
-  `jsr:@jrmarcum/binaryen-ts` (no Emscripten blobs). wabt-ts 1.3.0/1.3.1 fixed a
-  call-before-`return` encoder bug and hex-float-literal parsing; binaryen-ts 1.3.2/1.3.4 fixed a
-  doubly-merged optimizer miscompile and an exception-aware `-Oz` CoalesceLocals bug.
+- **Backends.** wasmtk runs on **`jsr:@jrmarcum/binaryang`** — one JSR package carrying
+  TypeScript ports of both wabt and Binaryen, with no Emscripten blobs. It is consumed through two
+  subpaths, `compat/wabt` (assembler) and `compat/binaryen` (optimiser), which are pinned to the
+  same exact version. It was two packages until **2026-08-27**, when `@jrmarcum/wabt-ts` and
+  `@jrmarcum/binaryen-ts` merged; both names are retired. Fixes that shipped under the old names:
+  wabt-ts 1.3.0/1.3.1 (a call-before-`return` encoder bug, hex-float-literal parsing) and
+  binaryen-ts 1.3.2/1.3.4 (a doubly-merged optimizer miscompile, an exception-aware `-Oz`
+  CoalesceLocals bug).
 - **Output-diff hardening.** The test runner compares run-ts vs run-wasm OUTPUT (not just exit
   codes); that audit surfaced and fixed ~14 silently-wrong codegen bugs across exceptions, string
   formatting, struct-field mutation, `for…of`, and class-array literals.

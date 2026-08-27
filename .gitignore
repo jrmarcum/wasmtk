@@ -65,3 +65,6 @@ tests/go_fixtures/**/.tinygo-cache/
 # with the repo — an allowlist from one machine should never pre-approve
 # commands on someone else's checkout.
 .claude/settings.local.json
+
+# Build artifacts from the EH fixtures (scripts/*.wat are the sources; no scripts/*.wasm is tracked)
+scripts/*.wasm

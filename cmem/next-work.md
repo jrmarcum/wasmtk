@@ -4,27 +4,42 @@
 > targets + the first breaking change). Authoritative status lives in [roadmap.md](roadmap.md); this
 > file is the short, prioritized "what to pick up next" list. Prune items as they land.
 
-## Open as of 2026-08-25 — after the backend double-bump
+## Open as of 2026-08-27 — after the backend merge
 
-Both backends moved the same day: **wabt-ts → `1.4.1`, binaryen-ts → `1.5.0`, both EXACT pins**
-([design-decisions.md](design-decisions.md)). Three items fall out of it.
+Both backends moved on 2026-08-25 (**wabt-ts → `1.4.1`, binaryen-ts → `1.5.0`**) and then **merged
+into `@jrmarcum/binaryang@1.5.1` on 2026-08-27** — one package, two compat subpaths, one exact
+version ([design-decisions.md](design-decisions.md)).
 
-- 🔴 **Re-record `tests/engine_baseline.json`.** The `try_table` migration means wasmtime now loads
-  every module that throws, so the gate reports `IMPROVED: reject → match — re-record` across the
-  `15_*` and `64_*` families. **Do it only after the full gate is green**, with
-  `tests/engine_cross_check_tests.ts --update-baseline`; wasmtime `reject` should fall from 22
-  toward 0. This is the gate behaving as designed — see [testing.md](testing.md).
-- 🔴 **Send the binaryen-ts `-Oz` / `try_table` miscompile report** — drafted and ready at the top of
-  `scripts/binaryen-ts-report.md`. `-Oz` CoalesceLocals merges a local live across a `try_table`
-  catch edge, so an inner `catch (e)` overwrites an outer `e`. **Until they ship a fix, throwing
-  modules must keep skipping binaryen** ([design-decisions.md](design-decisions.md)). The report
-  includes the repro caveat that cost us the bug: a fixture with no local live across the handler
-  edge passes `-Oz` cleanly, so a minimal repro **must** write a local before the `try_table` and
-  read it inside the catch.
-- 🟡 **Add a `try_table` fixture that keeps a local live across the catch edge.** The existing
-  `scripts/eh_try_table_fixture.wat` cannot see this bug class, and it was trusted to authorise
-  removing a safety skip. Until that fixture exists, the acceptance gate for the skip is
-  `15_Exceptions` + `15_LexicalShadowing_Stress`.
+- ✅ **`tests/engine_baseline.json` — RE-RECORDED 2026-08-25.** wasmtime `match` **354 → 364**,
+  `reject` **22 → 12**; `0 regressed`. Ten modules flipped, not the eight first reported — the first
+  run graded a corpus built by the previous compiler. **Order is load-bearing: `wasi_tests` →
+  `engine_cross_check_tests` → `wast_tests`.**
+- ⏳ **Kill the `os error 32` flake in the Go suites (Windows).** `go_asyncify_tests` intermittently
+  fails writing `tests/go_fixtures/**/main.wasm` — an OS file-lock race, never an assertion failure.
+  Measured 2026-08-27 back-to-back with nothing else running: 11/1 then 12/12. The recorded advice
+  ("run alone it is 12/12") is not reliable; a preceding run of the SAME suite is enough to trigger
+  it. **Fix: retry-with-backoff around the asyncify write in `src/gowasic.ts`.** Left out of the
+  2026-08-27 release batch on purpose — it is release-critical code and the failure is cosmetic and
+  re-runnable, so it should land on its own with its own gate, not inside a bump.
+- 🔴 **Send the `-Oz` / `try_table` report to the binaryang team** — rewritten and ready at the
+  top of `scripts/binaryang-report.md`, now carrying a **161-byte minimal repro**. Two corrections
+  went into it: the recipient (binaryen-ts no longer exists) and the mechanism — we had called it
+  "CoalesceLocals merging a local live across a catch edge", which was a **guess, now retracted**.
+  The observable defect is that **`-Oz` drops a local's initialisation when the local is reassigned
+  inside the `try_table` body**; the pre-try store is dead only if the try COMPLETES. `vacuum` and
+  `dce` alone are safe; we could not bisect further because `listPasses()` is not exposed on
+  `compat/binaryen` even though the unknown-pass error tells you to call it (also reported).
+  **Until they ship a fix, throwing modules keep skipping binaryen.**
+- ✅ **`try_table` `-Oz` fixture — BUILT AND REPRODUCING (2026-08-27).**
+  `scripts/eh_try_table_live_local_fixture.wat` + `scripts/check_try_table_oz.ts`: assembles once,
+  runs both sides of `-Oz`, exit 42 = safe, exit 1 = the bug. Measured on binaryang 1.5.1: pre-Oz
+  **42**, post-Oz **1**.
+  🎓 **It took two attempts, and the first one is the lesson.** Version one set the local before the
+  try and never wrote it inside — a plain live range with no dead-store reasoning to get wrong. It
+  passed `-Oz` cleanly while `15_Exceptions` was still miscompiling, i.e. it reproduced the ORIGINAL
+  mistake (trusting a green fixture) while being built specifically to prevent it. **The local must
+  be assigned INSIDE the try by something that throws.** Run the checker before ever lifting the
+  skip — and then still run the full gate, because the two wasi tests remain the real acceptance.
 - ✅ **`18_Multi-ScopeScaleAndMemoryLongevityTest` — MEASURED AND PASSING (2026-08-25).** The third
   of the three malformations wabt-ts 1.4.0 exposed is resolved. It had survived **four invalid
   measurements** — a scratch copy that lost its imports, a hand-run `wasmtk wasic` that is not the
@@ -33,10 +48,13 @@ Both backends moved the same day: **wabt-ts → `1.4.1`, binaryen-ts → `1.5.0`
   failed.** 🎓 The reusable part: this item cost four wrong answers because each shortcut *looked*
   like a measurement. **When a test's setup is built by another test, only the full unfiltered suite
   can measure it** — a filter silently removes the producer, not just the noise.
-- ⏳ **`ref.null` needs re-measuring against 1.4.1, and the old prediction about it was wrong.**
-  The note below says `ref.null $t` is "parity with upstream wabt, needs an upstream feature, not a
-  wabt-ts release" — **1.4.0 moved it anyway.** Re-run the `wast` gate's pinned files before
-  repeating any claim about what a wabt-ts release can and cannot fix.
+- ✅ **`ref.null` re-measured 2026-08-27 — STILL BROKEN, and the old prediction was wrong.**
+  `ref_null.wast` is **0 pass / 32 skip** on binaryang 1.5.1: `ref.null` still cannot encode for any
+  heap type. But the recorded verdict that `ref.null $t` and `(module definition …)` were "parity
+  with upstream wabt, so a wabt-ts bump will not move them" **was false** — 1.4.1 moved both
+  (`return_call.wast` 12 → **45 passes**, one better than before the corpus sync). 🎓 Matching
+  upstream tells you where a behaviour came from, **not whether anyone will fix it**; re-measure such
+  claims on every bump rather than carrying them forward as settled.
 
 ## Open as of 2026-07-30 (v2.0.0)
 
@@ -54,7 +72,10 @@ Both backends moved the same day: **wabt-ts → `1.4.1`, binaryen-ts → `1.5.0`
 - ⏳ **Declare a Deno floor in `deno.json`.** There is none today, so nothing validates a minimum
   supported version and a release could silently start requiring a newer Deno — first signal would
   be a user report. Cheap to add, and it would make the compatibility question decidable.
-- ⏳ **Chase the wabt-ts `ref.null` bug; do NOT expect the other two to move.** The 2026-08-20 corpus
+- 🔁 **SUPERSEDED — see the 2026-08-27 `ref.null` entry above.** Two of the three gaps below DID
+  move on wabt-ts 1.4.1, contradicting this item's core claim; only `ref.null` itself still stands,
+  and the baseline numbers quoted here are the pre-re-record ones. Kept for the reasoning only.
+- ⏳ **(historical) Chase the wabt-ts `ref.null` bug; do NOT expect the other two to move.** The 2026-08-20 corpus
   sync exposed three gaps, and they have **different owners** — see
   [compiler-bugs.md](compiler-bugs.md) § "wabt-ts `ref.null` + parser gaps". Only `ref.null`
   (cannot encode for any heap type; `ref_null.wast` is 0 pass / 34 skip) is a genuine wabt-ts bug and

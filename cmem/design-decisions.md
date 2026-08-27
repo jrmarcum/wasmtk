@@ -798,6 +798,24 @@ silently break (all `src/wasic.ts`):
     § "Vendored spec testsuite"). **If it ever bites, add `*.wast text eol=lf`** for exactly the
     reason `*.ts` is pinned — do not fix it by rewriting the vendored files, which are upstream's
     bytes and must stay that way.
+  - 🔀 **BOTH BACKENDS ARE NOW ONE PACKAGE — `@jrmarcum/binaryang` (merged 2026-08-27).** `wabt-ts`
+    and `binaryen-ts` no longer exist as separate dependencies. `deno.json` keeps **two specifiers
+    pointing at one dependency at one version**:
+
+    ```jsonc
+    "binaryen": "jsr:@jrmarcum/binaryang@1.5.1/compat/binaryen",
+    "wabt":     "jsr:@jrmarcum/binaryang@1.5.1/compat/wabt"
+    ```
+
+    - **Keep the two specifiers.** They are not redundant: `src/binaryen.ts` is a facade that also
+      supports `npm:binaryen`, and the bare `"wabt"` specifier is imported by five modules. Two
+      names over one package preserves the ability to swap either half independently.
+    - **They must move together.** Version skew between the assembler and the optimiser used to be
+      unavoidable; it is now self-inflicted. Bump both lines or neither.
+    - **There is no `./ir` and the root export is empty**, deliberately — 56 type names collide
+      across the two retained IRs (`Type`, `ValueType`, `WasmModule`, `Token`, ~52 expression
+      nodes). Always import a **compat subpath**; never the bare package.
+    - The entries below are the pre-merge history and stay for the reasoning, not the specifiers.
   - **`wabt-ts` moved to an exact `1.4.1` pin on 2026-08-25** once the three malformations it exposed
     were fixed. **The pin and the `try_table` migration are INSEPARABLE: 1.3.5 cannot encode
     `try_table` at all** (every handler form is an ENCODE-FAIL), so the emitter change cannot land on
@@ -807,7 +825,7 @@ silently break (all `src/wasic.ts`):
   - **`minimumDependencyAge: "PT1M"` STAYS — owner directive 2026-08-25. Do not "clean it up".**
     Deno's default 24-hour guard exists to stop a freshly-published malicious version from being
     pulled in unnoticed. That threat model does not describe this repo: **both backends are
-    first-party (`@jrmarcum/wabt-ts`, `@jrmarcum/binaryen-ts`), EXACT-pinned, and bumped deliberately
+    first-party (now the single `@jrmarcum/binaryang`), EXACT-pinned, and bumped deliberately
     in lockstep with a full regression gate.** The versions we install are ones we asked for, in
     response to bugs we reported. The guard's only effect here is to block a same-day backend fix for
     a day — which is exactly what it did to 1.4.1 and 1.5.0.
@@ -820,9 +838,11 @@ silently break (all `src/wasic.ts`):
     **both backends are now exact pins. Neither may move without a full gate**, because both are code
     generators whose *output text* we parse.
     - 🔒 **`try_table` modules SKIP binaryen `-Oz` — do not remove that branch on a version bump
-      alone.** 1.5.0 fixed the reader and then silently miscompiled the same modules: `-Oz`
-      CoalesceLocals merges a local live across a `try_table` catch edge, so an inner `catch (e)`
-      can overwrite an outer `e`. Reading the module is not the same capability as optimising it,
+      alone.** 1.5.0 fixed the reader and then silently miscompiled the same modules: `-Oz` drops a
+      local's initialisation when the local is reassigned inside the `try_table` body (the pre-try
+      store is dead only if the try COMPLETES). Reproduced in 161 bytes by
+      `scripts/check_try_table_oz.ts`; the offending pass is unidentified — an earlier note here
+      blamed CoalesceLocals and that was a guess, now retracted. Reading the module is not the same capability as optimising it,
       and the version that gained the first did not gain the second. Full post-mortem in
       [compiler-bugs.md](compiler-bugs.md); **the gate for lifting it is `15_Exceptions` +
       `15_LexicalShadowing_Stress`, never the acceptance fixture alone.**

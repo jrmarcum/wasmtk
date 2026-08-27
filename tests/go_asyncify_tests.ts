@@ -42,7 +42,7 @@ const HERE = import.meta.dirname!;
 const FIXTURE = join(HERE, "go_fixtures", "goroutines");
 const WASMTK = "wasmtk";
 
-/** Fixtures that MUST pass through the forced in-house binaryen-ts asyncify path. */
+/** Fixtures that MUST pass through the forced in-house binaryen asyncify path. */
 const INHOUSE: Array<{ name: string; src: string; expect: RegExp }> = [
   { name: "worker-pool", src: join(FIXTURE, "main.go"), expect: /sum:\s*30/ },
   { name: "select", src: join(FIXTURE, "select_ch", "main.go"), expect: /select-total:\s*300/ },
@@ -94,7 +94,9 @@ async function main(): Promise<void> {
   // ── Forced in-house asyncify path: the full working goroutine surface ──
   for (const f of INHOUSE) {
     const { success, text } = await runGo(f.src, /*forceInhouse*/ true);
-    ok(`${f.name}: in-house asyncify path used`, /binaryen-ts asyncify/.test(text));
+    // ⚠️ Coupled to the report label in `src/gowasic.ts` ("+ binaryen asyncify+-Oz").
+    // Renaming one without the other silently stops testing the thing it names.
+    ok(`${f.name}: in-house asyncify path used`, /binaryen asyncify/.test(text));
     ok(`${f.name}: ran and printed the expected result`, success && f.expect.test(text));
     if (!(success && f.expect.test(text))) console.error(text.slice(0, 600));
   }

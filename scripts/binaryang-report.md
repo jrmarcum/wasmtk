@@ -1,59 +1,77 @@
-# Report / reply to the `binaryen-ts` team
+# Reports / replies to the `binaryang` backend team
 
-## NEW BUG — 2026-08-25 (3): `-Oz` CoalesceLocals miscompiles `try_table` (silent wrong answers)
+> Formerly two threads, to `@jrmarcum/binaryen-ts` and `@jrmarcum/wabt-ts`, which **merged into
+> `@jrmarcum/binaryang` on 2026-08-27**. Sections dated before that keep the old package names on
+> purpose — they record what was reported to whom, and retitling them would make the record wrong.
 
-**Thank you for 1.5.0 — the multi-value block reader works.** Modules whose `try_table` handler block
-takes two results now load cleanly, which unblocked us. We removed our skip branch, ran the full
-gate, and hit a **second, quieter defect in the same modules.** Reporting it immediately because this
-one produces wrong output rather than an error.
+## NEW BUG — 2026-08-27: `-Oz` silently drops a pre-`try_table` local initialisation
 
-### Symptom
+*(Addressed to **binaryang**. This file is the running thread with the backend team; earlier
+sections predate the `binaryen-ts` + `wabt-ts` merge and still carry the old names.)*
 
-`-Oz` (`setShrinkLevel(2)`, `setOptimizeLevel(2)`, `setFeatures(Features.All)`) on a module using the
-standard exception proposal returns a module that **runs and prints the wrong value**. Two of our
-tests, one root cause:
+**Confirmed present in `binaryang@1.5.1`.** We first hit this on `binaryen-ts@1.5.0` and the merge did
+not change it. **Minimal repro attached below: 161 bytes, no imports beyond `proc_exit`.**
 
-| test | expected | after `-Oz` |
-| --- | --- | --- |
-| `15_Exceptions` | `-1` | `0` |
-| `15_LexicalShadowing_Stress` | `Shadow Check: Outer String` | `Shadow Check: Inner Literal Error` |
+### The defect
 
-The second is the clearer statement of the bug: an **inner `catch (e)` overwrites the OUTER `e`.**
+`-Oz` (`setShrinkLevel(2)`, `setOptimizeLevel(2)`, `setFeatures(Features.All)`) **eliminates a local's
+initialisation when the local is written again inside a `try_table` body.** The pre-try store is only
+dead if the try COMPLETES; when the body throws, the handler must still observe the initial value.
 
-### Attribution — one variable, measured
+```
+  pre-Oz   161 bytes -> exit 42   (correct)
+  post-Oz  151 bytes -> exit  1   ($result + 1, with the 41 initialisation dropped: 0 + 1)
+```
 
-We assembled the same `.wat` with the same wabt-ts 1.4.1 and ran both artifacts:
+### The shape (this is the part that matters)
 
-- pre-`-Oz` bytes (wabt output, untouched) → correct `-1`
-- post-`-Oz` bytes → `0`
+```ts
+let result = -1;                  // initialised BEFORE the try
+try { result = divide(a, b); }    // ASSIGNED INSIDE the try, by a call that throws
+catch (e) { /* leaves result alone */ }
+return result;                    // must still be -1; we observed 0
+```
 
-Same WAT, same assembler, same runtime. The only difference is `optimize()`.
+Our reading: the CFG has no edge from **mid-`try_table` body** to the handler. With `try_table` a
+catch clause is a **branch target**, not the inline handler legacy `try`/`catch` has, so a
+legacy-shaped CFG never walks that edge and the initialising store looks unreachable-from-live.
 
-### Our reading of the cause (may save you a bisect)
+### ⚠️ Correction to what we told you earlier
 
-We believe this is **CoalesceLocals merging a local that is live across a `try_table` catch edge.**
-The EH-aware CFG added around 1.3.4 fixed exactly this class for **legacy** `try`/`catch`, where a
-catch clause is an *inline handler*. In `try_table` a catch clause is a **branch target**, so the
-edge from the guarded region to the handler is an ordinary branch edge that the legacy-shaped CFG
-may not be modelling. A local live into the handler then looks dead and gets coalesced.
+Our first report called this "CoalesceLocals merging a local live across a catch edge." **That was a
+guess and we are retracting the attribution** — the observable defect is a dropped initialisation, and
+we have not identified the pass. What we can say:
 
-If that is right, the fix is in how liveness enumerates successor edges for `try_table`, and it
-should be reproducible with any function that keeps a value live across a catch.
+- `vacuum` alone: **safe** (exit 42)
+- `dce` alone: **safe** (exit 42)
+- Every other pass name we tried is unknown to the compat surface, so we could not bisect further.
 
-### ⚠️ A repro caveat that cost us the bug
+**Small API gap while you are in there:** `runPasses(["coalesce-locals"])` fails with
+`Unknown pass: "coalesce-locals". Run listPasses() to see registered passes.` — but **`listPasses()`
+is not exposed** on `compat/binaryen` (not on the module instance, not on the namespace). The error
+names a function the caller cannot reach.
 
-Our minimal fixture (`scripts/eh_try_table_fixture.wat`) **passes `-Oz` and exits 34 correctly.** It
-exercises `try_table` but keeps **no local live across the handler edge**, so it does not reproduce
-this at all. We trusted it, deleted our skip, and the full suite caught what the fixture could not.
-**A minimal `try_table` repro needs a local written before the `try_table` and read inside the catch**
-— otherwise it will look green.
+### Repro
 
-### What we did on our side
+`scripts/eh_try_table_live_local_fixture.wat` in wasmtk, driven by
+`deno run -A scripts/check_try_table_oz.ts`, which assembles once and runs the result both sides of
+`-Oz`. Exit 42 = correct, exit 1 = this bug.
 
-Reinstated our skip: modules containing `try_table` bypass binaryen entirely and ship raw wabt
-output. We stay on **1.5.0** (the reader fix is real and we want it); the skip is narrow and costs us
-only binary size on modules that throw. We would happily lift it — the acceptance gate is those two
-tests above, not the fixture.
+### ⚠️ The trap that cost us two days — worth repeating to anyone writing the regression test
+
+Our FIRST attempt at this fixture set the local before the try and never wrote it inside. **It passed
+`-Oz` cleanly while real modules were still miscompiling**, and on that evidence we removed our
+workaround and shipped wrong code until the full suite caught it. A `try_table` module that merely
+*uses* exceptions does not exercise this. **The local must be assigned INSIDE the try body by
+something that throws** — otherwise there is no dead-store reasoning to get wrong, and the test is
+green for the wrong reason.
+
+### What we do on our side meanwhile
+
+`try_table` modules bypass binaryen entirely and ship raw wabt output (`src/wasic.ts`). We stay on
+`binaryang@1.5.1` — we want the multi-value block reader that 1.5.0 brought. The skip costs us only
+binary size on modules that throw, and we would happily drop it: our acceptance gate is
+`check_try_table_oz.ts` **plus** `15_Exceptions` and `15_LexicalShadowing_Stress` in `wasi_tests`.
 
 ---
 

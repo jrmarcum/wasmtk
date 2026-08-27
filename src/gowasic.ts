@@ -4,7 +4,7 @@
  *
  * A front-end plugin: it shells out to a Go toolchain to emit a wasm module, then the existing
  * wasmtk downstream takes over (`wasmtk run` hosts wasip1 output on the TS WASI host; wasmmerge /
- * binaryen-ts can consume it). No part of the wasic TypeScript compiler is involved.
+ * binaryen can consume it). No part of the wasic TypeScript compiler is involved.
  *
  * Command set (all WASI — no browser/syscall/js output; consume the modules with the universal
  * wasm loader):
@@ -23,8 +23,8 @@
  * mandatory codegen for goroutines, not optimization. If a real `wasm-opt` is present (PATH /
  * $WASMOPT) wasmtk lets TinyGo use it (full support incl. goroutines). If not, wasmtk supplies a
  * passthrough `wasm-opt` shim, builds with `-scheduler=none` (no asyncify), and optimizes the
- * result with binaryen-ts `-Oz` instead — no external binaryen, goroutine-FREE code only. (Native
- * goroutine support without binaryen needs an asyncify pass in binaryen-ts — roadmap future item.)
+ * result with binaryen `-Oz` instead — no external binaryen, goroutine-FREE code only. (Native
+ * goroutine support without binaryen needs an asyncify pass in binaryen — roadmap future item.)
  *
  * Scope (v1, numerics-first): command-mode (`func main`). Go string/aggregate HOST bindings
  * (bindgen) are deferred (ABI forward-alignment).
@@ -109,14 +109,14 @@ async function isDirectory(path: string): Promise<boolean> {
 }
 
 /** The passthrough wasm-opt shim: answers `--version`, otherwise copies TinyGo's input wasm to its
- *  `-o`/`--output` target with NO optimization (binaryen-ts does the -Oz afterwards).
+ *  `-o`/`--output` target with NO optimization (binaryen does the -Oz afterwards).
  *  Runtime-agnostic: runs under whichever runtime execs it (Deno, Bun, or Node). */
 const SHIM_TS = String.raw`// @ts-nocheck
 const _D = typeof Deno !== "undefined" ? Deno : undefined;
 const _argv = _D ? _D.args : (typeof process !== "undefined" ? process.argv.slice(2) : []);
 const _exit = (c) => { if (_D) _D.exit(c); else process.exit(c); };
 if (_argv.includes("--version") || _argv.includes("-version")) {
-  console.log("wasm-opt version 116 (wasmtk binaryen-ts passthrough shim)");
+  console.log("wasm-opt version 116 (wasmtk binaryen passthrough shim)");
   _exit(0);
 }
 let out = "", input = "";
@@ -244,7 +244,7 @@ async function buildWithTinyGo(
   ];
 
   // `WASMTK_GO_BINARYEN_ASYNCIFY=1` forces the no-external-binaryen path (TinyGo
-  // asyncify scheduler + passthrough shim + binaryen-ts Asyncify+-Oz) even when a
+  // asyncify scheduler + passthrough shim + binaryen Asyncify+-Oz) even when a
   // real `wasm-opt` is on PATH — used by the goroutine e2e and by users who want
   // zero external binaryen. Otherwise a real `wasm-opt` (if present) is preferred.
   const forceBinaryenAsyncify = rt.env.get("WASMTK_GO_BINARYEN_ASYNCIFY") === "1";
@@ -272,9 +272,9 @@ async function buildWithTinyGo(
 
   // No real wasm-opt → build with TinyGo's asyncify scheduler + a passthrough
   // wasm-opt shim (so TinyGo leaves the module un-instrumented, importing the
-  // `asyncify.*` control API), then run binaryen-ts's Asyncify (which resolves
+  // `asyncify.*` control API), then run binaryen's Asyncify (which resolves
   // those imports) + `-Oz` ourselves. This supports GOROUTINES with no external
-  // binaryen (binaryen-ts ≥ 1.4.1's in-wasm asyncify-import mode).
+  // binaryen (in-wasm asyncify-import mode: binaryen ≥ 1.4.1, now binaryang ≥ 1.5.1).
   const shim = await writeWasmOptShim(baseDir);
   try {
     const r = await new rt.Command("tinygo", {
@@ -306,15 +306,15 @@ async function buildWithTinyGo(
   } finally {
     await shim.cleanup();
   }
-  // Resolve the asyncify.* imports + optimize via binaryen-ts. This MUST succeed —
+  // Resolve the asyncify.* imports + optimize via binaryen. This MUST succeed —
   // an un-asyncified module has unresolved `asyncify.*` imports and won't run.
   try {
     await rt.writeFile(out, binaryenAsyncify(await rt.readFile(out)));
-    return await report(out, `tinygo:${reportLabel} + binaryen-ts asyncify+-Oz`);
+    return await report(out, `tinygo:${reportLabel} + binaryen asyncify+-Oz`);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error(`❌ wasmtk (go): binaryen-ts asyncify pass failed: ${msg}`);
-    return { success: false, error: "binaryen-ts asyncify failed" };
+    console.error(`❌ wasmtk (go): binaryen asyncify pass failed: ${msg}`);
+    return { success: false, error: "binaryen asyncify failed" };
   }
 }
 
@@ -325,7 +325,7 @@ async function buildWithTinyGo(
  * wasmbundle build like a Zig `FixedBufferAllocator` leaf. (wasmtk's merge calls the leaf's
  * `_initialize` — TinyGo guards each export on a runtime-init flag — see `mergeOneWasmImport`.)
  * No asyncify path: a leaf has no goroutine scheduler, so `-Oz` alone (real `wasm-opt` or the
- * binaryen-ts passthrough) suffices.
+ * binaryen passthrough) suffices.
  *
  * CAVEAT: the init flag sits at a fixed page-1 address (65536), so the host program must not use
  * that region — fine for typical small hosts; large-memory hosts should prefer the reactor/bindgen
@@ -370,7 +370,7 @@ async function buildGoLeaf(baseDir: string, buildArg: string, out: string): Prom
     if (fail) return fail;
     return await report(out, "tinygo:wasm-unknown leaf (wasm-opt)");
   }
-  // No real wasm-opt → passthrough shim + binaryen-ts `-Oz` (a leaf needs no asyncify).
+  // No real wasm-opt → passthrough shim + binaryen `-Oz` (a leaf needs no asyncify).
   const shim = await writeWasmOptShim(baseDir);
   try {
     const fail = await runBuild({ ...baseEnv, WASMOPT: shim.launcher });
@@ -380,7 +380,7 @@ async function buildGoLeaf(baseDir: string, buildArg: string, out: string): Prom
   }
   const { bytes, optimized } = binaryenOptimize(await rt.readFile(out));
   if (optimized) await rt.writeFile(out, bytes);
-  return await report(out, `tinygo:wasm-unknown leaf${optimized ? " + binaryen-ts -Oz" : ""}`);
+  return await report(out, `tinygo:wasm-unknown leaf${optimized ? " + binaryen -Oz" : ""}`);
 }
 
 async function buildWithStd(
