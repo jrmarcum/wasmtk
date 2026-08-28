@@ -4,37 +4,35 @@
 > targets + the first breaking change). Authoritative status lives in [roadmap.md](roadmap.md); this
 > file is the short, prioritized "what to pick up next" list. Prune items as they land.
 
-## 🔽 TASK 1 FOR 2026-08-28 — bump binaryang to 1.5.3 and gate it
+## 🔽 TASK 1 FOR 2026-08-28 — GATE binaryang 1.5.3 (pin already updated)
 
-⚠️ **PRECONDITION: 1.5.3 was NOT on JSR as of 2026-08-27 evening. Check first.**
-Owner reported the bump; JSR listed only **1.5.2, 1.5.1**, and the resolver refused:
-`Could not find version of '@jrmarcum/binaryang' that matches specified version constraint '1.5.3'`.
-**The pin was deliberately left at 1.5.2** — a specifier that cannot resolve breaks every build and
-test on the specifier rather than on anything real, which is a worse state to start a day in than
-being one version behind. Same situation as `release/1.5.2` earlier that day: tagged upstream, not
-yet published.
+**The pin is DONE and the binary is installed; only the gate is outstanding.** `deno.json` points
+both compat subpaths at `1.5.3`, `deno.lock` resolves `binaryang@1.5.3` alone, and
+`deno task install` has run. **Committed but UNGATED — do not publish from this tree until the gate
+below is green.**
 
-```bash
-# 0. does it exist yet?
-deno info "jsr:@jrmarcum/binaryang@1.5.3/compat/wabt"     # must succeed before anything below
-```
+Already verified, 2026-08-27 evening:
+- `scripts/check_try_table_oz.ts` → **exit 0** (pre-Oz 42 / post-Oz 42). The `-Oz` skip stays lifted;
+  the fix that landed in 1.5.2 is still good in 1.5.3.
 
-Then, in order — this is the sequence that has now worked twice:
+⚠️ **A publishing problem delayed 1.5.3, and it bit us in a way worth remembering.** JSR's API listed
+`1.5.3` while `deno info` still reported *"Could not find version … that matches 1.5.3"* — deno had
+cached `https://jsr.io/@jrmarcum/binaryang/meta.json`. **`deno info --reload` is what resolves it.**
+This is the same failure class as the provenance false negatives: a cached read reporting absence
+that is not real. **When a version you were told exists cannot be found, reload before concluding it
+is unpublished.**
 
-1. **Pin both subpaths** in `deno.json` to `1.5.3` (`compat/binaryen` AND `compat/wabt` — one
-   package, one version, they move together), `rm deno.lock`, `deno task install`, confirm the lock
-   resolves `binaryang@1.5.3` alone.
-2. **`deno run -A scripts/check_try_table_oz.ts`** — exit 0 required. This is the standing guard on
-   the `-Oz` skip having been lifted; a regression here means reinstating it.
-3. **Full gate, in dependency order:** everything else → `wasi_tests` → `engine_cross_check_tests`
+Remaining, in order:
+
+1. **Full gate, in dependency order:** everything else → `wasi_tests` → `engine_cross_check_tests`
    → `wast_tests`. Order is load-bearing (the engine gate reads the corpus wasi regenerates).
-4. **No reinstall while the gate runs**, and let the machine settle before the Go suites — see the
+2. **No reinstall while the gate runs**, and let the machine settle before the Go suites — see the
    `os error 32` note in [testing.md](testing.md).
-5. Expect the engine and/or wast gates to report **IMPROVED** rather than regressed; re-record
+3. Expect the engine and/or wast gates to report **IMPROVED** rather than regressed; re-record
    deliberately, never reflexively, and read what moved before accepting it.
 
-Nothing about 1.5.3 is known here — no release note reached us, so treat every gate result as new
-information rather than confirmation.
+No release note for 1.5.3 reached us, so treat every gate result as new information rather than
+confirmation. The 25/21 dependency counts on the two compat subpaths are unchanged from 1.5.2.
 
 ## Open as of 2026-08-27 — after the backend merge
 
