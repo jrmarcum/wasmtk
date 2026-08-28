@@ -4,6 +4,38 @@
 > targets + the first breaking change). Authoritative status lives in [roadmap.md](roadmap.md); this
 > file is the short, prioritized "what to pick up next" list. Prune items as they land.
 
+## 🔽 TASK 1 FOR 2026-08-28 — bump binaryang to 1.5.3 and gate it
+
+⚠️ **PRECONDITION: 1.5.3 was NOT on JSR as of 2026-08-27 evening. Check first.**
+Owner reported the bump; JSR listed only **1.5.2, 1.5.1**, and the resolver refused:
+`Could not find version of '@jrmarcum/binaryang' that matches specified version constraint '1.5.3'`.
+**The pin was deliberately left at 1.5.2** — a specifier that cannot resolve breaks every build and
+test on the specifier rather than on anything real, which is a worse state to start a day in than
+being one version behind. Same situation as `release/1.5.2` earlier that day: tagged upstream, not
+yet published.
+
+```bash
+# 0. does it exist yet?
+deno info "jsr:@jrmarcum/binaryang@1.5.3/compat/wabt"     # must succeed before anything below
+```
+
+Then, in order — this is the sequence that has now worked twice:
+
+1. **Pin both subpaths** in `deno.json` to `1.5.3` (`compat/binaryen` AND `compat/wabt` — one
+   package, one version, they move together), `rm deno.lock`, `deno task install`, confirm the lock
+   resolves `binaryang@1.5.3` alone.
+2. **`deno run -A scripts/check_try_table_oz.ts`** — exit 0 required. This is the standing guard on
+   the `-Oz` skip having been lifted; a regression here means reinstating it.
+3. **Full gate, in dependency order:** everything else → `wasi_tests` → `engine_cross_check_tests`
+   → `wast_tests`. Order is load-bearing (the engine gate reads the corpus wasi regenerates).
+4. **No reinstall while the gate runs**, and let the machine settle before the Go suites — see the
+   `os error 32` note in [testing.md](testing.md).
+5. Expect the engine and/or wast gates to report **IMPROVED** rather than regressed; re-record
+   deliberately, never reflexively, and read what moved before accepting it.
+
+Nothing about 1.5.3 is known here — no release note reached us, so treat every gate result as new
+information rather than confirmation.
+
 ## Open as of 2026-08-27 — after the backend merge
 
 Both backends moved on 2026-08-25 (**wabt-ts → `1.4.1`, binaryen-ts → `1.5.0`**) and then **merged
