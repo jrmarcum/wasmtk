@@ -6,3 +6,26 @@
 # Pinning eol=lf for TypeScript settles it — the blobs are already stored as LF, so this changes
 # nothing in history; it only stops the checkout filter from converting them back to CRLF.
 *.ts text eol=lf
+
+# ── Binary artifacts: mark EXPLICITLY, never rely on git's guess ────────────────────────────────
+# 66 `.wasm` fixtures are tracked. With core.autocrlf=true git decides text-vs-binary by heuristic:
+# it looks for a NUL byte within the first 8000 bytes. A WebAssembly binary's 4-byte magic ends in
+# one, so the heuristic has always won and nothing is corrupt today — verified 2026-08-27, 40 files
+# sampled, zero blob-vs-worktree mismatches. **That is luck holding, not a guarantee.** The guess
+# reads a prefix, and a mangled `.wasm` surfaces as a malformed module far from its cause.
+*.wasm binary
+
+# ── WAT / WAST: the same LF pin as *.ts, for the same reason ────────────────────────────────────
+# Every blob is already LF — verified 2026-08-27, 30 `.wast` and 20 `.wat` sampled, none containing
+# CR — so this changes NOTHING in history. It only stops the checkout filter handing back CRLF.
+# The `.wast` corpus is vendored upstream bytes that must not be rewritten; pinning eol is precisely
+# how to leave them alone, as against reformatting them.
+#
+# ⚠️ Adding a rule does NOT re-materialise files already in the working tree — existing line endings
+# survive until a file is deleted and checked out again. `git add --renormalize .` fixes the INDEX,
+# not the working tree, and it re-applies conversion to EVERY tracked file: run it here and it also
+# rewrites `LICENSE*` and `.github/FUNDING.yml`, whose blobs still carry CRLF. Those are a separate
+# decision and do not belong in a change about WASM artifacts. Verify with
+# `git check-attr text eol binary -- <file>`, never by eyeballing the file.
+*.wat  text eol=lf
+*.wast text eol=lf
