@@ -318,9 +318,12 @@ when handed a shape, ask what makes it fire before auditing for the shape.
 
 | method | reports | wrong how |
 | --- | --- | --- |
-| `grep -c ''` | 140 | the backslash is a BRE escape — it counts literal `r` characters |
-| `grep -c $''` (no `-U`) | **0** | grep strips CR in text mode on this platform |
-| `grep -cU $''` | 184 | correct |
+| `grep -c '
+'` | 140 | the backslash is a BRE escape — it counts literal `r` characters |
+| `grep -c $'
+'` (no `-U`) | **0** | grep strips CR in text mode on this platform |
+| `grep -cU $'
+'` | 184 | correct |
 | byte count in python | 184 | correct |
 
 Upstream's error read **high and plausible** and confirmed the theory they were testing; ours would
@@ -379,6 +382,42 @@ later**, at 2140s and 1533s of CPU, competing with every build and timing measur
 between. Nothing reported an error — the harness said the task was stopped, and it was. After killing
 a long run, list the process table and kill survivors by PID. On a gate whose failures are *timeouts*,
 a stray CPU hog is not just noise, it manufactures the symptom you are hunting.
+
+## 4b. Tooling that lies to you (the shell, the cache, the generator)
+
+These are not "be careful" items — each returns a **confident, plausible, wrong** answer, and every
+one of them cost real time on 2026-08-27.
+
+**Author file CONTENT with a real file write; use the shell only to MOVE it.** [binaryang + wasmtk]
+Writing a config through a shell heredoc into `python3 - <<'EOF'` collapses backslashes one level:
+`\0asm` in the source became ` asm`, which Python read as **a literal NUL byte**, and that byte
+landed in `.gitattributes` — the file whose entire job is stopping content corruption. git flagged it
+instantly (`Bin 584 -> 2144`), which is the only reason it was caught. **The corruption was invisible
+in the source that produced it.** Same wall hit three times in one day. The rule is not "escape more
+carefully": use `Write`/`Edit` for content, and reserve the shell for running things.
+
+**When the exit code IS the measurement, do not pipe.** [wasmtk, third occurrence] `deno fmt --check
+... | tail -1` inside an `&&` chain gives the chain **tail's** status, so a failing format check
+committed anyway. This rule was already written down and still did not survive contact. The
+behavioural fix that does: **redirect to a file and echo `$?`** —
+`cmd > /tmp/out.txt 2>&1; echo "exit=$?"` — rather than remembering `${PIPESTATUS[0]}` at the moment
+you are focused on something else.
+
+**A cached read reports an ABSENCE that is not real — reload before concluding something does not
+exist.** [wasmtk] Two instances, same shape: JSR's API listed `binaryang@1.5.3` while `deno info`
+insisted *"Could not find version … that matches 1.5.3"* from a cached `meta.json` (`deno info
+--reload` resolved it); and the JSR provenance endpoint returned null for minutes after a publish
+that DID get attestation. **The symmetry is the trap:** hours before the 1.5.3 case, the identical
+reasoning — "the resolver cannot find it, so do not pin it" — was correct and kept us off an
+unresolvable pin. The tell is not how confident the error sounds; it is which side of a cache you are
+reading from.
+
+**Prefer a WILDCARD-plus-exceptions default over a hand-maintained list.** [binaryang → wasmtk] Our
+`.gitattributes` began `*.ts text eol=lf` and grew by appending types as each was noticed. That is a
+list, and **a list acquires a hole the next time someone adds a file type** — `.md`, `.json`, `.go`
+and `LICENSE` were all still unspecified when we checked. Leading with `* text=auto eol=lf` and
+subtracting `*.wasm binary` cannot develop that hole. Generalises past git: when a rule must cover
+"everything of a kind", write the default and carve out exceptions, rather than enumerating members.
 
 ## 5. Recording what you found
 

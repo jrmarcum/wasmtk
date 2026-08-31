@@ -803,9 +803,12 @@ silently break (all `src/wasic.ts`):
     pointing at one dependency at one version**:
 
     ```jsonc
-    "binaryen": "jsr:@jrmarcum/binaryang@1.5.1/compat/binaryen",
-    "wabt":     "jsr:@jrmarcum/binaryang@1.5.1/compat/wabt"
+    "binaryen-backend": "jsr:@jrmarcum/binaryang@1.5.3/compat/binaryen",
+    "wabt":             "jsr:@jrmarcum/binaryang@1.5.3/compat/wabt"
     ```
+
+    ⚠️ **The alias is `binaryen-backend`, not `binaryen`** — see the invariant below. This block is
+    the live shape; keep it in step with `deno.json` or it becomes the thing people copy.
 
     - **Keep the two specifiers.** They are not redundant: `src/binaryen.ts` is a facade that also
       supports `npm:binaryen`, and the bare `"wabt"` specifier is imported by five modules. Two

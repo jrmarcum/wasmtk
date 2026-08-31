@@ -12,7 +12,7 @@
 | --- | --- |
 | `wasi_tests` | **417 / 417**, 0 failed |
 | `engine_cross_check_tests` | 1128 on-baseline, **0 regressed, 0 improved** — ALL ON BASELINE |
-| `wast_tests` | ON BASELINE — 288 files / 37,247 passed / 102 known failures |
+| `wast_tests` | ON BASELINE — 288 files / 37,247 passed / 102 known failures *(figures AS MEASURED on 1.5.3; the `ref.null` runner fix later the same day took this to **37,370 / 100** — see below)* |
 | everything else | exit 0 |
 | `scripts/check_try_table_oz.ts` | exit 0 (pre-Oz 42 / post-Oz 42) — `-Oz` skip stays lifted |
 
