@@ -91,6 +91,8 @@ const head = new TextDecoder().decode(
 console.log(`   checkout at ${head || "unknown"}`);
 console.log("");
 console.log("   Use:  deno run -A --config deno.upstream.json <script>");
-console.log("         deno task upstream:install     # installs as `wasmtk-upstream`, NOT `wasmtk`");
+console.log(
+  "         deno task upstream:install     # installs as `wasmtk-upstream`, NOT `wasmtk`",
+);
 console.log("   ⚠️  Results from this config are NOT evidence for a decision — the gate of record");
 console.log("       runs `wasmtk`, built from the pinned release in deno.json.");
