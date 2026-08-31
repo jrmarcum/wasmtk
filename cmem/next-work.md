@@ -4,35 +4,31 @@
 > targets + the first breaking change). Authoritative status lives in [roadmap.md](roadmap.md); this
 > file is the short, prioritized "what to pick up next" list. Prune items as they land.
 
-## 🔽 TASK 1 FOR 2026-08-28 — GATE binaryang 1.5.3 (pin already updated)
+## ✅ binaryang 1.5.3 — PINNED AND FULLY GATED (2026-08-27). Tree is publishable.
 
-**The pin is DONE and the binary is installed; only the gate is outstanding.** `deno.json` points
-both compat subpaths at `1.5.3`, `deno.lock` resolves `binaryang@1.5.3` alone, and
-`deno task install` has run. **Committed but UNGATED — do not publish from this tree until the gate
-below is green.**
+**All 16 suites green, and nothing moved.**
 
-Already verified, 2026-08-27 evening:
-- `scripts/check_try_table_oz.ts` → **exit 0** (pre-Oz 42 / post-Oz 42). The `-Oz` skip stays lifted;
-  the fix that landed in 1.5.2 is still good in 1.5.3.
+| gate | result |
+| --- | --- |
+| `wasi_tests` | **417 / 417**, 0 failed |
+| `engine_cross_check_tests` | 1128 on-baseline, **0 regressed, 0 improved** — ALL ON BASELINE |
+| `wast_tests` | ON BASELINE — 288 files / 37,247 passed / 102 known failures |
+| everything else | exit 0 |
+| `scripts/check_try_table_oz.ts` | exit 0 (pre-Oz 42 / post-Oz 42) — `-Oz` skip stays lifted |
 
-⚠️ **A publishing problem delayed 1.5.3, and it bit us in a way worth remembering.** JSR's API listed
-`1.5.3` while `deno info` still reported *"Could not find version … that matches 1.5.3"* — deno had
-cached `https://jsr.io/@jrmarcum/binaryang/meta.json`. **`deno info --reload` is what resolves it.**
-This is the same failure class as the provenance false negatives: a cached read reporting absence
-that is not real. **When a version you were told exists cannot be found, reload before concluding it
-is unpublished.**
+**No baseline needed re-recording** — the first backend bump in this whole sequence where that is
+true. From our vantage point 1.5.3 is behaviourally identical to 1.5.2; the dependency counts on both
+compat subpaths are unchanged too (25 / 21). No release note reached us, so this is measurement, not
+confirmation: whatever 1.5.3 changed, it is not something our 417 modules, 376-module engine corpus
+or 288-file spec corpus can see.
 
-Remaining, in order:
-
-1. **Full gate, in dependency order:** everything else → `wasi_tests` → `engine_cross_check_tests`
-   → `wast_tests`. Order is load-bearing (the engine gate reads the corpus wasi regenerates).
-2. **No reinstall while the gate runs**, and let the machine settle before the Go suites — see the
-   `os error 32` note in [testing.md](testing.md).
-3. Expect the engine and/or wast gates to report **IMPROVED** rather than regressed; re-record
-   deliberately, never reflexively, and read what moved before accepting it.
-
-No release note for 1.5.3 reached us, so treat every gate result as new information rather than
-confirmation. The 25/21 dependency counts on the two compat subpaths are unchanged from 1.5.2.
+⚠️ **A cached-read trap cost us a false "unpublished" verdict on the way in.** JSR's API listed
+`1.5.3` while `deno info` reported *"Could not find version … that matches 1.5.3"* — deno had cached
+`jsr.io/@jrmarcum/binaryang/meta.json`. **`deno info --reload` resolves it.** Same failure class as the
+provenance false negatives: a cached read reporting an absence that is not real. The symmetry is the
+lesson — hours earlier the identical reasoning ("the resolver cannot find it, so do not pin it")
+was CORRECT and kept us off an unresolvable pin. **The tell is which side of the cache you are
+reading from, not how confident the error sounds. Reload before concluding a version does not exist.**
 
 ## Open as of 2026-08-27 — after the backend merge
 
