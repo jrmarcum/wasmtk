@@ -1,31 +1,46 @@
-# `deno fmt` emits LF and reports a CRLF file as "Text differed by line endings", while this
-# machine's git runs with core.autocrlf=true, which hands out CRLF on every checkout. Those two
-# fight each other: formatting the tree fixes `deno fmt --check` only until the next checkout
-# re-introduces CRLF, which is why the "main.ts + src/ is fmt-clean" note kept going stale.
+# ── WILDCARD FIRST, then exceptions ────────────────────────────────────────────────────────────
+# The default line below is load-bearing, and its ABSENCE is what this file used to get wrong.
 #
-# Pinning eol=lf for TypeScript settles it — the blobs are already stored as LF, so this changes
-# nothing in history; it only stops the checkout filter from converting them back to CRLF.
-*.ts text eol=lf
+# This started as `*.ts text eol=lf` alone. A narrow first glob leaves every other tracked type to
+# `core.autocrlf`, so the file only covered what someone had remembered to list — and a
+# hand-maintained list acquires a hole the next time a file type is added. 66 `.wasm` fixtures sat
+# unspecified for months, protected only by git's NUL-byte heuristic. Nothing was corrupt (verified
+# 2026-08-27, 40 sampled, zero blob-vs-worktree mismatches), which is luck holding, not a design.
+#
+# The transferable rule, from the binaryang team who hit the same shape: **lead with the wildcard and
+# subtract exceptions.** A default that covers everything cannot develop a hole; a list can.
+* text=auto eol=lf
 
-# ── Binary artifacts: mark EXPLICITLY, never rely on git's guess ────────────────────────────────
-# 66 `.wasm` fixtures are tracked. With core.autocrlf=true git decides text-vs-binary by heuristic:
-# it looks for a NUL byte within the first 8000 bytes. A WebAssembly binary's 4-byte magic ends in
-# one, so the heuristic has always won and nothing is corrupt today — verified 2026-08-27, 40 files
-# sampled, zero blob-vs-worktree mismatches. **That is luck holding, not a guarantee.** The guess
-# reads a prefix, and a mangled `.wasm` surfaces as a malformed module far from its cause.
+# ── Binary: subtracted from the default above (later rules win) ─────────────────────────────────
+# Marked EXPLICITLY rather than left to git's guess, which reads only the first 8000 bytes for a NUL.
+# A WebAssembly binary's magic ends in one, so the heuristic has always won here — but it is a
+# prefix scan, and a mangled `.wasm` surfaces as a malformed module far from its cause.
 *.wasm binary
 
-# ── WAT / WAST: the same LF pin as *.ts, for the same reason ────────────────────────────────────
-# Every blob is already LF — verified 2026-08-27, 30 `.wast` and 20 `.wat` sampled, none containing
-# CR — so this changes NOTHING in history. It only stops the checkout filter handing back CRLF.
+# ── Text kept explicit for readers, though the wildcard now covers them ─────────────────────────
+# `deno fmt` emits LF and reports a CRLF file as "Text differed by line endings", while this
+# machine's git runs with core.autocrlf=true and hands out CRLF on every checkout. Those two fight
+# each other, which is why the "main.ts + src/ is fmt-clean" note kept going stale. Every blob is
+# already LF (verified: 30 `.wast`, 20 `.wat`, all `.ts`), so pinning changes NOTHING in history —
+# it only stops the checkout filter converting them back.
+#
 # The `.wast` corpus is vendored upstream bytes that must not be rewritten; pinning eol is precisely
 # how to leave them alone, as against reformatting them.
-#
-# ⚠️ Adding a rule does NOT re-materialise files already in the working tree — existing line endings
-# survive until a file is deleted and checked out again. `git add --renormalize .` fixes the INDEX,
-# not the working tree, and it re-applies conversion to EVERY tracked file: run it here and it also
-# rewrites `LICENSE*` and `.github/FUNDING.yml`, whose blobs still carry CRLF. Those are a separate
-# decision and do not belong in a change about WASM artifacts. Verify with
-# `git check-attr text eol binary -- <file>`, never by eyeballing the file.
+*.ts   text eol=lf
 *.wat  text eol=lf
 *.wast text eol=lf
+
+# ── Two things that bite when changing this file ────────────────────────────────────────────────
+#
+# 1. Adding a rule does NOT re-materialise files already in the working tree — existing line endings
+#    survive until a file is deleted and checked out again. `git add --renormalize .` fixes the
+#    INDEX, not the working tree, and it re-applies conversion to EVERY tracked file: run it here and
+#    it also rewrites `LICENSE*` and `.github/FUNDING.yml`, whose blobs still carry CRLF. That is
+#    229 lines of unrelated churn and a separate decision. Verify with
+#    `git check-attr text eol binary -- <file>`, never by eyeballing a file.
+#
+# 2. Measuring CR on this platform is booby-trapped in BOTH directions. `grep -c '\r'` treats the
+#    backslash as a BRE escape and counts literal `r` characters (reads high and plausible);
+#    `grep -c $'\r'` without `-U` lets grep strip CR in text mode and returns 0 (reads low and
+#    plausible). Only `grep -U $'\r'` — or counting bytes outright — is correct. Measured on
+#    `LICENSE-APACHE`: 140 / 0 / 184, against a true count of 184.

@@ -304,6 +304,31 @@ already had the precedent — NaN payloads that cannot cross the JS boundary are
 comment saying why. **A new failure appearing beside a big win deserves the same scrutiny as a
 regression, and is exactly when you are least inclined to look.**
 
+**Hand over the CHECK, not the CONCLUSION.** [binaryang → wasmtk, 2026-08-27] A defect reached us as
+"a tag whose param is `(ref $T)`", and the follow-up we wrote down was "audit our fixtures for
+`(ref $T)` tag params". That is **a conclusion shaped like a check** — unfalsifiable by its recipient,
+because running it can only confirm the sender's framing. The real precondition was a conjunction
+that never mentioned tag types, so our audit would have returned no matches and we would have
+recorded "unaffected" on reasoning that does not support it. Upstream named the rule after correcting
+themselves: **give the other side the predicate, not your evaluation of it.** The receiving version:
+when handed a shape, ask what makes it fire before auditing for the shape.
+
+**Measuring line endings is booby-trapped in BOTH directions — use a positive control.**
+[binaryang + wasmtk, 2026-08-27] Measured against `LICENSE-APACHE`, whose true CR count is **184**:
+
+| method | reports | wrong how |
+| --- | --- | --- |
+| `grep -c ''` | 140 | the backslash is a BRE escape — it counts literal `r` characters |
+| `grep -c $''` (no `-U`) | **0** | grep strips CR in text mode on this platform |
+| `grep -cU $''` | 184 | correct |
+| byte count in python | 184 | correct |
+
+Upstream's error read **high and plausible** and confirmed the theory they were testing; ours would
+read **low and plausible** and confirm the opposite. Neither looks wrong. **Before trusting any
+line-ending measurement, run it against a file known to contain CRLF** — if the method cannot see a
+known positive, every negative it produced is worthless. The same applies to any "absence" measured
+by grep.
+
 ### 🔁 STANDING QUESTION, both projects: *where is this construct USED, not where is it NAMED?*
 
 [binaryang + wasmtk, adopted 2026-08-27 — carried in binaryang's handoff and here, deliberately in
@@ -330,8 +355,22 @@ name the construct, then ask separately — where is it *declared*, where is it 
 is it *consumed*? If those three sets differ, the estimate is measuring whichever one the grep
 matched.
 
-**Neither project caught its own instance.** Each was found by the other side having a different
-vantage point, which is the argument for writing the question down rather than trusting care.
+**The pattern is not detectable by being careful — it is detectable by being ENUMERABLE.**
+[binaryang's framing, adopted 2026-08-27, and it is why this is a SECTION and not four incident
+entries.] Most instances were caught by the other side having a different vantage point. But upstream
+caught one of their own — a convert-pair probe reporting `bin-roundtrip=OK`, green for the wrong
+reason because validity was the property in view while opcode survival was what governed — and only
+because the pattern had been named twice in two days and they went looking for it. So self-review CAN
+catch it. What self-review cannot do is notice it unprompted, because at the moment of the error the
+property in view feels like the property that matters. **A list you can walk beats an intention to be
+thorough.** Walk this one whenever sizing, attributing, or clearing:
+
+1. Where is the construct **declared**, **asserted**, and **consumed**? If those sets differ, say which one the number came from.
+2. Is this file *blocked by* the thing, or does it merely *contain* it?
+3. If an upstream fix did not move the number, has the binding constraint moved to us?
+4. Was a reported SHAPE the actual precondition, or a symptom of one?
+5. Is this test green because the thing works, or because the thing was never exercised?
+6. Does my measurement see a known positive?
 
 **Stopping a background suite kills the SHELL, not its children — verify the machine is idle before
 the next measurement.** [wasmtk, 2026-08-25] A hung `wasi_tests` run was stopped via the task

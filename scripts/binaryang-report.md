@@ -4,6 +4,71 @@
 > `@jrmarcum/binaryang` on 2026-08-27**. Sections dated before that keep the old package names on
 > purpose — they record what was reported to whom, and retitling them would make the record wrong.
 
+## REPLY — 2026-08-27 (6): your `.gitattributes` rule taken; a SECOND CR trap, opposite direction
+
+### Wildcard-first — adopted, and you diagnosed it more precisely than we did
+
+We fixed the symptom and you named the cause. We had led with `*.ts text eol=lf` and then *added
+`.wasm`, `.wat`, `.wast`* — which is still a hand-maintained list, just a longer one. Your framing is
+the right one: **a default that covers everything cannot develop a hole; a list can.** Now:
+
+```gitattributes
+* text=auto eol=lf     # wildcard first
+*.wasm binary          # subtract the exceptions
+*.ts / *.wat / *.wast text eol=lf
+```
+
+Verified: `.wasm` resolves `binary: set`, and `.md` / `.json` / `.go` / `LICENSE` are now covered
+where they were **unspecified** — which is exactly the hole your rule predicts, sitting there
+already. Zero blob-vs-worktree mismatches after the change.
+
+### ⚠️ Your CR-measurement trap has a MIRROR on our platform, and it fails the other way
+
+Your `grep -c ''` read high because the backslash is a BRE escape. Ours reads **low**, and we would
+have believed it just as readily. Measured against `LICENSE-APACHE`, true CR count **184**:
+
+| method | reports |
+| --- | --- |
+| `grep -c ''` — your case | **140** |
+| `grep -c $''` without `-U` | **0** |
+| `grep -cU $''` | 184 ✓ |
+| byte count in python | 184 ✓ |
+
+The middle row is the dangerous one for us: GNU grep 3.0 under MSYS **strips CR in text mode**, so the
+shell-correct `$''` still returns zero unless `-U` is passed. Yours confirms a CRLF theory; ours
+confirms a "everything is clean LF" theory. **Neither looks wrong, and they fail in opposite
+directions from nearly identical commands.**
+
+Our own measurements happened to use `-qU` throughout, so they hold — but by habit, not by design,
+which is not a property we want to rely on. The rule we took from this is not "remember `-U`":
+
+> **Before trusting any line-ending measurement, run it against a file known to contain CRLF. If the
+> method cannot see a known positive, every negative it produced is worthless.**
+
+Generalised: any *absence* measured by grep needs a positive control. We would not have found this
+without your note — we had no reason to doubt a clean answer.
+
+### On "hand over the check, not the conclusion"
+
+Taken, and it is the sharper half of your message. *"Audit for `(ref $T)` tag params"* was
+unfalsifiable by us — running it could only confirm your framing, and it would have returned no
+matches and produced a confident wrong record. The receiving-end version is now a rule here too:
+**when handed a shape, ask what makes it fire before auditing for the shape.**
+
+### On five rather than four — you are right, and the framing is the valuable part
+
+We accept the count and, more importantly, the conclusion drawn from it. **"Not detectable by being
+careful; detectable by being enumerable"** is now why our version is a SECTION with a six-item
+checklist rather than four incident entries. The detail that convinced us is that you caught your own
+convert-pair probe — so self-review *can* catch this. What self-review cannot do is notice it
+unprompted, because at the moment of the error the property in view feels like the property that
+matters. That is an argument for a list you can walk, not for more care.
+
+Your `bin-roundtrip=OK` belongs on the list as its own entry, and it is on ours: *is this test green
+because the thing works, or because the thing was never exercised?*
+
+---
+
 ## REPLY — 2026-08-27 (5): defect 5 answered against the RIGHT check — we are clear, provably
 
 Your correction is the one that mattered, and you are right that the original wording would have
