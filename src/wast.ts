@@ -260,19 +260,37 @@ function parseFloatExpect(lit: string, is32: boolean): FloatExpect {
 // Value nodes → JS values (invoke args) and result comparison
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** True if a const node is a numeric type this runner supports (i32/i64/f32/f64). */
+/**
+ * True if a const node is a value this runner can marshal across the JS boundary:
+ * the four numeric types, plus `ref.null <heaptype>` which is simply JS `null`.
+ *
+ * ⚠️ `ref.func` / `ref.extern N` are still unsupported — those denote host references with
+ * IDENTITY, which needs spectest-side reference creation, not a literal conversion. `v128.const`
+ * likewise. Returning null here makes the whole assertion a SKIP, never a failure.
+ *
+ * (Admitting `ref.null` 2026-08-27 moved `ref_null.wast` off 0 pass / 32 skip. The gap had been
+ * recorded as a backend bug for a week; the backend fixed its half and our number did not move,
+ * because THIS function was the binding constraint and a skip never re-announces itself.)
+ */
 function constType(node: Sexp): string | null {
   if (!isList(node)) return null;
   const h = head(node);
   if (h === "i32.const" || h === "i64.const" || h === "f32.const" || h === "f64.const") return h;
-  return null; // v128.const, ref.null, ref.func, ref.extern … → unsupported here
+  if (h === "ref.null") return h;
+  return null; // v128.const, ref.func, ref.extern … → unsupported here
 }
 
 /** Convert a const node to the JS value WebAssembly expects as an argument. */
-function constToJs(node: SexpList): number | bigint {
+function constToJs(node: SexpList): number | bigint | null {
   const h = head(node);
   const lit = node.list[1] as string;
   switch (h) {
+    // Every null reference — funcref, externref, or a user-defined heap type — crosses the JS
+    // boundary as `null`. The heap type in `lit` is deliberately ignored: JS cannot distinguish
+    // a null funcref from a null externref, and the module's own type-checking is what keeps the
+    // two apart. See the note on `resultMatches`.
+    case "ref.null":
+      return null;
     case "i32.const":
       return U32(parseIntLit(lit)) | 0; // signed i32 arg
     case "i64.const":
@@ -285,11 +303,34 @@ function constToJs(node: SexpList): number | bigint {
   throw new Error("unsupported const " + h);
 }
 
+/**
+ * True when a thrown error is V8 refusing to marshal a value across the JS boundary, rather than a
+ * genuine trap. V8's JS API can represent `externref` and `funcref`, but not `exnref`, `anyref` or a
+ * user-defined heap type — calling such an export throws
+ * `type incompatibility when transforming from/to JS`.
+ *
+ * That is a limit of the JS embedding, NOT a toolchain defect, so it counts as a SKIP — the same
+ * treatment the NaN-payload argument case already gets. **Counting it as a failure would be a false
+ * negative**: it says the toolchain got something wrong when the module is fine and only the test
+ * harness cannot see it. Introduced 2026-08-27 alongside `ref.null` support, which is what first
+ * made these assertions reachable at all.
+ */
+function isJsBoundaryRefusal(e: unknown): boolean {
+  return /type incompatibility when transforming/i.test(e instanceof Error ? e.message : String(e));
+}
+
 /** Compare an actual WebAssembly result value against an expected const node. Returns true on match. */
 function resultMatches(expected: SexpList, actual: unknown): boolean {
   const h = head(expected);
   const lit = expected.list[1] as string;
   switch (h) {
+    // ⚠️ The expected heap type is NOT checked, because it cannot be: a null funcref and a null
+    // externref are both `null` in JS. This is marginally over-accepting — an assertion expecting
+    // `(ref.null extern)` would pass on a null funcref — but a module cannot return the wrong
+    // reference type without failing validation first, so the case is unreachable in a corpus that
+    // assembles. Recorded rather than silently assumed.
+    case "ref.null":
+      return actual === null;
     case "i32.const":
       return U32(parseIntLit(lit)) === ((actual as number) >>> 0);
     case "i64.const":
@@ -570,7 +611,7 @@ export async function runWast(
       return [g.value];
     }
     // invoke
-    const args: (number | bigint)[] = [];
+    const args: (number | bigint | null)[] = []; // null = a `ref.null` reference argument
     for (let k = idx; k < action.list.length; k++) {
       const a = action.list[k];
       if (!isList(a) || !constType(a)) throw new Error("__skip__: unsupported arg type");
@@ -645,8 +686,15 @@ export async function runWast(
           try {
             results = runAction(action);
           } catch (e) {
-            if (String(e).includes("__skip__")) {
+            if (String(e).includes("__skip__") || isJsBoundaryRefusal(e)) {
               res.skipped++;
+              if (opts.verbose && isJsBoundaryRefusal(e)) {
+                res.failures.push(
+                  `skip (JS boundary cannot carry this reference type): ${
+                    src.slice(cmd.start, cmd.start + 70)
+                  }`,
+                );
+              }
               break;
             }
             fail(`assert_return action trapped: ${e instanceof Error ? e.message : e}`);

@@ -26,12 +26,44 @@ async function readTextFile(path: string): Promise<string> {
   return Deno.readTextFile(path);
 }
 
+/**
+ * True for a Windows SHARING VIOLATION — `os error 32`, "The process cannot access the file because
+ * it is being used by another process". Transient by nature: a just-exited child process, an
+ * indexer or an AV scanner still holds a handle for a few milliseconds after we are done with it.
+ */
+function isWindowsSharingViolation(e: unknown): boolean {
+  const m = e instanceof Error ? e.message : String(e);
+  return /os error 32|being used by another process|EBUSY/i.test(m);
+}
+
+/**
+ * Write a file, retrying briefly on a Windows sharing violation.
+ *
+ * ⚠️ **This is a RACE fix, not an error-swallowing one.** Only `os error 32` is retried; every other
+ * failure propagates on the first attempt, and a violation that outlives ~1.2s still throws. The
+ * point is that the file is genuinely writable a few milliseconds later — retrying converts a
+ * spurious hard failure into the success it would have been.
+ *
+ * Why it exists (2026-08-27): `go_asyncify_tests` intermittently failed writing
+ * `tests/go_fixtures/**​/main.wasm` — measured 11/1 then 12/12 on back-to-back runs with nothing
+ * else running. It was recorded for weeks as "do not run the Go suites concurrently", which turned
+ * out not to be the whole rule: a preceding run of the SAME suite is enough to trigger it. The
+ * failure was always cosmetic and re-runnable, but it can redden a release gate at the worst moment.
+ */
 async function writeFile(path: string, data: Uint8Array): Promise<void> {
   if (isBun) {
     await (globalThis as any).Bun.write(path, data);
     return;
   }
-  return Deno.writeFile(path, data);
+  const DELAYS_MS = [15, 40, 100, 250, 800]; // ~1.2s total before giving up
+  for (let attempt = 0;; attempt++) {
+    try {
+      return await Deno.writeFile(path, data);
+    } catch (e) {
+      if (attempt >= DELAYS_MS.length || !isWindowsSharingViolation(e)) throw e;
+      await new Promise((r) => setTimeout(r, DELAYS_MS[attempt]));
+    }
+  }
 }
 
 async function writeTextFile(path: string, text: string): Promise<void> {

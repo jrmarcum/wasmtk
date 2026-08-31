@@ -185,8 +185,8 @@
     "skip": 0
   },
   "elem.wast": {
-    "pass": 52,
-    "skip": 20,
+    "pass": 55,
+    "skip": 17,
     "unbuilt": 12
   },
   "endianness.wast": {
@@ -206,8 +206,8 @@
     "skip": 0
   },
   "extern.wast": {
-    "pass": 0,
-    "skip": 17
+    "pass": 6,
+    "skip": 11
   },
   "f32.wast": {
     "pass": 2047,
@@ -282,8 +282,8 @@
     "skip": 0
   },
   "global.wast": {
-    "pass": 107,
-    "skip": 7
+    "pass": 110,
+    "skip": 4
   },
   "i16x8_relaxed_q15mulr_s.wast": {
     "pass": 0,
@@ -715,13 +715,13 @@
     "skip": 0
   },
   "ref_is_null.wast": {
-    "pass": 15,
-    "skip": 4,
+    "pass": 17,
+    "skip": 2,
     "fail": 1
   },
   "ref_null.wast": {
-    "pass": 0,
-    "skip": 32
+    "pass": 25,
+    "skip": 7
   },
   "ref_test.wast": {
     "pass": 36,
@@ -749,8 +749,8 @@
     "skip": 0
   },
   "return_call.wast": {
-    "pass": 45,
-    "skip": 1
+    "pass": 46,
+    "skip": 0
   },
   "return_call_indirect.wast": {
     "pass": 28,
@@ -762,8 +762,8 @@
     "skip": 0
   },
   "select.wast": {
-    "pass": 132,
-    "skip": 22
+    "pass": 134,
+    "skip": 20
   },
   "simd_address.wast": {
     "pass": 10,
@@ -1047,8 +1047,8 @@
     "skip": 0
   },
   "table.wast": {
-    "pass": 22,
-    "skip": 6,
+    "pass": 23,
+    "skip": 5,
     "unbuilt": 1
   },
   "table64.wast": {
@@ -1069,32 +1069,32 @@
     "skip": 0
   },
   "table_fill.wast": {
-    "pass": 9,
-    "skip": 35
+    "pass": 25,
+    "skip": 19
   },
   "table_fill64.wast": {
-    "pass": 9,
-    "skip": 70
+    "pass": 41,
+    "skip": 38
   },
   "table_get.wast": {
-    "pass": 10,
-    "skip": 4,
+    "pass": 12,
+    "skip": 2,
     "fail": 1
   },
   "table_get64.wast": {
-    "pass": 5,
-    "skip": 4,
+    "pass": 7,
+    "skip": 2,
     "fail": 1
   },
   "table_grow.wast": {
-    "pass": 29,
-    "skip": 17,
-    "fail": 2
+    "pass": 34,
+    "skip": 13,
+    "fail": 1
   },
   "table_grow64.wast": {
-    "pass": 4,
-    "skip": 15,
-    "fail": 2
+    "pass": 7,
+    "skip": 13,
+    "fail": 1
   },
   "table_init.wast": {
     "pass": 750,
@@ -1105,12 +1105,12 @@
     "skip": 0
   },
   "table_set.wast": {
-    "pass": 11,
-    "skip": 14
+    "pass": 21,
+    "skip": 4
   },
   "table_set64.wast": {
-    "pass": 4,
-    "skip": 14
+    "pass": 14,
+    "skip": 4
   },
   "table_size.wast": {
     "pass": 38,

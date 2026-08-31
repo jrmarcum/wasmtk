@@ -40,7 +40,13 @@ version ([design-decisions.md](design-decisions.md)).
   `reject` **22 → 12**; `0 regressed`. Ten modules flipped, not the eight first reported — the first
   run graded a corpus built by the previous compiler. **Order is load-bearing: `wasi_tests` →
   `engine_cross_check_tests` → `wast_tests`.**
-- ⏳ **Kill the `os error 32` flake in the Go suites (Windows).** `go_asyncify_tests` intermittently
+- ✅ **`os error 32` flake — FIXED 2026-08-27 in `rt.writeFile`, not in the Go producer.** The race
+  is not Go-specific, so a retry-with-backoff (5 attempts, ~1.2s) lives where every writer benefits.
+  **Only Windows sharing violations are retried**; everything else rethrows on the first attempt, so
+  it is a race fix, not error-swallowing. Verified with three back-to-back `go_asyncify_tests` runs
+  — **12/12, 12/12, 12/12** — in the exact condition that produced 11/1 before.
+  **Superseded description below.**
+- ⏳ **(superseded) Kill the `os error 32` flake in the Go suites (Windows).** `go_asyncify_tests` intermittently
   fails writing `tests/go_fixtures/**/main.wasm` — an OS file-lock race, never an assertion failure.
   Measured 2026-08-27 back-to-back with nothing else running: 11/1 then 12/12. The recorded advice
   ("run alone it is 12/12") is not reliable; a preceding run of the SAME suite is enough to trigger
@@ -60,7 +66,26 @@ version ([design-decisions.md](design-decisions.md)).
   shares" in **11 modules that reach `-Oz`** (tag but no `try_table` — throw-without-catch, so the
   skip never fires), and all 11 PASS on 1.5.1. Asked upstream whether that defect needs a `(ref $T)`
   param. If it does not, those 11 should be failing and are not — understand why before trusting them.
-- 🟡 **`ref_null.wast` — MEASURED on 1.5.2, and the blocker MOVED TO US.** Still `0 passed, 0 failed,
+- ✅ **`ref_null` — FIXED 2026-08-27, and it was worth 4× the estimate.** `constType` now admits
+  `ref.null`, `constToJs` returns JS `null`, `resultMatches` compares against it.
+  **`ref_null.wast` 0 → 25 passes**, and the corpus gained **+123 assertions across 16 files** with
+  **0 regressions** — `table_fill64` 9 → 41, `table_fill` 9 → 25, `table_set` 11 → 21,
+  `table_set64` 4 → 14, plus `elem`, `global`, `select`, `table`, `extern`, `return_call`. Two files
+  SHED failures (`table_grow` 2 → 1, `table_grow64` 2 → 1). Baseline re-recorded: **288 files /
+  37,370 / 100 failures**.
+  🎓 **Sized at 32 in one file; delivered 123 across sixteen.** The `table_*` files pass `ref.null`
+  as an ARGUMENT to `table.fill` / `table.set`, which the estimate never considered — it counted
+  where the instruction was *asserted*, not where the value was *used*. Under-estimating in that
+  direction is the good kind, but it is the same "contains vs is blocked by" distinction that ran
+  through the whole binaryang exchange, pointed a third way.
+  ⚠️ **A false-negative trap on the way in, caught before it shipped.** Admitting `ref.null` first
+  produced 25 pass / **7 FAIL** — skips converted into failures. All seven were
+  `type incompatibility when transforming from/to JS`: V8 refusing to marshal `exnref` / `anyref` /
+  user-defined heap types. That is a limit of the HARNESS, not a toolchain defect, so counting it as
+  a failure would assert the toolchain got something wrong when the module is fine. Classified as a
+  skip via `isJsBoundaryRefusal`, matching the NaN-payload precedent the runner already had.
+  **Superseded analysis below.**
+- 🟡 **(superseded) `ref_null.wast` — MEASURED on 1.5.2, and the blocker MOVED TO US.** Still `0 passed, 0 failed,
   32 skipped` — but **`unbuilt modules = 0`**, so the modules assemble. `constType()` in
   `src/wast.ts` returns `null` for `ref.null` / `ref.func` / `ref.extern`, so the runner skips those
   assertions itself. **Fix is ours and contained:** teach `constType` / `constToJs` to marshal a
