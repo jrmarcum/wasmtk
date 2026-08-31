@@ -3,6 +3,49 @@
 All notable, user-facing changes to `wasmtk`. Versions follow the `deno.json` version and the
 published [`@jrmarcum/wasmtk`](https://jsr.io/@jrmarcum/wasmtk) JSR package.
 
+## 2.0.2 — Backend on `binaryang` 1.5.3; wider `.wast` coverage; a Windows write-race fix (2026-08-27)
+
+No breaking changes, no API change. A backend alignment plus two fixes you may notice.
+
+### Backend moved to `@jrmarcum/binaryang@1.5.3`
+
+Both halves of the toolchain — the WAT assembler and the Binaryen optimiser — come from one package
+at one exact version, and they move together. Fully gated: 417/417 WASI tests, the multi-engine gate
+all on baseline, and the spec-conformance gate on baseline. **Nothing moved from 1.5.2**, which is
+worth stating plainly rather than implying a fix you were waiting on.
+
+### `wasmtk wast` can now pass and compare null references
+
+The `.wast` spec runner had no way to marshal a **null reference** across the JS boundary, so every
+assertion using `ref.null` was skipped regardless of what the assembler could do — `ref_null.wast`
+sat at 0 passed / 32 skipped. `ref.null <heaptype>` is now handled as JS `null`, for arguments as
+well as expected results:
+
+| file | passes |
+| --- | --- |
+| `ref_null` | 0 → **25** |
+| `table_fill64` | 9 → **41** |
+| `table_fill` | 9 → **25** |
+| `table_set` | 11 → **21** |
+| `table_set64` | 4 → **14** |
+
+**+123 assertions across 16 files, zero regressions**, and two files shed failures outright. The
+corpus total is now **37,370 passing assertions**.
+
+Still unsupported: `ref.func` and `ref.extern N`, which denote host references with identity rather
+than a literal conversion. Heap types V8 cannot marshal at all (`exnref`, `anyref`, user-defined) are
+reported as **skips, not failures** — that is a limit of the JS harness, and calling it a failure
+would claim the toolchain got something wrong when the module is fine.
+
+### Fixed: intermittent `os error 32` when writing output on Windows
+
+A just-exited child process, a file indexer or a virus scanner can still hold a handle to a file
+wasmtk has finished with, so a write could fail with *"The process cannot access the file because it
+is being used by another process"* — intermittently, and never for a reason in your code. Writes now
+retry a Windows sharing violation five times over roughly 1.2 seconds. **Every other failure still
+propagates on the first attempt**, so this is a race fix and not swallowed errors. Affects every
+producer, not only Go.
+
 ## 2.0.1 — Standard exception handling; merged backend; a silent memory-corruption fix (2026-08-27)
 
 No breaking changes. Three user-facing improvements and one important bug fix.

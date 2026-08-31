@@ -1,6 +1,6 @@
 {
   "name": "@jrmarcum/wasmtk",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "A polyglot WASM toolkit for Deno: Run, inspect, and convert WASM/WAT and WASI modules with high compatibility.",
   "license": "MIT",
   "exports": {
