@@ -269,6 +269,31 @@ regenerates it.** [wasmtk, 2026-08-25] `testing.md` says to run `engine_cross_ch
 measured against a corpus built by the *previous* compiler — a real-looking number that answered a
 question nobody asked. Ordering inside a gate script is load-bearing, not cosmetic.
 
+**An upstream fix that does not move your number means the binding constraint may have MOVED, not
+that the fix failed.** [wasmtk, 2026-08-27] `ref_null.wast` sat at 0 pass / 32 skip, recorded as an
+upstream encoder bug. Upstream fixed their half; our number did not move, because our own runner's
+`constType()` had become the binding constraint — and **nothing re-announced it, because a skip is
+not a failure**. The tell was in the row all along: `unbuilt modules = 0` meant the modules
+ASSEMBLED, so whatever stopped them was downstream of the assembler. Teaching the runner to marshal
+`ref.null` was worth **+123 assertions across 16 files**. **When a fix lands and your metric is flat,
+re-ask which layer binds before re-reporting it upstream.**
+
+**Converting a SKIP into a FAILURE is a false negative — read what the new failures actually say.**
+[wasmtk, 2026-08-27] Admitting `ref.null` turned 32 skips into 25 passes and **7 failures**. All
+seven were `type incompatibility when transforming from/to JS` — V8 refusing to marshal `exnref` /
+`anyref` / user-defined heap types. That is a limit of the HARNESS; recording it as a failure asserts
+the toolchain got something wrong when the module is fine and only the test cannot see it. The runner
+already had the precedent — NaN payloads that cannot cross the JS boundary are skipped, with a
+comment saying why. **A new failure appearing beside a big win deserves the same scrutiny as a
+regression, and is exactly when you are least inclined to look.**
+
+**Estimate where a value is USED, not where the instruction is ASSERTED.** [wasmtk, 2026-08-27] The
+`ref.null` work was sized at 32 assertions, from `ref_null.wast` alone. It delivered **123 across 16
+files**, because `table_fill` / `table_set` / `table_grow` pass `ref.null` as an ARGUMENT — the
+estimate counted the files that assert the instruction, not the files that need the value. Same
+"contains vs is blocked by" distinction that ran through the whole binaryang exchange, pointed a
+third way.
+
 **Stopping a background suite kills the SHELL, not its children — verify the machine is idle before
 the next measurement.** [wasmtk, 2026-08-25] A hung `wasi_tests` run was stopped via the task
 harness; two orphaned `deno` processes kept spinning at ~98% CPU and were still there **30 minutes
