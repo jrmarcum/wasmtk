@@ -161,7 +161,7 @@ interface WasmFeatures {
 }
 interface WabtWasmModule {
   toBinary(opts: object): { buffer: ArrayBuffer };
-  toText(opts?: { foldExprs?: boolean; inlineExport?: boolean }): string;
+  toText(opts?: { inlineExport?: boolean }): string;
   destroy(): void;
 }
 interface WabtModule {
@@ -20187,7 +20187,7 @@ function mergeOneWasmImport(
 } {
   // Disassemble the binary to WAT text
   const importedMod = wabtMod.readWasm(wasmBytes.buffer as ArrayBuffer, { readDebugNames: true });
-  const importedWat = importedMod.toText({ foldExprs: false, inlineExport: false });
+  const importedWat = importedMod.toText({ inlineExport: false });
   importedMod.destroy();
 
   const result = mergeWasmWat(importedWat, prefix, dataOffset);
@@ -20314,7 +20314,7 @@ export async function compileWasiTs(
       const bytes = entry.bytes ?? await rt.readFile(entry.filePath);
       wasmBytesMap.set(entry.filePath, bytes);
       const mod = wabtMod.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: true });
-      const importedWat = mod.toText({ foldExprs: false, inlineExport: false });
+      const importedWat = mod.toText({ inlineExport: false });
       mod.destroy();
       const preResult = mergeWasmWat(importedWat, entry.prefix, 0);
       const logicalSigs = entry.witText !== undefined
@@ -20379,12 +20379,12 @@ export async function compileWasiTs(
     // A second pass with mergeWasmWat(dataReloc=0) gives us the imported module's own
     // dataOffset, which we use as the relocation size.
     const mod2 = wabtMod.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: false });
-    const wat2 = mod2.toText({ foldExprs: false, inlineExport: false });
+    const wat2 = mod2.toText({ inlineExport: false });
     mod2.destroy();
     // Advance dataOffset by the imported module's static footprint
-    // Brackets around the initialiser are OPTIONAL — wabt-ts 1.4.1 prints const-exprs
-    // unfolded under `foldExprs: false`. Requiring `(i32.const N)` sent every module down
-    // the 260 fallback below, under-advancing dataOffset into an out-of-bounds heap.
+    // Brackets around the initialiser are OPTIONAL — wabt-ts 1.4.1 began printing const-exprs
+    // unfolded. Requiring `(i32.const N)` sent every module down the 260 fallback below,
+    // under-advancing dataOffset into an out-of-bounds heap.
     const heapM = wat2.match(
       /\(global\s+\(;0;\)\s+\(mut i32\)\s+\(?\s*i32\.const\s+(\d+)\s*\)?\s*\)/,
     );
@@ -20504,7 +20504,7 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
       const bytes = entry.bytes ?? await rt.readFile(entry.filePath);
       wasmBytesMap2.set(entry.filePath, bytes);
       const mod = wabtMod2.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: true });
-      const importedWat = mod.toText({ foldExprs: false, inlineExport: false });
+      const importedWat = mod.toText({ inlineExport: false });
       mod.destroy();
       const preResult2 = mergeWasmWat(importedWat, entry.prefix, 0);
       const logicalSigs2 = entry.witText !== undefined
@@ -20562,11 +20562,11 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
     }
     wat = mergedWat;
     const mod2 = wabtMod2.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: false });
-    const wat2 = mod2.toText({ foldExprs: false, inlineExport: false });
+    const wat2 = mod2.toText({ inlineExport: false });
     mod2.destroy();
-    // Brackets around the initialiser are OPTIONAL — wabt-ts 1.4.1 prints const-exprs
-    // unfolded under `foldExprs: false`. Requiring `(i32.const N)` sent every module down
-    // the 260 fallback below, under-advancing dataOffset into an out-of-bounds heap.
+    // Brackets around the initialiser are OPTIONAL — wabt-ts 1.4.1 began printing const-exprs
+    // unfolded. Requiring `(i32.const N)` sent every module down the 260 fallback below,
+    // under-advancing dataOffset into an out-of-bounds heap.
     const heapM = wat2.match(
       /\(global\s+\(;0;\)\s+\(mut i32\)\s+\(?\s*i32\.const\s+(\d+)\s*\)?\s*\)/,
     );

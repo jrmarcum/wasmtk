@@ -374,6 +374,7 @@ thorough.** Walk this one whenever sizing, attributing, or clearing:
 4. Was a reported SHAPE the actual precondition, or a symptom of one?
 5. Is this test green because the thing works, or because the thing was never exercised?
 6. Does my measurement see a known positive?
+7. Am I proving something is DEAD from an input that could not show it alive?
 
 **Stopping a background suite kills the SHELL, not its children — verify the machine is idle before
 the next measurement.** [wasmtk, 2026-08-25] A hung `wasi_tests` run was stopped via the task
@@ -387,6 +388,26 @@ a stray CPU hog is not just noise, it manufactures the symptom you are hunting.
 
 These are not "be careful" items — each returns a **confident, plausible, wrong** answer, and every
 one of them cost real time on 2026-08-31.
+
+**To prove an option is DEAD, measure it against the input that flows through the code path — a
+minimal repro cannot prove an absence.** [wasmtk, 2026-08-31] `toText({ foldExprs: false,
+inlineExport: false })` sat at seven call sites. A five-line probe module said **all four
+combinations were byte-identical**, so both options were removed as noise. The gate came back
+**404/417 with 13 compile failures**, every one a mathlib consumer: without `inlineExport: false`,
+wabt writes the export inside the function header — `(func (;12;) (export "sin") (type 6) …)` — which
+the merge's header matching does not expect, so it emitted 22 `(type N)` references with no type
+section and wabt rejected it with `error: unknown type`.
+
+Re-measured on the REAL artifact (`src/wasm/mathlib.wasm`), isolating each option: `foldExprs` inert
+at both values; `inlineExport: false` **load-bearing**. `foldExprs` was dropped, `inlineExport` kept
+with a comment naming what breaks without it.
+
+⚠️ **The sharp part: a second real corpus module ALSO reported `inlineExport` inert.** Two of three
+inputs agreed with the wrong conclusion, because a module with no exports cannot exercise an
+export-formatting flag. **An absence measured on inputs that cannot exhibit the behaviour is not
+evidence.** A minimal repro is for demonstrating a failure you already understand — never for
+proving one does not exist. Before deleting anything as dead, ask which input would show it alive,
+then run THAT.
 
 **Author file CONTENT with a real file write; use the shell only to MOVE it.** [binaryang + wasmtk]
 Writing a config through a shell heredoc into `python3 - <<'EOF'` collapses backslashes one level:

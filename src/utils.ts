@@ -26,7 +26,7 @@ interface WasmFeatures {
 }
 interface WabtWasmModule {
   toBinary(opts: object): { buffer: ArrayBuffer };
-  toText(opts: object): string;
+  toText(opts?: { inlineExport?: boolean }): string;
   destroy(): void;
   applyNames(): void;
 }
@@ -507,7 +507,7 @@ export async function convertFile(p: string, outPath?: string): Promise<boolean>
       // Normal WASM → WAT round-trip
       const wabtModule = await (wabt as unknown as () => Promise<WabtModule>)();
       const mod = wabtModule.readWasm(wasmBytes, { readDebugNames: true });
-      const wat = mod.toText({ foldExprs: false, inlineExport: false });
+      const wat = mod.toText({ inlineExport: false });
       mod.destroy();
       await rt.writeTextFile(out, wat);
       console.log(`✅ Converted to ${out}`);

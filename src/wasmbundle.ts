@@ -200,7 +200,7 @@ export async function runWasmBundle(
   for (const filePath of inputs) {
     const bytes = await rt.readFile(filePath);
     const wabtMod = wabt.readWasm(bytes, { readDebugNames: true });
-    const wat = wabtMod.toText({ foldExprs: false, inlineExport: false });
+    const wat = wabtMod.toText({ inlineExport: false });
     wabtMod.destroy();
     const exports = extractExportNames(wat);
     // Also include _start for WASI executables — mergeWasmWat preserves it in

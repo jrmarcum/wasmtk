@@ -362,7 +362,22 @@ function replaceConstExpr(text: string, fn: (n: number) => number): string {
  * WatMergeResult containing the renamed, relocated fragments ready to be
  * spliced into the parent module.
  *
- * @param wat        WAT text produced by wabt.readWasm(...).toText()
+ * @param wat        WAT text produced by `wabt.readWasm(...).toText({ inlineExport: false })`,
+ *                   which is LINEAR (stack) form: `i32.const N` on one line, its consumer on
+ *                   the next.
+ *
+ *                   **`inlineExport: false` is LOAD-BEARING — do not remove it.** Without it
+ *                   wabt writes the export inline in the function header,
+ *                   `(func (;12;) (export "sin") (type 6) …)`, which this module's
+ *                   header-matching does not expect; the merge then emits `(type N)`
+ *                   references with no type section and wabt rejects the result with
+ *                   `error: unknown type`. Measured 2026-08-31: dropping it broke 13 wasi
+ *                   tests, all of them mathlib consumers.
+ *
+ *                   `foldExprs` WAS also passed and IS inert — measured on `mathlib.wasm` and
+ *                   a corpus module, both values byte-identical — so it was dropped. The form
+ *                   is a property of the backend, not something this code can request, which
+ *                   is why `relocateDataPtrs` handles folded input too.
  * @param prefix     Module prefix for name mangling, e.g. "math" for math.wasm
  * @param dataReloc  Byte delta to add to data addresses (= mainModule.dataOffset)
  */
@@ -689,15 +704,64 @@ export function mergeWasmWat(
     "i32.rotl",
     "i32.rotr",
   ]);
+  /**
+   * Head token of the s-expression ENCLOSING `from`, or "" when not inside one.
+   *
+   * This is the FOLDED-form analogue of "the next instruction token": in
+   * `(i32.mul (local.get $n) (i32.const 1024))` the constant's consumer is the enclosing `i32.mul`,
+   * not anything that follows it.
+   *
+   * ⚠️ Step over the constant's OWN opening paren first. Without that, the first `(` found scanning
+   * backwards is the const's own, and the function reports `i32.const` as its own consumer — which
+   * is never in ARITH_NEVER_PTR, so every constant relocates and arithmetic operands are corrupted.
+   * That bug passed a nested test case by coincidence while failing the simple one.
+   */
+  function enclosingHead(text: string, from: number): string {
+    let start = from - 1;
+    while (start >= 0 && /\s/.test(text[start]!)) start--;
+    if (text[start] === "(") start--;
+    let depth = 0;
+    for (let i = start; i >= 0; i--) {
+      const c = text[i];
+      if (c === ")") depth++;
+      else if (c === "(") {
+        if (depth === 0) {
+          let q = i + 1;
+          while (q < text.length && /\s/.test(text[q]!)) q++;
+          let e = q;
+          while (e < text.length && !/[\s()]/.test(text[e]!)) e++;
+          return text.slice(q, e);
+        }
+        depth--;
+      }
+    }
+    return "";
+  }
+
   function relocateDataPtrs(text: string): string {
     if (dataReloc === 0 || dataHi === 0) return text;
-    // The merged module body is disassembled to FLAT (stack) form — `i32.const N` then its CONSUMER
-    // instruction on the following line. So the disambiguating signal is the next instruction token:
-    // if it is a pure arithmetic / bitwise / shift op the const is that op's rhs operand and is
-    // therefore arithmetic (a data pointer is never `% * & << …`'s rhs) → leave it. Any other consumer
-    // (store/load/add/sub/call, or a `(data …)` segment offset whose next token is the data string)
-    // keeps relocating, so no genuine pointer is ever dropped. Only whitespace/comments are skipped
-    // between the constant and its consumer (flat form has no intervening parens).
+    // Decide whether a constant is a DATA POINTER (relocate) or an ARITHMETIC OPERAND (leave) by
+    // looking at what CONSUMES it: if the consumer is a pure arithmetic / bitwise / shift op, the
+    // constant is its rhs operand and is arithmetic — a data pointer is never `% * & << …`'s rhs.
+    // Any other consumer (store/load/add/sub/call, or a `(data …)` offset whose next token is the
+    // data string) keeps relocating, so no genuine pointer is ever dropped.
+    //
+    // ⚠️ **The consumer is found DIFFERENTLY in the two WAT forms, and we must handle both:**
+    //   FLAT    `i32.const 1024` / `i32.mul`               → consumer is the NEXT token
+    //   FOLDED  `(i32.mul (local.get $n) (i32.const 1024))` → consumer is the ENCLOSING head
+    //
+    // binaryang 1.5.3 emits FLAT, so today this reads the next token. **We cannot ask for a form:**
+    // `toText`'s `foldExprs` option was measured inert on 2026-08-31 (both values byte-identical on
+    // `mathlib.wasm`) and dropped. The form is whatever the backend decides.
+    //
+    // The folded fallback therefore is not belt-and-braces — it is the only protection, because
+    // **binaryang is standardising both backends on the folded form (2026-08-31)** and no flag on
+    // our side can opt out. Without it, the next token becomes `(` — an EMPTY token, not in
+    // ARITH_NEVER_PTR, so every in-range constant would relocate including arithmetic operands.
+    // Measured before the fix:
+    // `(i32.mul (local.get $n) (i32.const 1024))` → `1024` became `2130`. Silent address corruption
+    // in merged modules, which is the same class as the 2026-08-31 const-expr bug arriving from the
+    // other direction. Not depending on a formatter flag is cheaper than negotiating one.
     return text.replace(/\bi32\.const\s+(-?\d+)\b/g, (match, numStr: string, offset: number) => {
       const n = parseInt(numStr);
       if (!(n >= dataLo && n < dataHi)) return match;
@@ -722,8 +786,10 @@ export function mergeWasmWat(
       }
       let q = p;
       while (q < text.length && !/[\s()]/.test(text[q]!)) q++;
-      const nextTok = text.slice(p, q);
-      return ARITH_NEVER_PTR.has(nextTok) ? match : `i32.const ${n + dataReloc}`;
+      let consumer = text.slice(p, q);
+      // Empty means the next non-space character was a paren, i.e. FOLDED form — look outward.
+      if (consumer === "") consumer = enclosingHead(text, offset);
+      return ARITH_NEVER_PTR.has(consumer) ? match : `i32.const ${n + dataReloc}`;
     });
   }
 
