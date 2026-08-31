@@ -68,3 +68,9 @@ tests/go_fixtures/**/.tinygo-cache/
 
 # Build artifacts from the EH fixtures (scripts/*.wat are the sources; no scripts/*.wasm is tracked)
 scripts/*.wasm
+
+# Local upstream checkout for backend co-development (see scripts/upstream-link.ts).
+# NOT vendored and NOT a submodule on purpose: deno.json's EXACT JSR pin is the single source of
+# truth for what we ship, and a second pin living in this repo could disagree with it.
+upstream/
+deno.upstream.json

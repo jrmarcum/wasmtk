@@ -40,7 +40,7 @@
   "imports": {
     "@std/cli/parse-args": "jsr:@std/cli@^1.0.0/parse-args",
     "@std/path": "jsr:@std/path@^1.1.2",
-    "binaryen": "jsr:@jrmarcum/binaryang@1.5.3/compat/binaryen",
+    "binaryen-backend": "jsr:@jrmarcum/binaryang@1.5.3/compat/binaryen",
     "wasm2js": "npm:wasm2js@^0.2.0",
     "wabt": "jsr:@jrmarcum/binaryang@1.5.3/compat/wabt"
   },
@@ -49,6 +49,8 @@
     "cache": "deno cache main.ts",
     "update-version": "deno run --allow-read --allow-write scripts/sync-version.ts",
     "bump": "deno run --allow-read --allow-write scripts/bump.ts",
+    "upstream:link": "deno run --allow-read --allow-write --allow-run scripts/upstream-link.ts",
+    "upstream:install": "deno task upstream:link && deno install -g --allow-run --allow-read --allow-write --allow-env --allow-ffi --allow-net --config deno.upstream.json --force -n wasmtk-upstream main.ts",
     "install": "deno task update-version && deno task cache && deno install -g --allow-run --allow-read --allow-write --allow-env --allow-ffi --allow-net --config deno.json --force -n wasmtk main.ts",
     "compile": "deno compile -A --output wasmtk main.ts",
     "publish": "deno run --allow-read --allow-write --allow-run --allow-env scripts/publish.ts"

@@ -810,6 +810,13 @@ silently break (all `src/wasic.ts`):
     - **Keep the two specifiers.** They are not redundant: `src/binaryen.ts` is a facade that also
       supports `npm:binaryen`, and the bare `"wabt"` specifier is imported by five modules. Two
       names over one package preserves the ability to swap either half independently.
+    - 🔒 **The Binaryen alias is `binaryen-backend`, NOT the bare `binaryen` (2026-08-27). Do not
+      "simplify" it back.** `binaryen` is also a real published package that this facade can be
+      pointed at, so the bare name resolved to **two different packages depending on configuration**
+      — a defect independent of what it is called, because `import ... from "binaryen"` gave a reader
+      no way to tell which they were getting. Raised by the binaryang team. The general rule:
+      **an import alias must not collide with the name of a package the project could actually
+      resolve.** `"wabt"` does not collide with anything we can point it at, so it stays bare.
     - **They must move together.** Version skew between the assembler and the optimiser used to be
       unavoidable; it is now self-inflicted. Bump both lines or neither.
     - **There is no `./ir` and the root export is empty**, deliberately — 56 type names collide

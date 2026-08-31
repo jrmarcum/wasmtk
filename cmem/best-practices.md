@@ -269,6 +269,23 @@ regenerates it.** [wasmtk, 2026-08-25] `testing.md` says to run `engine_cross_ch
 measured against a corpus built by the *previous* compiler — a real-looking number that answered a
 question nobody asked. Ordering inside a gate script is load-bearing, not cosmetic.
 
+**A reported SHAPE may be a symptom of a PRECONDITION that never mentions it — ask for the
+precondition.** [binaryang → wasmtk, 2026-08-27] A defect was reported to us as "a tag whose param
+is `(ref $T)`". We wrote down the obvious follow-up: audit our fixtures for `(ref $T)` tag params.
+Upstream then re-probed it and the real precondition was a **conjunction neither half of which
+mentions the tag's types** — the module contains a struct or array type, AND no function shares the
+tag's exact signature. Our audit would have returned no matches and we would have recorded
+"unaffected", a conclusion that does not follow from that check. We were in fact clear, for an
+entirely different reason (wasic emits no struct or array types at all). **The right answer arrived
+by luck; the check was wrong.** When an upstream reports a shape, ask what makes it fire.
+
+**An import alias must not collide with a package the project could actually resolve.**
+[binaryang → wasmtk, 2026-08-27] Our `"binaryen"` alias pointed at a JSR compat subpath, but the
+facade behind it can also be pointed at the real `npm:binaryen`. One specifier, two packages,
+selected by configuration — and `import ... from "binaryen"` told the reader nothing about which.
+Renamed to `binaryen-backend`. **The test is not "is the name accurate?" but "could this name also
+resolve to something else here?"**
+
 **An upstream fix that does not move your number means the binding constraint may have MOVED, not
 that the fix failed.** [wasmtk, 2026-08-27] `ref_null.wast` sat at 0 pass / 32 skip, recorded as an
 upstream encoder bug. Upstream fixed their half; our number did not move, because our own runner's
@@ -287,12 +304,34 @@ already had the precedent — NaN payloads that cannot cross the JS boundary are
 comment saying why. **A new failure appearing beside a big win deserves the same scrutiny as a
 regression, and is exactly when you are least inclined to look.**
 
-**Estimate where a value is USED, not where the instruction is ASSERTED.** [wasmtk, 2026-08-27] The
-`ref.null` work was sized at 32 assertions, from `ref_null.wast` alone. It delivered **123 across 16
-files**, because `table_fill` / `table_set` / `table_grow` pass `ref.null` as an ARGUMENT — the
-estimate counted the files that assert the instruction, not the files that need the value. Same
-"contains vs is blocked by" distinction that ran through the whole binaryang exchange, pointed a
-third way.
+### 🔁 STANDING QUESTION, both projects: *where is this construct USED, not where is it NAMED?*
+
+[binaryang + wasmtk, adopted 2026-08-27 — carried in binaryang's handoff and here, deliberately in
+both so neither side has to remember it alone.]
+
+**Ask it before sizing any conformance or migration work.** Both projects made this error
+independently, four days apart, in opposite directions:
+
+| | estimate | actual | why |
+| --- | --- | --- | --- |
+| wasmtk, `ref.null` | 32 assertions | **123** | `table_fill` / `table_set` / `table_grow` pass `ref.null` as an ARGUMENT — the count found where the instruction is *asserted*, not where the value is *used* |
+| binaryang, `br_on_cast` | inflated by a 114-assertion file | **20–40** | the file was counted because it *contained* `br_on_cast`; it dies in the parser on `(exact $T)` long before reaching one |
+
+Undershooting cost nothing but a surprise. Overshooting would have reordered a release around a file
+that no amount of `br_on_cast` work could move. **Same failure, and the direction is luck.**
+
+The generalisation covers a whole family this week: *"contains the instruction" ≠ "is blocked by the
+instruction"*; a fixed thing left in the wrong column because a skip never re-announces itself; a
+defect reported by a SHAPE when the precondition was a conjunction not mentioning it. **Every one is
+attributing a result to the property that happened to be in view.**
+
+The check is cheap and mechanical: **grep finds names; sizing needs uses.** Before quoting a number,
+name the construct, then ask separately — where is it *declared*, where is it *asserted*, and where
+is it *consumed*? If those three sets differ, the estimate is measuring whichever one the grep
+matched.
+
+**Neither project caught its own instance.** Each was found by the other side having a different
+vantage point, which is the argument for writing the question down rather than trusting care.
 
 **Stopping a background suite kills the SHELL, not its children — verify the machine is idle before
 the next measurement.** [wasmtk, 2026-08-25] A hung `wasi_tests` run was stopped via the task

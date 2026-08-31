@@ -8,6 +8,45 @@ The *testing* half (where tests go, phase filter then full suite, verifying pre-
 lives in [testing.md](testing.md) § "Stress-test batches" and § "Which suites to run for a given
 change". This file covers the git/release half and the traps.
 
+## Co-developing with the binaryang backend (`upstream/`, added 2026-08-27)
+
+The backend is a first-party sibling project and the two repos trade bug reports constantly, so a
+local checkout lives at **`upstream/binaryang`** — **gitignored, not vendored, not a submodule**.
+
+```bash
+git clone https://github.com/jrmarcum/binaryang.git upstream/binaryang   # once
+deno task upstream:link        # regenerate deno.upstream.json from deno.json
+deno run -A --config deno.upstream.json <script>     # run anything against the checkout
+deno task upstream:install     # installs as `wasmtk-upstream`, NOT `wasmtk`
+```
+
+### The split that makes this safe
+
+| | role |
+| --- | --- |
+| `deno.json` | **the gate of record.** Always a published, EXACT-pinned version. Never edited to point at a checkout. |
+| `deno.upstream.json` | **exploration only.** Generated, gitignored, disposable. |
+
+🔒 **Two structural guards, both deliberate:**
+
+1. **`upstream:install` installs `wasmtk-upstream`, never `wasmtk`.** The suites invoke `wasmtk` by
+   name, so an exploratory build **cannot** be picked up by a gate run even by accident. This repo's
+   recorded failure mode is precisely "the suite silently ran the wrong binary" — the name collision
+   is the only thing between an unpublished build and a green gate that means nothing.
+2. **NOT a submodule.** A submodule would commit a second pin into this repo that can disagree with
+   the JSR pin in `deno.json`, and the JSR pin is the single source of truth for what we ship. The
+   checkout is a working convenience, not a dependency declaration.
+
+⚠️ **A result from `wasmtk-upstream` or `deno.upstream.json` is NEVER evidence for a decision** — it
+tells you where to look. Upstream asked for exactly this discipline in their own words: *"point at a
+local checkout for your gate … and hold until you've seen those green against a version you can
+pin."* The premature `-Oz` skip removal on 2026-08-25 is what that sentence is protecting against.
+
+**Environment note:** this drive does not record file ownership, so git refuses the nested repo with
+*"dubious ownership"* until you run
+`git config --global --add safe.directory <abs-path-to>/upstream/binaryang`. The symptom is a silent
+`unknown` where `upstream:link` should print the checkout revision.
+
 ## Context boundaries
 
 **One context per batch.** Cut at the natural boundary: after the memory update and commit. That

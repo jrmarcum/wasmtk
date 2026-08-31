@@ -1,15 +1,22 @@
 /**
  * @module binaryen
- * @description Stable internal facade over whichever Binaryen package is
- * configured via the `"binaryen"` specifier in `deno.json`. Source code in the
- * rest of the project imports from `./binaryen.ts`; never from `"binaryen"`
+ * @description Stable internal facade over whichever Binaryen implementation is
+ * configured via the `"binaryen-backend"` specifier in `deno.json`. Source code in
+ * the rest of the project imports from `./binaryen.ts`; never from the specifier
  * directly.
+ *
+ * ⚠️ **The alias is `binaryen-backend`, NOT `binaryen`, deliberately (2026-08-27).** It used to be
+ * the bare name `binaryen` — which is also a REAL published package (`npm:binaryen`) that this very
+ * facade can be pointed at. One specifier resolving to two different packages depending on config is
+ * a defect regardless of what it is called: a reader of `import ... from "binaryen"` cannot tell
+ * which one they are getting without opening `deno.json`. Raised by the binaryang team; the sibling
+ * `"wabt"` alias is unambiguous and stays as it is.
  *
  * Supported backends (switch by editing `deno.json` only):
  *
- *   "binaryen": "npm:binaryen@^116.0.0"                            // Emscripten WASM blob
- *   "binaryen": "jsr:@jrmarcum/binaryang@1.5.1/compat/binaryen"    // JSR-native TS port
- *   "binaryen": "jsr:@jrmarcum/binaryen-ts@1.5.0/compat"           // SUPERSEDED — see below
+ *   "binaryen-backend": "npm:binaryen@^116.0.0"                          // Emscripten WASM blob
+ *   "binaryen-backend": "jsr:@jrmarcum/binaryang@1.5.3/compat/binaryen"  // JSR-native TS port (current)
+ *   "binaryen-backend": "jsr:@jrmarcum/binaryen-ts@1.5.0/compat"         // SUPERSEDED — see below
  *
  * ⚠️ **`binaryen-ts` and `wabt-ts` merged into `@jrmarcum/binaryang` (2026-08-27).** One package now
  * ships both TypeScript ports, so the two specifiers in `deno.json` point at ONE dependency at the
@@ -24,7 +31,7 @@
  * `npm:binaryen` ships a CommonJS default-export factory; the JSR compat entry
  * is a pure ES-module namespace with no default export.
  *
- * `import * as ns from "binaryen"` works against both:
+ * `import * as ns from "binaryen-backend"` works against both:
  *   - npm:binaryen      → ns is a namespace whose `.default` is the binaryen
  *                         factory object that owns readBinary, Features, etc.
  *   - binaryang compat  → ns is the namespace and owns readBinary, Features,
@@ -37,7 +44,7 @@
  */
 
 // deno-lint-ignore-file no-explicit-any
-import * as ns from "binaryen";
+import * as ns from "binaryen-backend";
 
 const lib: any = (ns as any).default ?? ns;
 

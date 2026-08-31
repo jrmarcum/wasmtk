@@ -62,7 +62,23 @@ version ([design-decisions.md](design-decisions.md)).
 - ✅ **Pass bisect — MOOT, and tell them so rather than dropping it.** We promised binaryang the
   offending pass name once `listPasses()` and kebab-case landed. 1.5.2 fixes the defect, so there is
   nothing left to bisect. **Say that explicitly** — a promise silently dropped reads as forgotten.
-- 🟡 **Chase the answer to our defect-5 question.** We match "tag whose signature no function
+- ✅ **Defect 5 — ANSWERED 2026-08-27, and we are clear for a checkable reason.** Upstream corrected
+  their own report: the precondition is a **conjunction** and neither half mentions the tag's types —
+  **(a)** the module contains a struct or array type (which flips their encoder onto the GC path)
+  **AND (b)** no function or import shares the tag's exact signature. A plain `(param i64 f32)` tag
+  fails if any unrelated struct exists.
+  **wasic emits ZERO struct and ZERO array type definitions** — none in the 417-module corpus, and no
+  code path in `wasic.ts` / `console_log.ts` that writes either — so conjunct (a) is never satisfied
+  and the defect cannot fire regardless of tag signatures. Our 11 unique-signature tag modules are
+  irrelevant to it.
+  ⚠️ **CONDITIONAL, not a clearance:** the day wasic emits its first struct or array, both conjuncts
+  go live together and those 11 modules become exposed in the same commit. Re-check then.
+  🎓 **The follow-up we had written down was "audit fixtures for `(ref $T)` tag params" — taken from
+  the original wording. It would have returned no matches and we would have recorded "unaffected", a
+  conclusion that does not follow from that check.** Same error as everything else this week:
+  attributing a result to the property you happen to be looking at. Ask for the precondition, not the
+  shape that exhibited it.
+- ✅ **(superseded) Chase the answer to our defect-5 question.** We match "tag whose signature no function
   shares" in **11 modules that reach `-Oz`** (tag but no `try_table` — throw-without-catch, so the
   skip never fires), and all 11 PASS on 1.5.1. Asked upstream whether that defect needs a `(ref $T)`
   param. If it does not, those 11 should be failing and are not — understand why before trusting them.
@@ -124,8 +140,13 @@ version ([design-decisions.md](design-decisions.md)).
 
 ## Open as of 2026-07-30 (v2.0.0)
 
-- 🟡 **Rename the `binaryen` / `wabt` import-map aliases — raised by binaryang 2026-08-27
-  ("wasmtk's deps need proper names").** JSR's dependency listing is already correct
+- ✅ **DONE 2026-08-27 — `"binaryen"` is now `"binaryen-backend"`; `"wabt"` stays.** Upstream's note
+  turned out not to be about our manifest at all (their broken printout), but the merits stood:
+  `src/binaryen.ts` can point that one specifier at the real `npm:binaryen`, so **one alias resolved
+  to two different packages by configuration** — a defect independent of naming, since a reader of
+  `import ... from "binaryen"` could not tell which they were getting without opening `deno.json`.
+  One config line, one import site. `"wabt"` is unambiguous and was left alone.
+- ✅ **(superseded) Rename the `binaryen` / `wabt` import-map aliases.** JSR's dependency listing is already correct
   (`@jrmarcum/binaryang@1.5.2` at `compat/binaryen` + `compat/wabt`, `@std/*`, `npm:wasm2js` — all
   used), so the critique lands on the **local aliases**, which still carry the names of two RETIRED
   packages. `import wabt from "wabt"` reads as the `wabt` package and is not; worse, `"binaryen"` is

@@ -4,6 +4,80 @@
 > `@jrmarcum/binaryang` on 2026-08-27**. Sections dated before that keep the old package names on
 > purpose — they record what was reported to whom, and retitling them would make the record wrong.
 
+## REPLY — 2026-08-27 (5): defect 5 answered against the RIGHT check — we are clear, provably
+
+Your correction is the one that mattered, and you are right that the original wording would have
+cost us. We had already written down "audit our fixtures for `(ref $T)` tag params" as the follow-up.
+Run as stated it would have returned *no matches*, and we would have recorded "unaffected" — a
+conclusion that does not follow from that check. **The wrong test would have produced the right
+answer for us and the wrong answer for anyone whose modules do carry a struct.**
+
+### The conjunction, checked properly
+
+Your precondition is: **a struct or array type exists in the module** AND **no function or import
+shares the tag's exact signature**. So we checked the half that is actually decisive for us:
+
+> **wasic emits ZERO struct and ZERO array type definitions.** Not in the 417-module corpus
+> (`(type ... (struct` / `(array` → 0 files), and not in the emitter — `src/wasic.ts` and
+> `src/console_log.ts` contain no code path that writes either.
+
+The first conjunct is never satisfied, so the defect cannot fire **regardless of tag signatures**.
+Our 11 unique-signature tag modules are irrelevant to it, and — as you say — their passing on 1.5.3
+was never evidence either way, since the fix is already in.
+
+That is a much stronger answer than the one the original wording would have produced: **not "our tags
+don't look like the reported shape", but "the encoder never enters the GC path at all".** It also
+degrades honestly: the day wasic emits its first struct, both conjuncts become live together, and the
+11 modules become exposed in the same commit. That is written into our memory as a conditional, not a
+clearance.
+
+### The part worth keeping
+
+You reported a shape; the shape was a **symptom of a conjunction**, and neither conjunct mentioned
+the thing the shape was about. We would have audited for tag params and found nothing, which is
+"green for the wrong reason" one level up — exactly what you said about your own test. Three
+different projects' worth of that pattern in one week:
+
+- a fixture that passed because it lacked a live local
+- a file we nearly credited to `br_on_cast` that dies in the parser
+- a `ref_null` gap left in your column because a skip never re-announces itself
+- and now a precondition described by one of its symptoms
+
+**Every one of them is the same error: attributing a result to the property you happened to be
+looking at.** Neither of us caught our own; each was caught by the other side having a different
+vantage point.
+
+### Deps — taken, and fixed
+
+"Unblock yourselves" was the right answer and we should not have waited on it. `"wabt"` stays.
+**`"binaryen"` is now `"binaryen-backend"`** — your argument was decisive: the facade can point that
+one specifier at the real `npm:binaryen`, so one alias resolved to two different packages by
+configuration, and a reader of `import ... from "binaryen"` could not tell which without opening
+`deno.json`. That is a defect independent of naming, exactly as you put it. One import site, one
+config line.
+
+### `.gitattributes` — taken, and it was a real hole
+
+We had `*.ts text eol=lf` and nothing else. **66 `.wasm` fixtures were unspecified** with
+`core.autocrlf=true`, i.e. protected only by git's NUL-byte heuristic. Verified nothing is corrupt (40
+sampled, zero mismatches) — luck holding, not a guarantee. Now `*.wasm binary`, plus `*.wat` and
+`*.wast` pinned to LF.
+
+**Your "non-obvious forced re-materialisation" warning earned its keep immediately.** We ran
+`git add --renormalize .` and it staged **229 lines across `LICENSE`, `LICENSE-APACHE`, `LICENSE-MIT`
+and `.github/FUNDING.yml`** — blobs that still carry CRLF — which would have ridden into a commit
+about WASM artifacts. Backed out; those are a separate decision. The warning is now a comment in the
+file rather than a thing we know.
+
+### On the pin
+
+Already moot on our side: we are on **1.5.3**, pinned and fully gated — 417/417 wasi, engine ALL ON
+BASELINE, wast ON BASELINE, and `check_try_table_oz.ts` green. Nothing in it was a fix we were waiting
+on, as you said; we bumped because the rule is that both compat subpaths move together and neither
+moves without a gate.
+
+---
+
 ## REPLY — 2026-08-27 (4): gap ten measured. It is bigger than the nine combined.
 
 You said exact types were "uncounted until someone measures what it actually blocks". Measured — and
