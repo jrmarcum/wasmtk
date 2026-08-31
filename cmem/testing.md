@@ -94,14 +94,14 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 
 `go_merge_tests` was mis-classified as a Go-only outlier until this grep showed the `wasic` call.
 
-## Current pass counts (2026-08-27, **v2.0.1 released**, binaryang **1.5.3** — fully gated, nothing moved from 1.5.2)
+## Current pass counts (2026-08-31, **v2.0.2 released**, binaryang **1.5.3** — fully gated, nothing moved from 1.5.2)
 
 > ### EVERY suite in the repo is green (2026-07-30, re-measured on the v2.0.0 tree) — full roster
 >
 > | Suite | Result |
 > | --- | --- |
 > | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **417 / 417** — 412 + the Phase 34 type-predicate batch (3 owner stress tests; 2 passed as written, 1 exposed the inline-target bug) + 2 regressions, 2026-07-30. Full suite RE-RUN: the fix changed `src/wasic.ts`, so the gate applied |
-> | `wast_tests.ts` | **288 files, 37370 passing assertions** — ON BASELINE (re-recorded 2026-08-27 after `ref.null` support: +123 assertions across 16 files, 0 regressions), with **15 files pinned WITH failures** and **0 unrunnable**. On **binaryang 1.5.3** (was wabt-ts 1.4.1 before the 2026-08-27 merge; unchanged across 1.5.1 → 1.5.2 → 1.5.3). The +9264 passes are the 1.4.0/1.4.1 bump landing after the three malformations it exposed were fixed: an earlier 1.4.0 attempt was reverted when it took wasi to 378/417 and both dync suites to 0. **The gain is mostly recovered COVERAGE, not new correctness** — 14 of the 15 newly-pinned files went `unbuilt → 0`, so modules that could not previously be assembled now run and expose real conformance gaps (`ref_cast`, `ref_test`, `br_on_cast`, `table_grow`, … — GC/ref-types). Those failures were always there; they were invisible. See compiler-bugs.md |
+> | `wast_tests.ts` | **288 files, 37370 passing assertions** — ON BASELINE (re-recorded 2026-08-31 after `ref.null` support: +123 assertions across 16 files, 0 regressions), with **15 files pinned WITH failures** and **0 unrunnable**. On **binaryang 1.5.3** (was wabt-ts 1.4.1 before the 2026-08-27 merge; unchanged across 1.5.1 → 1.5.2 → 1.5.3). The +9264 passes are the 1.4.0/1.4.1 bump landing after the three malformations it exposed were fixed: an earlier 1.4.0 attempt was reverted when it took wasi to 378/417 and both dync suites to 0. **The gain is mostly recovered COVERAGE, not new correctness** — 14 of the 15 newly-pinned files went `unbuilt → 0`, so modules that could not previously be assembled now run and expose real conformance gaps (`ref_cast`, `ref_test`, `br_on_cast`, `table_grow`, … — GC/ref-types). Those failures were always there; they were invisible. See compiler-bugs.md |
 > | `bindgen_tests.ts` | 142, 0 failed |
 > | `engine_cross_check_tests.ts` | **376 modules × 3 engines = 1128 pairs, ALL ON BASELINE** — the multi-engine gate (2026-08-24). V8 vs wasmtime/wasmer/wazero, byte-identical stdout. Baseline `tests/engine_baseline.json`. **Re-recorded 2026-08-25 after the `try_table` migration: wasmtime 364 match / 12 reject / 0 differ** (was 354/22 — 10 modules flipped `reject → match` once EH stopped being legacy). The 37 `differ` on the very first run were the `fd_write` short-write bug, fixed the same day. **Re-recorded AGAIN 2026-08-27 when the `-Oz` skip was lifted: wasmer 363 match / 13 reject** (was 353/23 — 10 modules that wasmer REJECTED as raw wabt output load once binaryen has optimised them). wazero unchanged at 346/30. Verified ALL ON BASELINE again on binaryang 1.5.3 with `0 regressed, 0 improved` |
 > | `go_merge_tests.ts` · `go_bindgen_tests.ts` · `go_asyncify_tests.ts` | **7 / 7 · 7 / 7 · 12 / 12** — green on **Go 1.26.7 + TinyGo 0.41.1**. TinyGo 0.41.1 caps at Go 1.26; a Go 1.27 install breaks all three (`requires go version 1.19 through 1.26`). Keep the pair in step — Go 1.27 is safe only once TinyGo **0.42.0** ships (support is on `dev`). See [next-work.md](next-work.md) |
@@ -172,7 +172,7 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 > ("file is being used by another process") on `tests/go_fixtures/**/main.wasm`, i.e. the TinyGo
 > build / asyncify write racing the OS file lock, NOT assertion failures.
 >
-> 🔁 **CORRECTION 2026-08-27 — "run alone it is 12/12" is NOT reliable.** Measured back-to-back with
+> 🔁 **CORRECTION 2026-08-31 — "run alone it is 12/12" is NOT reliable.** Measured back-to-back with
 > nothing else running: run 1 **11/1** (`nested (re-entrant suspend)`, `os error 32` on
 > `writefile … nested/main.wasm`), run 2 **12/12**, same inputs. Concurrency with *other suites* is
 > not the only trigger — a **preceding run of this same suite** is enough, because handles from the
@@ -218,7 +218,7 @@ counts in README are a record of when each phase first went green, not a live in
 ## `wast_tests` is a PER-FILE BASELINE gate (rebuilt 2026-08-20)
 
 **288 files, 37370 passing assertions, 15 files pinned WITH failures, 0 unrunnable** (re-recorded
-2026-08-27 after `ref.null` support landed; was 288 / 37247 on wabt-ts 1.4.1, and 287 / 27983 / 12
+2026-08-31 after `ref.null` support landed; was 288 / 37247 on wabt-ts 1.4.1, and 287 / 27983 / 12
 on 1.3.5) — up from 41 files / 12444, because the gate no
 longer needs a hand-curated file list. Expected pass counts live in **`tests/wast_baseline.json`**
 (tracked). Every baselined file must produce **exactly** its baseline: fewer → FAIL (coverage lost),
@@ -377,7 +377,7 @@ it. Each cost passes without costing a single failure:
 | --- | --- | --- | --- |
 | `return_call.wast` | 44 → 12 | `ref.null $t` (concrete type index) at `:95` | ✅ **FIXED — now 45 pass / 0 fail**, one better than before the sync |
 | `proposals/custom-page-sizes/memory_max*.wast` | 4 → 2 each | `(module definition …)` | ✅ **FIXED** — folded into the +9264 re-record |
-| `ref_null.wast` (pre-existing, not from this sync) | 0 / 34 skip | `ref.null` cannot encode for **any** heap type | ✅ **FIXED 2026-08-27 — now 25 pass / 0 fail / 7 skip.** The 7 are V8 refusing to marshal `exnref`/`anyref`/user-defined heap types, classified as skips by `isJsBoundaryRefusal`. Earlier: ⚠️ **RE-ATTRIBUTED — the blocker was OURS.** Still 0 pass / 32 skip on binaryang 1.5.2, but **`unbuilt modules = 0`**: the modules assemble fine. `constType()` in `src/wast.ts` returns `null` for `ref.null` / `ref.func` / `ref.extern`, so our RUNNER skips every such assertion regardless of what the assembler can do. Upstream fixed their half (they report `ref.null` with a user-defined heap type was two defects stacked); our number did not move because we cannot marshal a reference VALUE. |
+| `ref_null.wast` (pre-existing, not from this sync) | 0 / 34 skip | `ref.null` cannot encode for **any** heap type | ✅ **FIXED 2026-08-31 — now 25 pass / 0 fail / 7 skip.** The 7 are V8 refusing to marshal `exnref`/`anyref`/user-defined heap types, classified as skips by `isJsBoundaryRefusal`. Earlier: ⚠️ **RE-ATTRIBUTED — the blocker was OURS.** Still 0 pass / 32 skip on binaryang 1.5.2, but **`unbuilt modules = 0`**: the modules assemble fine. `constType()` in `src/wast.ts` returns `null` for `ref.null` / `ref.func` / `ref.extern`, so our RUNNER skips every such assertion regardless of what the assembler can do. Upstream fixed their half (they report `ref.null` with a user-defined heap type was two defects stacked); our number did not move because we cannot marshal a reference VALUE. |
 
 ⚠️ **The original verdict on this table was wrong, and the way it was wrong is worth keeping.** It
 read: *"Only the third is a wabt-ts bug; the first two match upstream wabt's own parser, so a wabt-ts

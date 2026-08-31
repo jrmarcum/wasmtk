@@ -34,7 +34,7 @@ See [testing.md](testing.md).
 
 **Pass counts over a corpus you cannot fully run are UPPER BOUNDS, not measurements. Skips are not
 passes.** [wazmrt] Live figure here: the wast gate reads **37,370 passed / 27,154 skipped**
-(re-recorded 2026-08-27 after `ref.null` support; binaryang 1.5.3). **The two crossed over** — this
+(re-recorded 2026-08-31 after `ref.null` support; binaryang 1.5.3). **The two crossed over** — this
 corpus used to skip more than it ran (27,983 / 37,252 on 1.3.5). The prediction that a bump would
 cross them was right, and the bump LANDED — an earlier 1.4.0 attempt was reverted, 1.4.1 was not.
 Any headline quoting passes without skips is still overstated by more than the number itself.
@@ -280,14 +280,14 @@ entirely different reason (wasic emits no struct or array types at all). **The r
 by luck; the check was wrong.** When an upstream reports a shape, ask what makes it fire.
 
 **An import alias must not collide with a package the project could actually resolve.**
-[binaryang → wasmtk, 2026-08-27] Our `"binaryen"` alias pointed at a JSR compat subpath, but the
+[binaryang → wasmtk, 2026-08-31] Our `"binaryen"` alias pointed at a JSR compat subpath, but the
 facade behind it can also be pointed at the real `npm:binaryen`. One specifier, two packages,
 selected by configuration — and `import ... from "binaryen"` told the reader nothing about which.
 Renamed to `binaryen-backend`. **The test is not "is the name accurate?" but "could this name also
 resolve to something else here?"**
 
 **An upstream fix that does not move your number means the binding constraint may have MOVED, not
-that the fix failed.** [wasmtk, 2026-08-27] `ref_null.wast` sat at 0 pass / 32 skip, recorded as an
+that the fix failed.** [wasmtk, 2026-08-31] `ref_null.wast` sat at 0 pass / 32 skip, recorded as an
 upstream encoder bug. Upstream fixed their half; our number did not move, because our own runner's
 `constType()` had become the binding constraint — and **nothing re-announced it, because a skip is
 not a failure**. The tell was in the row all along: `unbuilt modules = 0` meant the modules
@@ -296,7 +296,7 @@ ASSEMBLED, so whatever stopped them was downstream of the assembler. Teaching th
 re-ask which layer binds before re-reporting it upstream.**
 
 **Converting a SKIP into a FAILURE is a false negative — read what the new failures actually say.**
-[wasmtk, 2026-08-27] Admitting `ref.null` turned 32 skips into 25 passes and **7 failures**. All
+[wasmtk, 2026-08-31] Admitting `ref.null` turned 32 skips into 25 passes and **7 failures**. All
 seven were `type incompatibility when transforming from/to JS` — V8 refusing to marshal `exnref` /
 `anyref` / user-defined heap types. That is a limit of the HARNESS; recording it as a failure asserts
 the toolchain got something wrong when the module is fine and only the test cannot see it. The runner
@@ -304,7 +304,7 @@ already had the precedent — NaN payloads that cannot cross the JS boundary are
 comment saying why. **A new failure appearing beside a big win deserves the same scrutiny as a
 regression, and is exactly when you are least inclined to look.**
 
-**Hand over the CHECK, not the CONCLUSION.** [binaryang → wasmtk, 2026-08-27] A defect reached us as
+**Hand over the CHECK, not the CONCLUSION.** [binaryang → wasmtk, 2026-08-31] A defect reached us as
 "a tag whose param is `(ref $T)`", and the follow-up we wrote down was "audit our fixtures for
 `(ref $T)` tag params". That is **a conclusion shaped like a check** — unfalsifiable by its recipient,
 because running it can only confirm the sender's framing. The real precondition was a conjunction
@@ -314,7 +314,7 @@ themselves: **give the other side the predicate, not your evaluation of it.** Th
 when handed a shape, ask what makes it fire before auditing for the shape.
 
 **Measuring line endings is booby-trapped in BOTH directions — use a positive control.**
-[binaryang + wasmtk, 2026-08-27] Measured against `LICENSE-APACHE`, whose true CR count is **184**:
+[binaryang + wasmtk, 2026-08-31] Measured against `LICENSE-APACHE`, whose true CR count is **184**:
 
 | method | reports | wrong how |
 | --- | --- | --- |
@@ -359,7 +359,7 @@ is it *consumed*? If those three sets differ, the estimate is measuring whicheve
 matched.
 
 **The pattern is not detectable by being careful — it is detectable by being ENUMERABLE.**
-[binaryang's framing, adopted 2026-08-27, and it is why this is a SECTION and not four incident
+[binaryang's framing, adopted 2026-08-31, and it is why this is a SECTION and not four incident
 entries.] Most instances were caught by the other side having a different vantage point. But upstream
 caught one of their own — a convert-pair probe reporting `bin-roundtrip=OK`, green for the wrong
 reason because validity was the property in view while opcode survival was what governed — and only
@@ -386,14 +386,23 @@ a stray CPU hog is not just noise, it manufactures the symptom you are hunting.
 ## 4b. Tooling that lies to you (the shell, the cache, the generator)
 
 These are not "be careful" items — each returns a **confident, plausible, wrong** answer, and every
-one of them cost real time on 2026-08-27.
+one of them cost real time on 2026-08-31.
 
 **Author file CONTENT with a real file write; use the shell only to MOVE it.** [binaryang + wasmtk]
 Writing a config through a shell heredoc into `python3 - <<'EOF'` collapses backslashes one level:
-`\0asm` in the source became ` asm`, which Python read as **a literal NUL byte**, and that byte
-landed in `.gitattributes` — the file whose entire job is stopping content corruption. git flagged it
-instantly (`Bin 584 -> 2144`), which is the only reason it was caught. **The corruption was invisible
-in the source that produced it.** Same wall hit three times in one day. The rule is not "escape more
+a doubled backslash before `0asm` in the source arrived at Python as a single one, which Python then
+read as **a literal NUL byte**, and that byte landed in `.gitattributes` — the file whose entire job
+is stopping content corruption. git flagged it instantly (`Bin 584 -> 2144`), which is the only
+reason it was caught. **The corruption was invisible in the source that produced it.**
+
+🔁 **Then it happened a FOURTH time — inside this very rule.** Writing the paragraph you are reading,
+through a heredoc, put a NUL byte into `best-practices.md` itself; the tell was `grep` reporting
+`Binary file cmem/best-practices.md matches` during an unrelated search. Knowing the rule, having
+just written it down, and being actively on guard were all insufficient, because the failure is in
+the transport and not in the author's attention. **That is the argument for the mechanical form:**
+author content with `Write`/`Edit`, or run a script from a FILE — never inline through a shell
+heredoc — and the class disappears rather than being watched for. The repair here was itself done
+with a script file, using `chr(92)` rather than any escape. The rule is not "escape more
 carefully": use `Write`/`Edit` for content, and reserve the shell for running things.
 
 **When the exit code IS the measurement, do not pipe.** [wasmtk, third occurrence] `deno fmt --check

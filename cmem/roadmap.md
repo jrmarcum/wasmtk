@@ -38,6 +38,46 @@
 > replace it with the real version at publish time. A breaking change may ALSO warrant a Feature
 > Status row if it ships alongside a feature — but the Breaking Changes row is mandatory.
 
+## Release status (2026-08-31) — v2.0.2: backend on binaryang 1.5.3, wider `.wast` coverage
+
+**v2.0.2 is PUBLISHED to JSR and ATTESTED** — `rekorLogId 2666522017`, `createdAt 17:56:16.616` →
+`updatedAt 17:56:21.068` (4.45s, the attested signature). Patch bump from v2.0.1, no breaking
+changes, no API change. Tagged `v2.0.2` at `14b4edcc028`.
+
+What it carries:
+
+1. **Backend `@jrmarcum/binaryang@1.5.3`**, both compat subpaths at one exact version. Fully gated —
+   and **nothing moved from 1.5.2**, which is recorded plainly rather than implying a fix anyone was
+   waiting on. No release note for 1.5.3 ever reached us, so this is measurement, not confirmation.
+2. **`wasmtk wast` marshals `ref.null`** — **+123 assertions across 16 files, zero regressions**
+   (`ref_null` 0 → 25, `table_fill64` 9 → 41, `table_fill` 9 → 25, `table_set` 11 → 21,
+   `table_set64` 4 → 14, …). Corpus **37,247 → 37,370**. `ref.func` / `ref.extern N` still
+   unsupported (host references have identity); heap types V8 cannot marshal are **skips, not
+   failures**.
+3. **Windows `os error 32` write race fixed** in `rt.writeFile` — five retries over ~1.2s for a
+   sharing violation ONLY, everything else propagating on the first attempt. Affects every producer.
+4. Internal: the `binaryen` import alias became **`binaryen-backend`**, `.gitattributes` rebuilt
+   **wildcard-first**, and an `upstream/binaryang` co-development checkout with a structural guard
+   (its build installs as `wasmtk-upstream` and can never be picked up by a gate).
+
+Gate at release: **wasi 417/417 · engine 1128 ALL ON BASELINE · wast ON BASELINE, 288 files /
+37,370**.
+
+### ✅✅ PROVENANCE: TWO IN A ROW — it is holding
+
+| version | `rekorLogId` | attested |
+| --- | --- | --- |
+| v1.11.2 | `2053916008` | yes |
+| v1.11.3 → v2.0.0 | null | **no — twelve releases** |
+| v2.0.1 | `2620232142` | yes |
+| **v2.0.2** | **`2666522017`** | **yes** |
+
+v2.0.1 was a data point; **v2.0.2 makes it a trend.** The cause is still UNKNOWN and must not be
+credited to our cache-bust, which only changed how the answer is READ — the earlier absences were
+themselves re-verified with cache-busted reads. Leading candidate remains that v2.0.1 was the first
+release built on the merged `binaryang` rather than `wabt-ts` + `binaryen-ts`. Watch v2.0.3, but the
+open question is now "why did it come back", not "is it broken".
+
 ## Release status (2026-08-27) — v2.0.1: standard EH, merged backend, a memory-corruption fix
 
 **v2.0.1 is PUBLISHED to JSR.** Patch bump from v2.0.0, no breaking changes. Tagged `v2.0.1` and

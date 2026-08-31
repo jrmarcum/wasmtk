@@ -4,7 +4,7 @@
 > targets + the first breaking change). Authoritative status lives in [roadmap.md](roadmap.md); this
 > file is the short, prioritized "what to pick up next" list. Prune items as they land.
 
-## ✅ binaryang 1.5.3 — PINNED AND FULLY GATED (2026-08-27). Tree is publishable.
+## ✅ binaryang 1.5.3 — PINNED AND FULLY GATED (2026-08-31). Tree is publishable.
 
 **All 16 suites green, and nothing moved.**
 
@@ -40,7 +40,7 @@ version ([design-decisions.md](design-decisions.md)).
   `reject` **22 → 12**; `0 regressed`. Ten modules flipped, not the eight first reported — the first
   run graded a corpus built by the previous compiler. **Order is load-bearing: `wasi_tests` →
   `engine_cross_check_tests` → `wast_tests`.**
-- ✅ **`os error 32` flake — FIXED 2026-08-27 in `rt.writeFile`, not in the Go producer.** The race
+- ✅ **`os error 32` flake — FIXED 2026-08-31 in `rt.writeFile`, not in the Go producer.** The race
   is not Go-specific, so a retry-with-backoff (5 attempts, ~1.2s) lives where every writer benefits.
   **Only Windows sharing violations are retried**; everything else rethrows on the first attempt, so
   it is a race fix, not error-swallowing. Verified with three back-to-back `go_asyncify_tests` runs
@@ -48,7 +48,7 @@ version ([design-decisions.md](design-decisions.md)).
   **Superseded description below.**
 - ⏳ **(superseded) Kill the `os error 32` flake in the Go suites (Windows).** `go_asyncify_tests` intermittently
   fails writing `tests/go_fixtures/**/main.wasm` — an OS file-lock race, never an assertion failure.
-  Measured 2026-08-27 back-to-back with nothing else running: 11/1 then 12/12. The recorded advice
+  Measured 2026-08-31 back-to-back with nothing else running: 11/1 then 12/12. The recorded advice
   ("run alone it is 12/12") is not reliable; a preceding run of the SAME suite is enough to trigger
   it. **Fix: retry-with-backoff around the asyncify write in `src/gowasic.ts`.** Left out of the
   2026-08-27 release batch on purpose — it is release-critical code and the failure is cosmetic and
@@ -62,7 +62,7 @@ version ([design-decisions.md](design-decisions.md)).
 - ✅ **Pass bisect — MOOT, and tell them so rather than dropping it.** We promised binaryang the
   offending pass name once `listPasses()` and kebab-case landed. 1.5.2 fixes the defect, so there is
   nothing left to bisect. **Say that explicitly** — a promise silently dropped reads as forgotten.
-- ✅ **Defect 5 — ANSWERED 2026-08-27, and we are clear for a checkable reason.** Upstream corrected
+- ✅ **Defect 5 — ANSWERED 2026-08-31, and we are clear for a checkable reason.** Upstream corrected
   their own report: the precondition is a **conjunction** and neither half mentions the tag's types —
   **(a)** the module contains a struct or array type (which flips their encoder onto the GC path)
   **AND (b)** no function or import shares the tag's exact signature. A plain `(param i64 f32)` tag
@@ -82,7 +82,7 @@ version ([design-decisions.md](design-decisions.md)).
   shares" in **11 modules that reach `-Oz`** (tag but no `try_table` — throw-without-catch, so the
   skip never fires), and all 11 PASS on 1.5.1. Asked upstream whether that defect needs a `(ref $T)`
   param. If it does not, those 11 should be failing and are not — understand why before trusting them.
-- ✅ **`ref_null` — FIXED 2026-08-27, and it was worth 4× the estimate.** `constType` now admits
+- ✅ **`ref_null` — FIXED 2026-08-31, and it was worth 4× the estimate.** `constType` now admits
   `ref.null`, `constToJs` returns JS `null`, `resultMatches` compares against it.
   **`ref_null.wast` 0 → 25 passes**, and the corpus gained **+123 assertions across 16 files** with
   **0 regressions** — `table_fill64` 9 → 41, `table_fill` 9 → 25, `table_set` 11 → 21,
@@ -112,7 +112,7 @@ version ([design-decisions.md](design-decisions.md)).
   been theirs originally — but we never re-checked WHICH layer was binding after they shipped, and
   the runner's own skip was invisible because a skip is not a failure. **When an upstream fix does
   not move your number, the next question is whether the constraint is still theirs.**
-- ✅ **`try_table` `-Oz` fixture — BUILT AND REPRODUCING (2026-08-27).**
+- ✅ **`try_table` `-Oz` fixture — BUILT AND REPRODUCING (2026-08-27; still green on 1.5.3, 08-31).**
   `scripts/eh_try_table_live_local_fixture.wat` + `scripts/check_try_table_oz.ts`: assembles once,
   runs both sides of `-Oz`, exit 42 = safe, exit 1 = the bug. Measured on binaryang 1.5.1: pre-Oz
   **42**, post-Oz **1**.
@@ -130,7 +130,7 @@ version ([design-decisions.md](design-decisions.md)).
   failed.** 🎓 The reusable part: this item cost four wrong answers because each shortcut *looked*
   like a measurement. **When a test's setup is built by another test, only the full unfiltered suite
   can measure it** — a filter silently removes the producer, not just the noise.
-- ✅ **`ref.null` re-measured 2026-08-27 — STILL BROKEN, and the old prediction was wrong.**
+- ✅ **`ref.null` re-measured 2026-08-31 — STILL BROKEN then, and the old prediction was wrong.**
   `ref_null.wast` is **0 pass / 32 skip** on binaryang 1.5.1: `ref.null` still cannot encode for any
   heap type. But the recorded verdict that `ref.null $t` and `(module definition …)` were "parity
   with upstream wabt, so a wabt-ts bump will not move them" **was false** — 1.4.1 moved both
@@ -140,7 +140,7 @@ version ([design-decisions.md](design-decisions.md)).
 
 ## Open as of 2026-07-30 (v2.0.0)
 
-- ✅ **DONE 2026-08-27 — `"binaryen"` is now `"binaryen-backend"`; `"wabt"` stays.** Upstream's note
+- ✅ **DONE 2026-08-31 — `"binaryen"` is now `"binaryen-backend"`; `"wabt"` stays.** Upstream's note
   turned out not to be about our manifest at all (their broken printout), but the merits stood:
   `src/binaryen.ts` can point that one specifier at the real `npm:binaryen`, so **one alias resolved
   to two different packages by configuration** — a defect independent of naming, since a reader of
@@ -158,7 +158,14 @@ version ([design-decisions.md](design-decisions.md)).
     a full gate and should NOT ride inside a release.
   - ⚠️ Confirm the intent with binaryang before acting: their note is one line, and the reading
     above is inferred. We checked the two other candidate meanings and both came back clean.
-- ✅ **JSR provenance — v2.0.1 IS ATTESTED. `rekorLogId 2620232142`.** Read 2026-08-27,
+- ✅ **JSR provenance — TWO IN A ROW. v2.0.1 `2620232142`, v2.0.2 `2666522017`, both attested.**
+  Read cache-busted 2026-08-31; `updatedAt` 4.45s after `createdAt` on v2.0.2. **Twelve releases of
+  absence (v1.11.3 → v2.0.0) ended and have stayed ended.** The cause is still unknown and is NOT
+  ours to claim — our cache-bust changed only how the result is read, and the earlier absences were
+  confirmed with cache-busted reads. Leading candidate: v2.0.1 was the first release built on merged
+  `binaryang`. **The open question flipped** — it is now "why did it come back", not "is it broken".
+  Superseded single-release note follows.
+- ✅ **(superseded) JSR provenance — v2.0.1 IS ATTESTED. `rekorLogId 2620232142`.** Read 2026-08-27,
   cache-busted; `updatedAt` 4.6s after `createdAt`; JSR score 100. **Twelve releases of absence
   (v1.11.3 → v2.0.0) ended.** We do NOT know why — our cache-bust changes only how the result is
   read, and the earlier absences were themselves confirmed with cache-busted reads. Leading
@@ -189,7 +196,7 @@ version ([design-decisions.md](design-decisions.md)).
 - ⏳ **Declare a Deno floor in `deno.json`.** There is none today, so nothing validates a minimum
   supported version and a release could silently start requiring a newer Deno — first signal would
   be a user report. Cheap to add, and it would make the compatibility question decidable.
-- 🔁 **SUPERSEDED — see the 2026-08-27 `ref.null` entry above.** Two of the three gaps below DID
+- 🔁 **SUPERSEDED — see the 2026-08-31 `ref.null` entry above.** Two of the three gaps below DID
   move on wabt-ts 1.4.1, contradicting this item's core claim; only `ref.null` itself still stands,
   and the baseline numbers quoted here are the pre-re-record ones. Kept for the reasoning only.
 - ⏳ **(historical) Chase the wabt-ts `ref.null` bug; do NOT expect the other two to move.** The 2026-08-20 corpus

@@ -8,7 +8,7 @@ The *testing* half (where tests go, phase filter then full suite, verifying pre-
 lives in [testing.md](testing.md) § "Stress-test batches" and § "Which suites to run for a given
 change". This file covers the git/release half and the traps.
 
-## Co-developing with the binaryang backend (`upstream/`, added 2026-08-27)
+## Co-developing with the binaryang backend (`upstream/`, added 2026-08-31)
 
 The backend is a first-party sibling project and the two repos trade bug reports constantly, so a
 local checkout lives at **`upstream/binaryang`** — **gitignored, not vendored, not a submodule**.

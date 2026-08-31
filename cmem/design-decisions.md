@@ -813,7 +813,7 @@ silently break (all `src/wasic.ts`):
     - **Keep the two specifiers.** They are not redundant: `src/binaryen.ts` is a facade that also
       supports `npm:binaryen`, and the bare `"wabt"` specifier is imported by five modules. Two
       names over one package preserves the ability to swap either half independently.
-    - 🔒 **The Binaryen alias is `binaryen-backend`, NOT the bare `binaryen` (2026-08-27). Do not
+    - 🔒 **The Binaryen alias is `binaryen-backend`, NOT the bare `binaryen` (2026-08-31). Do not
       "simplify" it back.** `binaryen` is also a real published package that this facade can be
       pointed at, so the bare name resolved to **two different packages depending on configuration**
       — a defect independent of what it is called, because `import ... from "binaryen"` gave a reader
