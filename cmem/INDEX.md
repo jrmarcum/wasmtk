@@ -57,6 +57,22 @@ a hard `diagnostics` abort, guarding speculative probes with `quietEmit`. Fan ou
 investigators per category when the surface is large. Report `file:line` + severity, fix the safe
 ones, and keep every suite green (**output-diff, not just exit codes**).
 
+### 🔒 Two HARD RULES for tooling (owner directive 2026-09-19, binding on every agent)
+
+1. **Scripting is Deno/TypeScript ONLY.** Ad-hoc probes, migrations and repairs are written as
+   `.ts` in the scratchpad and run with `deno run -A <file>`. **No `python3`**, no inline
+   `python3 -c`, no `node -e`. It is the language the repo is already in, a TS probe can import
+   the real modules instead of reimplementing them, and python brought a second encoding regime
+   (cp1252 stdout) and a second escape pass into a UTF-8 repo.
+2. **No heredocs. Ever, in any language.** Not `<<'EOF'`, not `@'…'@`, and **not for commit
+   messages** — write the message with `Write` and use `git commit -F <file>`, never `-F-`.
+   Five content corruptions trace to heredoc transport, including a literal NUL byte written into
+   `.gitattributes` and another into the rule warning about it. **The corruption is invisible in
+   the source that produces it**, so attention does not help; use `Write`/`Edit` for content and
+   let the shell only RUN things.
+
+Full rationale and the incident list: [best-practices.md](best-practices.md) §4b.
+
 ### Trigger — regression gate (owner directive 2026-07-28, binding)
 
 **When a bug is found/fixed, run the ENTIRE suite set — including `wast_tests`.** Skip a suite only
