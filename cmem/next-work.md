@@ -498,7 +498,13 @@ Nothing to build; this is a checklist so the bump is mechanical when it lands.
   pending; a version bump plus the regression gate is the whole job. Do not manufacture work to
   match the other side's activity.
 
-### ⏳ THE NEXT BUMP IS **wabt-ts 1.4.0** (owner, 2026-08-24)
+### ✅ DONE — "the next bump is wabt-ts 1.4.0" (owner, 2026-08-24)
+
+**Long since overtaken.** 1.4.0 was attempted and reverted, 1.4.1 landed, then wabt-ts and
+binaryen-ts **merged into `@jrmarcum/binaryang`**, which is now pinned at **1.5.3** and fully
+gated. Kept for the reasoning about how a bump is gated, not as a pending action.
+
+### (historical) ⏳ THE NEXT BUMP IS **wabt-ts 1.4.0** (owner, 2026-08-24)
 
 Named so the recheck is mechanical rather than rediscovered. Pin is currently `^1.3.5` in
 `deno.json`; `deno.lock` resolves 1.3.5. **1.4.0 is expected to carry the `ref.null` and `try_table`
@@ -577,7 +583,14 @@ it. Reported by the wabt-ts side, confirmed here against regenerated artifacts. 
 Wasmtime from current `wasic`. Their corpus copy is 272 `.wat` vs our 373. Reply sent in
 `scripts/wabt-ts-bug-report.md`; fix is on their side.
 
-## SCOPED: work opened by the 2026-08-20 spec-corpus session
+## ✅ CLOSED — work opened by the 2026-08-20 spec-corpus session
+
+Every subsection below is RESOLVED, SUPERSEDED or historical: the 15 execution failures (premise
+gone — the baseline now covers all 288 files with 0 unrunnable), the dir-run OOM (fixed; there was
+never any retention), and Go 1.27 vs TinyGo (owner downgraded to 1.26.7). **Nothing here is
+actionable.** The heading is kept so the session's findings stay findable.
+
+## (historical) SCOPED: work opened by the 2026-08-20 spec-corpus session
 
 Everything below came out of one session (corpus sync -> per-file baseline gate -> wabt-ts report).
 Sized S/M/L by *uncertainty*, not keystrokes. **Nothing here is a release blocker** — every suite
