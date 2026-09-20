@@ -19,7 +19,32 @@
   "assemble", so an ENCODE error satisfied a decode assertion. Stages are now tagged; encode and
   V8-validation failures are skips with a reason, while `(module binary …)` decode rejections
   still pass. Acceptance fixture covers all three directions.
-- 🔴 **SEND: two parser-leniency bugs to binaryang** — drafted at the top of
+- 🤝 **SENT 2026-09-20 — both parser-leniency bugs are with binaryang and being worked on.**
+  Nothing for us to do but verify when it lands. Full write-up stays at the top of
+  `scripts/binaryang-report.md`.
+
+  **ACCEPTANCE — this fix is verifiable, and the prediction is specific.** Both assertions are
+  currently SKIPS because our runner correctly refuses to call a well-formed module "malformed".
+  When binaryang's parser starts rejecting them at parse, both flip **skip → pass**:
+
+  | file | today | after their fix |
+  | --- | --- | --- |
+  | `proposals/custom-page-sizes/memory_max_i64.wast` | 1 pass / 5 skip | **2 pass** / 4 skip |
+  | `legacy/try_catch.wast` | 34 pass / 5 skip | **35 pass** / 4 skip |
+  | corpus total | 37,365 | **37,367** |
+
+  ⚠️ **The gate will go RED on this, by design** — a GAINED-COVERAGE drift needing a deliberate
+  re-record, exactly like the `ref.null` win. Do not read it as a regression. And **if the numbers
+  move by anything other than exactly +1 and +1, the fix did something else too** — re-measure
+  before re-recording.
+
+  🎓 Worth noting what made this checkable at all: the two assertions are skips rather than passes
+  *because* we fixed our own runner first. Had we left `assert_malformed` conflating parse with
+  encode, their fix would have changed nothing visible on our side and we would have had no way to
+  confirm it.
+
+  Original report framing follows.
+- 📄 **(sent) Two parser-leniency bugs to binaryang** — drafted at the top of
   `scripts/binaryang-report.md`.
   1. **Quick:** integer literals in memory LIMITS are not range-checked. binaryang already does this
      correctly for `i32.const` / `i64.const`; limits take a path that skips it. Boundary:
