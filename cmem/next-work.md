@@ -280,7 +280,19 @@ version ([design-decisions.md](design-decisions.md)).
 - ⏳ **(historical) Decide whether to pin `*.wast text eol=lf` in `.gitattributes`.** Deliberately NOT done on
   2026-08-20 — a repo-wide checkout-behaviour change shouldn't ride along inside a corpus sync. It
   is a one-liner whenever wanted; rationale in [design-decisions.md](design-decisions.md).
-- ⏳ **`docs/` and `cmem/*.md` are not `deno fmt`-clean.** `main.ts` + `src/` now are, and
+- ✅ **CLOSED 2026-09-20 — markdown is OUT OF SCOPE for `deno fmt`**, not pending. `deno.json`
+  excludes `**/*.md`; `src/`, `main.ts` and `scripts/` are verified clean (3 script files were
+  formatted to get there). Measured trade in [design-decisions.md](design-decisions.md): formatting
+  the markdown costs 21 files / +5359 / −4869 and leaves **744 lines over 120 chars**, because fmt
+  pads table cells rather than wrapping them — and every later hand-edit re-dirties the file.
+  🎓 **Two corrections came out of testing the deferral rather than inheriting it.** The recorded
+  reason — "bare `deno fmt` mangles tables/code-fences" — was **wrong**: it changes zero table and
+  fence counts and loses zero words. And the trial exposed a **genuinely broken table** in
+  `best-practices.md`, split across lines because a `\r` I wrote became a real CR and was later
+  normalised to a newline. It had been rendering malformed for days. **A deferral held on a wrong
+  reason is still load-bearing — retest the reason, not just the decision.**
+  Original framing follows.
+- ⏳ **(superseded) `docs/` and `cmem/*.md` are not `deno fmt`-clean.** `main.ts` + `src/` now are, and
   `.gitattributes` keeps them that way; the markdown was deliberately left alone (bare `deno fmt`
   mangles tables/code-fences — see [workflow.md](workflow.md)). If it is ever wanted, it needs its
   own pass with `fmt.exclude` tuned, not a blanket run.

@@ -319,12 +319,9 @@ when handed a shape, ask what makes it fire before auditing for the shape.
 
 | method | reports | wrong how |
 | --- | --- | --- |
-| `grep -c '
-'` | 140 | the backslash is a BRE escape — it counts literal `r` characters |
-| `grep -c $'
-'` (no `-U`) | **0** | grep strips CR in text mode on this platform |
-| `grep -cU $'
-'` | 184 | correct |
+| `grep -c '\r'` | 140 | the backslash is a BRE escape — it counts literal `r` characters |
+| `grep -c $'\r'` (no `-U`) | **0** | grep strips CR in text mode on this platform |
+| `grep -cU $'\r'` | 184 | correct |
 | byte count in python | 184 | correct |
 
 Upstream's error read **high and plausible** and confirmed the theory they were testing; ours would

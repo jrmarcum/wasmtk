@@ -3,16 +3,16 @@
 //
 // Usage: deno run --allow-read --allow-write scripts/gen_mathlib_bytes.ts
 
-import { join, dirname, fromFileUrl } from "jsr:@std/path";
+import { dirname, fromFileUrl, join } from "jsr:@std/path";
 
 const scriptDir = dirname(fromFileUrl(import.meta.url));
 const root = join(scriptDir, "..");
 const wasmPath = join(root, "src", "wasm", "mathlib.wasm");
-const outPath  = join(root, "src", "wasm", "mathlib_bytes.ts");
+const outPath = join(root, "src", "wasm", "mathlib_bytes.ts");
 
 const bytes = await Deno.readFile(wasmPath);
 const hex = Array.from(bytes)
-  .map(b => "0x" + b.toString(16).padStart(2, "0"))
+  .map((b) => "0x" + b.toString(16).padStart(2, "0"))
   .join(", ");
 
 const header = [

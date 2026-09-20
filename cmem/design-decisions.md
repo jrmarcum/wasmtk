@@ -864,6 +864,32 @@ silently break (all `src/wasic.ts`):
       and the version that gained the first did not gain the second. Full post-mortem in
       [compiler-bugs.md](compiler-bugs.md); **the gate for lifting it is `15_Exceptions` +
       `15_LexicalShadowing_Stress`, never the acceptance fixture alone.**
+  - 🚫 **MARKDOWN IS OUT OF SCOPE FOR `deno fmt` — owner decision 2026-09-20.**
+    `deno.json` carries `fmt.exclude: ["src/wasm/", "**/*.md"]`. **Do not "finish the job" by
+    removing that glob.** It was measured, not assumed:
+
+    | | measured on a full trial run |
+    | --- | --- |
+    | churn | 21 files, **+5359 / −4869** |
+    | lines over 120 chars afterwards | **744** (our `lineWidth` is 100) |
+    | longest line | 3151 |
+    | style change | `*em*` → `_em_` throughout |
+
+    **The deciding factor is tables.** `deno fmt` does not wrap table rows — it PADS every cell to
+    align the column, so a wide table becomes one very long line, and **every subsequent hand-edit
+    re-dirties the file** until someone re-runs `fmt`. `cmem` is edited constantly and is mostly
+    tables; that is permanent friction bought for cosmetic consistency.
+
+    ⚠️ **The old note claiming `deno fmt` "mangles tables/code-fences" was WRONG and is retracted.**
+    With one genuinely broken table repaired, a trial format changed **zero** table or fence counts
+    and lost **zero** words. It reformats them unhelpfully; it does not corrupt them. The distinction
+    matters because the wrong reason would have been falsified the moment anyone tested it, and then
+    the right conclusion would have been discarded with it.
+
+    What REMAINS enforced: **`src/`, `main.ts` and `scripts/` are `deno fmt`-clean** (verified
+    2026-09-20). `tests/` is deliberately NOT — those 404 files are hand-written compiler INPUT, and
+    reformatting the corpus under test is a change to the test, not to its formatting.
+
   - 🗓️ **DENO FLOOR — decided 2026-09-20, to be WRITTEN AT THE NEXT BUMP, not before.**
     `deno.json` declares no floor today. The owner's policy:
 

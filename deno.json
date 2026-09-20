@@ -62,6 +62,9 @@
     "lineWidth": 100,
     "indentWidth": 2,
     "semiColons": true,
-    "exclude": ["src/wasm/"]
+    "exclude": [
+      "src/wasm/",
+      "**/*.md"
+    ]
   }
 }
