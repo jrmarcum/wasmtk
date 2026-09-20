@@ -864,6 +864,28 @@ silently break (all `src/wasic.ts`):
       and the version that gained the first did not gain the second. Full post-mortem in
       [compiler-bugs.md](compiler-bugs.md); **the gate for lifting it is `15_Exceptions` +
       `15_LexicalShadowing_Stress`, never the acceptance fixture alone.**
+  - 🗓️ **DENO FLOOR — decided 2026-09-20, to be WRITTEN AT THE NEXT BUMP, not before.**
+    `deno.json` declares no floor today. The owner's policy:
+
+    1. **The floor becomes whatever Deno version is in use at the next bump-and-release.** It is
+       captured from `deno --version` at that moment, not chosen in advance. (For reference, the
+       machine is on **2.9.7** as of 2026-09-20 — if a release happened today, that is the number.)
+    2. **Until then we keep cadence with Deno** — take upgrades as they come while the current bug
+       work is in flight, because chasing a floor and chasing backend bugs at once is two moving
+       parts.
+    3. **After that release we HOLD.** Future Deno releases get tested for compatibility *before*
+       the floor moves, rather than the floor drifting silently with whatever is installed.
+
+    **Why the hold matters here specifically: Deno has no LTS line.** There is no "supported old
+    version" to fall back to, so a floor that tracks the newest release is a floor that can strand
+    consumers with no maintained alternative. Holding and testing is the only way to make the
+    compatibility question answerable rather than assumed.
+
+    ⚠️ **Mechanism, so this does not get missed:** the floor is a `"deno": ">=X.Y.Z"` field in
+    `deno.json`. Nothing validates its absence today, so a release can silently start requiring a
+    newer Deno and the first signal would be a user report — which is the whole reason this is
+    being decided now rather than left implicit.
+
   - 🔒 **INVARIANT — never require a bracketing you did not emit.** wabt prints const-exprs folded
     (`(i32.const N)`) or unfolded (`i32.const N`) depending on version; 1.4.1 switched. Read them
     only through `constExprValue` / `replaceConstExpr` in `src/wasmmerge.ts`, which accept either and

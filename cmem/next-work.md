@@ -221,7 +221,15 @@ version ([design-decisions.md](design-decisions.md)).
   [design-decisions.md](design-decisions.md). The "Verify provenance was recorded on JSR" step now
   fails the publish job whenever it is missing, so this can no longer regress unnoticed —
   **expect the v2.0.0 Actions run to be red for this reason; the package published fine.**
-- ⏳ **Declare a Deno floor in `deno.json`.** There is none today, so nothing validates a minimum
+- 🗓️ **Deno floor — DECIDED 2026-09-20, execute AT THE NEXT BUMP.** Not an open question any more:
+  the floor becomes whatever `deno --version` reports at the next bump-and-release (machine is on
+  **2.9.7** today), written as `"deno": ">=X.Y.Z"` in `deno.json`. Until that release we keep
+  cadence with Deno; **after it we HOLD and test future releases for compatibility before moving the
+  floor**, because Deno has no LTS line — a floor tracking the newest release can strand consumers
+  with no maintained fallback. Full rationale in [design-decisions.md](design-decisions.md).
+  **Add this to the release checklist so it is not missed at the moment it has to happen.**
+  Superseded framing follows.
+- ⏳ **(superseded) Declare a Deno floor in `deno.json`.** There is none today, so nothing validates a minimum
   supported version and a release could silently start requiring a newer Deno — first signal would
   be a user report. Cheap to add, and it would make the compatibility question decidable.
 - 🔁 **SUPERSEDED — see the 2026-08-31 `ref.null` entry above.** Two of the three gaps below DID
