@@ -80,18 +80,19 @@
   "memory size must be at most 65536 pages (4GiB)"
 )
 
-(assert_malformed
-  (module quote "(memory 0x1_0000_0000)")
-  "i32 constant out of range"
-)
-(assert_malformed
-  (module quote "(memory 0x1_0000_0000 0x1_0000_0000)")
-  "i32 constant out of range"
-)
-(assert_malformed
-  (module quote "(memory 0 0x1_0000_0000)")
-  "i32 constant out of range"
-)
+;; ⚠️ VENDORED PATCH (wasmrt, 2026-09-19, owner-directed) — three `assert_malformed` cases removed
+;; here asserted that a 32-bit memory bound of 2^32 is malformed TEXT:
+;;
+;;   (assert_malformed (module quote "(memory 0x1_0000_0000)") "i32 constant out of range")
+;;   (assert_malformed (module quote "(memory 0x1_0000_0000 0x1_0000_0000)") "i32 constant out of range")
+;;   (assert_malformed (module quote "(memory 0 0x1_0000_0000)") "i32 constant out of range")
+;;
+;; Wasm 3.0 encodes limits as u64 whatever the index type, so these modules are well-formed and
+;; INVALID ("memory size must be at most ..."). Core `memory.wast` in this same checkout asserts
+;; exactly that for the same three modules (`assert_invalid ... "memory size"`), and wasm-tools
+;; 1.259 / wasmtime 48 agree. The two files cannot both pass; this per-proposal snapshot is the
+;; stale one. Same class as the 2026-09-17 patch above; see `imports.wast` for why it is patched
+;; rather than refreshed. Designed to be overwritten by the next corpus sync — re-check then.
 
 (module
   (memory 1)

@@ -306,18 +306,23 @@
 (assert_trap (invoke "call" (i32.const 100)) "undefined element")
 
 
-(assert_invalid
-  (module (import "" "" (table 10 funcref)) (import "" "" (table 10 funcref)))
-  "multiple tables"
-)
-(assert_invalid
-  (module (import "" "" (table 10 funcref)) (table 10 funcref))
-  "multiple tables"
-)
-(assert_invalid
-  (module (table 10 funcref) (table 10 funcref))
-  "multiple tables"
-)
+;; ⚠️ VENDORED PATCH (wasmrt, 2026-09-17, owner-directed) — three `assert_invalid` cases removed
+;; here asserted that a module with two TABLES is invalid:
+;;
+;;   (module (import "" "" (table 10 funcref)) (import "" "" (table 10 funcref)))  "multiple tables"
+;;   (module (import "" "" (table 10 funcref)) (table 10 funcref))                 "multiple tables"
+;;   (module (table 10 funcref) (table 10 funcref))                                "multiple tables"
+;;
+;; The reference-types proposal made multiple tables VALID. This directory is a per-proposal
+;; snapshot pinned before that landed, so the assertions are era-pinned: a modern engine MUST fail
+;; them. Verified two ways — the CORE `imports.wast` in this same checkout carries ZERO such
+;; assertions (upstream deleted them when multi-table landed), and wasmtime 48 accepts all three
+;; modules. Multi-table keeps positive coverage in core, so removing these loses nothing.
+;;
+;; 🔒 Patched rather than refreshed because the threads snapshot is STALE UPSTREAM TOO: the
+;; 2026-08-20 sync to upstream 65a43d2e did not touch `proposals/threads/` at all, so there is no
+;; newer snapshot to refresh to. Re-check on the next sync — `update-testsuite.py` will overwrite
+;; this note, which is the desired behaviour if upstream has fixed it by then.
 
 (module (import "test" "table-10-inf" (table 10 funcref)))
 (module (import "test" "table-10-inf" (table 5 funcref)))

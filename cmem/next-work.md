@@ -569,9 +569,16 @@ baselines. The "entire suite set" gate has no hole on this machine again.
 
 - **wabt-ts `ref.null`** — filed in `scripts/wabt-ts-bug-report.md`; waiting on them. The other two
   gaps are upstream-wabt parity and will not move on a wabt-ts release.
-- **Upstream propagation gap** — the 3 `"multiple tables"` assertions are fixed in
-  `WebAssembly/threads` but never propagated into `WebAssembly/testsuite`. Filing it upstream is
-  optional and costs us nothing either way; **do not patch it locally** (see testing.md).
+- **Upstream propagation gap — PATCHED LOCALLY 2026-09-19 (owner-directed), superseding the old
+  "do not patch it locally" note.** The 3 `"multiple tables"` assertions are fixed in
+  `WebAssembly/threads` but never propagated into `WebAssembly/testsuite`; they are now removed in
+  our vendored copy with a `;; ⚠️ VENDORED PATCH` header. A second patch removes 3
+  `assert_malformed "i32 constant out of range"` cases from `memory.wast` for a different reason
+  (Wasm 3.0 limits are u64, so those modules are invalid rather than malformed) — that one **costs 3
+  passes** which were green for the wrong reason. **The `"multiple memories"` assertions were also
+  removed and have been RESTORED** — upstream still carries those, so removing them diverges rather
+  than corrects. Both patches are designed to be overwritten by the next corpus sync. Filing the
+  tables gap upstream remains optional. See testing.md.
 - **`*.wast text eol=lf`** — one-line decision, deliberately deferred; see design-decisions.md.
 
 ## Recommended next pickup (updated 2026-07-28)

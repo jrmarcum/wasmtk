@@ -101,7 +101,7 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 > | Suite | Result |
 > | --- | --- |
 > | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **417 / 417** — 412 + the Phase 34 type-predicate batch (3 owner stress tests; 2 passed as written, 1 exposed the inline-target bug) + 2 regressions, 2026-07-30. Full suite RE-RUN: the fix changed `src/wasic.ts`, so the gate applied |
-> | `wast_tests.ts` | **288 files, 37370 passing assertions** — ON BASELINE (re-recorded 2026-08-31 after `ref.null` support: +123 assertions across 16 files, 0 regressions), with **15 files pinned WITH failures** and **0 unrunnable**. On **binaryang 1.5.3** (was wabt-ts 1.4.1 before the 2026-08-27 merge; unchanged across 1.5.1 → 1.5.2 → 1.5.3). The +9264 passes are the 1.4.0/1.4.1 bump landing after the three malformations it exposed were fixed: an earlier 1.4.0 attempt was reverted when it took wasi to 378/417 and both dync suites to 0. **The gain is mostly recovered COVERAGE, not new correctness** — 14 of the 15 newly-pinned files went `unbuilt → 0`, so modules that could not previously be assembled now run and expose real conformance gaps (`ref_cast`, `ref_test`, `br_on_cast`, `table_grow`, … — GC/ref-types). Those failures were always there; they were invisible. See compiler-bugs.md |
+> | `wast_tests.ts` | **288 files, 37367 passing assertions** — ON BASELINE (re-recorded 2026-09-19; the `ref.null` work took it to 37,370 and the vendored `threads` patch gives back 3), with **15 files pinned WITH failures** and **0 unrunnable**. On **binaryang 1.5.3** (was wabt-ts 1.4.1 before the 2026-08-27 merge; unchanged across 1.5.1 → 1.5.2 → 1.5.3). The +9264 passes are the 1.4.0/1.4.1 bump landing after the three malformations it exposed were fixed: an earlier 1.4.0 attempt was reverted when it took wasi to 378/417 and both dync suites to 0. **The gain is mostly recovered COVERAGE, not new correctness** — 14 of the 15 newly-pinned files went `unbuilt → 0`, so modules that could not previously be assembled now run and expose real conformance gaps (`ref_cast`, `ref_test`, `br_on_cast`, `table_grow`, … — GC/ref-types). Those failures were always there; they were invisible. See compiler-bugs.md |
 > | `bindgen_tests.ts` | 142, 0 failed |
 > | `engine_cross_check_tests.ts` | **376 modules × 3 engines = 1128 pairs, ALL ON BASELINE** — the multi-engine gate (2026-08-24). V8 vs wasmtime/wasmer/wazero, byte-identical stdout. Baseline `tests/engine_baseline.json`. **Re-recorded 2026-08-25 after the `try_table` migration: wasmtime 364 match / 12 reject / 0 differ** (was 354/22 — 10 modules flipped `reject → match` once EH stopped being legacy). The 37 `differ` on the very first run were the `fd_write` short-write bug, fixed the same day. **Re-recorded AGAIN 2026-08-27 when the `-Oz` skip was lifted: wasmer 363 match / 13 reject** (was 353/23 — 10 modules that wasmer REJECTED as raw wabt output load once binaryen has optimised them). wazero unchanged at 346/30. Verified ALL ON BASELINE again on binaryang 1.5.3 with `0 regressed, 0 improved` |
 > | `go_merge_tests.ts` · `go_bindgen_tests.ts` · `go_asyncify_tests.ts` | **7 / 7 · 7 / 7 · 12 / 12** — green on **Go 1.26.7 + TinyGo 0.41.1**. TinyGo 0.41.1 caps at Go 1.26; a Go 1.27 install breaks all three (`requires go version 1.19 through 1.26`). Keep the pair in step — Go 1.27 is safe only once TinyGo **0.42.0** ships (support is on `dev`). See [next-work.md](next-work.md) |
@@ -217,9 +217,9 @@ counts in README are a record of when each phase first went green, not a live in
 
 ## `wast_tests` is a PER-FILE BASELINE gate (rebuilt 2026-08-20)
 
-**288 files, 37370 passing assertions, 15 files pinned WITH failures, 0 unrunnable** (re-recorded
-2026-08-31 after `ref.null` support landed; was 288 / 37247 on wabt-ts 1.4.1, and 287 / 27983 / 12
-on 1.3.5) — up from 41 files / 12444, because the gate no
+**288 files, 37367 passing assertions, 15 files pinned WITH failures, 0 unrunnable** (re-recorded
+2026-09-19 after the vendored `proposals/threads/` patches; was 37,370 after `ref.null` support,
+288 / 37247 on wabt-ts 1.4.1, and 287 / 27983 / 12 on 1.3.5) — up from 41 files / 12444, because the gate no
 longer needs a hand-curated file list. Expected pass counts live in **`tests/wast_baseline.json`**
 (tracked). Every baselined file must produce **exactly** its baseline: fewer → FAIL (coverage lost),
 more → FAIL (baseline stale, re-record deliberately), any execution failure → FAIL as before.
@@ -355,7 +355,7 @@ this gate compare against a compiler that no longer exists.
   byte-for-byte upstream diff above. If it ever does, add `*.wast text eol=lf` for the same reason
   `*.ts` is pinned (see design-decisions.md).
 
-### `proposals/threads/` is frozen upstream — NOT stale here (checked 2026-08-20)
+### `proposals/threads/` — frozen upstream, and now PARTLY PATCHED locally (2026-09-19)
 
 Recurring false alarm: `proposals/threads/{imports,memory}.wast` still assert `"multiple memories"`
 and `"multiple tables"` are invalid, which contradicts the core files in the same checkout. **That
@@ -364,7 +364,37 @@ is upstream's own content, not local drift.** Upstream has not touched `proposal
 `WebAssembly/threads` repo — still active — _itself_ keeps the `"multiple memories"` assertions in
 `test/core/{imports,memory}.wast`. Refreshing changes nothing. The only genuinely retired ones are
 the 3 `"multiple tables"` assertions, fixed in the proposal repo but never propagated into the
-testsuite mirror. **Do not "fix" this locally** — it is an upstream propagation gap to file there.
+testsuite mirror.
+
+#### Two vendored patches now in place (owner-directed; the earlier "do not fix locally" is SUPERSEDED)
+
+Both carry a `;; ⚠️ VENDORED PATCH` header naming the date and rationale, and both are **designed to
+be overwritten by the next corpus sync** — re-check them then rather than re-applying blindly.
+
+| file | removed | why |
+| --- | --- | --- |
+| `proposals/threads/imports.wast` | 3 × `assert_invalid … "multiple tables"` | reference-types made multiple tables VALID; core carries zero such assertions |
+| `proposals/threads/memory.wast` | 3 × `assert_malformed … "i32 constant out of range"` | Wasm 3.0 encodes limits as u64, so these modules are well-formed and **invalid**; core `memory.wast` asserts exactly that |
+
+⚠️ **The `"multiple memories"` assertions were ALSO removed and have been RESTORED** (2026-09-19,
+option 2). Five of them — 3 in `imports.wast`, 2 in `memory.wast`. They are **not** stale in the
+same way: the live `WebAssembly/threads` repo still carries them, so deleting them would diverge us
+from upstream's actual content rather than correct a propagation gap. **Leave them alone.**
+
+#### What the patches actually bought, measured
+
+- `imports.wast`: **105 pass / 6 skip → 105 pass / 3 skip.** No passes gained. The 3 removed
+  assertions were being counted as *toolchain-lenient skips* — our wabt+V8 pipeline correctly
+  accepts multiple tables, so an `assert_invalid` it fails to reject scores as a SKIP, not a
+  failure. The value is that those 3 skips no longer masquerade as a gap in our validator.
+- `memory.wast`: **68 pass / 2 skip → 65 pass / 2 skip.** This one COSTS 3 passes, and the reason
+  is worth keeping: those assertions were passing because our toolchain and the stale snapshot were
+  **wrong in the same direction** — both treat `(memory 0x1_0000_0000)` as malformed text, where
+  wasm-tools 1.259 and wasmtime 48 treat it as well-formed and invalid. They were green for the
+  wrong reason. Trading 3 such passes for an honest gap is the same call this project makes
+  everywhere else.
+
+Corpus effect: **37,370 → 37,367 passing assertions**, baseline re-recorded 2026-09-19.
 
 ### Known wabt-ts gaps exposed by the 2026-08-20 sync
 

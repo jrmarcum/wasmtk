@@ -682,10 +682,10 @@
   },
   "proposals/threads/imports.wast": {
     "pass": 105,
-    "skip": 6
+    "skip": 3
   },
   "proposals/threads/memory.wast": {
-    "pass": 68,
+    "pass": 65,
     "skip": 2
   },
   "proposals/wide-arithmetic/wide-arithmetic.wast": {

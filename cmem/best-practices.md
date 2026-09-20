@@ -33,8 +33,8 @@ ever goes down can be improved by running less. **Independently re-paid for here
 See [testing.md](testing.md).
 
 **Pass counts over a corpus you cannot fully run are UPPER BOUNDS, not measurements. Skips are not
-passes.** [wazmrt] Live figure here: the wast gate reads **37,370 passed / 27,154 skipped**
-(re-recorded 2026-08-31 after `ref.null` support; binaryang 1.5.3). **The two crossed over** — this
+passes.** [wazmrt] Live figure here: the wast gate reads **37,367 passed / 27,151 skipped**
+(re-recorded 2026-09-19 after the vendored threads patches; binaryang 1.5.3). **The two crossed over** — this
 corpus used to skip more than it ran (27,983 / 37,252 on 1.3.5). The prediction that a bump would
 cross them was right, and the bump LANDED — an earlier 1.4.0 attempt was reverted, 1.4.1 was not.
 Any headline quoting passes without skips is still overstated by more than the number itself.
@@ -408,6 +408,61 @@ export-formatting flag. **An absence measured on inputs that cannot exhibit the 
 evidence.** A minimal repro is for demonstrating a failure you already understand — never for
 proving one does not exist. Before deleting anything as dead, ask which input would show it alive,
 then run THAT.
+
+### 🔒 HARD RULE — scripting is **Deno/TypeScript only**. No `python3`. (owner directive 2026-09-19)
+
+**wasmtk is a Deno project. Ad-hoc tooling, probes, one-off migrations and repairs are written in
+TypeScript and run with `deno run -A <file.ts>`** — never `python3`, never an inline
+`python3 -c`, never an inline `node -e`.
+
+Why this is a rule and not a preference:
+
+- **It is the language the project is already in.** A probe written in TS can import the real
+  modules (`src/wasmmerge.ts`, the wabt backend) and measure the actual code path instead of a
+  reimplementation of it. Several wrong answers this month came from re-implementing a heuristic in
+  a probe and testing the copy.
+- **Python brought a second encoding regime into a UTF-8 repo.** On this machine `python3` writes
+  stdout as cp1252, so printing any emoji or box-drawing character from a repair script raised
+  `UnicodeEncodeError` mid-run and left files half-processed. Deno is UTF-8 throughout.
+- **Python's escape handling is a second chance to corrupt content.** `"\\0asm"` surviving one
+  transport becomes `"\0asm"`, which Python reads as a NUL byte. TypeScript string literals plus
+  `Deno.writeTextFile` have no such second pass.
+- **One toolchain, one set of failure modes.** Deno is already required to build and test this repo;
+  python3 is an extra dependency that nothing else needs.
+
+Permitted: `git`, `grep`, `deno`, `wasmtk` and the other CLIs, invoked directly. The shell
+**runs** things; it does not **author** them.
+
+### 🔒 HARD RULE — no heredocs. Ever, in any language. (owner directive 2026-09-19)
+
+**Never `<<'EOF'`, `<<EOF`, `@'…'@`, or any other inline document.** Not for file content, not
+for commit messages, not for scripts, not for "it's only three lines".
+
+This is the single most expensive recurring defect in this repo's history — **four separate content
+corruptions**, each invisible in the source that produced it:
+
+| # | what happened |
+| --- | --- |
+| 1–3 | backslash collapse silently mangling regexes and paths during memory updates |
+| 4 | a literal **NUL byte** written into `.gitattributes` — the file whose job is preventing content corruption |
+| 5 | a NUL byte written into `best-practices.md` **inside the rule warning about it**, caught only because `grep` said `Binary file … matches` |
+
+A sixth was a near-miss the same day: backticks inside a double-quoted `python3 -c` were eaten by
+command substitution.
+
+**The rule is mechanical because attention does not work here.** Knowing it, having just written it
+down, and being actively on guard were all insufficient — the corruption happens in the transport,
+between the author and the file, where nothing in the source reveals it. Use instead:
+
+- **File content** → the `Write` or `Edit` tool. Always.
+- **A script** → `Write` it to the scratchpad as `.ts`, then `deno run -A <path>`.
+- **A commit message** → `git commit -F <file>` with the file written by `Write`.
+
+⚠️ **`git commit -F-` with a heredoc body is the same defect wearing different clothes.** Write the
+message to a file, then `-F` that file.
+
+**The tell that you are about to break this rule:** you are typing `<<` into a Bash call. There is
+no case in this project where that is the right move.
 
 **Author file CONTENT with a real file write; use the shell only to MOVE it.** [binaryang + wasmtk]
 Writing a config through a shell heredoc into `python3 - <<'EOF'` collapses backslashes one level:
