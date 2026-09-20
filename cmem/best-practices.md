@@ -33,8 +33,9 @@ ever goes down can be improved by running less. **Independently re-paid for here
 See [testing.md](testing.md).
 
 **Pass counts over a corpus you cannot fully run are UPPER BOUNDS, not measurements. Skips are not
-passes.** [wazmrt] Live figure here: the wast gate reads **37,367 passed / 27,151 skipped**
-(re-recorded 2026-09-19 after the vendored threads patches; binaryang 1.5.3). **The two crossed over** — this
+passes.** [wazmrt] Live figure here: the wast gate reads **37,365 passed / 27,153 skipped**
+(re-recorded 2026-09-19 after the vendored threads patches and the `assert_malformed` stage split;
+binaryang 1.5.3). **The two crossed over** — this
 corpus used to skip more than it ran (27,983 / 37,252 on 1.3.5). The prediction that a bump would
 cross them was right, and the bump LANDED — an earlier 1.4.0 attempt was reverted, 1.4.1 was not.
 Any headline quoting passes without skips is still overstated by more than the number itself.
@@ -375,6 +376,10 @@ thorough.** Walk this one whenever sizing, attributing, or clearing:
 5. Is this test green because the thing works, or because the thing was never exercised?
 6. Does my measurement see a known positive?
 7. Am I proving something is DEAD from an input that could not show it alive?
+8. Does my probe **reimplement** anything the codebase already exports? If so I am testing the copy.
+9. **Is the distribution suspicious?** All-in-one-bucket, a round zero, or a total that matches the
+   input count exactly are signatures of a STUCK measurement, not findings. Sanity-check against one
+   case whose answer is known by hand before believing the aggregate.
 
 **Stopping a background suite kills the SHELL, not its children — verify the machine is idle before
 the next measurement.** [wasmtk, 2026-08-25] A hung `wasi_tests` run was stopped via the task
@@ -408,6 +413,23 @@ export-formatting flag. **An absence measured on inputs that cannot exhibit the 
 evidence.** A minimal repro is for demonstrating a failure you already understand — never for
 proving one does not exist. Before deleting anything as dead, ask which input would show it alive,
 then run THAT.
+
+**Import the helper; do not reimplement it ten lines from where it lives.** [wasmtk, 2026-09-19]
+Scoping the `assert_malformed` fix, a probe imported `parseSexprs` from `src/wast.ts` and then
+hand-rolled its own copy of `decodeWatString` — which sits in the same file. The copy did not strip
+the surrounding quote characters, so every `(module quote …)` in the corpus decoded to
+`(module "(module …)")` and failed to parse.
+
+**The failure reported itself as a clean result.** Parse-failure maps to "genuinely malformed, keeps
+passing", so a uniformly broken decoder produced **"1268 parse-fail, 0 flips"** — the most
+reassuring answer available, and completely false. The gate then found 2. The tell was visible in
+the output and I did not read it: **1268 in one bucket and 0 in every other is not a distribution,
+it is a stuck measurement.** A real corpus does not agree with itself that perfectly.
+
+This was the second wrong scope in a row on the same task — the first counted `(module binary …)`
+decode failures as conflation and claimed 930. **Both were confident, both were wrong, and the
+second felt more rigorous because it was a correction.** The rule that would have caught either:
+when a probe reimplements logic the codebase already has, it is testing the copy.
 
 ### 🔒 HARD RULE — scripting is **Deno/TypeScript only**. No `python3`. (owner directive 2026-09-19)
 

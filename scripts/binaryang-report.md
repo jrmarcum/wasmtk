@@ -4,6 +4,77 @@
 > `@jrmarcum/binaryang` on 2026-08-27**. Sections dated before that keep the old package names on
 > purpose — they record what was reported to whom, and retitling them would make the record wrong.
 
+## TWO PARSER-LENIENCY BUGS — 2026-09-19. Both are `assert_malformed` cases we were passing wrongly.
+
+Found by hardening our own `.wast` runner, not by reading. Context worth having first, because it
+is also a correction in your favour:
+
+Our runner had one `catch` around "assemble the module", so **any** failure — parse, encode, or V8
+validation — scored an `assert_malformed` as PASSED. An assertion that says *"this text cannot be
+decoded"* was satisfied by an ENCODER error. We split the stages; `assert_malformed` now passes only
+on a genuine parse failure. Two assertions immediately flipped from pass to skip, and both are real
+divergences on your side.
+
+### 🟢 QUICK ONE — integer literals in LIMITS are not range-checked (the check exists elsewhere)
+
+```wat
+(module (memory i64 0x1_0000_0000_0000_0000 (pagesize 1)))   ;; 2^64 — spec: MALFORMED
+```
+
+Spec expects `"i64 constant out of range"` **from the parser**. We parse it fine and die later in
+the writer with `toBinary: u64 LEB128 out of range`.
+
+**You already do this correctly — just not on this path:**
+
+| input | binaryang 1.5.3 |
+| --- | --- |
+| `(i32.const 0x1_0000_0000)` | ✅ parse rejects — `i32 constant out of range` |
+| `(i64.const 0x1_0000_0000_0000_0000)` | ✅ parse rejects — `i64 constant out of range` |
+| `(memory i64 0xFFFF_FFFF_FFFF_FFFF …)` | ✅ accepted — correctly in range for a u64 limit |
+| `(memory i64 0x1_0000_0000_0000_0000 …)` | ❌ parses; fails at encode |
+| `(memory i64 0x1_0000_0000_0000_0001 …)` | ❌ parses; fails at encode |
+| `(memory i64 0x1_0000_0000_0000_0000_0000 …)` (2^80) | ❌ parses; fails at encode |
+
+Boundary: **2^64-1 must pass, 2^64 must not.** Instruction operands take the range-checking path;
+limits take one that skips it.
+
+⚠️ **This is NOT the same as the three cases wasmrt patched out of `proposals/threads/memory.wast`,
+and their call there was right.** `(memory 0x1_0000_0000)` is 2^32 — genuinely IN range for a u64
+limit, so accepting it at parse is correct and `"i32 constant out of range"` was the stale
+expectation. The module is well-formed and *invalid*. Only the 2^64 case is a parser bug. The two
+look identical and are not.
+
+### 🟡 SLOWER ONE — legacy `try` clause structure is not validated at parse
+
+Spec expects `"unexpected token"` for a second `catch_all`. We accept it, and the leniency is
+broader than that one assertion:
+
+| input | binaryang 1.5.3 | then |
+| --- | --- | --- |
+| `(try (do) (catch_all))` | parse OK | V8 accepts — correct |
+| `(try (do) (catch_all) (catch_all))` | parse OK | V8 rejects |
+| `(try (do) (catch_all) (catch $e))` — `catch_all` before `catch` | parse OK | V8 rejects |
+| `(try (do) (do) (catch_all))` | parse OK | **V8 ACCEPTS** |
+| `(try (catch_all))` — no `do` at all | parse OK | **V8 ACCEPTS** |
+
+Clause arity, ordering, and the mandatory `do` all appear unchecked. The last two rows are the
+uncomfortable ones: no backstop anywhere, so a malformed legacy `try` assembles into a module that
+runs.
+
+**Low priority from our side, and we want to be straight about why:** we do not emit legacy EH any
+more — we migrated to `try_table` on 2026-08-25 — so wasic cannot produce these shapes. This costs
+us one pinned assertion, nothing else. It matters for anyone assembling hand-written legacy WAT.
+
+### What this cost us, for calibration
+
+Only 2 assertions across 288 files, because our corpus mostly exercises `(module binary …)` forms
+where a V8 decode rejection IS the right answer. The runner fix is hardening, not a rescue. But both
+of these had been passing for the wrong reason for as long as the corpus has existed, and no number
+the gate reported could have shown it — which is the same shape as the `bin-roundtrip=OK` probe you
+caught on your side.
+
+---
+
 ## REPLY — 2026-08-27 (6): your `.gitattributes` rule taken; a SECOND CR trap, opposite direction
 
 ### Wildcard-first — adopted, and you diagnosed it more precisely than we did

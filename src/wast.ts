@@ -43,6 +43,29 @@ export interface SexpList {
 export const isList = (s: Sexp): s is SexpList => typeof s !== "string";
 
 /** Read all top-level S-expressions from `.wast` source. */
+/**
+ * An assembly failure tagged with the STAGE it happened at, because `assert_malformed` means
+ * exactly one of them.
+ *
+ * `assert_malformed` asserts the module text **cannot be decoded**. A module that parses and then
+ * fails later is *well-formed* — it is invalid, or beyond what the encoder can represent — and the
+ * assertion should NOT pass on it.
+ *
+ * Before this existed the runner caught every failure in one `catch` and scored all of them as a
+ * pass, so an ENCODE error satisfied a PARSE assertion. Three assertions in
+ * `proposals/threads/memory.wast` passed that way for years: `(memory 0x1_0000_0000)` parses fine
+ * (Wasm 3.0 encodes limits as u64) and died in the encoder with `u32 LEB128 out of range`. They
+ * were removed by a vendored patch on 2026-09-19 — found by READING them, not by any measurement,
+ * because a false pass is invisible in every number the gate reports. This tag is what makes the
+ * next one visible. See cmem/testing.md.
+ */
+class AssembleError extends Error {
+  constructor(readonly stage: "parse" | "encode", inner: unknown) {
+    super(`assemble failed at ${stage}: ${inner instanceof Error ? inner.message : inner}`);
+    this.name = "AssembleError";
+  }
+}
+
 export function parseSexprs(src: string): SexpList[] {
   const out: SexpList[] = [];
   let i = 0;
@@ -571,10 +594,17 @@ export async function runWast(
     } else {
       text = src.slice(mod.start, mod.end);
     }
-    const parsed = wabtMod.parseWat(path, text, { enable_all: true });
+    let parsed: ReturnType<WabtModule["parseWat"]>;
+    try {
+      parsed = wabtMod.parseWat(path, text, { enable_all: true });
+    } catch (e) {
+      throw new AssembleError("parse", e); // genuinely MALFORMED text
+    }
     try {
       const { buffer } = parsed.toBinary({});
       return new Uint8Array(buffer);
+    } catch (e) {
+      throw new AssembleError("encode", e); // parsed fine → well-formed, but not encodable
     } finally {
       parsed.destroy();
     }
@@ -764,6 +794,10 @@ export async function runWast(
             res.skipped++;
             break;
           }
+          // `(module binary …)` has no text to decode — the BYTES are the subject, and V8's
+          // decoder rejecting them ("magic header not detected", "unexpected end") IS the decode
+          // failure the assertion asserts. For those, any compile error is a genuine pass.
+          const isBinary = mod.list.some((x) => x === "binary");
           try {
             const bytes = assemble(mod);
             await WebAssembly.compile(bytes as BufferSource);
@@ -775,7 +809,33 @@ export async function runWast(
                 }`,
               );
             }
-          } catch {
+          } catch (e) {
+            // A quote/text module that PARSED is well-formed. Whatever killed it afterwards —
+            // the encoder, or V8's validator — is not the decode failure this asserts, so it is a
+            // toolchain gap (skip), never a pass. Counting it as a pass is how a false green hides.
+            if (!isBinary && e instanceof AssembleError && e.stage === "encode") {
+              res.skipped++;
+              if (opts.verbose) {
+                res.failures.push(
+                  `not malformed (well-formed; failed at ENCODE): ${
+                    src.slice(cmd.start, cmd.start + 70)
+                  }`,
+                );
+              }
+              break;
+            }
+            if (!isBinary && !(e instanceof AssembleError)) {
+              // parsed and encoded, then V8 rejected it → invalid, not malformed.
+              res.skipped++;
+              if (opts.verbose) {
+                res.failures.push(
+                  `not malformed (well-formed; INVALID per V8): ${
+                    src.slice(cmd.start, cmd.start + 70)
+                  }`,
+                );
+              }
+              break;
+            }
             res.passed++;
           }
           break;

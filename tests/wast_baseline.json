@@ -376,8 +376,8 @@
     "skip": 5
   },
   "legacy/try_catch.wast": {
-    "pass": 35,
-    "skip": 4
+    "pass": 34,
+    "skip": 5
   },
   "legacy/try_delegate.wast": {
     "pass": 16,
@@ -668,8 +668,8 @@
     "unbuilt": 4
   },
   "proposals/custom-page-sizes/memory_max_i64.wast": {
-    "pass": 2,
-    "skip": 4,
+    "pass": 1,
+    "skip": 5,
     "unbuilt": 4
   },
   "proposals/threads/atomic.wast": {
