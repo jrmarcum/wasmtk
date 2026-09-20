@@ -241,7 +241,10 @@ version ([design-decisions.md](design-decisions.md)).
   modules and their `WebAssembly.Memory` buffers … a lifetime redesign"). It was two discrete bugs:
   our S-expr reader looping on a lone `;`, and a wabt-ts `parseWat` blow-up on `(ref (exact any))`
   fixed in 1.4.1. Read that § as a retracted hypothesis, not a plan.
-- ⏳ **Decide whether to pin `*.wast text eol=lf` in `.gitattributes`.** Deliberately NOT done on
+- ✅ **DONE 2026-09-19 — `*.wast text eol=lf` is pinned**, as part of rebuilding `.gitattributes`
+  wildcard-first (`* text=auto eol=lf` then `*.wasm binary`). Verified: every blob was already LF,
+  so nothing in history changed. Original deferral note follows.
+- ⏳ **(historical) Decide whether to pin `*.wast text eol=lf` in `.gitattributes`.** Deliberately NOT done on
   2026-08-20 — a repo-wide checkout-behaviour change shouldn't ride along inside a corpus sync. It
   is a one-liner whenever wanted; rationale in [design-decisions.md](design-decisions.md).
 - ⏳ **`docs/` and `cmem/*.md` are not `deno fmt`-clean.** `main.ts` + `src/` now are, and
@@ -498,7 +501,15 @@ rather than proceeding. The wabt-ts side asserted "nothing needed on our side" o
 Sizes and the class-A policy question are in the SCOPED section below. Unaffected by either sibling
 release. The runner OOM remains the only item with a user-visible symptom.
 
-## 🔴 wasic emits LEGACY exception handling — Wasmtime cannot run it (2026-08-24)
+## ✅ RESOLVED — wasic emitted LEGACY exception handling (2026-08-24 → fixed 2026-08-25)
+
+**Closed by the `try_table` migration.** Every `try`/`catch`/`finally` now compiles to the standard
+exception proposal; V8 and wasmtime produce byte-identical output on `15_Exceptions`, and 10 modules
+that Wasmer rejected outright now load (engine gate: wasmer 353 → 363 match). Shipped in v2.0.1.
+The original scoping text follows, kept because the *reasoning* about why it was the largest open
+item is still instructive — but **it is history, not work**.
+
+## (historical) 🔴 wasic emits LEGACY exception handling — Wasmtime cannot run it (2026-08-24)
 
 **The largest open item, and the only one that breaks real user output.** Every TS
 `try`/`catch`/`finally` compiles to the superseded legacy EH proposal; `wasmtime 47.0.3` rejects all
@@ -527,7 +538,14 @@ Everything below came out of one session (corpus sync -> per-file baseline gate 
 Sized S/M/L by *uncertainty*, not keystrokes. **Nothing here is a release blocker** — every suite
 that can run on this machine is green, and none of it touches `wasic` codegen.
 
-### The 15 execution failures the new gate made visible
+### ✅ SUPERSEDED — the 15 execution failures the new gate made visible
+
+Premise gone: these were framed as living in **"the 7 files excluded from `tests/wast_baseline.json`"**,
+and the baseline now covers **all 288 files with 0 unrunnable**. The current, accurate figure is the
+**100 pinned failures** scoped in the section above, which is where this work now lives. Triage text
+kept below for the class breakdown, which is still sound.
+
+### (historical) The 15 execution failures the new gate made visible
 
 These live in the 7 files excluded from `tests/wast_baseline.json`. **They were never in the old
 41-file gate**, so they have been invisible the whole time, not newly broken. Triaged 2026-08-20:
@@ -557,7 +575,17 @@ to 0 — which the gate reports as drift and refuses until re-recorded. What is 
 (1, the only independent failure) and the cascades behind ~25 unbuilt modules. Was: taking the gate from 280 files to ~286
 and closing the "8 corpus files not in the baseline" line the gate prints every run.
 
-### Runner memory retention (dir-run OOM) — L, and the only one with a user-visible symptom
+### ✅ RESOLVED — runner memory retention (dir-run OOM)
+
+**Verified 2026-08-31: the full 288-file corpus runs in ONE process, no OOM**
+(`37,365 passed, 100 failed` today). `exact.wast` runs too. **There was no memory retention.** It
+was two discrete bugs — an infinite loop in our S-expr reader on a lone `;`, and a wabt-ts
+`parseWat` blow-up on `(ref (exact any))` fixed in 1.4.1. The sizing below called it **L** and
+named "instantiated modules and their `WebAssembly.Memory` buffers … a lifetime redesign"; that
+hypothesis is **retracted**. Kept as a worked example of a prediction written in the voice of a
+measurement.
+
+### (historical) Runner memory retention (dir-run OOM) — L, and the only one with a user-visible symptom
 
 `wasmtk wast <dir>` over the full corpus OOMs; `proposals/custom-descriptors/exact.wast` exhausts
 the heap alone. README documents the crashing form, so this is the one item a user could hit.
