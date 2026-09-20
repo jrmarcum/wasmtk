@@ -4,6 +4,34 @@
 > targets + the first breaking change). Authoritative status lives in [roadmap.md](roadmap.md); this
 > file is the short, prioritized "what to pick up next" list. Prune items as they land.
 
+## 2026-09-19 — vendored threads patch reviewed, and the runner defect it exposed
+
+- ✅ **`proposals/threads/` patch narrowed to option 2.** wasmrt's vendored patch was FOUR blocks,
+  each documented. Kept: 3 × `"multiple tables"` (imports.wast) and 3 × `assert_malformed
+  "i32 constant out of range"` (memory.wast). **RESTORED: 5 × `"multiple memories"`** — the live
+  `WebAssembly/threads` repo still carries those, so removing them diverges from upstream rather
+  than correcting a propagation gap. Both surviving blocks are designed to be overwritten by the
+  next corpus sync.
+  ⚠️ What the patch actually bought, measured: `imports.wast` **gained no passes** (105 → 105); it
+  converted 3 toolchain-lenient SKIPS into nothing. `memory.wast` **cost 3 passes** (68 → 65) that
+  were green for the wrong reason. Net: signal quality, not coverage.
+- ✅ **`assert_malformed` now means PARSE failure (src/wast.ts).** The runner had one `catch` around
+  "assemble", so an ENCODE error satisfied a decode assertion. Stages are now tagged; encode and
+  V8-validation failures are skips with a reason, while `(module binary …)` decode rejections
+  still pass. Acceptance fixture covers all three directions.
+- 🔴 **SEND: two parser-leniency bugs to binaryang** — drafted at the top of
+  `scripts/binaryang-report.md`.
+  1. **Quick:** integer literals in memory LIMITS are not range-checked. binaryang already does this
+     correctly for `i32.const` / `i64.const`; limits take a path that skips it. Boundary:
+     2^64-1 must pass, 2^64 must not.
+  2. **Slower:** legacy `try` clause structure is unvalidated — arity, ordering, mandatory `do`.
+     Two of four probe cases produce a module V8 ACCEPTS, so there is no backstop. Low priority for
+     us: we stopped emitting legacy EH at the `try_table` migration.
+  ⚠️ **Neither is what wasmrt patched.** `(memory 0x1_0000_0000)` is 2^32 — IN range for a u64
+  limit — so accepting it at parse is correct and "malformed" was the stale expectation. Only the
+  2^64 case is a parser bug. Do not let the two be conflated back together.
+- 📉 **Corpus: 37,367 → 37,365**, baseline re-recorded, full gate green.
+
 ## ✅ binaryang 1.5.3 — PINNED AND FULLY GATED (2026-08-31). Tree is publishable.
 
 **All 16 suites green, and nothing moved.**
@@ -267,7 +295,7 @@ exists, and a failed `binaryen -Oz` swallowed silently. See [compiler-bugs.md](c
 - ⚠️ Add them to the impact map in [testing.md](testing.md) at the same time, or the suite set
   grows without the "which suites does this change reach" table knowing about it.
 
-## SCOPED: the 102 pinned wast failures after wabt-ts 1.4.0 (2026-08-25)
+## SCOPED: the pinned wast failures after wabt-ts 1.4.0 (2026-08-25; **now 100**, was 102)
 
 The 1.4.0 bump took the gate from 27,983 to **37,247 passing assertions** and dropped skips by
 ~10,000. What surfaced with it is 102 failures in **15 files** — all previously DARK, none of them
