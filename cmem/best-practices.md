@@ -523,6 +523,22 @@ and `LICENSE` were all still unspecified when we checked. Leading with `* text=a
 subtracting `*.wasm binary` cannot develop that hole. Generalises past git: when a rule must cover
 "everything of a kind", write the default and carve out exceptions, rather than enumerating members.
 
+**A backlog decays silently, and "how many are open?" is real work — sweep HEADINGS as well as
+bullets.** [wasmtk, 2026-09-19/20] Counting open items surfaced stale entries **three separate
+times in two days**, including a RED item claiming our shipped exception-handling output was broken
+— fixed and released weeks earlier — and a "next bump is wabt-ts 1.4.0" note overtaken three times
+over. The first count also came back **wrong because the extractor only read `- ` bullets** and
+the backlog's largest items are `##` sections.
+
+**Why it stays invisible:** a closed item's heading looks exactly like an open one until you read
+the body, so the list reads as current at a glance no matter how stale it is. And a stale RED item
+is worse than no item — it sends the next reader at work already done, or worse, contradicts the
+shipped product.
+
+The rule: when asked what is open, **re-derive it from the file rather than from memory of the last
+answer**, match section headings and bullets, and verify each survivor against the tree — the
+version pinned, the test passing, the flag present — before repeating it back.
+
 ## 5. Recording what you found
 
 **"Update the project memory" means AUDIT for stale live claims, not edit the files you happened to

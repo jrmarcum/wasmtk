@@ -251,7 +251,7 @@ Ineffective mark-compacts near heap limit`. This is our bug, not the corpus's, a
 form is the one README documents.
 
 > ✅ **FIXED — verified 2026-08-25. Everything in this bullet list is HISTORY; do not act on it.**
-> A full 288-file directory run now completes in one process: `37247 passed, 102 failed, 27275
+> A full 288-file directory run now completes in one process: `37365 passed, 100 failed, 27153
 > skipped, 162 unbuilt modules`, no OOM, matching the chunked gate exactly. `exact.wast` reports
 > `pass=20 fail=0 skip=16`. The causes were an infinite loop in our S-expr reader on a lone `;` and a
 > wabt-ts `parseWat` blow-up on `(ref (exact any))` (fixed in wabt-ts 1.4.1) — **not** memory

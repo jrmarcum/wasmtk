@@ -1,5 +1,35 @@
 # Next-work planning note
 
+> ## ⏸️ PAUSED 2026-09-20 — waiting on the next binaryang release
+>
+> Work is deliberately stopped here, not stalled. Both parser-leniency bugs are with binaryang and
+> being worked on, and the next thing we do is **verify their fix against a published version we can
+> pin** — never against a branch, per the standing rule that cost us the premature `-Oz` skip
+> removal.
+>
+> **On resume, in this order:**
+>
+> 1. `deno info --reload "jsr:@jrmarcum/binaryang@<new>/compat/wabt"` — a cached `meta.json` has
+>    twice reported a published version as missing. **Reload before concluding it is not out.**
+> 2. Pin BOTH compat subpaths to the same exact version; regenerate the lock.
+> 3. `deno run -A scripts/check_try_table_oz.ts` — the standing guard on the lifted `-Oz` skip.
+> 4. Full gate in dependency order: everything else → `wasi_tests` → `engine_cross_check_tests`
+>    → `wast_tests`.
+> 5. **Expect the wast gate to go RED with GAINED COVERAGE**, and check the prediction below before
+>    re-recording.
+>
+> **The acceptance prediction is exact — treat a different number as a finding, not a detail:**
+>
+> | file | now | after their fix |
+> | --- | --- | --- |
+> | `proposals/custom-page-sizes/memory_max_i64.wast` | 1 pass / 5 skip | **2 pass** / 4 skip |
+> | `legacy/try_catch.wast` | 34 pass / 5 skip | **35 pass** / 4 skip |
+> | corpus | 37,365 | **37,367** |
+>
+> State at pause: **v2.0.2 published and attested**, backend **binaryang 1.5.3**, every suite green
+> (wasi 417/417 · engine 1128 ALL ON BASELINE · wast ON BASELINE 288 files / 37,365). Working tree
+> clean. **One genuinely open item of our own: the Zig/Rust producer test suite.**
+
 > Actionable backlog as of **2026-07-30** (after **v2.0.0** shipped — Phase 34 inline predicate
 > targets + the first breaking change). Authoritative status lives in [roadmap.md](roadmap.md); this
 > file is the short, prioritized "what to pick up next" list. Prune items as they land.
