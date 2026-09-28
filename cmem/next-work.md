@@ -19,6 +19,9 @@
 >   refused 1.6.0 on the day it was published. The repo's `"minimumDependencyAge": "PT1M"` let it
 >   through. Scratch probes need `--minimum-dependency-age=0`, or they fail with "Could not find
 >   version".
+> - **Same day, on `fix/wast-ref-args-2026-09-28` (stacked on the bump branch because the baseline
+>   depends on 1.6.0):** three runner fixes took wast to **37,674 / 0 failures, ALL CLEAN**. See the
+>   RESOLVED section below. The H4 drift letter (T1–T11, W4) was worked in the same branch.
 > - Is 1.6.0 a release trigger? Not decided. That is the owner's call; nothing has been bumped.
 >
 > ### (historical) ⏸️ PAUSED 2026-09-20 — waiting on the next binaryang release
@@ -394,7 +397,16 @@ exists, and a failed `binaryen -Oz` swallowed silently. See [compiler-bugs.md](c
 - ⚠️ Add them to the impact map in [testing.md](testing.md) at the same time, or the suite set
   grows without the "which suites does this change reach" table knowing about it.
 
-## SCOPED: the pinned wast failures after wabt-ts 1.4.0 (2026-08-25; **now 100**, was 102)
+## ✅ RESOLVED 2026-09-28 — all 100 pinned wast failures are gone; the gate is ALL CLEAN (37,674 / 0)
+
+Every one of them was OUR RUNNER, none was the compiler or binaryang. Three fixes in `src/wast.ts`
+(post-mortem in [compiler-bugs.md](compiler-bugs.md)): (A) `ref.extern N` / `ref.host N` arguments
+and results → the 83 GC-cast failures + `ref_is_null`, `table_get*`, `table_grow*`; (B) `names` →
+a BOM-eating `TextDecoder`; (C/B below) `linking*` → `assert_trap` MODULES are now instantiated,
+so the partial writes later assertions read actually happen. The triage below is kept as history;
+its per-class counts undercounted the GC family (83, not 73).
+
+## (historical) SCOPED: the pinned wast failures after wabt-ts 1.4.0 (2026-08-25; **now 100**, was 102)
 
 The 1.4.0 bump took the gate from 27,983 to **37,247 passing assertions** and dropped skips by
 ~10,000. What surfaced with it is 102 failures in **15 files** — all previously DARK, none of them
@@ -552,7 +564,7 @@ Nothing to build; this is a checklist so the bump is mechanical when it lands.
 ### ✅ DONE — "the next bump is wabt-ts 1.4.0" (owner, 2026-08-24)
 
 **Long since overtaken.** 1.4.0 was attempted and reverted, 1.4.1 landed, then wabt-ts and
-binaryen-ts **merged into `@jrmarcum/binaryang`**, which is now pinned at **1.5.3** and fully
+binaryen-ts **merged into `@jrmarcum/binaryang`**, which is now pinned at **1.6.0** (2026-09-28) and fully
 gated. Kept for the reasoning about how a bump is gated, not as a pending action.
 
 ### (historical) ⏳ THE NEXT BUMP IS **wabt-ts 1.4.0** (owner, 2026-08-24)
@@ -687,7 +699,7 @@ and closing the "8 corpus files not in the baseline" line the gate prints every 
 ### ✅ RESOLVED — runner memory retention (dir-run OOM)
 
 **Verified 2026-08-31: the full 288-file corpus runs in ONE process, no OOM**
-(`37,365 passed, 100 failed` today). `exact.wast` runs too. **There was no memory retention.** It
+(`37,365 passed, 100 failed` at the time; 37,370 as of 2026-09-28). `exact.wast` runs too. **There was no memory retention.** It
 was two discrete bugs — an infinite loop in our S-expr reader on a lone `;`, and a wabt-ts
 `parseWat` blow-up on `(ref (exact any))` fixed in 1.4.1. The sizing below called it **L** and
 named "instantiated modules and their `WebAssembly.Memory` buffers … a lifetime redesign"; that

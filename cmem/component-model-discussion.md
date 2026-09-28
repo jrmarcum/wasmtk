@@ -16,6 +16,14 @@
 > by the `call_indirect` + `memory.grow` merge guards — with one refinement: *allocation-free leaves*
 > from Go/Rust/Zig **can** merge; only allocating/runtime modules (real libraries/components) can't. So
 > the conclusion (cross-language inclusion = `instance`/WIT/bindgen, not `merge`) stands for components.
+>
+> **UPDATED 2026-07-28 — `--lang` is AUTO-DETECTED, not explicit (supersedes tentative #2 and the
+> "`--lang` accepted everywhere, defaults to `ts`" resolution below).** Shipped: `--lang` is OPTIONAL
+> for `run`/`build`/`modc` (detected from a `.go`/`.zig`/`.rs` file or a `go.mod`/`Cargo.toml` dir via
+> `detectRunLang` in `main.ts`); `init`/`initmod` still REQUIRE it (nothing to detect from); the
+> Rust-exclusive verbs `add`/`remove`/`list`/`fmt`/`clean` need none. See
+> [polyglot-producers.md](polyglot-producers.md) § "UPDATED 2026-07-28" and
+> [design-decisions.md](design-decisions.md) § "Zig & Rust producers".
 
 ## Scope of the discussion
 

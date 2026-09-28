@@ -94,23 +94,23 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 
 `go_merge_tests` was mis-classified as a Go-only outlier until this grep showed the `wasic` call.
 
-## Current pass counts (2026-08-31, **v2.0.2 released**, binaryang **1.5.3** — fully gated, nothing moved from 1.5.2)
+## Current pass counts (2026-09-28, binaryang **1.6.0**; latest release v2.0.2 was gated on 1.5.3)
 
-> **2026-09-28, binaryang 1.6.0, full gate re-run, all green.** wasi 417/417 · engine 1128 ALL ON
-> BASELINE · bindgen 142 · bundle 4 · dync 3+3 · go_merge 7 · go_bindgen 7 · go_asyncify 12 · jstyper
-> 73 · merge 1 · mod 55 · varscope 12 · hybrid+guard 12 · **wast 288 files / 37,370, re-recorded
-> (+5 gained coverage, 0 new failures; 15 pinned / 100 failures unchanged)**. go_merge needed a
-> `src/` fix first (see compiler-bugs.md). The per-suite detail below predates this re-run: where it
-> says 37,365 or 1.5.3, read 37,370 and 1.6.0.
+> **2026-09-28, binaryang 1.6.0, full gate re-run, all green.** wasi 417/417 · engine 376 × 3 =
+> 1128 pairs ALL ON BASELINE · bindgen 142 · bundle 4 · dync 3+3 · go_merge 7 · go_bindgen 7 ·
+> go_asyncify 12 · jstyper 73 · merge 1 · mod 55 · varscope 12 · hybrid+guard 12 · **wast 288 files
+> / 37,370 on the bump alone (+5 gained coverage; 15 pinned / 100 failures unchanged,
+> 0 unrunnable), then 37,674 / 0 failures / ALL CLEAN after the same-day runner fixes**. go_merge
+> needed a `src/` fix first (see compiler-bugs.md).
 
 > ### EVERY suite in the repo is green (2026-07-30, re-measured on the v2.0.0 tree) — full roster
 >
 > | Suite | Result |
 > | --- | --- |
 > | `tests/wasi/wasm_wasi` (`wasi_tests.ts`) | **417 / 417** — 412 + the Phase 34 type-predicate batch (3 owner stress tests; 2 passed as written, 1 exposed the inline-target bug) + 2 regressions, 2026-07-30. Full suite RE-RUN: the fix changed `src/wasic.ts`, so the gate applied |
-> | `wast_tests.ts` | **288 files, 37370 passing assertions** — ON BASELINE (re-recorded 2026-09-28 on binaryang 1.6.0: +1 `memory_max_i64`, +1 `try_catch`, +2 `try_delegate`, +1 `tag`, all skip → pass. Before that, 37365, re-recorded 2026-09-19; `ref.null` took it to 37,370, the vendored `threads` patch gave back 3, and the `assert_malformed` stage split gave back 2 more that were passing for the wrong reason), with **15 files pinned WITH failures** and **0 unrunnable**. On **binaryang 1.5.3** (was wabt-ts 1.4.1 before the 2026-08-27 merge; unchanged across 1.5.1 → 1.5.2 → 1.5.3). The +9264 passes are the 1.4.0/1.4.1 bump landing after the three malformations it exposed were fixed: an earlier 1.4.0 attempt was reverted when it took wasi to 378/417 and both dync suites to 0. **The gain is mostly recovered COVERAGE, not new correctness** — 14 of the 15 newly-pinned files went `unbuilt → 0`, so modules that could not previously be assembled now run and expose real conformance gaps (`ref_cast`, `ref_test`, `br_on_cast`, `table_grow`, … — GC/ref-types). Those failures were always there; they were invisible. See compiler-bugs.md |
+> | `wast_tests.ts` | **288 files, 37674 passing assertions, 0 failures — ALL CLEAN** (2026-09-28: three runner fixes took 37370 / 100 failures to 37674 / 0; see compiler-bugs.md. The bump itself, on binaryang 1.6.0: +1 `memory_max_i64`, +1 `try_catch`, +2 `try_delegate`, +1 `tag`, all skip → pass. Before that, 37365, re-recorded 2026-09-19; `ref.null` took it to 37,370, the vendored `threads` patch gave back 3, and the `assert_malformed` stage split gave back 2 more that were passing for the wrong reason), with **15 files pinned WITH failures** and **0 unrunnable**. On **binaryang 1.6.0** (was wabt-ts 1.4.1 before the 2026-08-27 merge; unchanged across 1.5.1 → 1.5.2 → 1.5.3). The +9264 passes are the 1.4.0/1.4.1 bump landing after the three malformations it exposed were fixed: an earlier 1.4.0 attempt was reverted when it took wasi to 378/417 and both dync suites to 0. **The gain is mostly recovered COVERAGE, not new correctness** — 14 of the 15 newly-pinned files went `unbuilt → 0`, so modules that could not previously be assembled now run and expose real conformance gaps (`ref_cast`, `ref_test`, `br_on_cast`, `table_grow`, … — GC/ref-types). Those failures were always there; they were invisible. See compiler-bugs.md |
 > | `bindgen_tests.ts` | 142, 0 failed |
-> | `engine_cross_check_tests.ts` | **376 modules × 3 engines = 1128 pairs, ALL ON BASELINE** — the multi-engine gate (2026-08-24). V8 vs wasmtime/wasmer/wazero, byte-identical stdout. Baseline `tests/engine_baseline.json`. **Re-recorded 2026-08-25 after the `try_table` migration: wasmtime 364 match / 12 reject / 0 differ** (was 354/22 — 10 modules flipped `reject → match` once EH stopped being legacy). The 37 `differ` on the very first run were the `fd_write` short-write bug, fixed the same day. **Re-recorded AGAIN 2026-08-27 when the `-Oz` skip was lifted: wasmer 363 match / 13 reject** (was 353/23 — 10 modules that wasmer REJECTED as raw wabt output load once binaryen has optimised them). wazero unchanged at 346/30. Verified ALL ON BASELINE again on binaryang 1.5.3 with `0 regressed, 0 improved` |
+> | `engine_cross_check_tests.ts` | **376 modules × 3 engines = 1128 pairs, ALL ON BASELINE** — the multi-engine gate (2026-08-24). V8 vs wasmtime/wasmer/wazero, byte-identical stdout. Baseline `tests/engine_baseline.json`. **Re-recorded 2026-08-25 after the `try_table` migration: wasmtime 364 match / 12 reject / 0 differ** (was 354/22 — 10 modules flipped `reject → match` once EH stopped being legacy). The 37 `differ` on the very first run were the `fd_write` short-write bug, fixed the same day. **Re-recorded AGAIN 2026-08-27 when the `-Oz` skip was lifted: wasmer 363 match / 13 reject** (was 353/23 — 10 modules that wasmer REJECTED as raw wabt output load once binaryen has optimised them). wazero unchanged at 346/30. Verified ALL ON BASELINE again on binaryang 1.5.3 with `0 regressed, 0 improved`, and again on 1.6.0 (2026-09-28) |
 > | `go_merge_tests.ts` · `go_bindgen_tests.ts` · `go_asyncify_tests.ts` | **7 / 7 · 7 / 7 · 12 / 12** — green on **Go 1.26.7 + TinyGo 0.41.1**. TinyGo 0.41.1 caps at Go 1.26; a Go 1.27 install breaks all three (`requires go version 1.19 through 1.26`). Keep the pair in step — Go 1.27 is safe only once TinyGo **0.42.0** ships (support is on `dev`). See [next-work.md](next-work.md) |
 > | `bundle_tests.ts` | **4 / 4** — `StructImport` fixed, no longer a standing failure |
 > | `mod_tests.ts` · `merge_tests.ts` · `varscope_tests.ts` · `wasmmerge_guard_tests.ts` | 0 failed |
@@ -224,8 +224,11 @@ counts in README are a record of when each phase first went green, not a live in
 
 ## `wast_tests` is a PER-FILE BASELINE gate (rebuilt 2026-08-20)
 
-**288 files, 37370 passing assertions, 15 files pinned WITH failures, 0 unrunnable** (re-recorded
-2026-09-28 on binaryang 1.6.0, +5 skip → pass; before that 37365, re-recorded 2026-09-19 after the vendored `proposals/threads/` patches AND the `assert_malformed` stage split;
+**288 files, 37674 passing assertions, 0 failures, 0 files pinned, 0 unrunnable — ALL CLEAN**
+(re-recorded 2026-09-28 after three RUNNER fixes in `src/wast.ts`: `ref.extern`/`ref.host`
+arguments and results, BOM-preserving string decode, and running `assert_trap` MODULES; see
+[compiler-bugs.md](compiler-bugs.md). Before those, 37370 with 100 failures in 15 files, on
+binaryang 1.6.0, +5 skip → pass; before that 37365, re-recorded 2026-09-19 after the vendored `proposals/threads/` patches AND the `assert_malformed` stage split;
 was 37,367 / 37,370 earlier that day, 288 / 37247 on wabt-ts 1.4.1, and 287 / 27983 / 12 on 1.3.5) — up from 41 files / 12444, because the gate no
 longer needs a hand-curated file list. Expected pass counts live in **`tests/wast_baseline.json`**
 (tracked). Every baselined file must produce **exactly** its baseline: fewer → FAIL (coverage lost),
@@ -350,17 +353,18 @@ this gate compare against a compiler that no longer exists.
 `wast` runner reads it, so a corpus refresh reaches `wast_tests` and nothing else.
 
 - **Synced 2026-08-20 to upstream `main` @ `65a43d2e9464b6967c98b23c8493765c4d124f4e`.** The tree is
-  byte-identical to that commit; verify with a recursive diff against a fresh tarball before
-  assuming drift. There are **no local-only files** — never hand-edit anything under
-  `testsuite-main/`, or the next sync silently reverts it.
+  byte-identical to that commit **except the owner-directed `;; ⚠️ VENDORED PATCH` blocks** listed
+  under `proposals/threads/` below; verify with a recursive diff against a fresh tarball before
+  assuming drift. **The rule: never hand-edit anything under `testsuite-main/`** (the next sync
+  silently reverts it) — **the only exception is an owner-directed patch carrying that header**,
+  which is expected to be overwritten by the next sync and re-checked then.
 - **Re-sync:** download `https://codeload.github.com/WebAssembly/testsuite/tar.gz/refs/heads/main`,
   `cp -r` over the directory, then **measure per file** — a refresh legitimately adds AND retires
   assertions, so a bare total is not enough to tell a corpus change from a regression.
 - **Line endings:** every `.wast` is LF in both the blob and the working tree, and `.gitattributes`
-  pins only `*.ts`. With this machine's `core.autocrlf=true`, git warns that `.wast` would become
-  CRLF on the next checkout. It has not bitten yet, but a CRLF working tree would break the
-  byte-for-byte upstream diff above. If it ever does, add `*.wast text eol=lf` for the same reason
-  `*.ts` is pinned (see design-decisions.md).
+  **pins `*.wast text eol=lf`** (commit `3fb49b82102`), so this machine's `core.autocrlf=true` can no
+  longer hand out a CRLF corpus and break the byte-for-byte upstream diff above. Do not remove the
+  pin (see design-decisions.md).
 
 ### `proposals/threads/` — frozen upstream, and now PARTLY PATCHED locally (2026-09-19)
 
@@ -523,10 +527,10 @@ deno doc --lint <all 16 exports>       # clean — necessary but NOT sufficient,
 deno doc --json <all 16 exports> | …   # the REAL coverage check — expect 100/100, 0 missing modules
 deno lint main.ts src/                 # clean (21 files)
 deno fmt  --check main.ts src/         # clean as of 2026-07-30 — kept stable by .gitattributes
-                                       # (*.ts text eol=lf); src/wasm/ is fmt-excluded. NEVER run
-                                       # bare `deno fmt`. See design-decisions.md.
-deno run -A tests/wasi_tests.ts        # 336/336 as of 2026-06-23 (+18j..18q dynrt runtime/any; +18r..18z GC track P1-P5b + polish + hybrid allocator COMPLETE: auto-grow / free-list / registry / mark / shadow-stack / collect / payloads+auto-collect (bounded memory); +54..61 async). HARDENED 2026-06-07: diffs run-ts vs run-wasm OUTPUT, not just exit codes. No open bugs; 6 tests legitimately diverge and carry `// @allow-output-diff`. A test FAILS on `output-mismatch` unless it opts out.
-deno run -A tests/bindgen_tests.ts     # 119/119
+                                       # (*.ts text eol=lf); src/wasm/ and **/*.md are fmt-excluded.
+                                       # NEVER run bare `deno fmt`. See design-decisions.md.
+deno run -A tests/wasi_tests.ts        # 417/417 as of 2026-09-28. HARDENED 2026-06-07: diffs run-ts vs run-wasm OUTPUT, not just exit codes; tests that legitimately diverge carry `// @allow-output-diff`. A test FAILS on `output-mismatch` unless it opts out.
+deno run -A tests/bindgen_tests.ts     # 142/142
 deno run -A tests/jstyper_tests.ts     # 73/73
 ```
 

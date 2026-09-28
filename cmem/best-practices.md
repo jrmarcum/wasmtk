@@ -33,9 +33,10 @@ ever goes down can be improved by running less. **Independently re-paid for here
 See [testing.md](testing.md).
 
 **Pass counts over a corpus you cannot fully run are UPPER BOUNDS, not measurements. Skips are not
-passes.** [wazmrt] Live figure here: the wast gate reads **37,365 passed / 27,153 skipped**
-(re-recorded 2026-09-19 after the vendored threads patches and the `assert_malformed` stage split;
-binaryang 1.5.3). **The two crossed over** — this
+passes.** [wazmrt] Live figure here: the wast gate reads **37,674 passed / 0 failed / 26,944 skipped**
+(re-recorded 2026-09-28 after the runner fixes on binaryang 1.6.0); before those, the last measured skip count was **27,153**, at 37,365 passed
+(2026-09-19, binaryang 1.5.3, after the vendored threads patches and the `assert_malformed` stage
+split). **The two crossed over** — this
 corpus used to skip more than it ran (27,983 / 37,252 on 1.3.5). The prediction that a bump would
 cross them was right, and the bump LANDED — an earlier 1.4.0 attempt was reverted, 1.4.1 was not.
 Any headline quoting passes without skips is still overstated by more than the number itself.
@@ -74,7 +75,7 @@ only by luck of timing.
 and a lockfile is the right home for that. A few express *correctness* — "our code is bug-compatible
 with exactly this version" — and those belong in the **specifier**, where a reload cannot move them.
 Ours was the second kind written as the first. **Both backends are now EXACT pins**, and since
-2026-08-27 they are one package: `@jrmarcum/binaryang@1.5.3`, reached through `compat/wabt` and
+2026-08-27 they are one package: `@jrmarcum/binaryang` (1.6.0 as of 2026-09-28), reached through `compat/wabt` and
 `compat/binaryen` at the same version. The caret came off binaryen-ts too — "that one really is a
 compatibility range" did not survive contact with an optimiser that silently miscompiles.
 

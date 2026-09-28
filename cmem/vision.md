@@ -157,7 +157,7 @@ Stage 1 replicates this at runtime (reading WIT dynamically) rather than at comp
 
 Additions scoped here (Stage 1):
 
-- `wit-parser.js` — regex-based WIT parser; same format wasmtk emits (see CLAUDE.md)
+- `wit-parser.js` — regex-based WIT parser; same format wasmtk emits (see architecture.md)
 - `abi.js` — ABI encode/decode utilities; primary `"component"` profile matches the
   Canonical ABI in `src/bindgen.ts` exactly (`cabi_realloc`, out-parameter string returns);
   `"raw"` profile for modules not following the Canonical ABI
@@ -184,7 +184,7 @@ with the same "update the project memory" / "look for code issues" triggers as w
 | `universalWasmLoader-js`     | TypeScript / JS     | WebAssembly (host) | JSR (+ npm compat) |
 | `universalWasmLoader-rs`     | Rust                | wasmtime crate     | crates.io        |
 | `universalWasmLoader-py`     | Python              | wasmtime-py        | PyPI             |
-| `universalWasmLoader-go`     | Go                  | wazero (shipped; wasmtime-go was the decision) | pkg.go.dev |
+| `universalWasmLoader-go`     | Go                  | wazero (native Go; owner-DECIDED default) | pkg.go.dev |
 | `universalWasmLoader-jvm`    | Java / Kotlin       | Chicory            | Maven Central    |
 | `universalWasmLoader-dotnet` | C# / .NET           | Wasmtime (.NET)    | NuGet            |
 | `universalWasmLoader-dart`   | Dart (web-first)    | browser WASM (js_interop) | pub.dev   |
@@ -198,8 +198,10 @@ Julia-specific repo is planned. Julia is Tier 3 (community-contributed or long-t
 **Principle: native/server runtimes use wasmtime (engine + built-in WASI + Component-Model-ready);
 web/browser runtimes use the host's `WebAssembly` + a hand-rolled minimal WASI-P1 shim.** wasmtime is
 preferred for native because it's the de-facto reference runtime, has full built-in WASI, and is the
-Component Model runtime — and (owner, 2026-06-15) "wasmtime is faster" than the pure-Go interpreter
-alternative (wazero), so even `-go` uses **wasmtime-go** (CGO + native lib) rather than wazero.
+Component Model runtime. **Exception — `-go` (owner DECISION 2026-09-20): wazero is the
+`-go` loader default, because it is native Go** (pure-Go, no cgo, no native lib to distribute). This
+supersedes the 2026-06-15 call for **wasmtime-go** (CGO + native lib, chosen then for speed); wazero
+is what shipped and it stays.
 
 **SPEC §10 producer-model loader caps (`_initialize` call + minimal WASI-P1 shim) are COMPLETE in ALL
 10 ports as of 2026-07-05** — see the ✅ WASI-source column. `-rs` deviated from the originally-planned
@@ -211,7 +213,7 @@ minimal-invasiveness reasoning as the web ports, just for a different constraint
 | --- | --- | --- |
 | `-rs` | wasmtime crate | **hand-rolled `func_wrap` shim on `Store<()>`** (no `wasmtime-wasi` dep — chosen for minimal invasiveness; `cc8a5f7`) ✅ |
 | `-py` | wasmtime-py | `linker.define_wasi()` + `WasiConfig().inherit_stdout/stderr` on the `Store` (`a51c8da`) ✅ |
-| `-go` | **decided: wasmtime-go** (over wazero — speed); **shipped: wazero** (pure-Go, no cgo — `c7d9bb0`) — swap to wasmtime-go is a future change | wazero built-in (`wasi_snapshot_preview1.Instantiate`) ✅ |
+| `-go` | **wazero — the DECIDED default** (native Go: pure-Go, no cgo — `c7d9bb0`); supersedes the 2026-06-15 wasmtime-go decision | wazero built-in (`wasi_snapshot_preview1.Instantiate`) ✅ |
 | `-c`/`-cpp`, **Zig** | wasmtime C API (Zig via `@cImport`, cleanest) | wasmtime built-in (`wasi_config_new` + `wasmtime_context_set_wasi`) ✅ |
 | `-dotnet` | Wasmtime NuGet | wasmtime built-in (`DefineWasi` + `SetWasiConfiguration`) ✅ |
 | `-js` | host `WebAssembly` (Deno/Node/browser) | hand-rolled shim (`wasi.js`) ✅ |
@@ -230,9 +232,9 @@ slower Truffle interpreter on stock HotSpot, plus a heavy polyglot dependency �
 GraalVM-centric consumers; (c) **`libwasmtime` via the Java FFM API (Panama, JDK 22+)** would put the
 JVM on real wasmtime (peak speed, principle-consistent) but re-introduces the per-platform native-lib
 distribution cost (same as dart-ffi) and a JDK-22 floor — a "maybe later if JVM speed becomes
-critical," not now. (Contrast `-go`, where the native-lib engine wasmtime-go was *unconditionally*
-faster than pure-Go wazero, so it won; on the JVM the portable engine wins because GraalWasm's edge is
-conditional.)
+critical," not now. (`-go` now lands the same way: the 2026-06-15 reasoning picked wasmtime-go for
+speed, but the owner has since DECIDED on wazero because it is native Go — the portable engine wins
+there too.)
 
 **Dart is dual-backend** (the only language spanning both worlds): the current **web** backend is a
 native-Dart impl over browser `WebAssembly` (js_interop), and a future **native** backend would use
@@ -284,9 +286,9 @@ but not yet pushed to their registries:
   Sonatype secrets); `-c` (vcpkg — header + `ports/` + tests; needs a port PR / tagged ref).
 
 **`-dotnet`** is implemented **on Wasmtime** (the `.NET` runtime decision is now realized — it had a
-`*`-footnote "no `.csproj` yet — stub" that is now obsolete). **Deviation to note:** `-go` shipped on
-**wazero** (pure-Go, no cgo), NOT the **wasmtime-go** the runtime-strategy decision (2026-06-15) called
-for — a swap to wasmtime-go is a possible future change but wazero is what's implemented and tested.
+`*`-footnote "no `.csproj` yet — stub" that is now obsolete). **`-go` is on wazero by owner
+decision** (native Go: pure-Go, no cgo) — it shipped ahead of the 2026-06-15 wasmtime-go call, and
+that call is now superseded; no swap to wasmtime-go is planned.
 `-dart` is **web-first** (`dart:js_interop` over browser `WebAssembly`; runtime decision RESOLVED
 2026-06-15 — a native `dart:ffi` backend is a possible future add). `-c` ships the
 `universal_wasm_loader.h` header + vcpkg `ports/` + `tests/`; `-zig` is its own repo
@@ -701,8 +703,8 @@ that the spec is implementable before committing to additional ports.
 ```text
 jrmarcum/
 ├── wasmtk                        ← TypeScript compiler + polyglot build CLI
-├── wabt-ts                       ← JSR-native TS port of wabt; consumed by wasmtk via /compat (Stage 0.5 ✅)
-├── binaryen-ts                   ← JSR-native TS port of binaryen; consumed by wasmtk via /compat (Stage 0.5 ✅)
+├── binaryang                     ← wabt + binaryen TS ports in one package; consumed by wasmtk via /compat/wabt + /compat/binaryen
+│                                   (merged 2026-08-27; wabt-ts and binaryen-ts are its FROZEN predecessors)
 ├── universalWasmLoader           ← JS/TS loader + SPEC.md (reference impl)
 ├── universalWasmLoader-rs        ← Rust port (Stage 2)
 ├── universalWasmLoader-py        ← Python port (Stage 2)
@@ -712,8 +714,10 @@ jrmarcum/
 ```
 
 The spec in `universalWasmLoader/SPEC.md` is the single written contract that all
-repos agree on. The ABI conventions in `wasmtk/CLAUDE.md` are the authoritative source
-for what wasmtk emits. The two documents cross-reference each other.
+repos agree on. The ABI conventions in `wasmtk/cmem/architecture.md` § "Canonical ABI" (with
+`cmem/polyglot-producers.md` for the forward-alignment decision) are the authoritative source for
+what wasmtk emits — not `wasmtk/CLAUDE.md`, which is now a gitignored pointer file. The two
+documents cross-reference each other.
 
 ---
 

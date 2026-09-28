@@ -790,21 +790,20 @@ silently break (all `src/wasic.ts`):
   - The 130 worktree `.ts` files that were still CRLF were converted in place; `git diff --numstat`
     was **empty** afterwards, confirming zero content change (git had been normalising them all
     along).
-  - **`.wast` is NOT pinned, and that is a live trap (noted 2026-08-20).** `.gitattributes` covers
-    `*.ts` only. The vendored spec corpus under `tests/module/wasm_wast/testsuite-main/` is currently
-    LF in both the blob and the worktree, so nothing is broken — but `core.autocrlf=true` means git
-    warns it will hand out CRLF on the next checkout. That would silently break the byte-for-byte
-    diff against upstream that makes a corpus sync verifiable (see [testing.md](testing.md)
-    § "Vendored spec testsuite"). **If it ever bites, add `*.wast text eol=lf`** for exactly the
-    reason `*.ts` is pinned — do not fix it by rewriting the vendored files, which are upstream's
-    bytes and must stay that way.
+  - **`.wast` IS pinned: `*.wast text eol=lf`** (with `*.wat`, under a wildcard-first
+    `* text=auto eol=lf` default; commits `3fb49b82102` and `83c02a226f7`). It was flagged as a live
+    trap on 2026-08-20: under `core.autocrlf=true` a CRLF checkout of the vendored corpus
+    (`tests/module/wasm_wast/testsuite-main/`) would silently break the byte-for-byte diff against
+    upstream that makes a corpus sync verifiable (see [testing.md](testing.md) § "Vendored spec
+    testsuite"). **Do not remove the pin**, and never fix line endings by rewriting the vendored
+    files — they are upstream's bytes and must stay that way.
   - 🔀 **BOTH BACKENDS ARE NOW ONE PACKAGE — `@jrmarcum/binaryang` (merged 2026-08-27).** `wabt-ts`
     and `binaryen-ts` no longer exist as separate dependencies. `deno.json` keeps **two specifiers
     pointing at one dependency at one version**:
 
     ```jsonc
-    "binaryen-backend": "jsr:@jrmarcum/binaryang@1.5.3/compat/binaryen",
-    "wabt":             "jsr:@jrmarcum/binaryang@1.5.3/compat/wabt"
+    "binaryen-backend": "jsr:@jrmarcum/binaryang@1.6.0/compat/binaryen",
+    "wabt":             "jsr:@jrmarcum/binaryang@1.6.0/compat/wabt"
     ```
 
     ⚠️ **The alias is `binaryen-backend`, not `binaryen`** — see the invariant below. This block is
@@ -825,13 +824,19 @@ silently break (all `src/wasic.ts`):
     - **There is no `./ir` and the root export is empty**, deliberately — 56 type names collide
       across the two retained IRs (`Type`, `ValueType`, `WasmModule`, `Token`, ~52 expression
       nodes). Always import a **compat subpath**; never the bare package.
-    - The entries below are the pre-merge history and stay for the reasoning, not the specifiers.
-  - **`wabt-ts` moved to an exact `1.4.1` pin on 2026-08-25** once the three malformations it exposed
-    were fixed. **The pin and the `try_table` migration are INSEPARABLE: 1.3.5 cannot encode
-    `try_table` at all** (every handler form is an ENCODE-FAIL), so the emitter change cannot land on
-    the old backend. Anyone reverting the pin must revert the emitter too, or the compiler emits WAT
-    its own assembler rejects. Still exact, not a caret — the constraint is correctness, not
-    compatibility.
+  - 🔒 **THE RULE: `@jrmarcum/binaryang` is EXACT-pinned (no caret), both subpaths at the same
+    version, and it moves only with a full gate** (currently `1.6.0`, commit `17d5a1e6ae4`). Both
+    halves are code generators whose *output text* we parse, so the pin is a CORRECTNESS pin, not a
+    compatibility range. Never reintroduce a caret.
+    - History, for the reasoning only: `^1.3.5` let wabt-ts 1.4.0 (a stricter validator rejecting
+      three malformations we emitted) in through a reload — the `wast` gate went 156 files
+      off-baseline while `deno.json` still said 1.3.5 — so it was EXACT-pinned at 1.3.5
+      (`82b0e9eec79`, 2026-08-25), then 1.4.1 once those were fixed (`b381eb3cff0`); binaryen-ts went
+      `^1.4.3` → exact 1.5.0 by the same lesson (a caret is how 1.4.0 got in and regressed us). Both
+      merged into binaryang on 2026-08-27 (`1feceb06035`).
+    - **The `try_table` emitter needs a backend that can encode it** (wabt-ts 1.3.5 could not: every
+      handler form was an ENCODE-FAIL). Reverting the backend below that line means reverting the
+      emitter too, or the compiler emits WAT its own assembler rejects.
   - **`minimumDependencyAge: "PT1M"` STAYS — owner directive 2026-08-25. Do not "clean it up".**
     Deno's default 24-hour guard exists to stop a freshly-published malicious version from being
     pulled in unnoticed. That threat model does not describe this repo: **both backends are
@@ -842,11 +847,8 @@ silently break (all `src/wasic.ts`):
     - Use the ISO-8601 form. `"1h"` is **rejected**; `"PT1H"` / `"PT1M"` are accepted.
     - The safety that actually protects this repo is the **exact pin plus the gate**, not the age
       guard. Loosen either of those and this entry becomes wrong.
-  - **`binaryen-ts` is EXACT-pinned at `1.5.0` (2026-08-25), for the same reason and by the same
-    lesson.** It was `^1.4.3`; 1.5.0 is what *reads* the multi-value block a `try_table` handler
-    produces. The caret came off because a caret is exactly how 1.4.0 got in and regressed us —
-    **both backends are now exact pins. Neither may move without a full gate**, because both are code
-    generators whose *output text* we parse.
+  - **A backend bump never lifts a safety skip by itself** (the reader of a `try_table` handler's
+    multi-value block arrived in binaryen-ts 1.5.0; the optimiser fix came later):
     - ✅ **The `try_table` `-Oz` skip is REMOVED (2026-08-27, binaryang 1.5.2).** Kept here because
       the *rule* outlived the branch: **do not remove a safety skip on a version bump alone.** It was
       removed only after our own gate said so — `check_try_table_oz.ts` exit 0, then `15_Exceptions`
@@ -920,23 +922,10 @@ silently break (all `src/wasic.ts`):
     throw when the printer changes — it silently reports "no data segments", which collapses data
     relocation and seats the heap inside static data. It cost a hung suite to find; see
     compiler-bugs.md.
-  - **`wabt-ts` is EXACT-pinned (`1.3.5`, no caret) as of 2026-08-25 — a CORRECTNESS pin, not a
-    compatibility range.** 1.4.0 is a stricter validator that rejects three classes of malformed WAT
-    we emit (see compiler-bugs.md), so it must not arrive by accident. It nearly did: with `^1.3.5`
-    the lockfile was the only thing holding 1.4.0 back, and one config change let a reload pull it
-    in — the `wast` gate went 156 files off-baseline while `deno.json` still said 1.3.5.
-    **Restore the caret once the three malformations are fixed and the bump is deliberate.**
-    `binaryen-ts` keeps its caret; that constraint really is about compatibility.
   - **`deno.json` MUST STAY STRICT JSON — no JSONC comments (learned 2026-08-25).** Deno itself
     accepts comments, but `scripts/sync-version.ts` reads the file with `JSON.parse`, and
     `deno task install` chains `update-version` → that script. Adding one `//` comment to document a
     setting broke `deno task install` outright. Document settings in `cmem/`, not inline.
-  - **`minimumDependencyAge: "PT1H"` (set 2026-08-25, owner decision).** Deno blocks JSR versions
-    younger than 24h by default as a supply-chain guard; wabt-ts 1.4.0 was 13h old and carried three
-    fixes we were blocked on. Deliberately **not `"0"`** — a zero-age publish is the case the guard
-    exists for, and an hour still catches a package pulled immediately after being compromised. The
-    value is an ISO-8601 duration or a count of minutes; `"1h"` is REJECTED (`expected minutes,
-    RFC3339 datetime, or ISO-8601 duration`).
   - **Real content drift existed too and is now fixed**: `src/bindgen.ts` (40 diff lines),
     `src/hybrid.ts` (16), `src/wasic.ts` (6), `src/console_log.ts` (5), `src/wast.ts` (4).
   - **`src/wasm/` is excluded from fmt via `deno.json` → `fmt.exclude`.** Both files there are
@@ -944,17 +933,18 @@ silently break (all `src/wasic.ts`):
     that `deno fmt` wants to explode into ~9,000. The generators own those files' shape — never let
     fmt fight them. Note `exclude` applies to the DIRECTORY form (`deno fmt main.ts src/`); passing
     an excluded file explicitly still formats it.
-  - **Scope stays `deno fmt main.ts src/`** — never bare `deno fmt`, which would reflow the 214 KB
-    README and every `cmem/*.md` (mangling tables and code fences).
+  - **Scope stays `deno fmt main.ts src/`** (plus `scripts/`) — never bare `deno fmt`, which would
+    reformat the hand-written `tests/` corpus (compiler INPUT; see the markdown bullet above).
+    Markdown is now excluded in `deno.json`; the old "mangles tables" reason is retracted.
   - Reformatting touched `wasic.ts`/`console_log.ts`, i.e. the compiler, so the full gate was run
     after it (see testing.md). fmt is still not CI-gated and not a JSR score factor.
 - **Keep the published TypeScript (`main.ts` + `src/`) `deno fmt`-clean.** As of 2026-06-02 it
   passed `deno fmt --check main.ts src/` (one-time reflow to the deno.json fmt config: lineWidth
   100, arrow parens, semicolons). Format with the **scoped** `deno fmt main.ts src/` — do **NOT**
-  run bare `deno fmt`: with no `include`/`exclude` in deno.json it would reflow the 176 KB README
-  and all `cmem/*.md` markdown (mangling tables/code-fences) plus every test. `deno fmt` preserves
+  run bare `deno fmt`: it would reformat every test (markdown is excluded in deno.json since
+  2026-09-20). `deno fmt` preserves
   template-literal contents, so reformatting `wasic.ts`/`console_log.ts` leaves emitted WAT
-  byte-identical — but it IS the compiler, so reinstall (`deno install -g … -n wasmtk`) and re-run
+  byte-identical — but it IS the compiler, so reinstall (`deno task install`) and re-run
   the three suites after any reformat. fmt is not CI-gated (see testing.md), but staying clean keeps
   the pre-publish checklist green.
 - **Keep `deno doc --lint` clean across all `deno.json` entrypoints** (the JSR doc-coverage
@@ -1197,8 +1187,10 @@ revert these (full rationale in [polyglot-producers.md](polyglot-producers.md)):
   is `wasm32-wasi`.
 - **Rust (`src/rustwasic.ts`) — delegates fully to `rsxtk`** (do NOT reimplement via cargo). wasmtk
   wraps rsxtk: `init`→init, `initmod`→initmod, `modc`→`build … wasm`, `build`→`build … wasi`, `run`→
-  run, `add`/`remove`/`list`/`fmt`/`clean`→same. The Rust-only verbs (`initmod build add remove list
-  fmt clean`) **require `--lang=rust`**. Args are forwarded raw (command + `--lang` stripped) so
+  run, `add`/`remove`/`list`/`fmt`/`clean`→same. **UPDATED 2026-07-28:** the Rust-exclusive verbs
+  (`add remove list fmt clean`) need **no** `--lang` (implicitly Rust); `initmod`/`build` are now
+  shared go/zig/rust verbs; `run`/`build`/`modc` auto-detect the language; only `init`/`initmod`
+  still require `--lang` (see [polyglot-producers.md](polyglot-producers.md) § "UPDATED 2026-07-28"). Args are forwarded raw (command + `--lang` stripped) so
   rsxtk's own positionals/flags pass through; `modc`/`build` auto-append the rsxtk `build` TARGET
   (`wasm`/`wasi`). Prereq: `rustup target add wasm32-wasip1`.
 - **Run auto-detect** (`detectRunLang` in `main.ts`, NOT the producer modules): `.go`/`go.mod`→go,

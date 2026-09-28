@@ -96,5 +96,5 @@ removed. See compiler-bugs.md § "short-circuit `&&`/`||` removes the merge OOB-
 
 `wasmtk modc <lib>.ts` → `.wasm`+`.wat`+`.wit`; then `wasmtk wasic <driver>.ts` (merges); then
 `wasmtk run <driver>.wasm`. The test runner uses the **globally installed** `wasmtk`, so after
-editing `src/` you MUST reinstall:
-`deno install -g --allow-read --allow-write --allow-run --allow-env --allow-net --config deno.json --force -n wasmtk main.ts`.
+editing `src/` you MUST reinstall with **`deno task install`**. Never hand-write the
+`deno install` line — `--allow-ffi` is required and easy to drop.
