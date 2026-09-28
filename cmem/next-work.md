@@ -401,6 +401,36 @@ exists, and a failed `binaryen -Oz` swallowed silently. See [compiler-bugs.md](c
 - ⚠️ Add them to the impact map in [testing.md](testing.md) at the same time, or the suite set
   grows without the "which suites does this change reach" table knowing about it.
 
+## SCOPED 2026-09-28: the 886 remaining wast skips, by root cause and owner
+
+Measured, not estimated. `WastResult.skipReasons` (added the same day) labels every skip. A
+classifier (scratch; rules below) put all 886 in exactly one group, with none unclassified and the
+total equal to the gate. "No active module instance" skips are counted with the module whose failure
+caused them.
+
+| # | skips | root cause | owner | size |
+| --- | --- | --- | --- | --- |
+| 1 | 471 | `custom-descriptors` text syntax (`(ref (exact $t))`, `descriptor` clauses) not parsed | binaryang (drafted in `scripts/binaryang-report.md`) + V8 flag | theirs |
+| 2 | 101 | `wide-arithmetic` opcodes: V8 needs `--experimental-wasm-wide-arithmetic` | **decision**: allow test-only `--v8-flags` in the gate? Measured: 101 → 0 | S |
+| 3 | 56 | expected `ref.struct`/`ref.array`/`ref.eq`/`ref.i31` (25 core + 31 in custom-descriptors) | runner. V8 15.0 DOES return GC refs to JS (probed); classify with a `ref.test` helper module | S |
+| 4 | 51 | named heap type in an inline `call_indirect` typeuse not resolved (`"$$t"`) | binaryang encoder (drafted, with minimal repro) | theirs |
+| 5 | 44 | `custom-page-sizes`: V8 has NO flag for it, and binaryang does not parse `(pagesize N)` limits | engine: wait | — |
+| 6 | 41 | `assert_exception` directive not handled (EH files) | runner: invoke, expect `WebAssembly.Exception` | S |
+| 7 | 33 | `(module definition …)` / `(module instance …)` script syntax | runner (`instance`, `memory*`, `table*`, `memory_max*`) | M |
+| 8 | 32 | `(either …)` expected results (relaxed SIMD) | runner: trampoline matches any alternative | S |
+| 9 | 20 | `assert_malformed_custom` / `assert_invalid_custom` | runner, then depends on binaryang's annotation validation | S–M |
+| 10 | 16 | `assert_trap` with a NaN-payload argument (`conversions`) | runner: trampoline for `assert_trap`; result type by LinkError probing or a type-section read | S |
+| 11 | 7 | `exnref` and similar refs V8 will not hand to JS (`ref_null`) | engine limit | — |
+| 12 | 6 | top-level annotation / bare inline-module fields (`annotations`, `inline-module`) | runner: script grammar | S |
+| 13 | 5 | `proposals/threads` `assert_invalid` the toolchain accepts | spec-stale (frozen proposal repo) | — |
+| 14 | 2 | runner's s-expr parser ends a module too LATE (`id.wast` 24 → 32, `annotations.wast` 21 → 23) | runner, confirmed | S |
+| 15 | 1 | memory64 max pages above V8's implementation limit | engine limit | — |
+
+**Reachable by us alone: groups 3, 6, 7, 8, 10, 12, 14 = 186, plus 101 if flags are allowed.**
+**binaryang: 522. Engine or spec: 57. Shared (group 9): 20.** (186 + 101 + 522 + 57 + 20 = 886.)
+Suggested order: 14 → 8 → 6 → 3 → 10 → 12 → 7. Group 14 comes
+first because a parser that mis-ends modules can hide other things.
+
 ## ✅ RESOLVED 2026-09-28 — all 100 pinned wast failures are gone; the gate is ALL CLEAN (37,674 / 0)
 
 Every one of them was OUR RUNNER, none was the compiler or binaryang. Three fixes in `src/wast.ts`

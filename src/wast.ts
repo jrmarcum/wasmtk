@@ -765,6 +765,12 @@ export interface WastResult {
   /** Number of commands skipped (unsupported directive or unhandled command kind). */
   skipped: number;
   /**
+   * `skipped` broken down by reason (short fixed labels; the counts sum to `skipped`). A skip
+   * never re-announces itself, so without this a skip total can only be scoped by re-deriving
+   * every assertion by hand. Added 2026-09-28.
+   */
+  skipReasons: Record<string, number>;
+  /**
    * Modules in this file the toolchain could not ASSEMBLE. Report this alongside pass/fail/skip:
    * a file whose modules do not build is not healthy just because its failure count is small, and
    * every failure after the first one is likely a CASCADE from it rather than an independent
@@ -801,9 +807,28 @@ export async function runWast(
     passed: 0,
     failed: 0,
     skipped: 0,
+    skipReasons: {},
     modulesFailed: 0,
     failures: [],
   };
+  const skip = (reason: string) => {
+    res.skipped++;
+    res.skipReasons[reason] = (res.skipReasons[reason] ?? 0) + 1;
+  };
+  // `__skip__: <label>[: <detail>]` → `<label>` (the detail varies per assertion; the label does not).
+  const skipLabel = (e: unknown) =>
+    String(e instanceof Error ? e.message : e).replace(/^.*__skip__:\s*/, "").split(": ")[0];
+  // Why a module did not build, by STAGE: that is what decides who can fix it.
+  const moduleStage = (e: unknown) =>
+    e instanceof AssembleError
+      ? `module: ${e.stage} failed`
+      : e instanceof WebAssembly.CompileError
+      ? "module: V8 validation rejected"
+      : e instanceof WebAssembly.LinkError
+      ? "module: link failed"
+      : e instanceof WebAssembly.RuntimeError
+      ? "module: trapped at instantiation"
+      : "module: other";
   const src = await rt.readTextFile(path);
   let cmds: SexpList[];
   try {
@@ -1011,7 +1036,7 @@ export async function runWast(
             // A module we cannot assemble/instantiate (unsupported proposal, missing import, …).
             // Skip it and its dependent actions rather than failing the whole file.
             cur = null;
-            res.skipped++;
+            skip(moduleStage(e));
             res.modulesFailed++;
             sawUnassemblableModule = true;
             if (opts.verbose) {
@@ -1033,7 +1058,7 @@ export async function runWast(
             runAction(cmd);
             res.passed++;
           } catch (e) {
-            if (String(e).includes("__skip__")) res.skipped++;
+            if (String(e).includes("__skip__")) skip(`action: ${skipLabel(e)}`);
             else fail(`action ${head(cmd)} threw: ${e instanceof Error ? e.message : e}`);
           }
           break;
@@ -1044,7 +1069,7 @@ export async function runWast(
           if (head(action) === "invoke" && needsTrampoline([...action.list, ...expected])) {
             const resultTypes = expected.map(lowType);
             if (resultTypes.some((t) => t === null)) {
-              res.skipped++; // e.g. `(either …)` — not yet carried
+              skip("assert_return: result form the trampoline cannot carry (either, ref, …)");
               break;
             }
             let bits: bigint[];
@@ -1052,7 +1077,7 @@ export async function runWast(
               bits = runTrampolined(action, resultTypes as LowType[]);
             } catch (e) {
               if (String(e).includes("__skip__")) {
-                res.skipped++;
+                skip(`assert_return (trampoline): ${skipLabel(e)}`);
                 if (opts.verbose) res.failures.push(`skip (${e instanceof Error ? e.message : e})`);
                 break;
               }
@@ -1073,7 +1098,9 @@ export async function runWast(
             break;
           }
           if (anyUnsupportedResult(expected)) {
-            res.skipped++;
+            const forms = expected.filter((x) => !isList(x) || !resultType(x))
+              .map((x) => isList(x) ? head(x) : "?");
+            skip(`assert_return: unsupported expected ${[...new Set(forms)].join("/")}`);
             break;
           }
           let results: unknown[];
@@ -1081,7 +1108,11 @@ export async function runWast(
             results = runAction(action);
           } catch (e) {
             if (String(e).includes("__skip__") || isJsBoundaryRefusal(e)) {
-              res.skipped++;
+              skip(
+                isJsBoundaryRefusal(e)
+                  ? "assert_return: V8 cannot carry this ref type to JS"
+                  : `assert_return: ${skipLabel(e)}`,
+              );
               if (opts.verbose && isJsBoundaryRefusal(e)) {
                 res.failures.push(
                   `skip (JS boundary cannot carry this reference type): ${
@@ -1139,7 +1170,9 @@ export async function runWast(
               // Did not assemble, or failed to LINK/compile — not the trap this asserts. Count it
               // with the unbuilt modules and arm the cascade tag, so a failure it causes says where
               // it came from.
-              res.skipped++;
+              skip(
+                `${h} (module): ${bytes ? "did not trap: link/compile failed" : "did not build"}`,
+              );
               res.modulesFailed++;
               sawUnassemblableModule = true;
             }
@@ -1149,7 +1182,7 @@ export async function runWast(
             runAction(action);
             fail(`${h} did not trap: ${src.slice(cmd.start, cmd.start + 100)}`);
           } catch (e) {
-            if (String(e).includes("__skip__")) res.skipped++;
+            if (String(e).includes("__skip__")) skip(`${h}: ${skipLabel(e)}`);
             else res.passed++; // any trap/throw counts (message not matched in v1)
           }
           break;
@@ -1164,7 +1197,7 @@ export async function runWast(
             const bytes = assemble(mod);
             if (h === "assert_unlinkable") await instantiate(bytes);
             else await WebAssembly.compile(bytes as BufferSource); // validation
-            res.skipped++;
+            skip(`${h}: toolchain accepted it`);
             if (opts.verbose) {
               res.failures.push(
                 `toolchain-lenient (${h} not rejected): ${src.slice(cmd.start, cmd.start + 70)}`,
@@ -1181,7 +1214,7 @@ export async function runWast(
           // that wabt happens to accept is not a text-decode failure we can judge → skip.
           const isQuoteOrBinary = mod.list.some((x) => x === "quote" || x === "binary");
           if (!isQuoteOrBinary) {
-            res.skipped++;
+            skip("assert_malformed: plain (module …) — undecidable here");
             break;
           }
           // `(module binary …)` has no text to decode — the BYTES are the subject, and V8's
@@ -1191,7 +1224,7 @@ export async function runWast(
           try {
             const bytes = assemble(mod);
             await WebAssembly.compile(bytes as BufferSource);
-            res.skipped++; // toolchain-lenient (see assert_invalid note)
+            skip("assert_malformed: toolchain accepted it"); // see the assert_invalid note
             if (opts.verbose) {
               res.failures.push(
                 `toolchain-lenient (malformed not rejected): ${
@@ -1204,7 +1237,7 @@ export async function runWast(
             // the encoder, or V8's validator — is not the decode failure this asserts, so it is a
             // toolchain gap (skip), never a pass. Counting it as a pass is how a false green hides.
             if (!isBinary && e instanceof AssembleError && e.stage === "encode") {
-              res.skipped++;
+              skip("assert_malformed: parsed, then failed at encode");
               if (opts.verbose) {
                 res.failures.push(
                   `not malformed (well-formed; failed at ENCODE): ${
@@ -1216,7 +1249,7 @@ export async function runWast(
             }
             if (!isBinary && !(e instanceof AssembleError)) {
               // parsed and encoded, then V8 rejected it → invalid, not malformed.
-              res.skipped++;
+              skip("assert_malformed: parsed, then V8 rejected as invalid");
               if (opts.verbose) {
                 res.failures.push(
                   `not malformed (well-formed; INVALID per V8): ${
@@ -1232,7 +1265,7 @@ export async function runWast(
         }
         default:
           // assert_return_canonical_nan (legacy), assert_return_arithmetic_nan (legacy), meta, … → skip
-          res.skipped++;
+          skip(`directive not handled: ${h}`);
       }
     } catch (e) {
       fail(`command ${h} error: ${e instanceof Error ? e.message : e}`);

@@ -4,6 +4,34 @@
 > `@jrmarcum/binaryang` on 2026-08-27**. Sections dated before that keep the old package names on
 > purpose — they record what was reported to whom, and retitling them would make the record wrong.
 
+## DRAFT (not yet sent) — 2026-09-28, against 1.6.0: one encoder bug, one parser gap
+
+First, thanks: 1.6.0 landed both 2026-09-19 fixes. Our acceptance prediction held exactly, and three
+more spec assertions flipped from skip to pass as a bonus. With our own runner fixed the same day,
+the spec gate is 63,732 passed / 0 failed. Of the 886 still skipped, these two are on your side.
+
+### 🔴 Encoder: a NAMED heap type inside an inline `call_indirect` typeuse is never resolved
+
+```wat
+(module
+  (type $t (func))
+  (func $f (result (ref null $t)) (ref.null $t))
+  (table $tab funcref (elem $f))
+  (func (result (ref null $t)) (call_indirect $tab (result (ref null $t)) (i32.const 0))))
+```
+
+Parses, then `toBinary` throws `writeHeapType: type "$$t" is not resolved — run resolveNames before
+writing`. The same holds for `return_call_indirect`. The numeric form `(ref null 0)` encodes fine.
+Note the doubled `$$`: the name looks prefixed twice somewhere on the inline-typeuse path. Spec
+impact: `return_call_indirect.wast`'s main module, and the 50 assertions behind it (51 skips).
+
+### 🟡 Parser: custom-descriptors syntax (proposal, low priority for us)
+
+`exact` heap types (`(ref (exact $t))`) → `expected heap type, got (`, and `descriptor`/`describes`
+clauses in type definitions → `expected func, struct, or array in type`. Together they block 471
+assertions in `proposals/custom-descriptors/`. V8 needs `--experimental-wasm-custom-descriptors`
+for these too, so there is no hurry; this is here so it is on your list, not a request.
+
 ## TWO PARSER-LENIENCY BUGS — 2026-09-19. Both are `assert_malformed` cases we were passing wrongly.
 
 Found by hardening our own `.wast` runner, not by reading. Context worth having first, because it
