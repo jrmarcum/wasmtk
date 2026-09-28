@@ -199,7 +199,9 @@ export async function runWasmBundle(
   const modules: ModuleEntry[] = [];
   for (const filePath of inputs) {
     const bytes = await rt.readFile(filePath);
-    const wabtMod = wabt.readWasm(bytes, { readDebugNames: true });
+    // Index form, not debug names: extractExportNames and mergeWasmWat parse `(func N)` /
+    // `(func (;N;) …)`. binaryang 1.6.0 began honouring `true` (1.5.3 ignored it).
+    const wabtMod = wabt.readWasm(bytes, { readDebugNames: false });
     const wat = wabtMod.toText({ inlineExport: false });
     wabtMod.destroy();
     const exports = extractExportNames(wat);

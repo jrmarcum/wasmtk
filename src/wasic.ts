@@ -20185,8 +20185,11 @@ function mergeOneWasmImport(
   exportedFuncs: ExternalFuncDef[];
   hasMutableGlobals: boolean;
 } {
-  // Disassemble the binary to WAT text
-  const importedMod = wabtMod.readWasm(wasmBytes.buffer as ArrayBuffer, { readDebugNames: true });
+  // Disassemble the binary to WAT text. `readDebugNames: false` is LOAD-BEARING: mergeWasmWat
+  // parses the index form `(func (;N;) …)`. binaryang 1.5.3 ignored `true`; 1.6.0 honours it, and
+  // a leaf with a name section (TinyGo) then disassembles to `(func $main.addi#wasmexport …)`,
+  // which the merge cannot see (go_merge_tests, 2026-09-28).
+  const importedMod = wabtMod.readWasm(wasmBytes.buffer as ArrayBuffer, { readDebugNames: false });
   const importedWat = importedMod.toText({ inlineExport: false });
   importedMod.destroy();
 
@@ -20313,7 +20316,8 @@ export async function compileWasiTs(
       // Embedded capability (Brief #4): bytes/wit are carried inline; otherwise read the file.
       const bytes = entry.bytes ?? await rt.readFile(entry.filePath);
       wasmBytesMap.set(entry.filePath, bytes);
-      const mod = wabtMod.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: true });
+      // Index form, not debug names — see mergeOneWasmImport.
+      const mod = wabtMod.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: false });
       const importedWat = mod.toText({ inlineExport: false });
       mod.destroy();
       const preResult = mergeWasmWat(importedWat, entry.prefix, 0);
@@ -20503,7 +20507,8 @@ export async function compileLibTs(tsPath: string, outPath?: string): Promise<Wa
       // modc library that auto-merges dynrt for `any`/`eval`).
       const bytes = entry.bytes ?? await rt.readFile(entry.filePath);
       wasmBytesMap2.set(entry.filePath, bytes);
-      const mod = wabtMod2.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: true });
+      // Index form, not debug names — see mergeOneWasmImport.
+      const mod = wabtMod2.readWasm(bytes.buffer as ArrayBuffer, { readDebugNames: false });
       const importedWat = mod.toText({ inlineExport: false });
       mod.destroy();
       const preResult2 = mergeWasmWat(importedWat, entry.prefix, 0);

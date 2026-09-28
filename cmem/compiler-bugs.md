@@ -1,5 +1,32 @@
 # Compiler bug log
 
+## binaryang 1.6.0 honoured `readDebugNames: true`, and the merge path broke (FIXED 2026-09-28)
+
+**Symptom.** On the 1.5.3 → 1.6.0 bump, `go_merge_tests` went 6/7: merging the TinyGo leaf failed
+with `undefined func "$mathleaf_addi"` (and `_muli`, `_clampi`). Every other suite was green,
+including wasi 417/417, because wasic-built libraries carry no name section.
+
+**Root cause — ours, hidden by a backend bug.** Four sites disassembled an imported `.wasm` with
+`readDebugNames: true` and fed the text to parsers that match only the INDEX form
+`(func (;N;) …)` / `(export "x" (func N))`: `mergeOneWasmImport` and both signature pre-passes in
+`src/wasic.ts`, and `src/wasmbundle.ts`. **binaryang 1.5.3 ignored the flag** (its output was
+byte-for-byte the index form with `true` or `false`; measured on `mathleaf.wasm`). 1.6.0 honours it,
+as real wabt does, so a leaf with a name section now disassembles to `(func $main.addi#wasmexport …)`
+and the merge finds no exports to rename. We had asked for the wrong form since the Phase 1 split,
+and it never mattered until the backend started doing what we asked.
+
+**Fix.** Pass `readDebugNames: false` at all four sites, each with a comment saying why. Left alone on
+purpose: `convert` (wasm → wat, `src/utils.ts`). People read that output, so real names are an
+improvement there.
+
+**No input guard in `mergeWasmWat`.** One was considered and not added, because
+`wasmmerge_guard_tests.ts` feeds it hand-written NAMED WAT and expects it NOT to throw. The contract
+is enforced at the call sites instead. Regression coverage: `go_merge_tests` (the TinyGo leaf is the
+only merge input in the tree that carries a name section).
+
+**Lesson.** When a backend ignores an option, an option that is wrong for us stays hidden. Grep for
+every option we pass to the backend when bumping it, not only for the APIs it removed.
+
 ## Phase 34 inline predicate target: the whole function header failed to parse (FIXED 2026-07-30)
 
 Phase 34 stress batch (type predicates), 3 owner tests. Tests 1 and 2 — basic narrowing and an

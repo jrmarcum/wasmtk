@@ -1,6 +1,27 @@
 # Next-work planning note
 
-> ## ⏸️ PAUSED 2026-09-20 — waiting on the next binaryang release
+> ## ✅ RESUMED 2026-09-28 — binaryang 1.6.0 pinned and fully gated (branch `chore/binaryang-1.6.0-2026-09-28`)
+>
+> The resume sequence below was followed step for step. Results:
+>
+> - `-Oz` guard: pre 42 / post 42.
+> - **One regression, ours:** `go_merge_tests` 6/7. 1.6.0 began honouring `readDebugNames: true`,
+>   which 1.5.3 ignored. Fixed at four call sites; see the top of [compiler-bugs.md](compiler-bugs.md).
+> - Full gate green after the fix: wasi 417/417 · engine 1128 ALL ON BASELINE · every other suite 0
+>   failed.
+> - **wast: the prediction held (+1 `memory_max_i64`, +1 `try_catch`), plus 3 more we did not
+>   predict**, each checked assertion by assertion against 1.5.3 before re-recording.
+>   `legacy/try_delegate` 16 → 18 comes from the same legacy-`try` structure fix; we predicted only
+>   the `try_catch` side of it. `tag` 3 → 4 is an `assert_unlinkable` over a `rec` type, from 1.6.0's
+>   "a tag keeps the type it named" fix. All five were skips that became passes, with 0 new failures.
+>   **Corpus 37,365 → 37,370**, baseline re-recorded, still 15 files pinned / 100 failures.
+> - ⚠️ **Deno's minimum-dependency-age rule.** Outside this repo, Deno's default 24-hour age rule
+>   refused 1.6.0 on the day it was published. The repo's `"minimumDependencyAge": "PT1M"` let it
+>   through. Scratch probes need `--minimum-dependency-age=0`, or they fail with "Could not find
+>   version".
+> - Is 1.6.0 a release trigger? Not decided. That is the owner's call; nothing has been bumped.
+>
+> ### (historical) ⏸️ PAUSED 2026-09-20 — waiting on the next binaryang release
 >
 > Work is deliberately stopped here, not stalled. Both parser-leniency bugs are with binaryang and
 > being worked on, and the next thing we do is **verify their fix against a published version we can
