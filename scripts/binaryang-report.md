@@ -8,7 +8,8 @@
 
 First, thanks: 1.6.0 landed both 2026-09-19 fixes. Our acceptance prediction held exactly, and three
 more spec assertions flipped from skip to pass as a bonus. With our own runner fixed the same day,
-the spec gate is 63,732 passed / 0 failed. Of the 886 still skipped, these two are on your side.
+the spec gate is 63,880 passed / 0 failed. Of the 726 still skipped, 557 are the three items below;
+the rest are V8 or spec limits, and none are ours any more.
 
 ### 🔴 Encoder: a NAMED heap type inside an inline `call_indirect` typeuse is never resolved
 
@@ -24,6 +25,14 @@ Parses, then `toBinary` throws `writeHeapType: type "$$t" is not resolved — ru
 writing`. The same holds for `return_call_indirect`. The numeric form `(ref null 0)` encodes fine.
 Note the doubled `$$`: the name looks prefixed twice somewhere on the inline-typeuse path. Spec
 impact: `return_call_indirect.wast`'s main module, and the 50 assertions behind it (51 skips).
+
+### 🟢 Leniency: malformed custom annotations are accepted (5 assertions)
+
+`custom/name_annot.wast` has 3 `assert_malformed_custom` modules with a misplaced `(@name …)`, for
+example `(module (func) (@name "M"))`, where `@name` must come right after `module`. You accept all 3.
+`custom/branch_hint.wast`: one malformed and one invalid branch hint are accepted. Annotations are
+optional to process, so this is allowed. It is here only in case you intend to validate the ones you
+do process.
 
 ### 🟡 Parser: custom-descriptors syntax (proposal, low priority for us)
 

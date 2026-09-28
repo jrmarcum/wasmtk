@@ -33,7 +33,7 @@ ever goes down can be improved by running less. **Independently re-paid for here
 See [testing.md](testing.md).
 
 **Pass counts over a corpus you cannot fully run are UPPER BOUNDS, not measurements. Skips are not
-passes.** [wazmrt] Live figure here: the wast gate reads **63,732 passed / 0 failed / 886 skipped** (the SIMD/NaN trampoline, 2026-09-28; before it 37,674 / 26,944)
+passes.** [wazmrt] Live figure here: the wast gate reads **63,880 passed / 0 failed / 726 skipped** (after the SIMD/NaN trampoline and the script-grammar fixes, 2026-09-28; before it 37,674 / 26,944)
 (re-recorded 2026-09-28 after the runner fixes on binaryang 1.6.0); before those, the last measured skip count was **27,153**, at 37,365 passed
 (2026-09-19, binaryang 1.5.3, after the vendored threads patches and the `assert_malformed` stage
 split). **The two crossed over** — this

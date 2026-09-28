@@ -50,11 +50,12 @@ release.
    a BOM-eating decoder, `assert_trap` modules never instantiated) → **0 failures**.
 3. **`.wast` runner: SIMD / NaN-payload trampoline** → skips 26,944 → 886. It exposed and fixed a
    subnormal hex-float underflow.
-4. **`.wast` runner: `skipReasons`** labels every skip. The remaining 886 are SCOPED in
-   [next-work.md](next-work.md), 186 of them ours.
+4. **`.wast` runner: `skipReasons`** labels every skip; the 886 left were SCOPED, and every runner-owned
+   group was then fixed (script grammar, `either`, `assert_exception`, GC results, trap trampoline) →
+   726, none of them ours. See [next-work.md](next-work.md).
 5. **Workspace letter H4** (memory drift T1–T11) closed in `cmem/`.
 
-Gate: **wasi 417/417 · engine 1128 ALL ON BASELINE · wast 288 files / 63,732 passed / 0 failed / 886
+Gate: **wasi 417/417 · engine 1128 ALL ON BASELINE · wast 288 files / 63,880 passed / 0 failed / 726
 skipped (ALL CLEAN)** · every other suite 0 failed. Post-mortems in
 [compiler-bugs.md](compiler-bugs.md).
 

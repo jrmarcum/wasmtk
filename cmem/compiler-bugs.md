@@ -1,5 +1,34 @@
 # Compiler bug log
 
+## wast runner: every runner-owned skip group closed (2026-09-28) — skips 886 → 726, 0 of them ours
+
+Gate: 63,732 / 0 / 886 → **63,880 / 0 / 726**. 28 files moved, none went down, and none gained a
+failure. Two of the seven changes were BUGS. The rest are coverage.
+
+**Bugs.**
+1. **The s-expr reader ran a module on into the next command.** `readAtom` read through `"`, so a
+   string abutting other tokens (`x")"y`, `x-y$yz"aa"-2`) let a `)` inside it close a list, and a
+   quoted id `$" "` split at its space. `id.wast`'s module was read as lines 1–32 (it ends at 24),
+   silently swallowing five assertions; `annotations.wast` as 1–23 (ends at 21). A `"` now ends an
+   atom, except after a bare `$` or `@`, where the string is part of the token. `id.wast` went from
+   0 passed / 1 skipped to 6 / 0.
+2. **`spectest.table64` was a 32-bit table.** It was built with `index: "i64"`, but the JS API field
+   is `address` (with BigInt sizes). V8 ignores the unknown key, so the import failed with "cannot
+   import i32 table as i64". Probed both descriptors before fixing.
+
+**Coverage.** `(module definition|instance …)` (definitions compile only; a failed definition leaves
+the current instance alone). Annotations before a command keyword are stripped at the top level
+only. An inline-module script becomes one `(module quote …)`, byte-escaped. `(either …)` results go
+through the trampoline, typed by their agreeing alternatives. `assert_exception` passes only on a
+`WebAssembly.Exception`; a trap is a failure. Index-less `ref.struct/array/eq/i31/any` results are
+classified by a `ref.test` helper module: V8 15.0 hands GC values to JS, contrary to an old comment,
+which is corrected. `assert_trap` with trampoline-only arguments finds the result type by LinkError
+probing, and only a real `RuntimeError` counts as the trap: a runner error there must not score
+as one. Custom-annotation assertions share the plain handlers.
+
+**Inversion-checked:** requiring EVERY `either` alternative failed 10 + 8 assertions, and testing
+`ref.array` against struct failed exactly the 4 + 8 + 4 array assertions.
+
 ## wast trampoline: SIMD and NaN-payload assertions now RUN (2026-09-28) — skips 26,944 → 886
 
 **Not a bug fix but a coverage change, recorded here because it exposed one bug.** 96% of the

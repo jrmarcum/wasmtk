@@ -118,6 +118,11 @@ export function parseSexprs(src: string): SexpList[] {
     return src.slice(start, i); // verbatim, including quotes + escapes
   }
 
+  // A `"` ENDS an atom: WAT lets a string abut other tokens (`x-y$yz"aa"-2`, `x")"y`), and reading
+  // through it let a `)` inside the string close a list, so a module ran on into the next command.
+  // The one exception is a QUOTED identifier or annotation id, `$"…"` / `@"…"`: there the string is
+  // part of the token and may hold spaces and parens (`$" "`). Found 2026-09-28 in `id.wast` (module
+  // read as lines 1–32; it ends at 24) and `annotations.wast` (1–23; ends at 21).
   function readAtom(): string {
     const start = i;
     while (i < n) {
@@ -125,6 +130,11 @@ export function parseSexprs(src: string): SexpList[] {
       if (
         c === " " || c === "\t" || c === "\r" || c === "\n" || c === "(" || c === ")" || c === ";"
       ) break;
+      if (c === '"') {
+        const sofar = src.slice(start, i);
+        if (sofar === "$" || sofar === "@") readString();
+        break;
+      }
       i++;
     }
     return src.slice(start, i);
@@ -296,6 +306,14 @@ function parseFloatExpect(lit: string, is32: boolean): FloatExpect {
  * gives both views and identity. An object rather than the number `N`: under GC a JS number
  * crossing into `anyref` can become an `i31ref`, which a host reference must never be.
  */
+/**
+ * `WebAssembly.Exception`: an uncaught wasm exception as the JS API surfaces it. V8 has it, but
+ * Deno's TypeScript lib does not declare it, hence the cast.
+ */
+const WasmException =
+  (WebAssembly as unknown as { Exception: abstract new (...a: never[]) => object })
+    .Exception;
+
 const hostRefs = new Map<string, object>();
 function hostRef(n: string): object {
   let r = hostRefs.get(n);
@@ -326,17 +344,47 @@ function constType(node: Sexp): string | null {
   return null; // v128.const, ref.func, … → unsupported here
 }
 
+/** Index-less GC reference results: "any non-null reference of this kind". */
+const GC_KINDS = new Set(["ref.struct", "ref.array", "ref.eq", "ref.i31", "ref.any"]);
+
 /**
  * True if a node is an EXPECTED RESULT this runner can check: every argument form, plus the
- * index-less `(ref.extern)` / `(ref.func)`, which mean "any non-null reference of that kind" and
- * can only appear as results. `ref.struct` / `ref.array` / `ref.i31` / `ref.eq` / `ref.any` stay
- * unsupported (SKIP): V8 cannot hand those back to JS in a form we can classify.
+ * index-less `(ref.extern)` / `(ref.func)` and the GC kinds in `GC_KINDS`, which mean "any non-null
+ * reference of that kind" and can only appear as results. The GC kinds are classified by
+ * `gcClassifier` (2026-09-28; they were skips on the belief that V8 could not hand them to JS —
+ * V8 15.0 does, as opaque objects, and i31 as a number).
  */
 function resultType(node: Sexp): string | null {
   if (!isList(node)) return null;
   const h = head(node);
-  if ((h === "ref.extern" || h === "ref.func") && node.list.length === 1) return h;
+  if ((h === "ref.extern" || h === "ref.func" || GC_KINDS.has(h)) && node.list.length === 1) {
+    return h;
+  }
   return constType(node);
+}
+
+/**
+ * Tells a struct from an array from an i31 — which JS cannot — by handing the value back to wasm
+ * as `anyref` and asking `ref.test`. Built once per process, on first use.
+ */
+let gcClassifier: Record<string, (v: unknown) => number> | null = null;
+function getGcClassifier(wabtMod: WabtModule): Record<string, (v: unknown) => number> {
+  if (gcClassifier) return gcClassifier;
+  const wat = `(module
+    (func (export "ref.struct") (param anyref) (result i32) (ref.test (ref struct) (local.get 0)))
+    (func (export "ref.array") (param anyref) (result i32) (ref.test (ref array) (local.get 0)))
+    (func (export "ref.eq") (param anyref) (result i32) (ref.test (ref eq) (local.get 0)))
+    (func (export "ref.i31") (param anyref) (result i32) (ref.test (ref i31) (local.get 0)))
+    (func (export "ref.any") (param anyref) (result i32) (ref.test (ref any) (local.get 0))))`;
+  const parsed = wabtMod.parseWat("gc-classifier.wat", wat, { enable_all: true });
+  try {
+    const bytes = new Uint8Array(parsed.toBinary({}).buffer);
+    const inst = new WebAssembly.Instance(new WebAssembly.Module(bytes as BufferSource), {});
+    gcClassifier = inst.exports as unknown as Record<string, (v: unknown) => number>;
+    return gcClassifier;
+  } finally {
+    parsed.destroy();
+  }
 }
 
 /** Convert a const node to the JS value WebAssembly expects as an argument. */
@@ -367,9 +415,9 @@ function constToJs(node: SexpList): unknown {
 
 /**
  * True when a thrown error is V8 refusing to marshal a value across the JS boundary, rather than a
- * genuine trap. V8's JS API can represent `externref` and `funcref`, but not `exnref`, `anyref` or a
- * user-defined heap type — calling such an export throws
- * `type incompatibility when transforming from/to JS`.
+ * genuine trap. V8's JS API refuses `exnref` (and the other types it cannot represent), and calling
+ * such an export throws `type incompatibility when transforming from/to JS`. (This comment used to
+ * list `anyref` too; V8 15.0 carries anyref and GC values fine, measured 2026-09-28.)
  *
  * That is a limit of the JS embedding, NOT a toolchain defect, so it counts as a SKIP — the same
  * treatment the NaN-payload argument case already gets. **Counting it as a failure would be a false
@@ -401,6 +449,14 @@ function resultMatches(expected: SexpList, actual: unknown): boolean {
       return lit === undefined ? actual !== null && actual !== undefined : actual === hostRef(lit);
     case "ref.func":
       return typeof actual === "function";
+    // Index-less GC kinds: non-null, and `ref.test` in wasm agrees on the kind.
+    case "ref.struct":
+    case "ref.array":
+    case "ref.eq":
+    case "ref.i31":
+    case "ref.any":
+      return actual !== null && actual !== undefined && gcClassifier !== null &&
+        gcClassifier[h](actual) === 1;
     case "i32.const":
       return U32(parseIntLit(lit)) === ((actual as number) >>> 0);
     case "i64.const":
@@ -476,9 +532,26 @@ function lowType(node: Sexp): LowType | null {
  */
 function needsTrampoline(nodes: Sexp[]): boolean {
   return nodes.some((n) =>
-    isList(n) && (head(n) === "v128.const" ||
+    isList(n) && (head(n) === "v128.const" || head(n) === "either" ||
       ((head(n) === "f32.const" || head(n) === "f64.const") && /nan:0x/.test(n.list[1] as string)))
   );
+}
+
+/**
+ * The value type of an EXPECTED result. `(either A B …)` (relaxed SIMD: any one alternative is a
+ * correct answer) has the type its alternatives share; alternatives that disagree make it null.
+ */
+function expectedLowType(node: Sexp): LowType | null {
+  if (!isList(node) || head(node) !== "either") return lowType(node);
+  const ts = node.list.slice(1).map(lowType);
+  return ts.length > 0 && ts.every((t) => t !== null && t === ts[0]) ? ts[0] : null;
+}
+
+/** Match an expected result against raw bits; `(either …)` passes if ANY alternative matches. */
+function expectedMatches(node: SexpList, bits: bigint): boolean {
+  return head(node) === "either"
+    ? node.list.slice(1).some((alt) => bitsMatch(alt as SexpList, bits))
+    : bitsMatch(node, bits);
 }
 
 /**
@@ -743,8 +816,16 @@ function spectestImports(): WebAssembly.ModuleImports {
     imports.shared_memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
   } catch { /* threads unsupported by this engine — leave absent */ }
   try {
+    // The JS API field is `address` (with BigInt sizes). It was `index`, which V8 silently ignores,
+    // so this built an ordinary i32 table and `table64.wast`'s import failed with "cannot import
+    // i32 table as i64" (found 2026-09-28).
     imports.table64 = new WebAssembly.Table(
-      { initial: 10, maximum: 20, element: "anyfunc", index: "i64" } as WebAssembly.TableDescriptor,
+      {
+        initial: 10n,
+        maximum: 20n,
+        element: "anyfunc",
+        address: "i64",
+      } as unknown as WebAssembly.TableDescriptor,
     );
   } catch { /* table64 unsupported by this engine — leave absent */ }
   return imports as WebAssembly.ModuleImports;
@@ -797,6 +878,43 @@ function getWabt(): Promise<WabtModule> {
   return (wabtModPromise ??= (wabt as unknown as () => Promise<WabtModule>)());
 }
 
+/** A module FIELD keyword — what an inline-module script is made of. */
+const MODULE_FIELD = /^(type|rec|import|func|table|memory|global|export|start|elem|data|tag)$/;
+
+/**
+ * Two script-grammar forms the command loop could not dispatch (2026-09-28, 6 skips):
+ *
+ * - **Annotations before a command's keyword**, `((@a) module (@a) $m …)`. The keyword is read from
+ *   position 0, so these reached the loop with an empty head. Annotation sub-lists are dropped from
+ *   the top-level command only; `start`/`end` are kept, so a module still assembles from its
+ *   original text, annotations and all.
+ * - **An inline module**: a script consisting only of module fields, `(func) (memory 0) …`, which
+ *   the spec reads as ONE implicit module. It becomes a synthetic `(module quote "…")` whose text is
+ *   the fields, byte-escaped so any source character survives `decodeWatString`.
+ */
+function normalizeScript(cmds: SexpList[], src: string): SexpList[] {
+  const isAnnot = (x: Sexp) =>
+    isList(x) && typeof x.list[0] === "string" && x.list[0].startsWith("@");
+  const stripped = cmds.map((c) =>
+    isAnnot(c.list[0]) ? { ...c, list: c.list.filter((x) => !isAnnot(x)) } : c
+  );
+  if (stripped.length === 0 || !stripped.every((c) => MODULE_FIELD.test(head(c)))) return stripped;
+  const fields = stripped.map((c) => src.slice(c.start, c.end)).join("\n");
+  return [{
+    list: ["module", "quote", watQuote(fields)],
+    start: stripped[0].start,
+    end: stripped[stripped.length - 1].end,
+  }];
+}
+
+/** Escape text as a WAT string literal, every UTF-8 byte as `\hh` (round-trips any content). */
+function watQuote(text: string): string {
+  return '"' +
+    [...new TextEncoder().encode(text)].map((b) => "\\" + b.toString(16).padStart(2, "0"))
+      .join("") +
+    '"';
+}
+
 /** Run a single `.wast` file. Never throws — every command's outcome is tallied. */
 export async function runWast(
   path: string,
@@ -838,11 +956,15 @@ export async function runWast(
     res.failures.push(`parse error: ${e instanceof Error ? e.message : e}`);
     return res;
   }
+  cmds = normalizeScript(cmds, src);
 
   const wabtMod: WabtModule = await getWabt();
+  getGcClassifier(wabtMod); // `resultMatches` reads it for `(ref.struct)` & co.
 
   let cur: WebAssembly.Instance | null = null;
   const named = new Map<string, WebAssembly.Instance>();
+  const definitions = new Map<string, WebAssembly.Module>(); // `(module definition $M …)`
+  let lastDefinition: WebAssembly.Module | null = null;
   const registry: Record<string, WebAssembly.ModuleImports> = { spectest: spectestImports() };
 
   // Set once any module in this file fails to assemble. Every later failure is then reported as a
@@ -881,7 +1003,8 @@ export async function runWast(
       text = watUtf8.decode(decodeWatString(strs));
       if (!/^\s*\(module/.test(text)) text = `(module ${text})`;
     } else {
-      text = src.slice(mod.start, mod.end);
+      // `(module definition …)` is script syntax, not WAT: drop the keyword before assembling.
+      text = src.slice(mod.start, mod.end).replace(/^\(module\s+definition\b/, "(module");
     }
     let parsed: ReturnType<WabtModule["parseWat"]>;
     try {
@@ -1025,17 +1148,39 @@ export async function runWast(
     try {
       switch (h) {
         case "module": {
-          const nameTok = typeof cmd.list[1] === "string" && (cmd.list[1] as string).startsWith("$")
+          // Script forms (2026-09-28; 33 skips before): `(module definition $M? …)` COMPILES only —
+          // `memory.wast` uses it to define a 65536-page memory it must not allocate — and
+          // `(module instance $I? $M?)` instantiates a stored definition (the last one when `$M` is
+          // omitted) and makes it current.
+          const kind = cmd.list[1] === "definition" || cmd.list[1] === "instance"
             ? cmd.list[1] as string
-            : undefined;
+            : "plain";
+          const ids = cmd.list.slice(kind === "plain" ? 1 : 2, kind === "instance" ? undefined : 3)
+            .filter((x): x is string => typeof x === "string" && x.startsWith("$"));
           try {
+            if (kind === "definition") {
+              const mod = new WebAssembly.Module(assemble(cmd) as BufferSource);
+              lastDefinition = mod;
+              if (ids[0]) definitions.set(ids[0], mod);
+              break;
+            }
+            if (kind === "instance") {
+              const [instName, defName] = ids.length >= 2 ? ids : [ids[0], undefined];
+              const mod = defName ? definitions.get(defName) : lastDefinition;
+              if (!mod) throw new Error(`module instance: no definition ${defName ?? "(last)"}`);
+              cur = await WebAssembly.instantiate(mod, buildImports());
+              if (instName) named.set(instName, cur);
+              break;
+            }
+            const nameTok = ids[0];
             const bytes = assemble(cmd);
             cur = await instantiate(bytes);
             if (nameTok) named.set(nameTok, cur);
           } catch (e) {
             // A module we cannot assemble/instantiate (unsupported proposal, missing import, …).
-            // Skip it and its dependent actions rather than failing the whole file.
-            cur = null;
+            // Skip it and its dependent actions rather than failing the whole file. A failed
+            // DEFINITION leaves the current instance alone: defining never changes it.
+            if (kind !== "definition") cur = null;
             skip(moduleStage(e));
             res.modulesFailed++;
             sawUnassemblableModule = true;
@@ -1067,7 +1212,7 @@ export async function runWast(
           const action = cmd.list[1] as SexpList;
           const expected = cmd.list.slice(2) as SexpList[];
           if (head(action) === "invoke" && needsTrampoline([...action.list, ...expected])) {
-            const resultTypes = expected.map(lowType);
+            const resultTypes = expected.map(expectedLowType);
             if (resultTypes.some((t) => t === null)) {
               skip("assert_return: result form the trampoline cannot carry (either, ref, …)");
               break;
@@ -1085,7 +1230,8 @@ export async function runWast(
               break;
             }
             if (
-              bits.length === expected.length && expected.every((x, k) => bitsMatch(x, bits[k]))
+              bits.length === expected.length &&
+              expected.every((x, k) => expectedMatches(x, bits[k]))
             ) {
               res.passed++;
             } else {
@@ -1178,6 +1324,37 @@ export async function runWast(
             }
             break;
           }
+          if (head(action) === "invoke" && needsTrampoline(action.list)) {
+            // Arguments JS cannot carry (v128, NaN payloads) → trampoline. A trap assertion has no
+            // expected value to take the result type from, so try each: the import signature is
+            // checked at LINK time, before anything runs, so a wrong guess never executes the callee
+            // and the first candidate that links IS its signature.
+            const candidates: LowType[][] = [[], ["i32"], ["i64"], ["f32"], ["f64"], ["v128"]];
+            let outcome: "trapped" | "returned" | "unlinked" | "error" = "unlinked";
+            let error = "";
+            for (const rt of candidates) {
+              try {
+                runTrampolined(action, rt);
+                outcome = "returned";
+              } catch (e) {
+                if (String(e).includes("did not link")) continue;
+                if (String(e).includes("__skip__")) break;
+                // Only a genuine TRAP satisfies the assertion; anything else (e.g. our own
+                // trampoline failing to assemble) must not be scored as one.
+                const trap = e instanceof WebAssembly.RuntimeError ||
+                  (h === "assert_exhaustion" && e instanceof RangeError);
+                outcome = trap ? "trapped" : "error";
+                error = e instanceof Error ? e.message : String(e);
+              }
+              break;
+            }
+            if (outcome === "trapped") res.passed++;
+            else if (outcome === "returned") {
+              fail(`${h} did not trap: ${src.slice(cmd.start, cmd.start + 100)}`);
+            } else if (outcome === "error") fail(`${h} threw a non-trap: ${error}`);
+            else skip(`${h} (trampoline): no candidate signature linked`);
+            break;
+          }
           try {
             runAction(action);
             fail(`${h} did not trap: ${src.slice(cmd.start, cmd.start + 100)}`);
@@ -1187,6 +1364,33 @@ export async function runWast(
           }
           break;
         }
+        case "assert_exception": {
+          // The action must end in an UNCAUGHT wasm exception, which the JS API surfaces as a
+          // `WebAssembly.Exception`. A return, or a trap (`RuntimeError`), is a failure: a trap is
+          // not an exception. Unhandled (41 skips) until 2026-09-28.
+          const action = cmd.list[1];
+          if (!isList(action) || head(action) !== "invoke") {
+            skip("assert_exception: not an invoke");
+            break;
+          }
+          try {
+            runAction(action);
+            fail(`assert_exception did not throw: ${src.slice(cmd.start, cmd.start + 100)}`);
+          } catch (e) {
+            if (String(e).includes("__skip__")) skip(`assert_exception: ${skipLabel(e)}`);
+            else if (e instanceof WasmException) res.passed++;
+            else {
+              fail(
+                `assert_exception threw a non-exception (${
+                  e instanceof Error ? e.constructor.name : typeof e
+                }): ${src.slice(cmd.start, cmd.start + 100)}`,
+              );
+            }
+          }
+          break;
+        }
+        case "assert_invalid_custom": // custom-annotation variants: rejection passes, and an
+        // implementation that ignores the (optional) annotation may accept, so acceptance is a skip.
         case "assert_invalid":
         case "assert_unlinkable": {
           // Validation assertions test the ASSEMBLER/VALIDATOR, not execution. wasmtk's wabt(+V8)
@@ -1208,6 +1412,7 @@ export async function runWast(
           }
           break;
         }
+        case "assert_malformed_custom": // see assert_invalid_custom
         case "assert_malformed": {
           const mod = cmd.list[1] as SexpList;
           // Only `(module quote …)` / `(module binary …)` are decidable here; a plain `(module …)`

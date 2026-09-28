@@ -401,7 +401,21 @@ exists, and a failed `binaryen -Oz` swallowed silently. See [compiler-bugs.md](c
 - ⚠️ Add them to the impact map in [testing.md](testing.md) at the same time, or the suite set
   grows without the "which suites does this change reach" table knowing about it.
 
-## SCOPED 2026-09-28: the 886 remaining wast skips, by root cause and owner
+## ✅ RUNNER-OWNED GROUPS CLOSED 2026-09-28 — 886 → 726 skips, none of them ours
+
+Groups 3, 6, 7, 8, 10, 12 and 14 below are fixed, and group 9's runner half too. Gate: **63,880
+passed / 0 failed / 726 skipped**, ALL CLEAN; 28 files moved, none went down. What is left, re-scoped:
+
+| owner | skips | what |
+| --- | --- | --- |
+| binaryang | 557 | custom-descriptors syntax 501 · inline `call_indirect` typeuse encoder bug 51 · accepts malformed `@name` / branch-hint annotations 5 (`name_annot` 3, `branch_hint` 2) |
+| **decision** | 101 | `wide-arithmetic`: test-only `--v8-flags=--experimental-wasm-wide-arithmetic` takes it to 0 |
+| engine / spec | 68 | custom-page-sizes 44 · V8 implementation limits on definitions (2^64 tables, huge memories; `table`, `table64`, `memory64`, `memory_max*`) 12 · `exnref` 7 · threads spec-stale 5 |
+
+Group 7's residue is NOT the syntax any more: the definitions now assemble, and V8 refuses them for
+its implementation limits. Group 9's residue is binaryang accepting malformed annotations.
+
+## (historical) SCOPED 2026-09-28: the 886 remaining wast skips, by root cause and owner
 
 Measured, not estimated. `WastResult.skipReasons` (added the same day) labels every skip. A
 classifier (scratch; rules below) put all 886 in exactly one group, with none unclassified and the
