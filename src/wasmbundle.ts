@@ -389,7 +389,14 @@ export async function runWasmBundle(
     finalBytes = bMod.emitBinary();
     bMod.dispose();
     console.log("  ✓ Optimized with Binaryen");
-  } catch {
+  } catch (e) {
+    // Optional, but never silent (2026-09-28, found by the H11 inventory: a failed optimise used to
+    // ship the unoptimised bundle without a word, the same hole as the Go/Zig producers').
+    console.warn(
+      `  ⚠️  Binaryen optimize failed, shipping the unoptimised bundle: ${
+        e instanceof Error ? e.message : e
+      }`,
+    );
     finalBytes = new Uint8Array(buffer);
   }
 
