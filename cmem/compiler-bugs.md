@@ -1,5 +1,34 @@
 # Compiler bug log
 
+## wast trampoline: SIMD and NaN-payload assertions now RUN (2026-09-28) — skips 26,944 → 886
+
+**Not a bug fix but a coverage change, recorded here because it exposed one bug.** 96% of the
+corpus's skips were JS-embedding limits, not toolchain gaps: V8 refuses `v128` at the JS boundary
+(24,078 in `simd_*`), and a JS number cannot be trusted with a NaN payload (~1,840 `nan:0x…`
+assertions in `f32*`/`f64*`). `src/wast.ts` now routes any `assert_return` touching either through
+a generated wasm module. It IMPORTS the export with its true signature, since a wasm-to-wasm call
+has no such limit, and EXPORTS `run` over raw bits (f32 → i32, f64 → i64, v128 → two i64 halves).
+All comparison happens in JS on exact bits, per lane for v128, with the same NaN rules as before.
+It is cached per (instance, export, signature). A signature guess that does not LINK is a skip, and
+a trampoline that does not ASSEMBLE is a loud failure (it is our own text).
+
+**Result:** 37,674 / 0 / 26,944 → **63,732 passed / 0 failed / 886 skipped**, ALL CLEAN. The balance is
+exact (+26,058 = −26,058), 71 files moved, none went down, none gained a failure. Every
+`simd_*`, `relaxed_*`, `f32*`, `f64*` file now has 0 skips. **Inversion-checked two ways:** flipping
+result bit 0 failed 1496 / 400 / 456 / 274 in four sample files, and clearing the f32 quiet bit failed
+exactly the 466 trampolined `f32.wast` assertions. That second check was needed because those
+expect `nan:arithmetic`, which a bit-0 flip cannot break.
+
+**The bug it exposed — `hexFloatToNumber` underflowed subnormal literals to 0.** It computed
+`mantissa × 2^e` with one `Math.pow`, and `0x0.0000000000002p-1023` is `2 × 2^-1075`; `2^-1075`
+is 0 in f64. Two `simd_lane` assertions failed the moment they first ran. Fixed by scaling in two
+steps: the first is an exact power of two, so the value is rounded only once. The direct-call path
+shared the helper, so this was latent there too, just never reached by an assertion that ran.
+
+**Still open:** `(either …)` results and `assert_trap`/bare `invoke` with v128 arguments (no expected
+value to infer result types from) are still skips. None remain in the corpus today, but they would
+need the export's real signature, i.e. decoding the type section.
+
 ## The 100 pinned wast failures were all our RUNNER (FIXED 2026-09-28) — gate now ALL CLEAN
 
 Three defects in `src/wast.ts`, none in the compiler or binaryang. Corpus 37,370 / 100 failed /

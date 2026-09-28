@@ -14,9 +14,9 @@
  * BigInt, f32/f64 by bits incl. `nan:canonical`/`nan:arithmetic`/hex-float literals).
  *
  * Directives that use module features the toolchain/engine cannot assemble or instantiate (e.g. a
- * proposal the host V8 lacks), and assertion value types outside i32/i64/f32/f64 (v128, ref.*), are
- * reported as SKIPPED rather than FAILED — so the runner degrades gracefully on the full testsuite
- * while still validating everything in scope.
+ * proposal the host V8 lacks), and values the runner cannot carry (some ref.* kinds, `either`
+ * results), are reported as SKIPPED rather than FAILED — so the runner degrades gracefully on the
+ * full testsuite while still validating everything in scope.
  */
 import wabt from "wabt";
 import { rt } from "./rt.ts";
@@ -232,8 +232,13 @@ function hexFloatToNumber(body: string): number {
   const digits = (intPart + fracPart) || "0";
   const mantVal = BigInt("0x" + digits);
   const e = exp - fracPart.length * 4;
-  // Number(mantVal) is exact for ≤53-bit mantissas (all normalized f64 literals); *2^e is exact.
-  return Number(mantVal) * Math.pow(2, e);
+  // Number(mantVal) is exact for ≤53-bit mantissas (all normalized f64 literals). Scale in TWO
+  // steps: `2^e` alone under/overflows at the ends of the range even when the value itself is
+  // representable. `0x0.0000000000002p-1023` is 2 × 2^-1075, and 2^-1075 is 0 in f64, so it read as
+  // 0 (found 2026-09-28, the day `simd_lane.wast` first ran these through the trampoline). The first
+  // step is an exact power-of-two scaling, so the only rounding happens once, in the second.
+  const e1 = Math.max(-1000, Math.min(1000, e));
+  return Number(mantVal) * Math.pow(2, e1) * Math.pow(2, e - e1);
 }
 
 /** Parse any WAT float literal to a JS number (for use as an argument / exact const). */
@@ -303,8 +308,8 @@ function hostRef(n: string): object {
  * numeric types, `ref.null <heaptype>` (JS `null`), and `ref.extern N` / `ref.host N` (see
  * `hostRef`).
  *
- * ⚠️ `v128.const` is still unsupported. Returning null here makes the whole assertion a SKIP, never
- * a failure.
+ * ⚠️ `v128.const` is not a DIRECT argument: it goes through the trampoline (`needsTrampoline`).
+ * Returning null here makes the whole assertion a SKIP, never a failure.
  *
  * (Admitting `ref.null` 2026-08-27 moved `ref_null.wast` off 0 pass / 32 skip. The gap had been
  * recorded as a backend bug for a week; the backend fixed its half and our number did not move,
@@ -421,6 +426,216 @@ function resultMatches(expected: SexpList, actual: unknown): boolean {
     }
   }
   return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Trampoline: values the JS boundary cannot carry (v128, NaN payloads)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// V8 refuses `v128` at the JS boundary outright, and a JS number cannot be trusted with a NaN's
+// payload bits. Both are limits of the JS EMBEDDING, not of the module, and together they were
+// ~96% of the corpus's skips (2026-09-28: 24,078 in `simd_*` plus ~1,840 `nan:0x…` float
+// assertions). A wasm-to-wasm call has neither limit, so such an assertion runs through a small
+// generated module that IMPORTS the function under test with its true signature and EXPORTS `run`,
+// whose params and results are the same values as raw bits: f32 → i32, f64 → i64, v128 → two
+// i64 halves (low, high). Every comparison is then done in JS on exact bits.
+
+/** A value type the trampoline can lower to integer bits. */
+type LowType = "i32" | "i64" | "f32" | "f64" | "v128";
+
+const V128_SHAPES: Record<string, { lanes: number; width: number; float: boolean }> = {
+  i8x16: { lanes: 16, width: 8, float: false },
+  i16x8: { lanes: 8, width: 16, float: false },
+  i32x4: { lanes: 4, width: 32, float: false },
+  i64x2: { lanes: 2, width: 64, float: false },
+  f32x4: { lanes: 4, width: 32, float: true },
+  f64x2: { lanes: 2, width: 64, float: true },
+};
+
+/** The value type of a const node, if the trampoline can carry it. */
+function lowType(node: Sexp): LowType | null {
+  if (!isList(node)) return null;
+  switch (head(node)) {
+    case "i32.const":
+      return "i32";
+    case "i64.const":
+      return "i64";
+    case "f32.const":
+      return "f32";
+    case "f64.const":
+      return "f64";
+    case "v128.const":
+      return V128_SHAPES[node.list[1] as string] ? "v128" : null;
+  }
+  return null;
+}
+
+/**
+ * True when an assertion needs the trampoline: any `v128.const`, or any float literal carrying an
+ * explicit NaN payload (`nan:0x…`). Everything else keeps the direct JS call, which is proven.
+ */
+function needsTrampoline(nodes: Sexp[]): boolean {
+  return nodes.some((n) =>
+    isList(n) && (head(n) === "v128.const" ||
+      ((head(n) === "f32.const" || head(n) === "f64.const") && /nan:0x/.test(n.list[1] as string)))
+  );
+}
+
+/**
+ * A float literal's exact bit pattern, sign included. NaNs are built from their bits and never pass
+ * through a JS number, which is exactly where a payload would be lost. Finite values do go through
+ * a number (as `floatLitToNumber` already does for direct calls).
+ */
+function floatLitBits(lit: string, is32: boolean): bigint {
+  let s = lit.replace(/_/g, "");
+  let neg = false;
+  if (s[0] === "+") s = s.slice(1);
+  else if (s[0] === "-") {
+    neg = true;
+    s = s.slice(1);
+  }
+  let mag: bigint;
+  if (s === "nan" || s.startsWith("nan:")) {
+    const payload = s.startsWith("nan:0x") ? BigInt(s.slice(4)) : (is32 ? F32_QUIET : F64_QUIET);
+    mag = (is32 ? 0x7f800000n : 0x7ff0000000000000n) | payload;
+  } else {
+    const v = floatLitToNumber(s, is32);
+    mag = is32 ? f32Bits(v) : f64Bits(v);
+  }
+  const signBit = is32 ? 0x80000000n : 0x8000000000000000n;
+  return neg ? mag | signBit : mag & ~signBit;
+}
+
+/** Match a float expectation (exact literal or `nan:canonical`/`nan:arithmetic`) against bits. */
+function floatBitsMatch(lit: string, is32: boolean, bits: bigint): boolean {
+  const s = lit.replace(/^[+-]/, "");
+  if (s !== "nan:canonical" && s !== "nan:arithmetic") return floatLitBits(lit, is32) === bits;
+  const expMask = is32 ? 0x7f800000n : 0x7ff0000000000000n;
+  const mantMask = is32 ? 0x007fffffn : 0x000fffffffffffffn;
+  const quiet = is32 ? F32_QUIET : F64_QUIET;
+  if ((bits & expMask) !== expMask || (bits & mantMask) === 0n) return false; // not a NaN
+  return s === "nan:canonical" ? (bits & mantMask) === quiet : (bits & quiet) !== 0n;
+}
+
+/** The raw bits of a const node (an argument). v128 → one 128-bit BigInt, lane 0 lowest. */
+function constBits(node: SexpList): bigint {
+  const lit = node.list[1] as string;
+  switch (head(node)) {
+    case "i32.const":
+      return parseIntLit(lit) & 0xffffffffn;
+    case "i64.const":
+      return U64(parseIntLit(lit));
+    case "f32.const":
+      return floatLitBits(lit, true);
+    case "f64.const":
+      return floatLitBits(lit, false);
+  }
+  // v128.const <shape> <lane>…
+  const shape = V128_SHAPES[lit];
+  const lanes = node.list.slice(2) as string[];
+  if (lanes.length !== shape.lanes) throw new Error(`__skip__: v128.const ${lit} lane count`);
+  const mask = (1n << BigInt(shape.width)) - 1n;
+  let v = 0n;
+  for (let i = 0; i < shape.lanes; i++) {
+    const b = shape.float ? floatLitBits(lanes[i], shape.width === 32) : parseIntLit(lanes[i]);
+    v |= (b & mask) << BigInt(i * shape.width);
+  }
+  return v;
+}
+
+/** Compare an expected const node against the raw bits the trampoline returned for it. */
+function bitsMatch(expected: SexpList, bits: bigint): boolean {
+  const lit = expected.list[1] as string;
+  switch (head(expected)) {
+    case "i32.const":
+      return (parseIntLit(lit) & 0xffffffffn) === bits;
+    case "i64.const":
+      return U64(parseIntLit(lit)) === bits;
+    case "f32.const":
+      return floatBitsMatch(lit, true, bits);
+    case "f64.const":
+      return floatBitsMatch(lit, false, bits);
+  }
+  const shape = V128_SHAPES[lit];
+  const lanes = expected.list.slice(2) as string[];
+  if (lanes.length !== shape.lanes) return false;
+  const mask = (1n << BigInt(shape.width)) - 1n;
+  for (let i = 0; i < shape.lanes; i++) {
+    const lane = (bits >> BigInt(i * shape.width)) & mask;
+    const ok = shape.float
+      ? floatBitsMatch(lanes[i], shape.width === 32, lane)
+      : (parseIntLit(lanes[i]) & mask) === lane;
+    if (!ok) return false;
+  }
+  return true;
+}
+
+/** The trampoline's WAT for a callee of type `params → results`. */
+function trampolineWat(params: LowType[], results: LowType[]): string {
+  const lowered = (t: LowType) =>
+    t === "v128" ? ["i64", "i64"] : [t === "f32" ? "i32" : t === "f64" ? "i64" : t];
+  const lp = params.flatMap(lowered);
+  const lr = results.flatMap(lowered);
+  const body: string[] = [];
+  let p = 0;
+  for (const t of params) {
+    if (t === "v128") {
+      body.push(
+        `v128.const i64x2 0 0`,
+        `local.get ${p}`,
+        `i64x2.replace_lane 0`,
+        `local.get ${p + 1}`,
+        `i64x2.replace_lane 1`,
+      );
+      p += 2;
+    } else {
+      body.push(`local.get ${p}`);
+      if (t === "f32") body.push("f32.reinterpret_i32");
+      if (t === "f64") body.push("f64.reinterpret_i64");
+      p += 1;
+    }
+  }
+  body.push("call $f");
+  // Results come off the stack last-first into locals placed after the lowered params.
+  for (let j = results.length - 1; j >= 0; j--) body.push(`local.set ${lp.length + j}`);
+  results.forEach((t, j) => {
+    const l = lp.length + j;
+    if (t === "v128") {
+      body.push(`local.get ${l}`, `i64x2.extract_lane 0`, `local.get ${l}`, `i64x2.extract_lane 1`);
+    } else {
+      body.push(`local.get ${l}`);
+      if (t === "f32") body.push("i32.reinterpret_f32");
+      if (t === "f64") body.push("i64.reinterpret_f64");
+    }
+  });
+  const sig = (kw: string, ts: string[]) => ts.length ? ` (${kw} ${ts.join(" ")})` : "";
+  return `(module
+  (import "t" "f" (func $f${sig("param", params)}${sig("result", results)}))
+  (func (export "run")${sig("param", lp)}${sig("result", lr)}${sig("local", results)}
+    ${body.join("\n    ")}))`;
+}
+
+/** Lower one argument's bits to the JS values `run` takes (i32 → number, i64 → BigInt). */
+function lowerArg(t: LowType, bits: bigint): unknown[] {
+  if (t === "i32" || t === "f32") return [Number(BigInt.asIntN(32, bits))];
+  if (t === "i64" || t === "f64") return [BigInt.asIntN(64, bits)];
+  return [BigInt.asIntN(64, bits & 0xffffffffffffffffn), BigInt.asIntN(64, bits >> 64n)];
+}
+
+/** Rebuild each result's raw bits from `run`'s lowered return values. */
+function raiseResults(results: LowType[], out: unknown[]): bigint[] {
+  const bits: bigint[] = [];
+  let k = 0;
+  for (const t of results) {
+    if (t === "i32" || t === "f32") bits.push(BigInt((out[k++] as number) >>> 0));
+    else if (t === "i64" || t === "f64") bits.push(U64(out[k++] as bigint));
+    else {
+      const lo = U64(out[k++] as bigint);
+      const hi = U64(out[k++] as bigint);
+      bits.push(lo | (hi << 64n));
+    }
+  }
+  return bits;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -671,6 +886,75 @@ export async function runWast(
     return cur;
   }
 
+  // One compiled trampoline per (instance, export, signature). Most SIMD files hammer a handful of
+  // exports thousands of times, so the cache is what keeps this from assembling a module per assert.
+  const trampolines = new WeakMap<
+    WebAssembly.Instance,
+    Map<string, (...a: unknown[]) => unknown>
+  >();
+
+  /**
+   * Run an `(invoke …)` through the trampoline (see `trampolineWat`) and return each result's raw
+   * bits. `resultTypes` must come from the assertion's expected values: a wrong guess fails to LINK
+   * (the import signature is checked), which is reported as a skip, never as a wrong answer.
+   */
+  function runTrampolined(action: SexpList, resultTypes: LowType[]): bigint[] {
+    let idx = 1;
+    let nameTok: string | undefined;
+    if (typeof action.list[idx] === "string" && (action.list[idx] as string).startsWith("$")) {
+      nameTok = action.list[idx] as string;
+      idx++;
+    }
+    const field = watStrToJs(action.list[idx] as string);
+    const argNodes = action.list.slice(idx + 1);
+    const inst = actionInstance(nameTok);
+    if (!inst) throw new Error("__skip__: no active module instance");
+    const paramTypes: LowType[] = [];
+    for (const a of argNodes) {
+      const t = lowType(a);
+      if (!t) throw new Error("__skip__: unsupported arg type");
+      paramTypes.push(t);
+    }
+    const fn = (inst.exports as Record<string, unknown>)[field];
+    if (typeof fn !== "function") throw new Error(`export '${field}' is not a function`);
+
+    let perInst = trampolines.get(inst);
+    if (!perInst) trampolines.set(inst, perInst = new Map());
+    const key = `${field}\u0000${paramTypes.join(",")}\u0000${resultTypes.join(",")}`;
+    let run = perInst.get(key);
+    if (!run) {
+      const wat = trampolineWat(paramTypes, resultTypes);
+      let bytes: Uint8Array;
+      try {
+        const parsed = wabtMod.parseWat("trampoline.wat", wat, { enable_all: true });
+        try {
+          bytes = new Uint8Array(parsed.toBinary({}).buffer);
+        } finally {
+          parsed.destroy();
+        }
+      } catch (e) {
+        // Our own generated text failing to assemble is a runner defect: loud, not a skip.
+        throw new Error(`trampoline did not assemble: ${e instanceof Error ? e.message : e}`);
+      }
+      try {
+        const tInst = new WebAssembly.Instance(new WebAssembly.Module(bytes as BufferSource), {
+          t: { f: fn as WebAssembly.ImportValue },
+        });
+        run = tInst.exports.run as (...a: unknown[]) => unknown;
+      } catch (e) {
+        if (e instanceof WebAssembly.LinkError) {
+          throw new Error(`__skip__: trampoline signature did not link: ${e.message}`);
+        }
+        throw e;
+      }
+      perInst.set(key, run);
+    }
+    const args = argNodes.flatMap((a, i) => lowerArg(paramTypes[i], constBits(a as SexpList)));
+    const r = run(...args);
+    const out = r === undefined ? [] : (Array.isArray(r) ? r : [r]);
+    return raiseResults(resultTypes, out);
+  }
+
   // Run an (invoke …) / (get …) action node → array of result values (or throws the trap).
   function runAction(action: SexpList): unknown[] {
     const h = head(action);
@@ -757,6 +1041,37 @@ export async function runWast(
         case "assert_return": {
           const action = cmd.list[1] as SexpList;
           const expected = cmd.list.slice(2) as SexpList[];
+          if (head(action) === "invoke" && needsTrampoline([...action.list, ...expected])) {
+            const resultTypes = expected.map(lowType);
+            if (resultTypes.some((t) => t === null)) {
+              res.skipped++; // e.g. `(either …)` — not yet carried
+              break;
+            }
+            let bits: bigint[];
+            try {
+              bits = runTrampolined(action, resultTypes as LowType[]);
+            } catch (e) {
+              if (String(e).includes("__skip__")) {
+                res.skipped++;
+                if (opts.verbose) res.failures.push(`skip (${e instanceof Error ? e.message : e})`);
+                break;
+              }
+              fail(`assert_return action trapped: ${e instanceof Error ? e.message : e}`);
+              break;
+            }
+            if (
+              bits.length === expected.length && expected.every((x, k) => bitsMatch(x, bits[k]))
+            ) {
+              res.passed++;
+            } else {
+              fail(
+                `assert_return mismatch: ${
+                  src.slice(cmd.start, Math.min(cmd.end, cmd.start + 120))
+                }`,
+              );
+            }
+            break;
+          }
           if (anyUnsupportedResult(expected)) {
             res.skipped++;
             break;
@@ -998,7 +1313,7 @@ export async function wastCli(target: string, opts: { verbose?: boolean } = {}):
   }
   if (ts > 0) {
     console.log(
-      "   skipped = assertions using features/value-types out of scope (v128/ref, unsupported\n" +
+      "   skipped = assertions using features/value-types out of scope (some ref kinds, unsupported\n" +
         "   proposals, or validation assertions the wabt+host toolchain does not reject).",
     );
   }

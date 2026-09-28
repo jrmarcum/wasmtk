@@ -22,6 +22,10 @@
 > - **Same day, on `fix/wast-ref-args-2026-09-28` (stacked on the bump branch because the baseline
 >   depends on 1.6.0):** three runner fixes took wast to **37,674 / 0 failures, ALL CLEAN**. See the
 >   RESOLVED section below. The H4 drift letter (T1–T11, W4) was worked in the same branch.
+> - **Then the SIMD/NaN trampoline** (same branch): skips **26,944 → 886**, passes **63,732**, still 0
+>   failures. It exposed and fixed a subnormal hex-float underflow. The 886 left are mostly
+>   unfinished-proposal modules that do not build (`custom-descriptors`, `wide-arithmetic`,
+>   `custom-page-sizes`) plus EH/ref kinds V8 will not hand to JS. Not yet itemised.
 > - Is 1.6.0 a release trigger? Not decided. That is the owner's call; nothing has been bumped.
 >
 > ### (historical) ⏸️ PAUSED 2026-09-20 — waiting on the next binaryang release
