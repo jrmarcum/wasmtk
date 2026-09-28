@@ -7,15 +7,63 @@
 
 | class | compiler-open | compiler-fixed | other-open | other-fixed |
 | --- | --- | --- | --- | --- |
-| SILENT-WRONG | 1 | 31 | 2 | 12 |
-| LOUD | 0 | 11 | 1 | 8 |
+| SILENT-WRONG | 0 | 34 | 2 | 12 |
+| LOUD | 0 | 12 | 1 | 8 |
 | n/a | — | 3 | — | 3 |
 
-72 classified entries; 2 pure groupings (`### wabt-ts 1.4.0` with its blockers under `####`, and `## FIXED — the 7 long-standing test failures`) carry a note instead and are not counted. An entry covering several defects takes its WORST class. PARTIAL counts as open. n/a entries have no status and sit in the -fixed column for placement only.
+75 classified entries (re-tallied 2026-09-28 after the three entries at the top); 2 pure groupings (`### wabt-ts 1.4.0` with its blockers under `####`, and `## FIXED — the 7 long-standing test failures`) carry a note instead and are not counted. An entry covering several defects takes its WORST class. PARTIAL counts as open. n/a entries have no status and sit in the -fixed column for placement only.
 
-**Open silent-wrong in the compiler: 2** (1 headed: the JSON entry, PARTIAL; plus 1 with no heading of its own: the `"code " + x` i32-param concat gap, recorded "NOT yet fixed" in the text that follows the `ref.null` entry.)
+**Open silent-wrong in the compiler: 0** (2026-09-28, which is H12/I11 bar (c)). It was 2 at the first
+tally: the JSON residual (PARTIAL) and the unheaded `"code " + x` concat gap. Both were REPRODUCED
+before anything was changed, both turned out broader than recorded, and both are fixed below. The
+count is only as good as the entries: a silent-wrong bug nobody has found is not in it.
 
 Classified 2026-09-28 from each entry's own text; re-tally whenever an entry is added or closed.
+
+## String literals with escaped quotes in two more places (FIXED 2026-09-28)
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-09-28 · **Scope:** compiler (the enum half was loud)
+
+The 2026-05-31 JSON-work residual, confirmed. A first probe logged literals only and matched native,
+and was nearly recorded as "does not reproduce". The residual lives in `console_log.ts`'s `exprToWat`
+STRING-ARGUMENT branch: an argument to a call inside `console.log(...)`. There `"([^"]*)"` failed on
+`"a\"b"` and fell to the null string, so `len("a\"b")` gave **0** and `echo("say \"hi\"")` gave
+**`[]`**, silently. The same pattern parsed string ENUM members (`wasic.ts`), where
+`Escaped = "say \"hi\""` fell to the numeric branch and failed to compile (loud). Fix: the
+escape-aware `"((?:[^"\\]|\\.)*)"` already used by wasic's `emitStringPtrLen`; the raw body goes to
+`allocString`, which unescapes it. No other naive literal regex remains in either file (grepped).
+Regression: `27_EscapedQuoteLiterals` (inversion: the unfixed code fails at compile and run-wasm).
+
+**Lesson:** a "does not reproduce" needs the probe to reach the code the entry names. Grep the
+named site's CALLERS first, and build the probe from them.
+
+## Numbers and booleans in string values were silently dropped (FIXED 2026-09-28)
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-09-28 · **Scope:** compiler
+
+The unheaded "NOT yet fixed" note (the `"code " + x` i32-param gap, recorded after the `ref.null`
+entry). It was NOT specific to parameters. In any string VALUE built with `+`, every number or
+boolean operand was skipped: `"code " + 7` → `"code "` for a param, a literal and a top-level
+const; likewise `n + " items"`, `"sum=" + (n + 1)`, `"flag=" + b`. The concat branch asked
+`emitStringPtrLen`, got its "can't" sentinel back, and moved on. A sibling: a boolean in a template
+printed `1`/`0`. `console.log(...)` was never affected (its own path in `console_log.ts`, verified).
+Fix: `emitScalarToStr` renders i32/i64/f64 (f32 widened) and bool (`true`/`false`, with the
+condition evaluated once). It is used by both template branches and the concat branch. Anything
+still unrenderable is now a DIAGNOSTIC: a concat operand, and a template segment (a second silent
+skip in the same code). The temps are declared exactly, from a per-body flag in both assemblers,
+not from the `${`-only line pre-scan. Regression: `11_StringConcatScalars` (inversion: the old
+output is back without the fix). Commit `4aa36ce`.
+
+## The compiler killed its host process on an undeclared receiver (FIXED 2026-09-28)
+
+**Class:** LOUD · **Status:** FIXED 2026-09-28 · **Scope:** compiler
+
+`undeclared.method(…)` made `WasicTranspiler` print to stderr and call `rt.exit(1)` itself: the
+ONLY host access inside the class (H12 measurement). It was loud for the CLI, but it killed any
+embedding host outright, including `hybrid`/`dync`'s speculative probe compiles, which should just
+fail. It is now a diagnostic, worded to match the CLI's undefined-name guidance; user-visible
+behaviour is the same. Regression: `22_UndeclaredReceiverDiagnostic`. Guard: `wasic_seam_tests.ts`.
+Commit `e17d2d5`.
 
 ## The 2026-08-24 "-Oz failure is no longer silent" fix was DEAD CODE (FIXED 2026-09-28)
 
@@ -1536,7 +1584,7 @@ libm; ~13 sig-figs agree), NOT formatting — Dragon4 renders mathlib's value ex
 - **Issue 5 (LOW/MED — ✅ FIXED 2026-06-30, "5a"):** `Math.sin`/`cos`/`tan` of a LARGE argument diverged at the ~7th sig-fig. Root cause was the **range reduction**, not the polynomial: `mathlib.wat` reduced mod 2π with a SINGLE f64 2π constant, so for `sin(5e8)` the constant's ~1e-16 relative error was multiplied by `floor(x/2π) ≈ 8e7` → ~5e-8 absolute error in the reduced angle. FIXED with a **3-term Cody-Waite split** of 2π (HI with low mantissa bits zeroed so `k*HI` is exact for `|k| < 2^30`, + LO1 + LO2) in `$sin` and `$cos` (`tan = sin/cos`). `sin(5e8)` now matches JS to ~13 sig figs (was 7). Regenerated `mathlib.wasm` + `mathlib_bytes.ts`. Regression `65_ReportTrigLargeArg` (self-checking tolerance bands). NOTE: the trig POLYNOMIALS are still ~1e-11-accurate minimax approximations (e.g. `cos(1.0)` differs from JS at the ~11th digit) — a separate, deeper limit (better coefficients / more terms) not addressed here; only the large-argument reduction blow-up was fixed.
 - **Issue 6 (LOW — ✅ FIXED 2026-07-01):** f64 `toString` differed (`.wasm` ~15 sig-figs vs the JS engine's 17-sig-fig shortest-round-trip) and TRAPPED / lacked scientific notation for large-magnitude runtime values. Replaced `$__f64_to_str` with pure Dragon4 → 100% byte-exact parity with V8. Full write-up at the top of this file + design-decisions.md.
 
-**Separately DISCOVERED while fixing issue 1 (NOT yet fixed):** `"code " + x` where `x` is an i32 **parameter** drops the number (`"code 7"` → `"code "`) — a `string + i32-param` concat gap (template interpolation `${x}` works fine, so it's specific to the explicit `+` concat of a string with a numeric param). Simple workaround: use a template literal.
+**Separately DISCOVERED while fixing issue 1 (✅ FIXED 2026-09-28: broader than described here; see "Numbers and booleans in string values were silently dropped" at the top):** `"code " + x` where `x` is an i32 **parameter** drops the number (`"code 7"` → `"code "`) — a `string + i32-param` concat gap (template interpolation `${x}` works fine, so it's specific to the explicit `+` concat of a string with a numeric param). Simple workaround: use a template literal.
 
 **Low-priority OPEN-gap cleanup (2026-06-30) — all 5 documented gaps FIXED.** Regressions `62_GapNumericCoercion` / `62_GapStringCalls` / `62_GapSingleLineLocals` / `62_GapEmptyArrayGrow` / `62_GapStringLiteralBraces`. Each is a `src/wasic.ts` codegen fix (see the individual sections below, now marked FIXED):
 - **Gap 1** (single-line brace `if (c){return 1}else{return -1}` return mis-type) — was ALREADY resolved by the `fixTerminalFallthru` + `expandInlineBraceChain` work; verified across i32/f64/no-else/nested/brace-less/multi-line-else forms. The old "still-open" note was stale.
@@ -2469,7 +2517,7 @@ t.charCodeAt(ti + count)) === 1` **directly in the `while` `br_if`** (the exact 
 
 ## FIXED — JSON work (2026-05-31)
 
-**Class:** SILENT-WRONG · **Status:** PARTIAL — fixed 2026-05-31, but `console_log.ts`'s console.log-arg emitter still uses the un-escaped literal form (item 3) · **Scope:** compiler
+**Class:** SILENT-WRONG · **Status:** FIXED — 2026-05-31, and the item-3 residual (`console_log.ts`'s string-arg emitter) fixed 2026-09-28; see "String literals with escaped quotes in two more places" at the top · **Scope:** compiler
 
 1. **String args to a merged import dropped to one stack value** (`need 2, got 1`). A modc
    `func(s: string)` compiles its string param to `(i32 i32)`, so `mergeWasmWat` registered the

@@ -1660,8 +1660,12 @@ function exprToWat(
     if (/^\w+$/.test(expr) && locals.get(expr) === "string") {
       return `(local.get $${expr}_ptr) (local.get $${expr}_len)`;
     }
-    // String literal → allocate in data section if allocator provided
-    const litMatch = expr.match(/^"([^"]*)"$/) ?? expr.match(/^'([^']*)'$/);
+    // String literal → allocate in data section if allocator provided. ESCAPE-AWARE, like wasic's
+    // emitStringPtrLen: `[^"]*` stopped at the first `\"`, the match failed, and the literal fell to
+    // the null-string fallback below, so `len("a\"b")` inside console.log(...) passed "" (0 bytes),
+    // silently. The raw body goes to allocString, which unescapes it. (The 2026-05-31 JSON-work
+    // residual, confirmed and fixed 2026-09-28.)
+    const litMatch = expr.match(/^"((?:[^"\\]|\\.)*)"$/) ?? expr.match(/^'((?:[^'\\]|\\.)*)'$/);
     if (litMatch && allocString) {
       const [offset, len] = allocString(litMatch[1]);
       return `(i32.const ${offset}) (i32.const ${len})`;

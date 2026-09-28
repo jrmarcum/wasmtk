@@ -61,12 +61,16 @@ A structural check that no core code touches the host. Today that means the `Was
 After Phase 1, it means every module under the core tree. `tests/wasic_seam_tests.ts` runs it
 (added 2026-09-28). It must pass at every commit of Phases 1–3, next to the golden-WAT diff.
 
-### What has NOT started
+### Status (2026-09-28)
 
-**Phase 0 (the hard gate)**: the golden-WAT harness (0a) does not exist, and the audit loop has not
-run. The sequence stands as written below: 0a harness → 0b–0d audit loop to zero → Phase 1. The
-only H12 work done so far is the measurement, the one core seam fix, the seam gate and the
-bug-classification pass.
+- ✅ Measurement, the one core seam fix, the seam gate.
+- ✅ Bug classification: every `compiler-bugs.md` entry has a class line and the tally is at the
+  top. **Bar (c) is met today: 0 open silent-wrong compiler entries.** The first tally said 2;
+  both were reproduced, found broader than recorded, and fixed (`4aa36ce` string+number/bool
+  concat; the escaped-quote literal pair). That is 0 KNOWN; Phase 0's audit loop is what makes it
+  mean something.
+- ⏳ **Phase 0 (the hard gate) has NOT started**: no golden-WAT harness (0a), no audit loop. The
+  sequence stands: 0a harness → 0b–0d audit loop to zero → Phase 1. **Next H12 step: build 0a.**
 
 ## Why now — sequencing before `wasm2ts`
 

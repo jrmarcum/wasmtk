@@ -199,7 +199,7 @@ deno test --no-check --allow-read --allow-write --allow-run --allow-env \
 #    again, "✅ ON BASELINE — N known failure(s) still standing" is the pass condition.
 #    The known failures print in red every run by design; the gate fails only if a count MOVES.
 
-# 5. engine_cross_check → expect 376 modules × 3 engines = 1128 pairs on baseline,
+# 5. engine_cross_check → expect 378 modules × 3 engines = 1134 pairs on baseline (2026-09-28),
 #    0 regressed, 0 improved (as of 2026-09-28)
 deno run --allow-read --allow-run --allow-env --allow-write tests/engine_cross_check_tests.ts
 #    Multi-engine (V8 vs wasmtime/wasmer/wazero). Absent engines skip, never fail.

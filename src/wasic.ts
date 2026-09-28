@@ -3970,7 +3970,10 @@ class WasicTranspiler {
           const name = part.slice(0, eqIdx).trim();
           const rhs = part.slice(eqIdx + 1).trim();
           if (!/^\w+$/.test(name)) continue;
-          const strMatch = rhs.match(/^"([^"]*)"$/) ?? rhs.match(/^'([^']*)'$/);
+          // Escape-aware (2026-09-28): `[^"]*` failed on `"a\"b"`, and the member fell through to
+          // the NUMERIC branch below. The raw body is kept; allocString unescapes it at use.
+          const strMatch = rhs.match(/^"((?:[^"\\]|\\.)*)"$/) ??
+            rhs.match(/^'((?:[^'\\]|\\.)*)'$/);
           if (strMatch) {
             raws.push({ name, kind: "string", rhs: "", stringVal: strMatch[1] });
           } else {

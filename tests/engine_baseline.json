@@ -19,6 +19,11 @@
     "wasmer": "match",
     "wazero": "match"
   },
+  "11_StringConcatScalars": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
   "11_StringOps": {
     "wasmtime": "match",
     "wasmer": "match",
@@ -590,6 +595,11 @@
     "wazero": "match"
   },
   "27_ConsoleLogStringCompare": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "27_EscapedQuoteLiterals": {
     "wasmtime": "match",
     "wasmer": "match",
     "wazero": "match"
