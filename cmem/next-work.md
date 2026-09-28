@@ -401,6 +401,34 @@ exists, and a failed `binaryen -Oz` swallowed silently. See [compiler-bugs.md](c
 - ⚠️ Add them to the impact map in [testing.md](testing.md) at the same time, or the suite set
   grows without the "which suites does this change reach" table knowing about it.
 
+## 2026-09-28 (latest): FALSE-PASS AUDIT — 186 passes rested on the wrong failure; gate 63,800 / 804
+
+Asked "is there anything we missed?", I tallied WHAT each permissive pass path actually passed on.
+It measured, not guessed: temporary counters in `src/wast.ts`, reverted. **186 passes were false.**
+All became labelled skips, and 0 became failures:
+
+| pass path | false | what it really was |
+| --- | --- | --- |
+| `assert_invalid` | 147 | the backend could not PARSE custom-descriptors syntax, scored as "rejected as invalid" |
+| `assert_invalid` | 10 | encoder LEB overflow (`memory`, `table`): binaryang accepts an out-of-range limit in text, then fails to WRITE it, where it should give a validation error. New binaryang item |
+| `assert_unlinkable` | 3 | a parse error and 2 compile errors, not link errors |
+| `assert_trap` (action) | 50 → **now genuine** | V8 refusing the call at the JS boundary before any wasm ran; now retried through the trampoline, and they really do trap |
+| `assert_invalid` / binary `assert_malformed` | 11 | V8 FEATURE GATES ("requires --experimental-wasm-…"), e.g. `align.wast`'s over-large alignment read as an acquire-release ordering |
+| text `assert_malformed` | 15 | coincidental: the backend rejects WELL-FORMED modules in the same file with the same parse error (`exact.wast` 12, `descriptors.wast` 3) |
+
+Rules now in `src/wast.ts`: `assert_invalid` needs a V8 `CompileError`, `assert_unlinkable` a
+`LinkError`, and `assert_trap` a `RuntimeError`. `isFeatureGate` errors are never a verdict. A text
+malformed pass is demoted at end of file when well-formed modules there fail to parse identically.
+Gate **63,800 / 0 / 804**; the unflagged CLI **63,693 / 0 / 913** (measured).
+
+**Found in the same pass, NOT YET FIXED — 🔴 `wasmtk run` exits 0 on an uncaught exception.**
+`15_panic`, `15_Trap-On-Error` and `13_SecureMatrixManagerIntegration` print `error: Uncaught (in
+Wasm) Error: …` and exit **0**; wasmtime exits 1. A crashing program reads as success to any script
+or CI. It hid because the wasi suite compares output text and the engine gate reads the engines'
+correct exit 1 as their "reject". The other engine rejects are legitimate: wazero lacks EH (21),
+`env`-importing modules cannot link on a bare WASI engine (the `40_*` externals, `1_print`, `11b`),
+and wasmer requires `_start` (`18_symbol_table`).
+
 ## 2026-09-28 (later): engine/spec pass + the gate's V8 flag — 726 → 618 skips, ALL CLEAN
 
 Gate: **63,986 passed / 0 failed / 618 skipped**. (The unflagged `wasmtk wast` CLI reads 63,887 / 719.)

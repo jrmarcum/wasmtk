@@ -4,7 +4,21 @@
 > `@jrmarcum/binaryang` on 2026-08-27**. Sections dated before that keep the old package names on
 > purpose — they record what was reported to whom, and retitling them would make the record wrong.
 
-## DRAFT (not yet sent) — 2026-09-28, against 1.6.0: one encoder bug, one parser gap
+## FOLLOW-UP DRAFT (not yet sent) — 2026-09-28, found after the first letter went out
+
+### 🟢 An out-of-range limit is accepted in text, then fails at ENCODE instead of validation (10)
+
+Spec `assert_invalid` modules in `memory.wast` (6) and `table.wast` (3), plus 1 more, declare limits
+beyond what the type allows (e.g. a 32-bit memory above 65536 pages). You parse them, and `toBinary`
+then throws `u32 LEB128 out of range`. The spec calls these INVALID (a validation error: "memory
+size must be at most 65536 pages"), so a validation error is the expected answer. We now require a
+validation verdict for `assert_invalid`, so these 10 moved from pass to skip on our side.
+
+(Context: a new audit on our side found 186 passes that rested on the wrong failure. 147 of them
+were your parser's custom-descriptors gap being scored as "invalid", so that gap is now also
+visible as skips rather than hidden as passes: the item-5 count in the first letter rises.)
+
+## DRAFT (sent 2026-09-28) — 2026-09-28, against 1.6.0: one encoder bug, one parser gap
 
 First, thanks: 1.6.0 landed both 2026-09-19 fixes. Our acceptance prediction held exactly, and three
 more spec assertions flipped from skip to pass as a bonus. With our own runner fixed the same day,

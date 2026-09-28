@@ -33,7 +33,7 @@ ever goes down can be improved by running less. **Independently re-paid for here
 See [testing.md](testing.md).
 
 **Pass counts over a corpus you cannot fully run are UPPER BOUNDS, not measurements. Skips are not
-passes.** [wazmrt] Live figure here: the wast gate reads **63,986 passed / 0 failed / 618 skipped** (2026-09-28, with the gate's experimental V8 flag; the unflagged `wasmtk wast` CLI reads 63,887 / 719; before it 37,674 / 26,944)
+passes.** [wazmrt] Live figure here: the wast gate reads **63,800 passed / 0 failed / 804 skipped** (2026-09-28, after the false-pass audit removed 186 passes that rested on the wrong failure; with the gate's experimental V8 flag; before it 37,674 / 26,944)
 (re-recorded 2026-09-28 after the runner fixes on binaryang 1.6.0); before those, the last measured skip count was **27,153**, at 37,365 passed
 (2026-09-19, binaryang 1.5.3, after the vendored threads patches and the `assert_malformed` stage
 split). **The two crossed over** — this
@@ -208,6 +208,16 @@ next genuine failure in the same file. That argument arrived here from a downstr
 here 2026-08-20:** before committing the per-file baseline gate, its baseline was deliberately
 perturbed in both directions (one file +5, one −3) to confirm it reported LOST and GAINED coverage
 and exited non-zero. A gate that cannot fail is not a gate.
+
+**A PASS IS A CLAIM ABOUT *WHY* SOMETHING FAILED — count the failure kinds behind every pass
+path.** [wasmtk, 2026-09-28] A spec runner's `assert_invalid` / `assert_trap` / `assert_unlinkable`
+passed on ANY failure. Tallying what each path actually caught found 186 false passes. The largest
+share was the backend being unable to parse newer syntax, scored as "correctly rejected". A path
+that accepts any failure turns every gap in the thing under test into GREEN, and grows greener as
+the gaps grow. The 2026-09-19 fix to one directive did not make anyone check its siblings: when a
+class of bug is fixed in one handler, audit every handler of the same shape. Related tell: an exit
+code of 0 is also a claim. `wasmtk run` printed "Uncaught … Error" and exited 0, and no suite looked
+at the code.
 
 **A CHANGE'S OWN NEW SURFACE IS THE ONE PLACE THE AUDIT THAT PRODUCED IT WILL NOT LOOK.** [wazmrt]
 The new gate's own `--update-baseline` path is exactly such a surface — it is the part that OOMed

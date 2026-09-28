@@ -1,5 +1,27 @@
 # Compiler bug log
 
+## wast runner: 186 FALSE PASSES — pass paths accepted the wrong kind of failure (FIXED 2026-09-28)
+
+**How found:** an audit of what each permissive pass path actually passed on, counted with temporary
+instrumentation over the whole corpus (not by reading). Full table in next-work.md § "FALSE-PASS
+AUDIT". Gate 63,986 → **63,800 passed**, 618 → 804 skipped, 0 failed.
+
+**Root cause:** four handlers were written as `catch { passed++ }` or "any throw counts". The
+`assert_malformed` stage split of 2026-09-19 fixed this class for ONE directive; the others were
+never audited against it. The biggest share (147) was the backend being unable to PARSE newer
+syntax, scored as "correctly rejected as invalid". The more syntax the backend lacks, the greener
+that made the gate.
+
+**Fix:** each assertion now requires its own verdict: `CompileError` for invalid, `LinkError` for
+unlinkable, `RuntimeError` for a trap (`RangeError` for exhaustion). A JS-boundary refusal in
+`assert_trap` retries through the trampoline (those 50 now genuinely trap). `isFeatureGate` (any
+`--experimental-wasm-` requirement) is never a verdict. Text-malformed passes are reconciled per
+file against parse errors the backend raised on WELL-FORMED modules.
+
+**Lesson (also in best-practices):** "passes" is a claim about WHY something failed. Count the
+failure kinds behind every pass path; a path that accepts any failure turns every backend gap into
+green.
+
 ## wast: `exnref` results through the trampoline, and the gate's experimental V8 flag (2026-09-28)
 
 726 → **618 skips**, 0 failures; gate 63,986 passed.

@@ -16,8 +16,8 @@
     "skip": 0
   },
   "align.wast": {
-    "pass": 140,
-    "skip": 0
+    "pass": 136,
+    "skip": 4
   },
   "align0.wast": {
     "pass": 4,
@@ -68,8 +68,8 @@
     "skip": 0
   },
   "binary.wast": {
-    "pass": 107,
-    "skip": 0
+    "pass": 106,
+    "skip": 1
   },
   "binary0.wast": {
     "pass": 2,
@@ -440,8 +440,8 @@
     "skip": 0
   },
   "memory.wast": {
-    "pass": 78,
-    "skip": 0
+    "pass": 72,
+    "skip": 6
   },
   "memory64-imports.wast": {
     "pass": 30,
@@ -566,13 +566,13 @@
     "unbuilt": 1
   },
   "proposals/custom-descriptors/binary-descriptors.wast": {
-    "pass": 3,
-    "skip": 2,
+    "pass": 0,
+    "skip": 5,
     "unbuilt": 2
   },
   "proposals/custom-descriptors/binary.wast": {
-    "pass": 105,
-    "skip": 0
+    "pass": 104,
+    "skip": 1
   },
   "proposals/custom-descriptors/br_on_cast.wast": {
     "pass": 33,
@@ -580,13 +580,13 @@
     "unbuilt": 1
   },
   "proposals/custom-descriptors/br_on_cast_desc_eq.wast": {
-    "pass": 23,
-    "skip": 99,
+    "pass": 0,
+    "skip": 122,
     "unbuilt": 5
   },
   "proposals/custom-descriptors/br_on_cast_desc_eq_fail.wast": {
-    "pass": 23,
-    "skip": 99,
+    "pass": 0,
+    "skip": 122,
     "unbuilt": 5
   },
   "proposals/custom-descriptors/br_on_cast_fail.wast": {
@@ -595,8 +595,8 @@
     "unbuilt": 1
   },
   "proposals/custom-descriptors/descriptors.wast": {
-    "pass": 50,
-    "skip": 7,
+    "pass": 0,
+    "skip": 57,
     "unbuilt": 7
   },
   "proposals/custom-descriptors/exact-casts.wast": {
@@ -605,47 +605,47 @@
     "unbuilt": 3
   },
   "proposals/custom-descriptors/exact-func-import.wast": {
-    "pass": 4,
-    "skip": 20,
+    "pass": 1,
+    "skip": 23,
     "unbuilt": 8
   },
   "proposals/custom-descriptors/exact.wast": {
-    "pass": 20,
-    "skip": 16,
+    "pass": 3,
+    "skip": 33,
     "unbuilt": 16
   },
   "proposals/custom-descriptors/ref_cast_desc_eq.wast": {
-    "pass": 16,
-    "skip": 93,
+    "pass": 0,
+    "skip": 109,
     "unbuilt": 3
   },
   "proposals/custom-descriptors/ref_get_desc.wast": {
-    "pass": 12,
-    "skip": 26,
+    "pass": 0,
+    "skip": 38,
     "unbuilt": 7
   },
   "proposals/custom-descriptors/struct_new_desc.wast": {
-    "pass": 19,
-    "skip": 25,
+    "pass": 0,
+    "skip": 44,
     "unbuilt": 8
   },
   "proposals/custom-page-sizes/binary.wast": {
-    "pass": 107,
-    "skip": 0
+    "pass": 106,
+    "skip": 1
   },
   "proposals/custom-page-sizes/custom-page-sizes-invalid.wast": {
-    "pass": 21,
-    "skip": 1,
+    "pass": 19,
+    "skip": 3,
     "unbuilt": 1
   },
   "proposals/custom-page-sizes/custom-page-sizes.wast": {
-    "pass": 1,
-    "skip": 43,
+    "pass": 0,
+    "skip": 44,
     "unbuilt": 12
   },
   "proposals/custom-page-sizes/memory_max.wast": {
-    "pass": 2,
-    "skip": 4,
+    "pass": 1,
+    "skip": 5,
     "unbuilt": 4
   },
   "proposals/custom-page-sizes/memory_max_i64.wast": {
@@ -1023,8 +1023,8 @@
     "skip": 0
   },
   "table.wast": {
-    "pass": 27,
-    "skip": 1,
+    "pass": 24,
+    "skip": 4,
     "unbuilt": 1
   },
   "table64.wast": {

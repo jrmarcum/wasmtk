@@ -66,6 +66,13 @@ class AssembleError extends Error {
   }
 }
 
+/** The parser's message for a parse-stage AssembleError, without file/line/column (else null). */
+function parseErrorKey(e: unknown): string | null {
+  if (!(e instanceof AssembleError) || e.stage !== "parse") return null;
+  const m = /error:\s*(.*?)(?:\s+[A-Za-z]:[\\/]|\n|$)/.exec(e.message);
+  return m ? m[1].trim() : null;
+}
+
 export function parseSexprs(src: string): SexpList[] {
   const out: SexpList[] = [];
   let i = 0;
@@ -313,6 +320,17 @@ function parseFloatExpect(lit: string, is32: boolean): FloatExpect {
 const WasmException =
   (WebAssembly as unknown as { Exception: abstract new (...a: never[]) => object })
     .Exception;
+
+/**
+ * True when V8 rejected a module because a proposal it does not implement (or implements only
+ * behind a flag) is in play — "enable with --experimental-wasm-…", "… requires
+ * --experimental-wasm-… flag". That is not a verdict on the module, so it must not satisfy
+ * `assert_invalid` or a binary `assert_malformed` (2026-09-28 audit: 11 such passes, e.g. V8
+ * reading `align.wast`'s over-large alignment as an acquire-release ordering it will not validate).
+ */
+function isFeatureGate(e: unknown): boolean {
+  return /--experimental-wasm-/.test(e instanceof Error ? e.message : String(e));
+}
 
 const hostRefs = new Map<string, object>();
 function hostRef(n: string): object {
@@ -984,6 +1002,14 @@ export async function runWast(
   // two is what made these read as codegen bugs. They still FAIL — loudly, by design — they are
   // just now labelled with what actually happened.
   let sawUnassemblableModule = false;
+  // Parse errors the backend raised on modules the spec calls WELL-FORMED, and the parse errors
+  // behind text `assert_malformed` passes. Reconciled at the end of the file (see there).
+  const wellFormedParseErrors = new Set<string>();
+  const malformedTextPasses: string[] = [];
+  const noteWellFormedParseError = (e: unknown) => {
+    const key = parseErrorKey(e);
+    if (key !== null) wellFormedParseErrors.add(key);
+  };
   const fail = (msg: string) => {
     res.failed++;
     const tagged = sawUnassemblableModule
@@ -1191,6 +1217,7 @@ export async function runWast(
             // Skip it and its dependent actions rather than failing the whole file. A failed
             // DEFINITION leaves the current instance alone: defining never changes it.
             if (kind !== "definition") cur = null;
+            noteWellFormedParseError(e);
             skip(moduleStage(e));
             res.modulesFailed++;
             sawUnassemblableModule = true;
@@ -1326,7 +1353,9 @@ export async function runWast(
             let bytes: Uint8Array | null = null;
             try {
               bytes = isList(action) ? assemble(action) : null;
-            } catch { /* handled below as unbuilt */ }
+            } catch (e) {
+              noteWellFormedParseError(e); // handled below as unbuilt
+            }
             let outcome: "trapped" | "instantiated" | "other" = "other";
             if (bytes) {
               try {
@@ -1357,12 +1386,55 @@ export async function runWast(
             }
             break;
           }
-          if (head(action) === "invoke" && needsTrampoline(action.list)) {
-            // Arguments JS cannot carry (v128, NaN payloads) → trampoline. A trap assertion has no
-            // expected value to take the result type from, so try each: the import signature is
-            // checked at LINK time, before anything runs, so a wrong guess never executes the callee
-            // and the first candidate that links IS its signature.
-            const candidates: LowType[][] = [[], ["i32"], ["i64"], ["f32"], ["f64"], ["v128"]];
+          // Only a genuine TRAP satisfies the assertion.
+          const isTrap = (e: unknown) =>
+            e instanceof WebAssembly.RuntimeError ||
+            (h === "assert_exhaustion" && e instanceof RangeError);
+          let viaTrampoline = head(action) === "invoke" && needsTrampoline(action.list);
+          if (!viaTrampoline) {
+            // ⚠️ This used to count ANY throw as the trap (2026-09-28 audit: 50 of those "passes"
+            // were V8 refusing the call at the JS boundary — `type incompatibility` — BEFORE any wasm
+            // ran, e.g. an export with a v128 result). A refusal now retries through the
+            // trampoline; any other non-trap error fails loudly.
+            try {
+              runAction(action);
+              fail(`${h} did not trap: ${src.slice(cmd.start, cmd.start + 100)}`);
+              break;
+            } catch (e) {
+              if (String(e).includes("__skip__")) {
+                skip(`${h}: ${skipLabel(e)}`);
+                break;
+              }
+              if (isTrap(e)) {
+                res.passed++;
+                break;
+              }
+              if (!(isJsBoundaryRefusal(e) && head(action) === "invoke")) {
+                fail(
+                  `${h} threw a non-trap (${e instanceof Error ? e.constructor.name : typeof e}): ${
+                    e instanceof Error ? e.message : e
+                  }`,
+                );
+                break;
+              }
+              viaTrampoline = true;
+            }
+          }
+          if (viaTrampoline) {
+            // Values JS cannot carry (v128, NaN payloads, exnref) → trampoline. A trap assertion
+            // has no expected value to take the result type from, so try each: the import signature
+            // is checked at LINK time, before anything runs, so a wrong guess never executes the
+            // callee and the first candidate that links IS its signature.
+            const candidates: LowType[][] = [
+              [],
+              ["i32"],
+              ["i64"],
+              ["f32"],
+              ["f64"],
+              ["v128"],
+              ["exnref"],
+              ["nullexnref"],
+            ];
             let outcome: "trapped" | "returned" | "unlinked" | "error" = "unlinked";
             let error = "";
             for (const rt of candidates) {
@@ -1372,11 +1444,9 @@ export async function runWast(
               } catch (e) {
                 if (String(e).includes("did not link")) continue;
                 if (String(e).includes("__skip__")) break;
-                // Only a genuine TRAP satisfies the assertion; anything else (e.g. our own
-                // trampoline failing to assemble) must not be scored as one.
-                const trap = e instanceof WebAssembly.RuntimeError ||
-                  (h === "assert_exhaustion" && e instanceof RangeError);
-                outcome = trap ? "trapped" : "error";
+                // Anything but a trap (e.g. our own trampoline failing to assemble) must not be
+                // scored as one.
+                outcome = isTrap(e) ? "trapped" : "error";
                 error = e instanceof Error ? e.message : String(e);
               }
               break;
@@ -1386,14 +1456,6 @@ export async function runWast(
               fail(`${h} did not trap: ${src.slice(cmd.start, cmd.start + 100)}`);
             } else if (outcome === "error") fail(`${h} threw a non-trap: ${error}`);
             else skip(`${h} (trampoline): no candidate signature linked`);
-            break;
-          }
-          try {
-            runAction(action);
-            fail(`${h} did not trap: ${src.slice(cmd.start, cmd.start + 100)}`);
-          } catch (e) {
-            if (String(e).includes("__skip__")) skip(`${h}: ${skipLabel(e)}`);
-            else res.passed++; // any trap/throw counts (message not matched in v1)
           }
           break;
         }
@@ -1429,10 +1491,20 @@ export async function runWast(
           // Validation assertions test the ASSEMBLER/VALIDATOR, not execution. wasmtk's wabt(+V8)
           // pipeline is a known-incomplete validator, so a module that fails to reject here is a
           // toolchain-leniency gap (counted as skipped), NOT an execution failure.
+          //
+          // ⚠️ ONLY THE RIGHT KIND OF REJECTION PASSES (2026-09-28). This used to be `catch {
+          // passed++ }`, so ANY failure satisfied it. A pass audit found 160 of those passes resting
+          // on the wrong failure. 147 were our backend unable to PARSE newer syntax (custom
+          // descriptors): a module we could not read, scored as "correctly rejected as invalid". 10
+          // were encoder errors, and 3 `assert_unlinkable` were parse/compile errors. The same
+          // false-green the `assert_malformed` stage split closed on 2026-09-19. Now `assert_invalid`
+          // needs V8's VALIDATION verdict (a CompileError), `assert_unlinkable` needs a LinkError, and
+          // any other failure is a labelled skip.
           const mod = cmd.list[1] as SexpList;
+          const kind = h === "assert_unlinkable" ? "assert_unlinkable" : "assert_invalid";
           try {
             const bytes = assemble(mod);
-            if (h === "assert_unlinkable") await instantiate(bytes);
+            if (kind === "assert_unlinkable") await instantiate(bytes);
             else await WebAssembly.compile(bytes as BufferSource); // validation
             skip(`${h}: toolchain accepted it`);
             if (opts.verbose) {
@@ -1440,8 +1512,25 @@ export async function runWast(
                 `toolchain-lenient (${h} not rejected): ${src.slice(cmd.start, cmd.start + 70)}`,
               );
             }
-          } catch {
-            res.passed++;
+          } catch (e) {
+            noteWellFormedParseError(e); // invalid/unlinkable modules are well-FORMED by definition
+            const right = kind === "assert_unlinkable"
+              ? e instanceof WebAssembly.LinkError
+              : e instanceof WebAssembly.CompileError;
+            if (right && isFeatureGate(e)) {
+              skip(`${h}: V8 refused an unimplemented feature — not a verdict`);
+            } else if (right) res.passed++;
+            else {
+              skip(
+                `${h}: rejected for another reason (${
+                  e instanceof AssembleError
+                    ? `${e.stage} failed`
+                    : e instanceof Error
+                    ? e.constructor.name
+                    : typeof e
+                }) — not a ${kind === "assert_unlinkable" ? "link" : "validation"} verdict`,
+              );
+            }
           }
           break;
         }
@@ -1497,7 +1586,13 @@ export async function runWast(
               }
               break;
             }
+            if (isBinary && isFeatureGate(e)) {
+              skip("assert_malformed: V8 refused an unimplemented feature — not a verdict");
+              break;
+            }
             res.passed++;
+            const key = isBinary ? null : parseErrorKey(e);
+            if (key !== null) malformedTextPasses.push(key);
           }
           break;
         }
@@ -1508,6 +1603,17 @@ export async function runWast(
     } catch (e) {
       fail(`command ${h} error: ${e instanceof Error ? e.message : e}`);
     }
+  }
+  // A text `assert_malformed` passes on a PARSE failure. But when the backend rejects modules the
+  // spec calls WELL-FORMED, in this same file, with the very same parse error, that error is a
+  // syntax gap in the backend (e.g. custom-descriptors' `descriptor` / `exact`), not evidence of the
+  // malformation the assertion names. Those passes were coincidental; demote them to a skip.
+  // (2026-09-28 audit. Decided per file, after the whole file has run, because a malformed
+  // assertion can precede the well-formed module that exposes the gap.)
+  for (const key of malformedTextPasses) {
+    if (!wellFormedParseErrors.has(key)) continue;
+    res.passed--;
+    skip("assert_malformed: backend rejects well-formed modules here the same way — not a verdict");
   }
   return res;
 }
