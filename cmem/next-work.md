@@ -421,6 +421,14 @@ Rules now in `src/wast.ts`: `assert_invalid` needs a V8 `CompileError`, `assert_
 malformed pass is demoted at end of file when well-formed modules there fail to parse identically.
 Gate **63,800 / 0 / 804**; the unflagged CLI **63,693 / 0 / 913** (measured).
 
+**✅ DECIDED AND FIXED 2026-09-28 (owner: "parity with wasmtime"; branch
+`fix/run-uncaught-exit-2026-09-28`).** Uncaught exception → exit 1 (a foreign tag now prints a
+message too), `proc_exit(N)` → exit N silently (it exited 1 with a spurious "Run error": found while
+fixing), and `run file.ts` propagates the child's code (it was DISCARDED: the same bug's other
+half). Harness: `@expect-exit: N`. Engine gate: exit-code-aware, plus VANISHED detection. Full gate
+green: wasi 417/417 · engine ALL ON BASELINE (wasmtime 367/9) · wast ALL CLEAN · all others 0
+failed. The original finding follows.
+
 **Found in the same pass — 🗓️ OWNER DECISION: `wasmtk run` exits 0 on an uncaught exception.**
 This is a RECORDED invariant, not an accident: `design-decisions.md` § runtime says "exits cleanly
 (code 0)", and `utils.ts` says it "mirrors TypeScript uncaught error". But Deno and Node exit 1 on

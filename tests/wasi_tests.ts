@@ -58,6 +58,7 @@ async function runStep(
   args: string[],
   expectedFail = false,
   capture = false,
+  expectExit = 0,
 ): Promise<StepResult> {
   console.log(blue(`  [${label}]`), dim(`${cmd} ${args.join(" ")}`));
 
@@ -67,7 +68,11 @@ async function runStep(
       stdout: capture ? "piped" : "inherit",
       stderr: "inherit",
     }).output();
-    const { success, code } = output;
+    const { code } = output;
+    // "Success" is the EXPECTED exit code: 0 by default, N under `// @expect-exit: N`. That keeps a
+    // program that dies on purpose (an uncaught throw → exit 1, at parity with wasmtime since
+    // 2026-09-28) comparable run-ts vs run-wasm, which `@expect-fail` would switch off.
+    const success = code === expectExit;
 
     let captured: string | undefined;
     if (capture) {
@@ -77,7 +82,9 @@ async function runStep(
       captured = new TextDecoder().decode(output.stdout);
     }
 
-    if (success) {
+    if (success && expectExit !== 0) {
+      console.log(green(`  ✓ ${label} exited ${code} as expected (@expect-exit)`));
+    } else if (success) {
       if (expectedFail) {
         console.log(yellow(`  ✗ ${label} succeeded (expected failure)`));
       } else {
@@ -137,6 +144,22 @@ async function readExpectedFailures(tsPath: string): Promise<Set<string>> {
     }
   } catch { /* ignore unreadable files */ }
   return expected;
+}
+
+/**
+ * Reads the first 10 lines of a .ts file and returns N from a "// @expect-exit: N" comment (the
+ * exit code both run steps must produce), or 0 if absent. For programs that die on purpose, e.g.
+ * an uncaught throw, which exits 1 at parity with wasmtime.
+ */
+async function readExpectExit(tsPath: string): Promise<number> {
+  try {
+    const text = await Deno.readTextFile(tsPath);
+    for (const line of text.split("\n").slice(0, 10)) {
+      const m = line.match(/\/\/\s*@expect-exit\s*:\s*(\d+)/);
+      if (m) return Number(m[1]);
+    }
+  } catch { /* ignore unreadable files */ }
+  return 0;
 }
 
 /**
@@ -291,6 +314,7 @@ async function startTestSuite() {
     }
 
     const expectFail = await readExpectedFailures(tsPath);
+    const expectExit = await readExpectExit(tsPath);
     // A step "passes" if it succeeded when not expected to fail, or failed when expected to fail.
     const stepOk = (r: StepResult, step: string) => expectFail.has(step) ? !r.success : r.success;
 
@@ -319,7 +343,14 @@ async function startTestSuite() {
       console.log(dim("  (skipping run-ts — .wasm imports require modc-prereq)"));
       runTs = { success: true, code: 0 };
     } else {
-      runTs = await runStep("run-ts", WASMTK_BIN, ["run", tsPath], expectFail.has("run-ts"), true);
+      runTs = await runStep(
+        "run-ts",
+        WASMTK_BIN,
+        ["run", tsPath],
+        expectFail.has("run-ts"),
+        true,
+        expectExit,
+      );
     }
 
     // ── Step 3: Run compiled WASM ─────────────────────────────────
@@ -341,6 +372,7 @@ async function startTestSuite() {
         ["run", wasmPath],
         expectFail.has("run-wasm"),
         true,
+        expectExit,
       );
     }
 

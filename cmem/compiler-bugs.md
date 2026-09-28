@@ -1,5 +1,28 @@
 # Compiler bug log
 
+## `wasmtk run` exit status: three holes, now at parity with wasmtime (FIXED 2026-09-28)
+
+**Owner decision:** "we should be at parity with wasmtime". Measured wasmtime first: uncaught
+exception → 1, `proc_exit(N)` → N, trap → 3 on Windows / 134 on Unix.
+
+1. **Uncaught exception exited 0** (`src/utils.ts` `runWasi`). It was a RECORDED decision ("exits
+   cleanly"), justified as mirroring an uncaught TS error, but Deno and Node exit 1 on those. A
+   foreign-tag exception also printed NOTHING. Now it exits 1 with the message, or a generic one.
+2. **`proc_exit(N ≠ 0)` exited 1 with "❌ Run error: RuntimeError: exit:N"**: only `exit:0` was
+   recognised. Now it exits N silently. Found by reading the code next to (1), then probed.
+3. **`wasmtk run x.ts|.js` discarded the child's exit code** (`await process.status; return;`), so
+   EVERY failing TS program read as success, not only crashes. That is the bug's other half: without
+   it, run-ts and run-wasm would disagree on the same program.
+
+**Why nothing caught it:** the wasi suite compared stdout only, and the engine gate read wasmtime's
+CORRECT exit 1 as that engine's "reject". Traps stay at 1 (platform-specific upstream, outside the
+decision).
+
+**Gate changes that came with it:** `// @expect-exit: N` in `wasi_tests.ts` (success = that exact
+code; output still compared). The engine gate is now exit-code aware, with a VANISHED check. Its
+first version misread wazero refusing an EH module (exit 1, no output) as `differ`, which was
+corrected to `reject`. The VANISHED check was inversion-tested by planting a module. Full gate green.
+
 ## wast runner: 186 FALSE PASSES — pass paths accepted the wrong kind of failure (FIXED 2026-09-28)
 
 **How found:** an audit of what each permissive pass path actually passed on, counted with temporary

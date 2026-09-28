@@ -14,8 +14,9 @@ wasmtk's own runtime via `wasmtk dync` / `: any` / `eval`, also no external engi
 
 All five share one `@test-pipeline` shape: `modc lib` → `wasic driver` (imports the `.wasm`) →
 `run`. The driver is **self-checking**: on any wrong result it reads far out of bounds → WASM
-trap → nonzero exit, so a passing `run` proves semantics (a wasic uncaught `throw` exits 0 and
-can't fail a pipeline). Fixtures in `tests/wasi/wasm_wasi_bundle/<name>_bundle/`; pipeline tests
+trap → nonzero exit, so a passing `run` proves semantics. (Until 2026-09-28 a wasic uncaught
+`throw` exited 0 and could not fail a pipeline, which is why the drivers trap instead. It now exits
+1, at parity with wasmtime, so a `throw` would also work; the drivers were left as they are.) Fixtures in `tests/wasi/wasm_wasi_bundle/<name>_bundle/`; pipeline tests
 `tests/wasi/wasm_wasi/18c–18g`.
 
 ## Status (all shipped, 2026-05-30 / 05-31)

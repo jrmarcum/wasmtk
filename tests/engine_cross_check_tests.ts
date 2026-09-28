@@ -63,17 +63,48 @@ const updating = args.includes("--update-baseline");
 const filterIdx = args.indexOf("--filter");
 const filter = filterIdx !== -1 ? new RegExp(args[filterIdx + 1]) : null;
 
-async function capture(cmd: string, cmdArgs: string[]): Promise<{ ok: boolean; out: string }> {
+interface Run {
+  ok: boolean;
+  code: number;
+  out: string;
+  err: string;
+}
+
+async function capture(cmd: string, cmdArgs: string[]): Promise<Run> {
   try {
-    const { success, stdout } = await new Deno.Command(cmd, {
+    const { success, code, stdout, stderr } = await new Deno.Command(cmd, {
       args: cmdArgs,
       stdout: "piped",
-      stderr: "null",
+      stderr: "piped",
     }).output();
-    return { ok: success, out: new TextDecoder().decode(stdout) };
+    const dec = new TextDecoder();
+    return { ok: success, code, out: dec.decode(stdout), err: dec.decode(stderr) };
   } catch (err) {
-    return { ok: false, out: err instanceof Error ? err.message : String(err) };
+    return { ok: false, code: -1, out: err instanceof Error ? err.message : String(err), err: "" };
   }
+}
+
+/**
+ * V8 is the reference when the program RAN: it exited 0, or it died on an uncaught wasm exception.
+ * Since 2026-09-28 that exits 1 at parity with wasmtime, and it is a program outcome, not a
+ * failure to run. Anything else (a load/link error) leaves this gate with no opinion.
+ */
+function v8InScope(v8: Run): boolean {
+  return v8.ok || /error: Uncaught \(in Wasm\)/.test(v8.err);
+}
+
+/**
+ * `match` = same stdout AND the same exit code as V8. `reject` = the engine failed with a
+ * different code (refused the module, or its own crash convention). `differ` = it ran, and the
+ * output (or a clean exit) disagrees.
+ */
+function classify(engine: Run, v8: Run): Status {
+  if (engine.code === v8.code && engine.out === v8.out) return "match";
+  if (engine.code !== 0 && engine.code !== v8.code) return "reject";
+  // Failed, printed NOTHING, where V8's run printed output: the engine never got to run the
+  // program (e.g. wazero refusing an EH module, which exits 1 like the crash it never reached).
+  if (engine.code !== 0 && engine.out === "" && v8.out !== "") return "reject";
+  return "differ";
 }
 
 /** True if `cmd` is invocable here — used for skip-if-absent, never for failing. */
@@ -134,7 +165,7 @@ async function main() {
   for (const name of targets) {
     const wasm = join(CORPUS, `${name}.wasm`);
     const v8 = await capture(WASMTK_BIN, ["run", wasm]);
-    if (!v8.ok) {
+    if (!v8InScope(v8)) {
       // V8 itself cannot run it — nothing to compare against, so this gate has no opinion.
       console.log(dim(`  – ${name}  (V8 could not run it; out of scope here)`));
       continue;
@@ -146,7 +177,7 @@ async function main() {
       // a bare path with "invalid command", which this gate would otherwise have recorded as a
       // legitimate `reject` for every module in the corpus.
       const r = await capture(engine, ["run", wasm]);
-      const status: Status = !r.ok ? "reject" : (r.out === v8.out ? "match" : "differ");
+      const status = classify(r, v8);
       observed[name][engine] = status;
       if (updating) continue;
 
@@ -179,6 +210,19 @@ async function main() {
     for (const k of Object.keys(tally).sort()) console.log(dim(`    ${k} = ${tally[k]}`));
     Deno.exit(0);
   }
+
+  // A baselined module that produced no observation has silently LEFT the gate (e.g. V8 stopped
+  // running it): coverage loss, reported like a regression. Found 2026-09-28, when the exit-code
+  // fix would have quietly dropped three modules as "out of scope".
+  let vanished = 0;
+  if (!filter) {
+    for (const name of Object.keys(baseline)) {
+      if (observed[name] !== undefined) continue;
+      vanished++;
+      console.log(red(`  ✗ ${name} VANISHED — baselined, but not compared this run`));
+    }
+  }
+  regressed += vanished;
 
   console.log("\n" + "─".repeat(60));
   console.log(

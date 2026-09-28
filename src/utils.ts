@@ -219,7 +219,11 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
       args: ["run", "-A", path, ...args],
     });
     const process = command.spawn();
-    await process.status;
+    // Propagate the child's exit code. It was awaited and DISCARDED until 2026-09-28, so a
+    // TypeScript program that crashed (uncaught error → the runtime exits 1) read as success through
+    // `wasmtk run x.ts` — the other half of the uncaught-exception exit-code bug.
+    const { code } = await process.status;
+    if (code !== 0) rt.exit(code);
     return;
   }
 
@@ -305,14 +309,29 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
       try {
         (init as WasmCallable)();
       } catch (err) {
-        if (err instanceof WebAssembly.RuntimeError && err.message.includes("exit:0")) return;
+        // `proc_exit(N)` unwinds as RuntimeError("exit:N"). Exit with N, silently, as wasmtime
+        // does. Only `exit:0` was recognised until 2026-09-28, so `proc_exit(3)` exited 1 with a
+        // bogus "❌ Run error: RuntimeError: exit:3".
+        const exitM = err instanceof WebAssembly.RuntimeError
+          ? /^exit:(\d+)$/.exec(err.message)
+          : null;
+        if (exitM) {
+          const code = Number(exitM[1]);
+          if (code === 0) return;
+          rt.exit(code);
+          return;
+        }
         if (
           err instanceof
             ((WebAssembly as Record<string, unknown>)["Exception"] as new (
               ...args: unknown[]
             ) => unknown)
         ) {
-          // Unhandled WASM throw — print message to stderr (mirrors TypeScript uncaught error), then exit cleanly.
+          // Unhandled WASM throw — print the message to stderr, then EXIT 1, at parity with wasmtime
+          // (owner decision 2026-09-28). This used to exit 0 "cleanly", so a crashed program read as
+          // success to any script or CI. Deno and Node exit 1 on an uncaught error too.
+          // A foreign exception (not wasmtk's `__exn_tag`) used to print nothing at all.
+          let printed = false;
           try {
             const tag = wasiInstance?.exports.__exn_tag as unknown as
               | Record<string, unknown>
@@ -334,8 +353,13 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
               rt.stderr.writeSync(
                 new TextEncoder().encode(`error: Uncaught (in Wasm) Error: ${msg}\n`),
               );
+              printed = true;
             }
           } catch { /* ignore tag extraction errors */ }
+          if (!printed) {
+            rt.stderr.writeSync(new TextEncoder().encode("error: Uncaught (in Wasm) exception\n"));
+          }
+          rt.exit(1);
           return;
         }
         throw err;

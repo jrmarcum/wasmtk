@@ -65,7 +65,7 @@
     "wazero": "match"
   },
   "13_SecureMatrixManagerIntegration": {
-    "wasmtime": "reject",
+    "wasmtime": "match",
     "wasmer": "reject",
     "wazero": "reject"
   },
@@ -110,12 +110,12 @@
     "wazero": "reject"
   },
   "15_Trap-On-Error": {
-    "wasmtime": "reject",
+    "wasmtime": "match",
     "wasmer": "reject",
     "wazero": "reject"
   },
   "15_panic": {
-    "wasmtime": "reject",
+    "wasmtime": "match",
     "wasmer": "reject",
     "wazero": "reject"
   },

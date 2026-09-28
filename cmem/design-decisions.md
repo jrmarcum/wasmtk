@@ -377,8 +377,13 @@ high-value subset.
 ## Runner / ABI invariants
 
 - All runtime I/O goes through `rt.*` (never `Deno.*`) — Bun compatibility.
-- Uncaught WASM throw from `_start` prints `error: Uncaught (in Wasm) Error: <msg>` to stderr and
-  exits cleanly (code 0). `throw` inside try/catch emits `(throw $__exn_tag ...)`, never `proc_exit`.
+- 🔒 **`wasmtk run` exit status is at PARITY WITH WASMTIME (owner decision 2026-09-28; it was
+  "exits cleanly (code 0)" before).** An uncaught WASM throw from `_start` prints `error: Uncaught
+  (in Wasm) Error: <msg>` (or `error: Uncaught (in Wasm) exception` for a foreign tag) to stderr and
+  exits **1**. `proc_exit(N)` exits **N**, silently. `run file.ts|.js` propagates the child's code.
+  Traps stay at 1 (wasmtime's trap code is platform-specific, 3 on Windows / 134 on Unix, and was
+  not part of the decision). `throw` inside try/catch emits `(throw $__exn_tag ...)`, never
+  `proc_exit`. Tests that crash on purpose declare `// @expect-exit: N`.
 - The `env` import object in the runner is a `Proxy` returning a no-op `()=>0` stub for any unknown
   key (so Phase-40 `declare const` external modules instantiate without a real host).
 - `cabi_realloc` is exported (not `__malloc`) when any export has a string param/return. String

@@ -1,3 +1,4 @@
+// @expect-exit: 1  (dies on an uncaught throw by design; exit 1 at parity with wasmtime)
 type i32 = number;
 
 export function safeDivide(a: i32, b: i32): i32 {
