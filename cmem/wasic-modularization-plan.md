@@ -9,6 +9,65 @@
 > Status as work lands: check off phases here; keep [roadmap.md](roadmap.md) and
 > [architecture.md](architecture.md) in sync when the file layout actually changes.
 
+## 🔒 H12 update (2026-09-28): the seams are the ones a future `ts2wasm` import crosses
+
+Workspace letter H12 / divergence I11 (owner, 2026-09-20): `wasic` becomes binaryang's
+**`./ts2wasm`** once it is "sufficiently capable and less buggy", and is then retired from wasmtk.
+The bar, set by the owner: (a) this plan complete, (b) every wasic suite green on every engine in
+the cross-check gate, (c) **no OPEN silent-wrong compiler entry** in `compiler-bugs.md`, (d)
+binaryang's one front end done. **The scope of `ts2wasm` / `wasm2ts` is deliberately NOT written:
+the owner opens it. This section designs wasmtk's seams only.** It supersedes the wabt-ts
+"Phase 8 `wasm2ts`" framing below: wabt-ts is frozen, merged into binaryang.
+
+**Re-measured 2026-09-28** (a Deno script over `src/wasic.ts`, not the July numbers):
+
+- 20,691 lines. `class WasicTranspiler` is lines 1535–20156, i.e. **18,622 lines, 90%**.
+- About 139 methods and 89 fields, by an indentation heuristic that undercounts multi-line
+  signatures. The July "231 / 134" came from a different count.
+- `console_log.ts` is 4,111 lines.
+- **The class is already almost pure.** Everything that touches the host or the backend lives in
+  the ~2,000 lines OUTSIDE it: 13 `rt.*` (file/process I/O), 36 `console.*`, 9 wabt, 4 binaryen,
+  10 merge and 5 bundler sites. Inside it there was exactly ONE: an undeclared-receiver error that
+  called `console.error` + **`rt.exit(1)`**, killing the host process (including `hybrid`/`dync`
+  probe compiles). It is now a diagnostic, with regression test `22_UndeclaredReceiverDiagnostic`.
+  **The core has 0 host sites.**
+
+### The four layers (every extracted module belongs to exactly one)
+
+| layer | what | today | fate |
+| --- | --- | --- | --- |
+| **CORE** | TS source text → `{ wat, wit, diagnostics }`. Pure: no file I/O, no process exit, no console, no backend calls | `WasicTranspiler` (prepass / parse / infer / emit / runtime WAT templates), `console_log.ts`'s emission, `varscope.ts` | **the `ts2wasm` seam**: moves as a unit under I11 |
+| **FRONT EDGE** | gathers the source: reads imported `.ts`, resolves `wasmtk:<cap>` virtual imports, records `.wasm` imports | `tsbundler.ts` (`bundleImportsEx`), `jstyper.ts` | its OUTPUT must be pure data (source text + `{prefix, bytes, wit}` import descriptors), so the core never needs a file system |
+| **BACK EDGE** | WAT → wasm: merge imported modules, post-merge fixups, assemble, `-Oz` | `mergeOneWasmImport` + the fixup regexes, `wasmmerge.ts`, `watToOptimisedWasm`, the mathlib auto-merge | **NOT the core**: H11 #1/#3 moves it onto binaryang's parser/IR. Keeping it out of the core means neither move blocks the other |
+| **CLI EDGE** | path-based entry points and printing | `compileWasiTs` / `compileLibTs` / `compileWasi` / `compileWat`, `suggestNextStepOnAbort` | stays in wasmtk (the thin orchestrator in `projects.md`) |
+
+### Rules for Phases 1–3 (in addition to "output-preserving" below)
+
+1. **A core module never imports** `rt.ts`, `utils.ts`, `wasmmerge.ts`, `tsbundler.ts`, `wabt`,
+   `binaryen-backend` or `@std/path`, and never calls `console.*` or exits. Errors are
+   `diagnostics`. This is checkable by grep, so it becomes a gate (see below), not a convention.
+2. **The core's entry is string-in / data-out.** Phase 3's facade exposes something like
+   `transpile(source, options) → { wat, wit, diagnostics, warnings }`. The path-based functions
+   become CLI-edge wrappers over it. The exact signature is NOT fixed here: that is `ts2wasm` scope.
+3. **Back-edge code is extracted to its own modules (`src/wasic/link/…` or similar), never into the
+   core tree**, even where it is regex-over-WAT that H11 will retire.
+4. **`compiler-bugs.md` classifies every entry** (silent-wrong / loud, status, scope) with a tally
+   at the top. The open-silent-wrong-in-the-compiler count is bar (c). A new entry without a class
+   line is incomplete.
+
+### The seam gate
+
+A structural check that no core code touches the host. Today that means the `WasicTranspiler` body.
+After Phase 1, it means every module under the core tree. `tests/wasic_seam_tests.ts` runs it
+(added 2026-09-28). It must pass at every commit of Phases 1–3, next to the golden-WAT diff.
+
+### What has NOT started
+
+**Phase 0 (the hard gate)**: the golden-WAT harness (0a) does not exist, and the audit loop has not
+run. The sequence stands as written below: 0a harness → 0b–0d audit loop to zero → Phase 1. The
+only H12 work done so far is the measurement, the one core seam fix, the seam gate and the
+bug-classification pass.
+
 ## Why now — sequencing before `wasm2ts`
 
 wabt-ts's `wasm2ts` (`src/writer/ts-writer.ts`, wabt-ts `cmem/tasks.md` Phase 8) generates TypeScript

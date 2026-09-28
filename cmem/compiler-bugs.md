@@ -1,6 +1,25 @@
 # Compiler bug log
 
+## Classification tally (H12)
+
+- **SILENT-WRONG:** the defect produced a wrong result that LOOKED like success (wrong output or value, exit 0, a false pass, a swallowed error, dead code believed to guard something), with no error or abort.
+- **LOUD:** the defect announced itself (compile error/abort, crash/trap, hang, failing test, non-zero exit, visible error message), even if the message was misleading.
+
+| class | compiler-open | compiler-fixed | other-open | other-fixed |
+| --- | --- | --- | --- | --- |
+| SILENT-WRONG | 1 | 31 | 2 | 12 |
+| LOUD | 0 | 11 | 1 | 8 |
+| n/a | — | 3 | — | 3 |
+
+72 classified entries; 2 pure groupings (`### wabt-ts 1.4.0` with its blockers under `####`, and `## FIXED — the 7 long-standing test failures`) carry a note instead and are not counted. An entry covering several defects takes its WORST class. PARTIAL counts as open. n/a entries have no status and sit in the -fixed column for placement only.
+
+**Open silent-wrong in the compiler: 2** (1 headed: the JSON entry, PARTIAL; plus 1 with no heading of its own: the `"code " + x` i32-param concat gap, recorded "NOT yet fixed" in the text that follows the `ref.null` entry.)
+
+Classified 2026-09-28 from each entry's own text; re-tally whenever an entry is added or closed.
+
 ## The 2026-08-24 "-Oz failure is no longer silent" fix was DEAD CODE (FIXED 2026-09-28)
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-09-28 · **Scope:** other
 
 That audit put a `catch` around `binaryenOptimize` in `zigwasic.ts` to warn when `-Oz` failed. But
 `binaryenOptimize` catches everything itself and returns `{ optimized: false }`, so the `catch` could
@@ -26,6 +45,8 @@ fails with exactly the old symptom.
 
 ## `wasmtk run` exit status: three holes, now at parity with wasmtime (FIXED 2026-09-28)
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-09-28 · **Scope:** other (hole 2 was loud)
+
 **Owner decision:** "we should be at parity with wasmtime". Measured wasmtime first: uncaught
 exception → 1, `proc_exit(N)` → N, trap → 3 on Windows / 134 on Unix.
 
@@ -49,6 +70,8 @@ corrected to `reject`. The VANISHED check was inversion-tested by planting a mod
 
 ## wast runner: 186 FALSE PASSES — pass paths accepted the wrong kind of failure (FIXED 2026-09-28)
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-09-28 · **Scope:** other
+
 **How found:** an audit of what each permissive pass path actually passed on, counted with temporary
 instrumentation over the whole corpus (not by reading). Full table in next-work.md § "FALSE-PASS
 AUDIT". Gate 63,986 → **63,800 passed**, 618 → 804 skipped, 0 failed.
@@ -71,6 +94,8 @@ green.
 
 ## wast: `exnref` results through the trampoline, and the gate's experimental V8 flag (2026-09-28)
 
+**Class:** n/a (not a defect) · **Status:** — (coverage change and gate flag) · **Scope:** other
+
 726 → **618 skips**, 0 failures; gate 63,986 passed.
 
 - **`exnref` / `nullexnref` results (7, `ref_null.wast`).** V8 refuses these at the JS boundary, but
@@ -88,6 +113,8 @@ green.
   cap (hard-coded), and `compat/binaryen`'s `Module.validate()` is a stub that always returns 1.
 
 ## wast runner: every runner-owned skip group closed (2026-09-28) — skips 886 → 726, 0 of them ours
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-09-28 · **Scope:** other (reader swallowed assertions silently; table64 was loud; rest coverage)
 
 Gate: 63,732 / 0 / 886 → **63,880 / 0 / 726**. 28 files moved, none went down, and none gained a
 failure. Two of the seven changes were BUGS. The rest are coverage.
@@ -118,6 +145,8 @@ as one. Custom-annotation assertions share the plain handlers.
 
 ## wast trampoline: SIMD and NaN-payload assertions now RUN (2026-09-28) — skips 26,944 → 886
 
+**Class:** LOUD · **Status:** FIXED 2026-09-28 · **Scope:** other (coverage change; the exposed `hexFloatToNumber` bug failed 2 assertions)
+
 **Not a bug fix but a coverage change, recorded here because it exposed one bug.** 96% of the
 corpus's skips were JS-embedding limits, not toolchain gaps: V8 refuses `v128` at the JS boundary
 (24,078 in `simd_*`), and a JS number cannot be trusted with a NaN payload (~1,840 `nan:0x…`
@@ -146,6 +175,8 @@ value to infer result types from) are still skips. None remain in the corpus tod
 need the export's real signature, i.e. decoding the type section.
 
 ## The 100 pinned wast failures were all our RUNNER (FIXED 2026-09-28) — gate now ALL CLEAN
+
+**Class:** LOUD · **Status:** FIXED 2026-09-28 · **Scope:** other
 
 Three defects in `src/wast.ts`, none in the compiler or binaryang. Corpus 37,370 / 100 failed /
 27,148 skipped → **37,674 / 0 / 26,944**. The totals are consistent (+304 passes = 204 former skips
@@ -180,6 +211,8 @@ now proven on the whole set).
 
 ## binaryang 1.6.0 honoured `readDebugNames: true`, and the merge path broke (FIXED 2026-09-28)
 
+**Class:** LOUD · **Status:** FIXED 2026-09-28 · **Scope:** compiler (3 of 4 sites in `src/wasic.ts`; 1 in `wasmbundle.ts`)
+
 **Symptom.** On the 1.5.3 → 1.6.0 bump, `go_merge_tests` went 6/7: merging the TinyGo leaf failed
 with `undefined func "$mathleaf_addi"` (and `_muli`, `_clampi`). Every other suite was green,
 including wasi 417/417, because wasic-built libraries carry no name section.
@@ -206,6 +239,8 @@ only merge input in the tree that carries a name section).
 every option we pass to the backend when bumping it, not only for the APIs it removed.
 
 ## Phase 34 inline predicate target: the whole function header failed to parse (FIXED 2026-07-30)
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-07-30 · **Scope:** compiler (bug 1 loud, bug 2 silent)
 
 Phase 34 stress batch (type predicates), 3 owner tests. Tests 1 and 2 — basic narrowing and an
 if/else-if chain of two sibling predicates — **passed as written**. Test 3 failed, and probing its
@@ -263,6 +298,8 @@ the shape that must abort).
 
 ## Phase 33 intersection base-prefix: a base-typed parameter read the wrong fields (FIXED 2026-07-30)
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-07-30 (by a hard-abort guard) · **Scope:** compiler
+
 Phase 33 stress batch (intersection types). **All three owner tests passed as written** — the bug
 came from a follow-up probe on test 3's mechanic, not from the tests themselves.
 
@@ -314,6 +351,8 @@ two-way and a three-way intersection argument, an intermediate intersection as a
 chain, and an exact-type parameter.
 
 ## A union field shared by two variants took the FIRST variant's type (FIXED 2026-07-30)
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-07-30 · **Scope:** compiler (silent truncation masked by a loud instantiate error)
 
 Phase 19 stress batch (discriminated unions: super-struct layout / switch dispatch / chained
 `else if` narrowing). Tests 1 and 2 passed as written; test 3 failed at instantiation with
@@ -376,6 +415,8 @@ first, so widening cannot be order-dependent).
 
 ## Phase 31 TypedArray stress batch (2026-07-30) — NO BUGS FOUND
 
+**Class:** n/a (not a defect) · **Status:** — (clean stress batch, no bug) · **Scope:** compiler
+
 Recorded because a clean batch is itself evidence. 3 owner stress tests, all passing as written on
 the first run, every printed value matching the owner's inline `// Expected:` annotations:
 
@@ -396,6 +437,8 @@ without an offset, and TypedArray function parameters. The genuinely new ground 
 during this batch; see INDEX.md and testing.md.
 
 ## Namespace member references not rewritten inside the body (FIXED 2026-07-30)
+
+**Class:** LOUD · **Status:** FIXED 2026-07-30 · **Scope:** compiler (the `###` sub-entry below is classified separately)
 
 Phase 30 stress batch (namespaces / interface inheritance / shorthand properties). Tests 2 and 3
 passed as-written; test 1 failed with `Unsupported expression: GRAVITY`.
@@ -419,6 +462,8 @@ const reference, a sibling FUNCTION call, a member name inside a string literal,
 sharing a member name.
 
 ### String members in a namespace — ALSO FIXED (2026-07-30)
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-07-30 · **Scope:** compiler (string const printed 0; string return was loud)
 
 Found while probing the above; pre-existing (verified on a clean tree with the first fix stashed),
 then fixed in the same batch.
@@ -447,6 +492,8 @@ member name inside a string literal.
 Gate: wasi **400/400**, wast 12444/0, every other suite 0 failures.
 
 ## Multiplicative associativity + string-enum values + literal-led console.log (FIXED 2026-07-29)
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-07-29 · **Scope:** compiler (items 2–3 were loud)
 
 Phase 29 stress batch (static fields / getters+setters / string enums). Test 1 passed; the other two
 each failed, and the getter/setter failure turned out to be a **general arithmetic bug** with nothing
@@ -499,6 +546,8 @@ other suite 0 failures.
 
 ## `arr.join()` had no string VALUE + console.log concat broke on `]`/`)` (FIXED 2026-07-28)
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-07-28 · **Scope:** compiler (join-as-value was a loud abort; concat printed `0`)
+
 Two bugs from the Phase 28 array-method stress batch (`28_ArrayPredicatesAndAt` and
 `28_ArrayMutationsAndSort` passed as-written; `28_ArrayJoin` failed).
 
@@ -545,6 +594,8 @@ on Windows.**
 
 ## Phase 27 string methods missing from `emitStringPtrLen` — silent `0` (FIXED 2026-07-28)
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-07-28 · **Scope:** compiler
+
 Surfaced by an owner stress test whose only failing line was `console.log("Repeated:", "x".repeat(3))`
 → printed **`0`** instead of `xxx`. Pulling the thread showed a whole family of silent-wrong output.
 
@@ -590,6 +641,8 @@ skipped) all **0 failures**.
 
 ## `bundle_tests.ts` StructImport — struct types gated on PascalCase spelling (FIXED 2026-07-28)
 
+**Class:** LOUD · **Status:** FIXED 2026-07-28 · **Scope:** compiler
+
 The one long-standing red suite. `StructImport` (a two-file fixture importing `interface Vec2`
 from `vec.ts`) aborted with 10 "unsupported expression" diagnostics — every `a.x` field access and
 both struct literals.
@@ -623,6 +676,8 @@ write, struct params, struct literals). Gate: wasi **384/384**, **bundle 4/4 (wa
 142, jstyper 73, mod 55, merge 1, varscope 12, wasmmerge_guard — all zero failures.
 
 ## Stress-test batch (2026-07-28) — 8 new Phase 22/24/25/26 tests surfaced 6 bugs, all FIXED
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-07-28 · **Scope:** compiler (bugs 4 and 6 silent; 1–3 and 5 loud)
 
 Owner supplied 8 hand-written stress tests (Phase 22 enum-folding/casts, 24 nullable returns, 25
 nullish/logical-assignment, 26 `for…of`/destructuring). 3 passed as-written; the other 5 each
@@ -690,6 +745,8 @@ the working changes, rebuilding, and re-running. Still open; worth a look separa
 
 ## Code-audit sweep (2026-07-08) — THREE fan-out passes, all fixed, all suites green
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-07-08 (two documented latent limits remain, see "Known-latent") · **Scope:** other
+
 Three adversarial fan-out passes over the freshly-added asyncify port (binaryen-ts) + Go-bindgen /
 WIT-overlay / hybrid / bindgen surface (wasmtk), then over this session's own fix code. Final
 gates: binaryen-ts **401/401** · wasi **375/375** · bindgen **142** · go_bindgen **7/7** ·
@@ -743,6 +800,8 @@ Commits: binaryen-ts `e616d8f`/`27a6f2f`/`0cc225b`/`c5bee62`, wasmtk `0e94a38`/`
 
 ## wabt-ts BACKEND bugs surfaced by the `.wast` spec runner — NOT wasmtk-side
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-07-02 (wabt-ts 1.3.4/1.3.5) · **Scope:** other — this line covers only the preamble's 3 execution findings; each `###`/`####` below carries its own line.
+
 The `wasmtk wast` conformance runner (`src/wast.ts`, gate `tests/wast_tests.ts`) runs the official
 WebAssembly spec `.wast` testsuite through the pluggable WABT backend + host V8. Each isolated execution
 failure is a genuine `jsr:@jrmarcum/wabt-ts` (active backend) bug (V8 is spec-compliant; fed wabt-ts's
@@ -775,6 +834,8 @@ The runner also counts validation-assertion toolchain leniency (`assert_invalid`
 wabt+V8 fails to reject) as **skips**, not failures.
 
 ### wasic emits LEGACY exception handling — Wasmtime cannot run it (OPEN, 2026-08-24)
+
+**Class:** LOUD · **Status:** FIXED 2026-08-25 (see "LEGACY EH MIGRATED TO `try_table`" below; the heading's OPEN predates it) · **Scope:** compiler
 
 Reported by the **wabt-ts** side (`wabt-ts/scripts/wasmtk-eh-report.md`, commit `b26b6a99`) and
 **confirmed here against freshly regenerated artifacts** (wasi suite 417/417, corpus rebuilt
@@ -831,6 +892,8 @@ fixes Wasmtime and does not change Wasmer. Not a reason to defer; Wasmtime is th
 
 ### The wabt-ts `KNOWN_INVALID` list is STALE — do not act on it (checked 2026-08-24)
 
+**Class:** SILENT-WRONG · **Status:** OPEN (fix is on the wabt-ts side, per this entry) · **Scope:** other
+
 The same report repeats seven modules as "genuinely invalid wasm … V8, Wasmtime and Wasmer all
 reject them". **Not reproducible here.** Against artifacts regenerated from current `wasic`, all
 seven RUN CLEAN on `wasmtime 47.0.3` — exit 0, correct output:
@@ -848,6 +911,8 @@ Same failure mode as the `proposals/threads/` false alarm (see testing.md): a st
 snapshot read as a live signal. Fix is on their side — re-vendor the corpus.
 
 ### wast runner memory — ✅ FIXED, verified 2026-08-25 (was OPEN; the diagnosis below was wrong)
+
+**Class:** LOUD · **Status:** FIXED 2026-08-25 · **Scope:** other
 
 **A full 288-file directory run now completes in ONE process** — `37247 passed, 102 failed, 27275
 skipped, 162 unbuilt modules`, no OOM, totals identical to the chunked gate.
@@ -870,6 +935,8 @@ retracted hypothesis.**
 
 ### (RETRACTED) wast runner memory — OPEN as of 2026-08-20 (OURS, not a backend bug)
 
+**Class:** n/a (not a defect) · **Status:** — (retracted hypothesis; see entry above) · **Scope:** other
+
 `wasmtk wast <dir>` over the full 288-file spec corpus dies with `Fatal JavaScript out of memory:
 Ineffective mark-compacts near heap limit`. Heap reaches ~1.9 GB within the first few files, then
 creeps ~1–6 MB per file; `proposals/custom-descriptors/exact.wast` exhausts the heap **on its own**.
@@ -888,6 +955,8 @@ Knock-ons to be aware of before touching this:
   from losing all its results.
 
 ### 2026-08-24 "look for code issues" audit — 5 passes, 9 fixed, 1 retracted
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-08-24 · **Scope:** compiler (`evalEnumExpr`, `console.log(a == b)`); also other (CLI exit 0, Zig `report()`, gate holes)
 
 Full trigger sweep. Grouped by what the defect actually was, because three of them are the SAME
 SHAPE in different files: a result that was computed correctly and then never reached the caller.
@@ -945,6 +1014,8 @@ caught the `report()` bug automatically. See [next-work.md](next-work.md).
 
 ### `fd_write` short writes — ✅ FIXED 2026-08-24 (found by the multi-engine gate on run one)
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-08-24 · **Scope:** compiler
+
 **Found by the new multi-engine gate on its very first full run** (`tests/engine_cross_check_tests.ts`),
 which is exactly the class of defect it was built for: 37 corpus modules produce **different stdout on
 wasmtime than on V8** — and match on wasmer and wazero, so V8-only testing could never see it.
@@ -987,6 +1058,8 @@ calling this fixed — there are two `nwrittenOffset` call sites in `console_log
 (~3040, ~3177).
 
 ### `console.log(<bool expr>)` evaluated its argument TWICE — ✅ FIXED 2026-08-24
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-08-24 · **Scope:** compiler
 
 Found while fixing `fd_write` above — same code region, unrelated defect, and **worse in kind**: it changes program semantics rather than output formatting.
 
@@ -1040,6 +1113,8 @@ exclusion existed *because* of the multiple evaluation.
 
 ### wabt-ts 1.4.0 — cleared THREE blockers, but the bump was REVERTED same-day (2026-08-25)
 
+**Class:** grouping — each blocker is classified under its own `####` below (not counted in the tally).
+
 Probed BEFORE bumping, per the recorded plan. All five `try_table` handler forms encode; `ref.null`
 encodes for every heap type; and `proposals/custom-descriptors/exact.wast` — the 50-character input
 that took `parseWat` to 4 GB and killed the process — now runs. `(module definition …)` still does
@@ -1050,6 +1125,8 @@ not parse, which is expected: that one really is upstream-wabt parity.
 file that had been DARK. Scoped in [next-work.md](next-work.md).
 
 #### Blocker 1 of 3 — `unknown type` — ✅ FIXED 2026-08-25 (and it was not what it looked like)
+
+**Class:** LOUD · **Status:** FIXED 2026-08-25 · **Scope:** compiler (`internalizeDynrtHostImports`, `src/wasic.ts`)
 
 **The dangling `(type N)` was the symptom; matching a pretty-printer's exact output was the bug.**
 `internalizeDynrtHostImports` recognised its two host imports with regexes requiring
@@ -1070,6 +1147,8 @@ its side effect of making the regex match again is what made it look partly righ
 **A regex over generated text is a coupling to a formatter, not to a format.**
 
 ### ✅ LEGACY EH MIGRATED TO `try_table` — 2026-08-25, on wabt-ts 1.4.1
+
+**Class:** n/a (not a defect) · **Status:** — (fix record for the legacy-EH entry) · **Scope:** compiler
 
 **The headline defect of the whole exchange, and it is fixed.** Every TypeScript `try`/`catch`/
 `finally` now compiles to the STANDARD exception proposal. Measured on `15_Exceptions`: legacy
@@ -1092,6 +1171,8 @@ not an inline handler — without unique labels an inner handler shadows an oute
 that, and they were right — dropping it would silently degrade every uncaught error to an opaque trap.
 
 #### ⚠️ The deliberate cost: `try_table` modules SKIP binaryen `-Oz`
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-08-27 (binaryang 1.5.2; skip removed) · **Scope:** other (binaryen `-Oz` miscompiled `try_table`)
 
 binaryen-ts 1.4.3's binary reader rejects a multi-value block type, and a two-param tag makes the
 handler block's type necessarily multi-value. `try_table` itself is fine in binaryen-ts; multi-value
@@ -1189,6 +1270,8 @@ component is on the critical path or merely on the current path.**
 
 ### 🔥 wabt-ts 1.4.1 prints const-exprs UNFOLDED — six folded-only regexes silently no-opped (FIXED 2026-08-25)
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-08-25 · **Scope:** other (`wasmmerge.ts`/`wasmbundle.ts`; one site in `wasic.ts`; seen only as a hang)
+
 **The most dangerous bug of this batch, and it was OURS, not wabt's.** Found only because a full
 `wasi_tests` run *hung* — two processes burning 1146s and 540s of CPU. A hang, not a failure.
 
@@ -1240,6 +1323,8 @@ back empty. See the parallel-code-paths warning in `CLAUDE.md`.
 
 #### Blocker 2 of 3 — `duplicate local $alist` — ✅ FIXED 2026-08-25
 
+**Class:** LOUD · **Status:** FIXED 2026-08-25 · **Scope:** compiler
+
 `dynArrayMethod` in the dynrt library declares `const alist` in **four separate branches**.
 TypeScript scopes those independently; wasic hoists every declaration to a function local. Several
 registration paths feed `declaredLocals` and only the supplementary scan checked `locals` first, so
@@ -1260,6 +1345,8 @@ rule in [testing.md](testing.md) exists for exactly this, and it nearly banked a
 test that never re-ran the compiler.
 
 #### Blocker 1b — 1.4.0 dync output is EMPTY (OPEN, cause not established)
+
+**Class:** SILENT-WRONG · **Status:** OPEN (cause not established; suspected `wasmmerge`) · **Scope:** other
 
 With blocker 1 fixed the module assembles on 1.4.0 and still prints nothing. Same input yields a
 structurally IDENTICAL module — same section counts, 157 data segments, 34 globals — but **774 bytes
@@ -1300,6 +1387,8 @@ half of that same claim did hold.
 
 ### `decodeWatString` corrupted every non-ASCII character — ✅ FIXED 2026-08-25
 
+**Class:** LOUD · **Status:** FIXED 2026-08-25 · **Scope:** other (spec runner; surfaced as 368 failures)
+
 Pushed `s.charCodeAt(i)` into a `number[]` that becomes a `Uint8Array`, which truncates anything
 above `0xFF`. `names.wast` exports a function named **U+FEFF** (raw `EF BB BF` in the source): we
 pushed `0xFEFF`, it became `0xFF`, and the export lookup missed. Astral characters were worse — a
@@ -1314,6 +1403,8 @@ latent defect of ours sitting behind a toolchain gap, which is exactly why a fil
 `0 passed, N skipped` has to be treated as dark rather than healthy.
 
 ### wabt-ts cannot ENCODE `try_table` — blocks the EH migration (OPEN, 2026-08-24)
+
+**Class:** LOUD · **Status:** FIXED 2026-08-25 (wabt-ts 1.4.x per the entries above; the heading's OPEN predates it) · **Scope:** other
 
 Found while closing a caveat the binaryen-ts team raised (they asked which side should fix the
 legacy-EH problem; see `scripts/binaryen-ts-report.md`). **This inverts the plan recorded earlier
@@ -1359,6 +1450,8 @@ emit it, both proposed options need work there and the sequencing changes again 
 the binaryen half is clear.**
 
 ### wabt-ts `ref.null` + parser gaps — OPEN as of 2026-08-20 (wabt-ts 1.3.5)
+
+**Class:** LOUD · **Status:** FIXED 2026-08-25 (item 1: `ref.null` encodes in wabt-ts 1.4.0 per the entry above; items 2–3 are upstream parity, not defects) · **Scope:** other
 
 > **Corrected 2026-08-20 (same day).** The first version of this entry blamed
 > "typed function references `(ref null $t)`" and said a wabt-ts bump would likely recover them. Both
@@ -1468,6 +1561,8 @@ the RegExp `&&` precedent). (Pre-18j: 317 = 307 at v1.7.0 + 2 Phase-53 tests + 8
 
 ## FIXED — wasic `parseClasses` was string-blind: `class …{}` inside a STRING parsed as a real class (#14 2e.8, 2026-06-26)
 
+**Class:** LOUD · **Status:** FIXED 2026-06-26 · **Scope:** compiler
+
 Surfaced building #14 2e.8 (classes in the dynrt interpreter): the test driver passes eval-source STRINGS
 like `"class Point { constructor(x){ this.x = x; } … } const p = new Point(5); …"` to `dynRun`. wasic's
 `parseClasses` (`src/wasic.ts`) ran its `class\s+(\w+)…{` regex over the RAW `this.src` (string-blind), so
@@ -1485,6 +1580,8 @@ visible).
 
 ## FIXED — `deno fmt` wrapped a deeply-indented ternary that modc can't parse (process bug, 2026-06-26)
 
+**Class:** LOUD · **Status:** FIXED 2026-06-26 · **Scope:** other (process; dynrt lib source)
+
 Found building #14 2e.7: the dynrt lib (`tests/wasi/wasm_wasi_bundle/dynrt_bundle/dynrt_lib_modc.ts`) is
 compiled by **`modc`**, whose body-line joiner does NOT handle a multi-line (wrapped) ternary. Three
 deeply-indented ternaries in the 2e.4 member/index-assign path (16-space indent, >100 cols) — e.g.
@@ -1500,6 +1597,8 @@ POST-fmt source before committing — `deno fmt` line-wrapping and the modc subs
 Cheap guard: keep dynrt conditionals as `if/else` rather than long ternaries at deep indentation.
 
 ## FIXED — wasic arrow detection mis-fired on `=>` inside STRING LITERALS (#14 2e.3, 2026-06-24)
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-24 · **Scope:** compiler (`=>` loud; the `?.` strip silently rewrote string data)
 
 Surfaced building #14 2e.3 (arrow functions in the dynrt interpreter): the test driver passes eval-source
 STRINGS like `"const add = (a, b) => a + b;"` to `dynRun`. wasic's two arrow-detection sites scanned the
@@ -1524,6 +1623,8 @@ literal now compiles correctly.
 
 ## FIXED — wasmmerge placed a merged module's non-WASI import AFTER function definitions (#14 Phase 2, 2026-06-24)
 
+**Class:** LOUD · **Status:** PARTIAL — fixed 2026-06-24 in `wasmmerge`; `wasmbundle` still does not route `importWat` (documented follow-up) · **Scope:** other
+
 Surfaced building #14 Phase 2 (host→core callbacks): the dynrt lib gained ONE `env.__host_call` import
 (its first import). Adding it broke `18l` (explicit-path dynrt merge) with a runtime "memory access out
 of bounds" — while `18q`/`18za` (virtual-path) passed. Long diagnosis (isolation + GOOD/BAD WAT diff +
@@ -1542,6 +1643,8 @@ into its master WAT — a non-WASI import in a `wasmbundle`d module would be dro
 mis-handled there pre-fix; no regression, no current test exercises it) — documented follow-up.
 
 ## "look for code issues" audit of the functions-as-`any` work (2026-06-24, post-v1.9.0)
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-24 · **Scope:** compiler (`eval(`/`Function(` pre-pass); also other (bindgen, tsbundler)
 
 Focused audit of the freshly-shipped functions-as-`any` code (pin table, `Function(` producer, bindgen
 tag-7 proxy, the tsbundler comment-strip). Suite **335/335 → 336/336** (item 3 added the `18zb`
@@ -1582,6 +1685,8 @@ regression), bindgen **119 → 122**.
 
 ## ✅ FIXED 2026-06-30 (was OPEN) — `f64call() | 0` doesn't truncate a call result in i32 context (found 2026-06-23)
 
+**Class:** LOUD · **Status:** FIXED 2026-06-30 · **Scope:** compiler
+
 **Fix:** the general user-call return in `emitExpr` (`src/wasic.ts`) now wraps `(i32.trunc_f64_s …)` when the called fn's `result` is f64/f32 and `defaultType` is i32. Regression `62_GapNumericCoercion`. Original note below.
 
 `s = s + (dynNumberValue(x) | 0)` where `dynNumberValue` returns `f64` miscompiles:
@@ -1593,6 +1698,8 @@ f64 needing `i32.trunc_f64_s`. Low severity. Fix site: the `| 0` / i32-coercion 
 (detect an f64-returning call operand). Bind the call to an `f64` local first as a workaround.
 
 ## FIXED — wasmmerge clobbered ALL merged mutable globals to 131072 (#14 GC Part 3, 2026-06-22)
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-22 · **Scope:** other (silent heap corruption; trapped only past ~3–4k cells)
 
 `mergeWasmWat` (`src/wasmmerge.ts` ~line 776) rewrote the initial value of **every** `(mut i32)` global
 in a merged library to `131072` (the page-2 boundary). That hack was meant for a hand-written library
@@ -1618,6 +1725,8 @@ i.e. an initial-value/relocation problem, not a logic bug.
 
 ## ✅ FIXED 2026-06-30 (was OPEN) — single-physical-line function: nested-block `const` not declared as a WAT local (found 2026-06-22)
 
+**Class:** LOUD · **Status:** FIXED 2026-06-30 · **Scope:** compiler
+
 **Fix:** a supplementary `maskCode`-masked scan in `emitFunction` (after the anchored pre-scan) declares any primitive `const`/`let` that follows a `{`/`;` on the same physical line. Regression `62_GapSingleLineLocals`. Original note below.
 
 A function written on ONE physical line whose body has a nested block declaring a local —
@@ -1630,6 +1739,8 @@ by writing the test's `check` multi-line. Fix site: the local-declaration pre-sc
 bodies in `emitFunction`.
 
 ## ✅ FIXED 2026-06-30 (was OPEN, worked-around-in-lib) — 4 gaps surfaced by the #14 dynamic runtime (found 2026-06-22)
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-30 · **Scope:** compiler (gap 3 silent; gaps 0–2 loud)
 
 **All four are now fixed in the compiler** (regressions `62_GapNumericCoercion` + `62_GapStringCalls` +
 `62_GapEmptyArrayGrow`): **0/5.0** module-global + TypedArray-element reads now coerce like the local
@@ -1676,6 +1787,8 @@ context in [dynrt-design.md](dynrt-design.md). None failed the suite.
 
 ## console.log struct-array STRING field printed the raw pointer (2026-06-15, async 13.4b)
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-15 · **Scope:** compiler
+
 Both console.log/console.error `arr[idx].field` struct-lookup closures returned a `field.type ===
 "string"` field with only `watLoad` (the ptr i32) and NO `watLoadLen`, so `console.log(arr[i].strField)`
 printed the raw data pointer (e.g. `260`) instead of the string text. Surfaced by `Promise.allSettled`'s
@@ -1684,6 +1797,8 @@ watLoad: ptr@offset, watLoadLen: len@offset+4}` (the same shape the class-var st
 used). General improvement — any struct-array string field in console.log now prints correctly.
 
 ## Capturing expression-body arrow result-type inferred as f64 (2026-06-15, async 13.1b)
+
+**Class:** LOUD · **Status:** FIXED 2026-06-15 · **Scope:** compiler
 
 A LATENT bug surfaced by capturing-closure `.then` callbacks. `substituteOneArrow` inferred an
 **expression-body** arrow's result type (`v => base + v`, no return annotation) with ONLY the arrow's
@@ -1699,6 +1814,8 @@ mis-picked `await_i32`; added a `cbResult` resolver covering the `__anon_N__fact
 
 ## Multi-level interface inheritance dropped fields on forward `extends` (2026-06-15, Phase 53.11)
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-15 · **Scope:** compiler
+
 `parseStructs` built interface/object-type structs in a single **source-order** regex pass. When a
 derived interface was declared **before** its base (`interface C extends B {…}` above `B`/`A`), the
 base wasn't in `structDefs` yet, so the inherited fields were silently lost — `const c: C = {x,y,z}`
@@ -1712,6 +1829,8 @@ unresolved base. Field-building extracted into the new `buildStructDef` helper. 
 behavior change for in-order decls (non-extends build in the same interfaces-then-type-aliases order).
 
 ## console.log string/numeric comparison fixes + member-target chained assignment (2026-06-12)
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-12 (a documented LOUD limitation remains: 5th+ numeric arg in per-iov mode prints `?`) · **Scope:** compiler
 
 The remaining audit items (the console_log.ts silent-wrong stubs the wasic-side hardening didn't
 reach — console_log has no `diagnostics` channel). Root cause was a single broad bug plus a few
@@ -1754,6 +1873,8 @@ in per-iov mode** prints `"?"` (a VISIBLE marker, not silent-wrong). Raising `SC
 load-bearing for data-pointer relocation. Left as-is.
 
 ## Pre-publish hardening pass — else-chain drop bug + silent-fall-through diagnostics (2026-06-12)
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-12 · **Scope:** compiler
 
 A pre-bump audit (workarounds / dead code / silent fall-throughs) added **unsupported-feature
 diagnostics** to the emitter's terminal "give-up" fallbacks, and that immediately surfaced a **real,
@@ -1802,12 +1923,16 @@ statement emitter; the chained-assignment `=` scan is now string/template-aware.
 
 ## Phase 52 (2026-06-11) — leaf conveniences
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-11 · **Scope:** compiler
+
 Phase 52 surfaced one pre-existing gap, now fixed: `console.log("s.length:", s.length)` on a STRING var
 returned 0 — `console_log.ts dotLenMatch` only handled array `.length`; added a string-`.length`
 branch (UTF-8 byte length) for local strings / module string consts / string globals (also fixed
 the same direct-print path for `fromCharCode` strings).
 
 ## Remaining-items pass — chained new().method(), module-level multi-statement lines, string-assign delegation (2026-06-08)
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-08 (item 5 2026-06-09; the named feature gaps hit a stub, later a loud abort) · **Scope:** compiler (item 5 is `wasmmerge`)
 
 Cleared the low-severity items the pre-bump audit had left (suite 296→298). Two MORE real
 silently-wrong bugs surfaced + fixed in the process:
@@ -1855,6 +1980,8 @@ silently-wrong bugs surfaced + fixed in the process:
 
 ## Pre-bump audit — greedy method/new in binary ops + console.log array arithmetic (2026-06-08)
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-08 · **Scope:** compiler
+
 A "dead code / workarounds / bugs / fallthroughs" sweep (3 parallel scan agents + reproduction)
 before bumping wasmtk found two REAL silently-wrong-output bugs (both fixed; suite 293→296):
 
@@ -1899,6 +2026,8 @@ companion `memory.grow`-in-merge guard.
 
 ## Proactive hazard-audit fixes (2026-06-08, suite 292→293)
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-08 · **Scope:** compiler
+
 A codebase sweep for latent workarounds / fallthroughs found four issues; all fixed (zero
 regressions, `src/wasic.ts` + `src/console_log.ts`):
 
@@ -1923,6 +2052,8 @@ regressions, `src/wasic.ts` + `src/console_log.ts`):
    `console_log.ts` (mirrors wasic's) for the console.log-arg `at`/`isNaN` handlers.
 
 ## The 14 output-mismatch bugs — ALL FIXED 2026-06-08
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-08 · **Scope:** compiler (one cluster was a binaryen `-Oz` bug)
 
 The runner-hardening (2026-06-07) exposed 14 tests whose WASM output diverged from native TS. All
 fixed, grouped by root cause (suite 278/292 → **292/292**, zero regressions; `src/wasic.ts` +
@@ -1999,6 +2130,8 @@ fixed, grouped by root cause (suite 278/292 → **292/292**, zero regressions; `
 
 ## Runner-hardening audit (2026-06-07) — exit-code suite was masking wrong output
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-07 (the 14 deferred mismatches closed 2026-06-08, entry above) · **Scope:** other (test runner; two compiler scanner fixes too)
+
 **Test runner hardened (`tests/wasi_tests.ts`):** previously a test "passed" if compile / run-ts /
 run-wasm each exited 0 — it never compared the two runs' *output*. Now it captures both stdouts and
 fails on mismatch (`output-mismatch`), unless the test carries `// @allow-output-diff` (for the few
@@ -2038,6 +2171,8 @@ By cluster:
 
 ## console.log i32 struct-field + struct-field arithmetic emitted f64.add — FIXED 2026-06-07
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-07 (array-element part 2026-06-12) · **Scope:** compiler (main defect loud; `arr[i] + arr[j]` part silent)
+
 Pre-existing (predates Phase 51.4; found while building the utility-types test). `console.log("x:",
 a.i + b.i)` where `a.i`/`b.i` are **i32 struct fields** — and 3-term `a + b + c` of i32 locals —
 emitted `f64.add` of `i32.load`s and failed to compile (`f64.add[0] expected f64, found i32...`). In
@@ -2055,6 +2190,8 @@ variable indices) is correct (verified directly).
 
 ## Tuple positional-gap collapse in nested destructure rewrite — FIXED 2026-06-07 (pre-commit)
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-07 · **Scope:** compiler
+
 Caught during Phase 51.3 nested-tuple work, never shipped. The rewritten recursive destructure helpers
 used `splitBraceAwareCommas`, which **drops empty elements** — so `const [coordX, , coordY] = t`
 collapsed the gap and `coordY` read index 1 instead of 2 (`21_SkippedElementsAndGaps` printed
@@ -2064,6 +2201,8 @@ not output), so it was found only by output-diffing ts-run vs wasm-run. Fixed wi
 recorded in testing.md / roadmap.md: output-verify the tests a codegen change touches.
 
 ## Reactor library exports trapped without `_initialize` — FIXED 2026-06-07
+
+**Class:** LOUD · **Status:** FIXED 2026-06-07 · **Scope:** other
 
 Surfaced wiring `modc --lang=go` to build a WASI **reactor library** (`-buildmode=c-shared`; see
 polyglot-producers.md). Calling such a library's export via `wasmtk mod <lib> fn args` (or `wasmtk
@@ -2079,6 +2218,8 @@ Phase-40 `env` Proxy as `runWasi` (unlisted `env` imports → no-op stubs) for r
 provide the browser `gojs` namespace, so syscall/js browser modules stay (correctly) un-hostable.
 
 ## Merge guard #2 — `memory.grow` in a merged module (2026-06-07)
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-07 (by a loud guard) · **Scope:** other
 
 Companion to the 2026-06-05 `call_indirect`-in-merge guard. `wasmmerge` now also throws a loud,
 actionable error when a module being merged contains `memory.grow`. **Why:** `memory.grow` signals
@@ -2108,6 +2249,8 @@ hand-built `memory.grow` module imported by a wasic program is rejected with the
 
 ## Workaround audit follow-up (2026-06-05)
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-05 · **Scope:** compiler (`call_indirect` merge guard is other)
+
 A sweep for remaining "workarounds" (keywords + a measurement of silent-stub hits) produced:
 
 - **FIXED — `s.at(i).charCodeAt(j)` silently returned 0.** The chain fell to the catch-all `emitExpr`
@@ -2133,6 +2276,8 @@ A sweep for remaining "workarounds" (keywords + a measurement of silent-stub hit
 
 ## Single-physical-line class / constructor bodies — FIXED 2026-06-05
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-05 · **Scope:** compiler
+
 `class C { v: i32; constructor(x: i32) { this.v = x; } }` with the whole class (and/or constructor)
 body on ONE physical line previously parsed wrong two ways: (1) **fields were dropped** — the field
 loop iterated `classBody.split("\n")` and skipped any line containing `(`, so a field sharing the
@@ -2151,6 +2296,8 @@ single physical line is split into statements via the existing string-aware `spl
 class bodies (the norm) are unaffected. Validated: full suites green, zero regressions.
 
 ## Class construction gaps surfaced during Phase 51 instanceof — FIXED 2026-06-05
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-05 · **Scope:** compiler
 
 Found while writing instanceof tests; both predated Phase 51 and were unrelated to instanceof (the
 WASM output silently diverged from the TS oracle — no error — so they were latent). Both now fixed
@@ -2180,6 +2327,8 @@ with regression tests `51_ModuleLevelClassInstance` + `51_ClassInstanceArrayLite
 same Phase 51 pass — see the "Single-physical-line class / constructor bodies" section above.)
 
 ## FIXED — single-physical-line function bodies were mangled (2026-06-03)
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-03 · **Scope:** compiler (trailing statements silently dropped; some shapes V8-rejected)
 
 When a whole function body lived on ONE physical line, multi-statement bodies were mis-emitted and
 trailing statements after a brace `if` block were silently dropped. Two root causes:
@@ -2218,6 +2367,8 @@ that `expandInlineBraceChain` alone fixed this was inaccurate; `cmem/` is author
 
 ## FIXED — the 7 long-standing test failures (2026-06-02)
 
+**Class:** grouping — the two root causes are classified under `(a)` and `(b)` below (not counted in the tally).
+
 All 7 of the previously-"known pre-existing" failures are now fixed; as of 2026-06-02 the full
 `tests/wasi/wasm_wasi` was **278/278** (the 7 fixes brought it to 277/277; the new `18h` virtual-
 capability test added the 278th). (By 2026-06-03 it was **279/279** — the single-line-brace
@@ -2225,6 +2376,8 @@ capability test added the 278th). (By 2026-06-03 it was **279/279** — the sing
 They were two unrelated root causes:
 
 ### (a) Value-fallthru codegen — `5e_MixedSignatures`, `19_NestedDiscriminantUnions`, `19_VariantMaximumMemoryAlignment` (fixed in wasic)
+
+**Class:** LOUD · **Status:** FIXED 2026-06-02 · **Scope:** compiler
 
 A value-returning function whose body **ends in a statement-level (void) `if/else` where every
 path `return`s** left nothing on the stack at the implicit function end. wabt + binaryen accept
@@ -2247,6 +2400,8 @@ section at the top of this file. The 7 fixes here all use the multi-line form.
 
 ### (b) Hex-float literals encoded as 0 — `38_MathExpLog`, `38_MathHyperbolic`, `38_MathTrig`, `38_Phase38Combined` (fixed in wabt-ts 1.3.1)
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-02 (wabt-ts 1.3.1) · **Scope:** other (backend; garbage `Math.*` values, sometimes a trap)
+
 The mathlib functions are merged from `mathlib.wasm`, whose f64 constants are in **hex-float**
 notation (`0x1.921fb54442d18p+2`) after wabt disassembly. `wabt-ts@1.3.0`'s parser
 (`parseF32/F64LiteralBits`) handled `LiteralType.Hexfloat` with JavaScript's `parseFloat()`, which
@@ -2263,6 +2418,8 @@ both f32 and f64 Hexfloat cases route through it; decimal `Float` still uses `pa
 bumped `^1.3.0` → `^1.3.1`. Regression test in wabt-ts `tests/tools/wat2wasm.test.ts`.
 
 ## FIXED — short-circuit `&&`/`||` removes the merge OOB-`charCodeAt` trap class (2026-06-02)
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-06-02 · **Scope:** compiler (trap with runner exit 0 and no stderr)
 
 This was the last OPEN bug. **Fixed properly** (Proper-fix #1 from the original writeup) by making
 wasic emit **short-circuit** `&&`/`||` instead of a bitwise `i32.and`/`i32.or`; the RegExp library's
@@ -2300,6 +2457,8 @@ t.charCodeAt(ti + count)) === 1` **directly in the `while` `br_if`** (the exact 
 
 ## FIXED — RegExp work (2026-05-31)
 
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-05-31 · **Scope:** compiler
+
 - **Greedy `charCodeAt` (and `startsWith`/`endsWith`/`split`) regex swallowed a following operator.**
   `expr.match(/^(\w+)\.charCodeAt\s*\((.+)\)$/)` with greedy `(.+)` matched the whole
   `p.charCodeAt(i) === t.charCodeAt(i)` as one call (the expr *starts* with `p.charCodeAt(` and
@@ -2309,6 +2468,8 @@ t.charCodeAt(ti + count)) === 1` **directly in the `while` `br_if`** (the exact 
   `v[i] !== t.charCodeAt(i)` didn't hit this because it starts with `v[`, not `X.charCodeAt`.)
 
 ## FIXED — JSON work (2026-05-31)
+
+**Class:** SILENT-WRONG · **Status:** PARTIAL — fixed 2026-05-31, but `console_log.ts`'s console.log-arg emitter still uses the un-escaped literal form (item 3) · **Scope:** compiler
 
 1. **String args to a merged import dropped to one stack value** (`need 2, got 1`). A modc
    `func(s: string)` compiles its string param to `(i32 i32)`, so `mergeWasmWat` registered the
@@ -2337,6 +2498,8 @@ t.charCodeAt(ti + count)) === 1` **directly in the `while` `br_if`** (the exact 
 
 ## The 7 formerly-known test failures — ALL FIXED 2026-06-02
 
+**Class:** n/a (not a defect) · **Status:** — (pointer to the fuller entry above) · **Scope:** compiler
+
 These failed for a long time but are **now all passing** (full suite 278/278 as of 2026-06-02;
 live count at the top of this file — **309/309**). Kept here as a
 pointer; full root-cause writeups are in the "FIXED — the 7 long-standing test failures" section at
@@ -2348,6 +2511,8 @@ the top of this file.
 | `38_MathExpLog` / `38_MathHyperbolic` / `38_MathTrig` / `38_Phase38Combined` | merged mathlib returned garbage — hex-float consts encoded as 0; the original "f64→i32 truncation" framing was a downstream symptom (NaN/Inf → `i64.trunc_f64_s` trap) | wabt-ts 1.3.1 hex-float parse fix |
 
 ## Regenerated `.wat`/`.wasm` artifact churn
+
+**Class:** n/a (not a defect) · **Status:** — (process note on artifact churn) · **Scope:** other
 
 Running the suite overwrites many committed `tests/wasi/wasm_wasi/*.wat`/`*.wasm` from passing tests
 (cumulative compiler drift, not behavior changes — outputs are identical). One incidental cosmetic

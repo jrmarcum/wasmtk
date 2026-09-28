@@ -13700,14 +13700,17 @@ class WasicTranspiler {
           this.interfaceVars.has(receiver) || this.namespaceDefs.has(receiver) ||
           this.externalBindings.has(receiver);
         if (!isKnown) {
-          console.error(
-            `❌ wasic: '${receiver}' is not defined — '${receiver}.${methodName}(...)' cannot be compiled`,
+          // A diagnostic, not `console.error` + `rt.exit(1)` (2026-09-28, H12). This was the ONLY
+          // place inside WasicTranspiler that touched the host: it killed the whole process, which
+          // a library import (the future `ts2wasm` seam) must never do, and which aborted `hybrid`'s
+          // and `dync`'s speculative probe compiles instead of failing just the probe. Worded to
+          // match the edge's "Unknown function … not declared" undefined-name classification.
+          this.diagnostics.push(
+            `Unknown function '${receiver}.${methodName}' — '${receiver}' is not declared in this ` +
+              `module. If it is an external module, declare it: ` +
+              `declare const ${receiver}: { ${methodName}(...): ReturnType }`,
           );
-          console.error(`   Note: '${receiver}' was not imported or declared in this module.`);
-          console.error(
-            `   If '${receiver}' is an external module, use: declare const ${receiver}: { ${methodName}(...): ReturnType }`,
-          );
-          rt.exit(1);
+          return `(unreachable)`;
         }
       }
     }
