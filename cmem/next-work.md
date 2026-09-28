@@ -421,7 +421,14 @@ Rules now in `src/wast.ts`: `assert_invalid` needs a V8 `CompileError`, `assert_
 malformed pass is demoted at end of file when well-formed modules there fail to parse identically.
 Gate **63,800 / 0 / 804**; the unflagged CLI **63,693 / 0 / 913** (measured).
 
-**Found in the same pass, NOT YET FIXED — 🔴 `wasmtk run` exits 0 on an uncaught exception.**
+**Found in the same pass — 🗓️ OWNER DECISION: `wasmtk run` exits 0 on an uncaught exception.**
+This is a RECORDED invariant, not an accident: `design-decisions.md` § runtime says "exits cleanly
+(code 0)", and `utils.ts` says it "mirrors TypeScript uncaught error". But Deno and Node exit 1 on
+one, so the stated intent argues for 1. It has already cost a workaround:
+`capabilities.md` has the pipeline drivers read out of bounds to force a TRAP, because "a wasic
+uncaught `throw` exits 0 and can't fail a pipeline". A foreign exception (not wasmtk's tag) prints
+nothing AND exits 0. Changing it needs the harness to compare output on an expected non-zero exit
+(`@expect-fail` today skips the output comparison), then the full gate.
 `15_panic`, `15_Trap-On-Error` and `13_SecureMatrixManagerIntegration` print `error: Uncaught (in
 Wasm) Error: …` and exit **0**; wasmtime exits 1. A crashing program reads as success to any script
 or CI. It hid because the wasi suite compares output text and the engine gate reads the engines'
