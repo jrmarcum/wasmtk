@@ -284,30 +284,64 @@ function parseFloatExpect(lit: string, is32: boolean): FloatExpect {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * True if a const node is a value this runner can marshal across the JS boundary:
- * the four numeric types, plus `ref.null <heaptype>` which is simply JS `null`.
+ * The host value a spec-script `(ref.extern N)` / `(ref.host N)` denotes. The reference interpreter
+ * treats these as the external and internal views of ONE opaque host value, compared by `N`; in
+ * the JS API both cross as the same JS value (V8 internalizes on the way in and hands the original
+ * back on the way out). So one canonical object per `N`, shared by every module in the process,
+ * gives both views and identity. An object rather than the number `N`: under GC a JS number
+ * crossing into `anyref` can become an `i31ref`, which a host reference must never be.
+ */
+const hostRefs = new Map<string, object>();
+function hostRef(n: string): object {
+  let r = hostRefs.get(n);
+  if (!r) hostRefs.set(n, r = Object.freeze({ wastHostRef: n }));
+  return r;
+}
+
+/**
+ * True if a const node is an ARGUMENT this runner can marshal across the JS boundary: the four
+ * numeric types, `ref.null <heaptype>` (JS `null`), and `ref.extern N` / `ref.host N` (see
+ * `hostRef`).
  *
- * ⚠️ `ref.func` / `ref.extern N` are still unsupported — those denote host references with
- * IDENTITY, which needs spectest-side reference creation, not a literal conversion. `v128.const`
- * likewise. Returning null here makes the whole assertion a SKIP, never a failure.
+ * ⚠️ `v128.const` is still unsupported. Returning null here makes the whole assertion a SKIP, never
+ * a failure.
  *
  * (Admitting `ref.null` 2026-08-27 moved `ref_null.wast` off 0 pass / 32 skip. The gap had been
  * recorded as a backend bug for a week; the backend fixed its half and our number did not move,
- * because THIS function was the binding constraint and a skip never re-announces itself.)
+ * because THIS function was the binding constraint and a skip never re-announces itself. The same
+ * held for `ref.extern N` until 2026-09-28: `ref_test.wast`'s `(invoke "init" (ref.extern 0))` was
+ * skipped, so the tables it fills stayed null and 73 GC-cast assertions failed on an empty table.)
  */
 function constType(node: Sexp): string | null {
   if (!isList(node)) return null;
   const h = head(node);
   if (h === "i32.const" || h === "i64.const" || h === "f32.const" || h === "f64.const") return h;
   if (h === "ref.null") return h;
-  return null; // v128.const, ref.func, ref.extern … → unsupported here
+  if ((h === "ref.extern" || h === "ref.host") && typeof node.list[1] === "string") return h;
+  return null; // v128.const, ref.func, … → unsupported here
+}
+
+/**
+ * True if a node is an EXPECTED RESULT this runner can check: every argument form, plus the
+ * index-less `(ref.extern)` / `(ref.func)`, which mean "any non-null reference of that kind" and
+ * can only appear as results. `ref.struct` / `ref.array` / `ref.i31` / `ref.eq` / `ref.any` stay
+ * unsupported (SKIP): V8 cannot hand those back to JS in a form we can classify.
+ */
+function resultType(node: Sexp): string | null {
+  if (!isList(node)) return null;
+  const h = head(node);
+  if ((h === "ref.extern" || h === "ref.func") && node.list.length === 1) return h;
+  return constType(node);
 }
 
 /** Convert a const node to the JS value WebAssembly expects as an argument. */
-function constToJs(node: SexpList): number | bigint | null {
+function constToJs(node: SexpList): unknown {
   const h = head(node);
   const lit = node.list[1] as string;
   switch (h) {
+    case "ref.extern":
+    case "ref.host":
+      return hostRef(lit);
     // Every null reference — funcref, externref, or a user-defined heap type — crosses the JS
     // boundary as `null`. The heap type in `lit` is deliberately ignored: JS cannot distinguish
     // a null funcref from a null externref, and the module's own type-checking is what keeps the
@@ -354,6 +388,14 @@ function resultMatches(expected: SexpList, actual: unknown): boolean {
     // assembles. Recorded rather than silently assumed.
     case "ref.null":
       return actual === null;
+    // `(ref.extern N)` / `(ref.host N)`: the very host value passed in (identity). Index-less
+    // `(ref.extern)`: any non-null externref; `(ref.func)`: any non-null funcref, which V8 exports
+    // as a JS function.
+    case "ref.extern":
+    case "ref.host":
+      return lit === undefined ? actual !== null && actual !== undefined : actual === hostRef(lit);
+    case "ref.func":
+      return typeof actual === "function";
     case "i32.const":
       return U32(parseIntLit(lit)) === ((actual as number) >>> 0);
     case "i64.const":
@@ -438,9 +480,16 @@ function decodeWatString(tokens: string[]): Uint8Array {
   return new Uint8Array(bytes);
 }
 
+/**
+ * UTF-8 decoder for WAT string contents. `ignoreBOM: true` is LOAD-BEARING: the default decoder
+ * silently drops a leading U+FEFF, so `names.wast`'s export `"\u{FEFF}"` was invoked as `""` and
+ * failed (2026-09-28). A name or quoted module is bytes, not a document; nothing here may be eaten.
+ */
+const watUtf8 = new TextDecoder("utf-8", { ignoreBOM: true });
+
 /** Decode a single verbatim WAT string token (`"export.name"`) to a JS string. */
 function watStrToJs(token: string): string {
-  return new TextDecoder().decode(decodeWatString([token]));
+  return watUtf8.decode(decodeWatString([token]));
 }
 
 /**
@@ -589,7 +638,7 @@ export async function runWast(
     let text: string;
     if (qkIdx !== -1) {
       const strs = mod.list.slice(qkIdx + 1).filter((x): x is string => typeof x === "string");
-      text = new TextDecoder().decode(decodeWatString(strs));
+      text = watUtf8.decode(decodeWatString(strs));
       if (!/^\s*\(module/.test(text)) text = `(module ${text})`;
     } else {
       text = src.slice(mod.start, mod.end);
@@ -641,7 +690,7 @@ export async function runWast(
       return [g.value];
     }
     // invoke
-    const args: (number | bigint | null)[] = []; // null = a `ref.null` reference argument
+    const args: unknown[] = []; // null = `ref.null`; an object = `ref.extern N` (hostRef)
     for (let k = idx; k < action.list.length; k++) {
       const a = action.list[k];
       if (!isList(a) || !constType(a)) throw new Error("__skip__: unsupported arg type");
@@ -660,7 +709,7 @@ export async function runWast(
     return r === undefined ? [] : (Array.isArray(r) ? r : [r]);
   }
 
-  const anyUnsupportedResult = (nodes: Sexp[]) => nodes.some((x) => !isList(x) || !constType(x));
+  const anyUnsupportedResult = (nodes: Sexp[]) => nodes.some((x) => !isList(x) || !resultType(x));
 
   for (const cmd of cmds) {
     const h = head(cmd);
@@ -744,15 +793,41 @@ export async function runWast(
         case "assert_exhaustion": {
           const action = cmd.list[1];
           if (!isList(action) || (head(action) !== "invoke" && head(action) !== "get")) {
-            // The argument is a MODULE, not an action: `assert_trap` on instantiation. We do not
-            // run it — but the spec says instantiation gets part-way before trapping, so its
-            // element segments ARE applied and later assertions depend on that state. Skipping it
-            // silently is what made `linking0.wast` report a bare "null function" trap that read
-            // like an engine bug. Count it with the unbuilt modules and arm the cascade tag, so the
-            // failure it causes says where it came from.
-            res.skipped++;
-            res.modulesFailed++;
-            sawUnassemblableModule = true;
+            // The argument is a MODULE: `assert_trap` on instantiation. It MUST be run, because
+            // instantiation gets part-way before trapping — element and data segments that precede
+            // the trap ARE written into the imported table/memory, and later assertions read that
+            // state. Until 2026-09-28 it was skipped, which cost 11 `linking*` assertions that read
+            // as bare "null function" traps. V8 applies the partial writes itself; we only instantiate.
+            let bytes: Uint8Array | null = null;
+            try {
+              bytes = isList(action) ? assemble(action) : null;
+            } catch { /* handled below as unbuilt */ }
+            let outcome: "trapped" | "instantiated" | "other" = "other";
+            if (bytes) {
+              try {
+                await instantiate(bytes);
+                outcome = "instantiated";
+              } catch (e) {
+                const trap = e instanceof WebAssembly.RuntimeError ||
+                  (h === "assert_exhaustion" && e instanceof RangeError);
+                outcome = trap ? "trapped" : "other";
+              }
+            }
+            if (outcome === "trapped") res.passed++;
+            else if (outcome === "instantiated") {
+              fail(
+                `${h} module instantiated without trapping: ${
+                  src.slice(cmd.start, cmd.start + 100)
+                }`,
+              );
+            } else {
+              // Did not assemble, or failed to LINK/compile — not the trap this asserts. Count it
+              // with the unbuilt modules and arm the cascade tag, so a failure it causes says where
+              // it came from.
+              res.skipped++;
+              res.modulesFailed++;
+              sawUnassemblableModule = true;
+            }
             break;
           }
           try {

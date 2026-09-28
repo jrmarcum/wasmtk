@@ -1,5 +1,38 @@
 # Compiler bug log
 
+## The 100 pinned wast failures were all our RUNNER (FIXED 2026-09-28) — gate now ALL CLEAN
+
+Three defects in `src/wast.ts`, none in the compiler or binaryang. Corpus 37,370 / 100 failed /
+27,148 skipped → **37,674 / 0 / 26,944**. The totals are consistent (+304 passes = 204 former skips
++ 100 former failures), so no assertion was lost and none flipped to failing.
+
+1. **Reference-typed arguments were refused (88 failures, +150 skips → pass).**
+   `(invoke "init" (ref.extern 0))` hit `__skip__: unsupported arg type`, so `init` never ran and
+   every later assertion read an empty table. That covered the whole GC-cast family (`ref_test` 32,
+   `ref_cast` 11, `br_on_cast*` 4 × 10, which is 83, not the 73 the old triage said), plus `ref_is_null`,
+   `table_get*` and `table_grow*`. Fix: `hostRef(N)` gives one frozen object per `N`, shared by
+   `ref.extern N` and `ref.host N` (the spec's external and internal views of one host value).
+   It is an object, not the number, because under GC a JS number entering `anyref` can become an
+   `i31ref`. The new `resultType` also admits index-less `(ref.extern)` / `(ref.func)` as non-null
+   matchers. Arguments and results are checked separately, so a result-only form can never be
+   passed as an argument. **Inversion-checked:** a fresh object per call (identity broken) failed
+   3 `extern` and 13 `table_fill` assertions.
+2. **`TextDecoder` dropped a leading U+FEFF (1 failure).** `names.wast` exports `"\u{FEFF}"`. Both the
+   assembler and our s-expression parser kept it, but `watStrToJs` decoded it to `""`. Fixed with a
+   shared `watUtf8 = new TextDecoder("utf-8", { ignoreBOM: true })`, also used for the
+   `module quote` text, where eating a BOM could make a malformed module look well-formed.
+3. **`assert_trap (module …)` was never instantiated (11 failures, +54 skips → pass).**
+   Instantiation writes element and data segments into IMPORTED tables and memories before it
+   traps, and `linking*` reads that state afterwards. It is now instantiated: a `RuntimeError` is a
+   pass, a clean instantiation is a loud failure, and a link or compile error keeps the old skip with
+   the cascade tag. It also cleared every "unbuilt module" in `data`, `data1`, `elem`, `linking1` and
+   `start`. Those modules had never failed to build; they were these skipped traps.
+
+**Lesson.** The runner reported all 100 as conformance gaps, and for a month they read as
+GC/ref-types work waiting on the toolchain. Before attributing a failure to the thing under test,
+check that the harness gave it the same SETUP the spec did (the method note in next-work.md § A,
+now proven on the whole set).
+
 ## binaryang 1.6.0 honoured `readDebugNames: true`, and the merge path broke (FIXED 2026-09-28)
 
 **Symptom.** On the 1.5.3 → 1.6.0 bump, `go_merge_tests` went 6/7: merging the TinyGo leaf failed
