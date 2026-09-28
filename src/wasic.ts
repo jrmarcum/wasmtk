@@ -6206,6 +6206,55 @@ class WasicTranspiler {
   // -------------------------------------------------------------------------
 
   /**
+   * Set while emitting one function (or `_start`) body whenever `emitScalarToStr` used the
+   * `$__tmpl_num_ptr`/`$__tmpl_num_len` temps. The body's assembler declares them from this flag,
+   * which is EXACT, unlike the source-line pattern pre-scan that only fires on `${`.
+   */
+  private scalarStrTempsUsed = false;
+
+  /**
+   * Render a NUMBER or BOOLEAN value as text into `$__tmpl_num_ptr`/`$__tmpl_num_len` (statements
+   * pushed onto `stmts`), for building strings: template `${…}` segments and `+` concatenation.
+   * `i32`/`i64`/`f64` go through the number formatters (`f32` is widened to f64). `bool` becomes
+   * `"true"`/`"false"`, as in JS: templates used to print a boolean through the i32 formatter as
+   * `1`/`0` (2026-09-28).
+   */
+  private emitScalarToStr(
+    expr: string,
+    type: WatType,
+    locals: Map<string, WatType>,
+    stmts: string[],
+  ): void {
+    this.scalarStrTempsUsed = true;
+    if (type === "bool") {
+      const [tOff, tLen] = this.allocString("true");
+      const [fOff, fLen] = this.allocString("false");
+      // Evaluate the condition ONCE (it may have side effects), then select both ptr and len on it.
+      stmts.push(`(local.set $__tmpl_num_len ${this.emitExpr(expr, locals, "i32")})`);
+      stmts.push(
+        `(local.set $__tmpl_num_ptr (select (i32.const ${tOff}) (i32.const ${fOff}) (local.get $__tmpl_num_len)))`,
+      );
+      stmts.push(
+        `(local.set $__tmpl_num_len (select (i32.const ${tLen}) (i32.const ${fLen}) (local.get $__tmpl_num_len)))`,
+      );
+      return;
+    }
+    this.needsNumericHelpers = true;
+    const asF64 = type === "f64" || type === "f32";
+    const helper = asF64 ? "$__f64_to_str" : type === "i64" ? "$__i64_to_str" : "$__i32_to_str";
+    const valWat = this.emitExpr(expr, locals, asF64 ? "f64" : type === "i64" ? "i64" : "i32");
+    stmts.push(`(local.set $__tmpl_num_ptr (call $__malloc (i32.const 32)))`);
+    stmts.push(
+      `(local.set $__tmpl_num_len (call ${helper} ${valWat} (local.get $__tmpl_num_ptr)))`,
+    );
+  }
+
+  /** True for the types `emitScalarToStr` renders. */
+  private static isScalarForStr(t: WatType): boolean {
+    return t === "i32" || t === "i64" || t === "f32" || t === "f64" || t === "bool";
+  }
+
+  /**
    * Emits WAT to assign a string expression to the `$<varName>_ptr` and `$<varName>_len`
    * locals.  Supports:
    *   - String literals:  "hello" or 'hello'
@@ -6387,23 +6436,18 @@ class WasicTranspiler {
               if (ptrLenTmplFallback !== "(i32.const 0) (i32.const 0)") {
                 const [pWtf, lWtf] = splitTwoWatExprs(ptrLenTmplFallback);
                 emitTmplConcat(pWtf, lWtf);
+              } else {
+                // Was silently SKIPPED: the segment vanished from the string (2026-09-28).
+                this.diagnostics.push(
+                  `Unsupported template segment: \${${e.slice(0, 60)}} — cannot render it as text`,
+                );
               }
             }
           } else {
             // Numeric segment: convert to string using the pre-declared shared temp pair $__tmpl_num_ptr/$__tmpl_num_len.
             // We reuse the same pair for every numeric segment (safe because each concat happens immediately after).
             numericTmpIdx++;
-            this.needsNumericHelpers = true;
-            const helper = eType === "f64"
-              ? "$__f64_to_str"
-              : eType === "i64"
-              ? "$__i64_to_str"
-              : "$__i32_to_str";
-            const valWat = this.emitExpr(e, locals, eType);
-            tmplStmts.push(`(local.set $__tmpl_num_ptr (call $__malloc (i32.const 32)))`);
-            tmplStmts.push(
-              `(local.set $__tmpl_num_len (call ${helper} ${valWat} (local.get $__tmpl_num_ptr)))`,
-            );
+            this.emitScalarToStr(e, eType, locals, tmplStmts);
             emitTmplConcat(`(local.get $__tmpl_num_ptr)`, `(local.get $__tmpl_num_len)`);
           }
         }
@@ -6937,17 +6981,7 @@ class WasicTranspiler {
                   concatAppend(pW, lW);
                 }
               } else {
-                this.needsNumericHelpers = true;
-                const helperCC = eTypeCC === "f64"
-                  ? "$__f64_to_str"
-                  : eTypeCC === "i64"
-                  ? "$__i64_to_str"
-                  : "$__i32_to_str";
-                const valWatCC = this.emitExpr(eCC, locals, eTypeCC);
-                stmts.push(`(local.set $__tmpl_num_ptr (call $__malloc (i32.const 32)))`);
-                stmts.push(
-                  `(local.set $__tmpl_num_len (call ${helperCC} ${valWatCC} (local.get $__tmpl_num_ptr)))`,
-                );
+                this.emitScalarToStr(eCC, eTypeCC, locals, stmts);
                 concatAppend(`(local.get $__tmpl_num_ptr)`, `(local.get $__tmpl_num_len)`);
               }
             }
@@ -7091,7 +7125,22 @@ class WasicTranspiler {
         if (simple !== "(i32.const 0) (i32.const 0)") {
           const [pW, lW] = splitTwoWatExprs(simple);
           concatAppend(pW, lW);
+          return;
         }
+        // A NUMBER or BOOLEAN operand ("n=" + n, n + " items", "sum=" + (n + 1), "flag=" + b):
+        // render it as text. Until 2026-09-28 such a part fell through here and was SKIPPED:
+        // `"code " + 7` built "code " with no diagnostic (the last open silent-wrong compiler entry).
+        const partT = part.trim();
+        const partType = this.inferExprType(partT, locals);
+        if (WasicTranspiler.isScalarForStr(partType)) {
+          this.emitScalarToStr(partT, partType, locals, stmts);
+          concatAppend(`(local.get $__tmpl_num_ptr)`, `(local.get $__tmpl_num_len)`);
+          return;
+        }
+        // Anything else can't be rendered: say so instead of dropping it.
+        this.diagnostics.push(
+          `Unsupported operand in string concatenation: ${partT.slice(0, 60)} (in ${varName} = …)`,
+        );
       };
       for (const part of concatParts) {
         appendConcatPart(part);
@@ -18529,7 +18578,14 @@ class WasicTranspiler {
     this.currentBoxedCaptures = fn.boxedCaptures ?? new Set();
     this.currentSharedMutableCaptures = fn.sharedMutableCaptures ?? new Set();
     this.currentClosureCaptureLayout = fn.closureCaptureLayout ?? new Map();
+    const savedScalarTemps = this.scalarStrTempsUsed;
+    this.scalarStrTempsUsed = false;
     const body = this.emitBlock(fn.bodyLines, locals, blockResult);
+    // Declare the number/bool → text temps if the body used them and the pre-scan didn't already.
+    const scalarTempDecls = this.scalarStrTempsUsed && !seenLocals.has("__tmpl_num_ptr")
+      ? `    (local $__tmpl_num_ptr i32)\n    (local $__tmpl_num_len i32)`
+      : "";
+    this.scalarStrTempsUsed = savedScalarTemps;
     this.currentBoxedCaptures = new Set();
     this.currentSharedMutableCaptures = new Set();
     this.currentClosureCaptureLayout = new Map();
@@ -18551,6 +18607,7 @@ class WasicTranspiler {
     return [
       `  (func $${fn.name} ${exportAttr}${params} ${result}`,
       localDecls ? localDecls : "",
+      scalarTempDecls,
       finalBody + neverSuffix,
       `  )`,
     ].filter((l) => l.trim() !== "").join("\n");
@@ -20019,10 +20076,18 @@ class WasicTranspiler {
       const declMap = new Map<string, WatType>();
       for (const [n, t] of startLocals.entries()) if (t !== "string") declMap.set(n, t as WatType);
       for (const [n, t] of startDeclaredLocals) if (!declMap.has(n)) declMap.set(n, t);
+      const savedScalarTemps = this.scalarStrTempsUsed;
+      this.scalarStrTempsUsed = false;
+      const bodyWat = this.emitBlock(this.startBodyLines, startLocals, null);
+      // Declare the number/bool → text temps if the body used them (exact; see scalarStrTempsUsed).
+      if (this.scalarStrTempsUsed && !declMap.has("__tmpl_num_ptr")) {
+        declMap.set("__tmpl_num_ptr", "i32");
+        declMap.set("__tmpl_num_len", "i32");
+      }
+      this.scalarStrTempsUsed = savedScalarTemps;
       const localDecls = [...declMap.entries()]
         .map(([n, t]) => `    (local $${n} ${watBaseType(t)})`)
         .join("\n");
-      const bodyWat = this.emitBlock(this.startBodyLines, startLocals, null);
       startBody = `\n${localDecls ? localDecls + "\n" : ""}${bodyWat}${
         this.needsPromiseRuntime ? `\n    (call $__drain_microtasks)` : ""
       }\n    (call $proc_exit (i32.const 0))`;
