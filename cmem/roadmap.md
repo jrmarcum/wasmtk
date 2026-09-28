@@ -38,6 +38,26 @@
 > replace it with the real version at publish time. A breaking change may ALSO warrant a Feature
 > Status row if it ships alongside a feature — but the Breaking Changes row is mandatory.
 
+## Unreleased (working tree, 2026-09-28) — binaryang 1.6.0, `.wast` gate ALL CLEAN, SIMD runs
+
+Two unmerged branches, stacked: `chore/binaryang-1.6.0-2026-09-28` (`17d5a1e`), then
+`fix/wast-ref-args-2026-09-28` on top. Merge them in that order. The owner has not decided on a
+release.
+
+1. **Backend → binaryang 1.6.0.** One regression, ours: 1.6.0 honours `readDebugNames: true`, and
+   four merge-path call sites asked for it. They now pass `false` (go_merge_tests 7/7).
+2. **`.wast` runner: three defects behind all 100 pinned failures** (`ref.extern`/`ref.host` values,
+   a BOM-eating decoder, `assert_trap` modules never instantiated) → **0 failures**.
+3. **`.wast` runner: SIMD / NaN-payload trampoline** → skips 26,944 → 886. It exposed and fixed a
+   subnormal hex-float underflow.
+4. **`.wast` runner: `skipReasons`** labels every skip. The remaining 886 are SCOPED in
+   [next-work.md](next-work.md), 186 of them ours.
+5. **Workspace letter H4** (memory drift T1–T11) closed in `cmem/`.
+
+Gate: **wasi 417/417 · engine 1128 ALL ON BASELINE · wast 288 files / 63,732 passed / 0 failed / 886
+skipped (ALL CLEAN)** · every other suite 0 failed. Post-mortems in
+[compiler-bugs.md](compiler-bugs.md).
+
 ## Release status (2026-08-31) — v2.0.2: backend on binaryang 1.5.3, wider `.wast` coverage
 
 **v2.0.2 is PUBLISHED to JSR and ATTESTED** — `rekorLogId 2666522017`, `createdAt 17:56:16.616` →
