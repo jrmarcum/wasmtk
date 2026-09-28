@@ -43,11 +43,71 @@
  * the module count, not the failure count: `type-equivalence.wast` shows 1 failure and **13**
  * unbuilt modules.
  *
- *   deno run --allow-read --allow-net tests/wast_tests.ts
+ *   deno run --allow-read --allow-write --allow-run --allow-env --allow-net tests/wast_tests.ts
+ *
+ * `--allow-run` is required since 2026-09-28: the gate re-runs itself with the experimental V8
+ * flags in `GATE_V8_FLAGS` (see below). Without it the run continues unflagged and
+ * `wide-arithmetic.wast` goes OFF BASELINE, loudly.
  */
 import { runWast } from "../src/wast.ts";
 import { join } from "jsr:@std/path@1.0.2";
 import { walk } from "jsr:@std/fs@1.0.0/walk";
+import wabtInit from "wabt";
+
+// ── Experimental V8 features for the GATE ONLY (owner decision 2026-09-28) ─────────────────────
+// The corpus has proposal files V8 implements only behind a flag. The gate turns them on, so those
+// files are measured rather than skipped. The `wasmtk wast` CLI deliberately does NOT: users get
+// the stable engine. V8 flags cannot be set at runtime, so when the feature is absent this script
+// re-runs itself with the flag. It detects the feature, not an env marker, so it cannot loop and
+// cannot be fooled. Without `--allow-run` it continues unflagged, and the baselined
+// `wide-arithmetic.wast` counts then fail the gate LOUDLY rather than skipping quietly.
+const GATE_V8_FLAGS = ["--experimental-wasm-wide-arithmetic"];
+
+async function wideArithmeticAvailable(): Promise<boolean> {
+  // deno-lint-ignore no-explicit-any
+  const wabt: any = await (wabtInit as any)();
+  const probe = wabt.parseWat(
+    "probe.wat",
+    "(module (func (param i64 i64 i64 i64) (result i64 i64) " +
+      "(i64.add128 (local.get 0) (local.get 1) (local.get 2) (local.get 3))))",
+    { enable_all: true },
+  );
+  try {
+    return WebAssembly.validate(new Uint8Array(probe.toBinary({}).buffer));
+  } finally {
+    probe.destroy();
+  }
+}
+
+if (!(await wideArithmeticAvailable())) {
+  const self = new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+  try {
+    const { code } = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--allow-read",
+        "--allow-write",
+        "--allow-net",
+        "--allow-run",
+        "--allow-env",
+        `--v8-flags=${GATE_V8_FLAGS.join(",")}`,
+        self,
+        ...Deno.args,
+      ],
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    }).output();
+    Deno.exit(code);
+  } catch (e) {
+    console.error(
+      `⚠️  could not re-run with ${GATE_V8_FLAGS.join(" ")} (${
+        e instanceof Error ? e.message : e
+      });` +
+        " continuing without it — wide-arithmetic.wast will go OFF BASELINE.",
+    );
+  }
+}
 
 const SUITE = join(import.meta.dirname ?? ".", "module", "wasm_wast", "testsuite-main");
 const BASELINE = join(import.meta.dirname ?? ".", "wast_baseline.json");
@@ -115,6 +175,7 @@ if (Deno.args.includes("--update-baseline")) {
         "--allow-read",
         "--allow-write",
         "--allow-net",
+        `--v8-flags=${GATE_V8_FLAGS.join(",")}`,
         self,
         "--scan-chunk",
         String(start),

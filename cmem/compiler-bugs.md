@@ -1,5 +1,23 @@
 # Compiler bug log
 
+## wast: `exnref` results through the trampoline, and the gate's experimental V8 flag (2026-09-28)
+
+726 → **618 skips**, 0 failures; gate 63,986 passed.
+
+- **`exnref` / `nullexnref` results (7, `ref_null.wast`).** V8 refuses these at the JS boundary, but
+  `(ref.null …)` needs only null-ness. The trampoline gained ref RESULT types, returned as their
+  `ref.is_null` flag (`RefLowType`). Since a `(ref.null exn)` expectation cannot say whether the
+  export returns `exnref` or `nullexnref`, the type is found by link probing (the import signature
+  must match exactly, so a wrong guess fails to link before anything runs). Inversion: requiring
+  flag = 0 failed exactly the 7.
+- **Gate-only V8 flag.** `tests/wast_tests.ts` probes `i64.add128` with `WebAssembly.validate`, and
+  when it is unavailable re-runs itself with `--v8-flags=--experimental-wasm-wide-arithmetic`. The
+  `--scan-chunk` children carry the flag too. It detects the feature rather than an env marker, so it
+  cannot loop. Without `--allow-run` it continues unflagged and `wide-arithmetic.wast` fails the gate
+  loudly. The CLI is deliberately unflagged.
+- **Tried and ruled out**, so nobody repeats it: `--wasm-max-table-size` does not lift V8's table
+  cap (hard-coded), and `compat/binaryen`'s `Module.validate()` is a stub that always returns 1.
+
 ## wast runner: every runner-owned skip group closed (2026-09-28) — skips 886 → 726, 0 of them ours
 
 Gate: 63,732 / 0 / 886 → **63,880 / 0 / 726**. 28 files moved, none went down, and none gained a

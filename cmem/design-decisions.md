@@ -709,6 +709,12 @@ silently break (all `src/wasic.ts`):
 
 ## Tooling
 
+- 🔒 **Experimental V8 flags are for the wast GATE only (owner decision 2026-09-28).**
+  `tests/wast_tests.ts` holds them in `GATE_V8_FLAGS` (currently
+  `--experimental-wasm-wide-arithmetic`) and re-runs itself with them when the feature is absent.
+  The `wasmtk wast` CLI and everything wasmtk ships run on the STABLE engine. Adding a flag moves
+  gate numbers, so it is a baseline re-record like any other: say so in the commit. When V8 ships a
+  feature unflagged, drop its flag; the gate should not move.
 - `tsbundle` outputs **`.ts`** (`.bundled.ts`), an import inliner — NOT `deno bundle`/JavaScript.
 - `.wasm` import detection matches **single-line** `import { … } from "./x.wasm"` only.
 - **`rt.Command.output()` always reads `result.stdout`/`stderr`, which THROWS unless they are

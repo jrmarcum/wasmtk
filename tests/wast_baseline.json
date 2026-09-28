@@ -670,9 +670,8 @@
     "skip": 2
   },
   "proposals/wide-arithmetic/wide-arithmetic.wast": {
-    "pass": 8,
-    "skip": 101,
-    "unbuilt": 2
+    "pass": 107,
+    "skip": 0
   },
   "ref.wast": {
     "pass": 12,
@@ -699,8 +698,8 @@
     "skip": 0
   },
   "ref_null.wast": {
-    "pass": 25,
-    "skip": 7
+    "pass": 32,
+    "skip": 0
   },
   "ref_test.wast": {
     "pass": 69,

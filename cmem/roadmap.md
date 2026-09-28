@@ -52,10 +52,11 @@ release.
    subnormal hex-float underflow.
 4. **`.wast` runner: `skipReasons`** labels every skip; the 886 left were SCOPED, and every runner-owned
    group was then fixed (script grammar, `either`, `assert_exception`, GC results, trap trampoline) →
-   726, none of them ours. See [next-work.md](next-work.md).
+   726, none of them ours; then `exnref` via the trampoline and the gate's experimental V8 flag → 618.
+   See [next-work.md](next-work.md).
 5. **Workspace letter H4** (memory drift T1–T11) closed in `cmem/`.
 
-Gate: **wasi 417/417 · engine 1128 ALL ON BASELINE · wast 288 files / 63,880 passed / 0 failed / 726
+Gate: **wasi 417/417 · engine 1128 ALL ON BASELINE · wast 288 files / 63,986 passed / 0 failed / 618
 skipped (ALL CLEAN)** · every other suite 0 failed. Post-mortems in
 [compiler-bugs.md](compiler-bugs.md).
 

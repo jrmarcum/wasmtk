@@ -497,7 +497,14 @@ function resultMatches(expected: SexpList, actual: unknown): boolean {
 // i64 halves (low, high). Every comparison is then done in JS on exact bits.
 
 /** A value type the trampoline can lower to integer bits. */
-type LowType = "i32" | "i64" | "f32" | "f64" | "v128";
+type LowType = "i32" | "i64" | "f32" | "f64" | "v128" | RefLowType;
+
+/**
+ * Reference RESULT types V8 refuses to hand to JS. The trampoline returns them as their
+ * `ref.is_null` flag (an i32), which is all a `(ref.null …)` expectation needs. Results only.
+ */
+type RefLowType = "exnref" | "nullexnref";
+const isRefLow = (t: LowType): t is RefLowType => t === "exnref" || t === "nullexnref";
 
 const V128_SHAPES: Record<string, { lanes: number; width: number; float: boolean }> = {
   i8x16: { lanes: 16, width: 8, float: false },
@@ -628,6 +635,8 @@ function bitsMatch(expected: SexpList, bits: bigint): boolean {
       return floatBitsMatch(lit, true, bits);
     case "f64.const":
       return floatBitsMatch(lit, false, bits);
+    case "ref.null": // a reference result arrives as its `ref.is_null` flag
+      return bits === 1n;
   }
   const shape = V128_SHAPES[lit];
   const lanes = expected.list.slice(2) as string[];
@@ -646,7 +655,7 @@ function bitsMatch(expected: SexpList, bits: bigint): boolean {
 /** The trampoline's WAT for a callee of type `params → results`. */
 function trampolineWat(params: LowType[], results: LowType[]): string {
   const lowered = (t: LowType) =>
-    t === "v128" ? ["i64", "i64"] : [t === "f32" ? "i32" : t === "f64" ? "i64" : t];
+    t === "v128" ? ["i64", "i64"] : [t === "f32" || isRefLow(t) ? "i32" : t === "f64" ? "i64" : t];
   const lp = params.flatMap(lowered);
   const lr = results.flatMap(lowered);
   const body: string[] = [];
@@ -679,6 +688,7 @@ function trampolineWat(params: LowType[], results: LowType[]): string {
       body.push(`local.get ${l}`);
       if (t === "f32") body.push("i32.reinterpret_f32");
       if (t === "f64") body.push("i64.reinterpret_f64");
+      if (isRefLow(t)) body.push("ref.is_null");
     }
   });
   const sig = (kw: string, ts: string[]) => ts.length ? ` (${kw} ${ts.join(" ")})` : "";
@@ -700,7 +710,7 @@ function raiseResults(results: LowType[], out: unknown[]): bigint[] {
   const bits: bigint[] = [];
   let k = 0;
   for (const t of results) {
-    if (t === "i32" || t === "f32") bits.push(BigInt((out[k++] as number) >>> 0));
+    if (t === "i32" || t === "f32" || isRefLow(t)) bits.push(BigInt((out[k++] as number) >>> 0));
     else if (t === "i64" || t === "f64") bits.push(U64(out[k++] as bigint));
     else {
       const lo = U64(out[k++] as bigint);
@@ -1253,6 +1263,29 @@ export async function runWast(
           try {
             results = runAction(action);
           } catch (e) {
+            if (
+              isJsBoundaryRefusal(e) && expected.length === 1 && head(expected[0]) === "ref.null"
+            ) {
+              // V8 will not hand this reference type to JS (exnref, nullexnref), but a
+              // `(ref.null …)` expectation needs only its null-ness: call it through the trampoline,
+              // which returns `ref.is_null`. The result type is found by link probing, as for
+              // `assert_trap` (2026-09-28; these were `ref_null.wast`'s 7 skips).
+              let verdict: "null" | "non-null" | "unlinked" = "unlinked";
+              for (const rt of ["exnref", "nullexnref"] as const) {
+                try {
+                  verdict = runTrampolined(action, [rt])[0] === 1n ? "null" : "non-null";
+                } catch (e2) {
+                  if (String(e2).includes("did not link")) continue;
+                  throw e2;
+                }
+                break;
+              }
+              if (verdict === "null") res.passed++;
+              else if (verdict === "non-null") {
+                fail(`assert_return mismatch: ${src.slice(cmd.start, cmd.start + 120)}`);
+              } else skip("assert_return: V8 cannot carry this ref type to JS");
+              break;
+            }
             if (String(e).includes("__skip__") || isJsBoundaryRefusal(e)) {
               skip(
                 isJsBoundaryRefusal(e)

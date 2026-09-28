@@ -8,8 +8,8 @@
 
 First, thanks: 1.6.0 landed both 2026-09-19 fixes. Our acceptance prediction held exactly, and three
 more spec assertions flipped from skip to pass as a bonus. With our own runner fixed the same day,
-the spec gate is 63,880 passed / 0 failed. Of the 726 still skipped, 557 are the three items below;
-the rest are V8 or spec limits, and none are ours any more.
+the spec gate is 63,986 passed / 0 failed. Of the 618 still skipped, 557 are the items below; the
+rest are V8 or spec limits, and none are ours any more.
 
 ### 🔴 Encoder: a NAMED heap type inside an inline `call_indirect` typeuse is never resolved
 
@@ -25,6 +25,23 @@ Parses, then `toBinary` throws `writeHeapType: type "$$t" is not resolved — ru
 writing`. The same holds for `return_call_indirect`. The numeric form `(ref null 0)` encodes fine.
 Note the doubled `$$`: the name looks prefixed twice somewhere on the inline-typeuse path. Spec
 impact: `return_call_indirect.wast`'s main module, and the 50 assertions behind it (51 skips).
+
+### 🟢 Request: export `allFeatures` (a one-liner that unblocks 12 of our assertions)
+
+`./wasm-validate`'s `wasmValidate(binary, { features })` is exactly the oracle we need for spec
+`(module definition …)` commands that V8 refuses only for ITS implementation limits (2^64-element
+tables, 2^48-page memories) or for custom page sizes, which it does not implement. The assertion is
+"this module is valid", not "this engine can allocate it". But the default features reject
+memory64 and custom page sizes, and `allFeatures()` lives in `core/feature.ts`, which no subpath
+exports. We will not hand-copy your feature list (that is the drift H10 is about). Could
+`allFeatures` (or `Features`) be exported from `./wasm-validate` or `./core/wabt-ts`? It is a new
+export, so a minor version.
+
+### 🟢 FYI: `compat/binaryen`'s `Module.validate()` always returns 1
+
+Its doc says so: "a permissive stub". Anyone porting binaryen.js code that relies on
+`validate() === 0` to reject a module gets a silent pass. Worth either delegating to `wasmValidate`
+or making it throw "not implemented", since a stub that answers "valid" is the silent-wrong kind.
 
 ### 🟢 Leniency: malformed custom annotations are accepted (5 assertions)
 

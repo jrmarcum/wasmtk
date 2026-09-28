@@ -401,6 +401,29 @@ exists, and a failed `binaryen -Oz` swallowed silently. See [compiler-bugs.md](c
 - ⚠️ Add them to the impact map in [testing.md](testing.md) at the same time, or the suite set
   grows without the "which suites does this change reach" table knowing about it.
 
+## 2026-09-28 (later): engine/spec pass + the gate's V8 flag — 726 → 618 skips, ALL CLEAN
+
+Gate: **63,986 passed / 0 failed / 618 skipped**. (The unflagged `wasmtk wast` CLI reads 63,887 / 719.)
+
+- ✅ **`exnref` (7) FIXED**: V8 will not hand `exnref`/`nullexnref` to JS, but a `(ref.null …)`
+  expectation needs only null-ness, so the trampoline now returns `ref.is_null` (type by link
+  probing). `ref_null.wast` 25 → 32. Inversion-checked: 7 fail when the flag is required to be 0.
+- ✅ **wide-arithmetic (101) — owner decision: experimental V8 flags ON for the GATE only.**
+  `tests/wast_tests.ts` detects the feature and re-runs itself with `GATE_V8_FLAGS`, and its
+  `--scan-chunk` children carry the flag. The CLI is unchanged. `wide-arithmetic.wast` 8 → 107.
+- ⏳ **Definitions V8 refuses for implementation limits (12)** — `table` 1, `table64` 1, `memory64` 2,
+  `memory_max*` 8. V8's limits here are hard-coded: `--wasm-max-table-size` was tried and has no
+  effect. A `(module definition …)` asserts only VALIDITY, so the sound oracle is binaryang's
+  published `wasmValidate` (`./wasm-validate`). But it needs `allFeatures`, which binaryang does not
+  export, and hand-copying its feature list is the H10 defect. **Blocked on a one-line export**
+  (drafted in `scripts/binaryang-report.md`). Do NOT use `compat/binaryen`'s `validate()`: it is a
+  stub that returns 1.
+- ⛔ **Not fixable here:** custom-page-sizes execution (44, V8 does not implement it; no flag) and
+  threads spec-stale (5, the vendored blocks were deliberately restored to match upstream,
+  2026-09-19).
+
+Left: **binaryang 557 · blocked on binaryang's export 12 · engine 44 · spec 5** = 618.
+
 ## ✅ RUNNER-OWNED GROUPS CLOSED 2026-09-28 — 886 → 726 skips, none of them ours
 
 Groups 3, 6, 7, 8, 10, 12 and 14 below are fixed, and group 9's runner half too. Gate: **63,880
