@@ -106,6 +106,7 @@ phase filter IS the whole gate. Full-suite runs cost >10 minutes and buy nothing
 | [async-design.md](async-design.md) | Promise/async design and its invariants |
 | [math-cr-sweep.md](math-cr-sweep.md) | The correctly-rounded `mathlib` sweep: dd framework, recipe, gotchas, oracle harness |
 | [stdlib-bundling-brief.md](stdlib-bundling-brief.md) | On-demand stdlib bundling design brief (§1–§7d) |
+| [offload-inventory.md](offload-inventory.md) | **Answer to workspace letter H11 (2026-09-28): what wasmtk does that binaryang, a runtime or a loader could own**, eight candidates each with its trigger and blocker, **nothing moved**. #1 (regex-over-WAT merge → binaryang's parser/IR) has the owner-set trigger nearly met: binaryang's one-front-end stage 5 is done on their `main` but UNRELEASED. Also lists what stays, and what moves with `wasic` (I11) |
 | [vision.md](vision.md) | Polyglot ecosystem vision; "TypeScript as a DLL"; loader strategy; repo map |
 | [wasic-modularization-plan.md](wasic-modularization-plan.md) | Plan of record for decomposing the `src/wasic.ts` monolith |
 | [component-model-discussion.md](component-model-discussion.md) | DRAFT/OPEN — polyglot monorepo component model; not implemented (its `--lang` question was settled 2026-07-28: auto-detect) |

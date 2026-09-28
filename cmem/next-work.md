@@ -383,6 +383,14 @@ console.log(isPositive(5));   // isPositive() is invoked TWICE
   **every engine agrees on the wrong answer**, which is precisely the blind spot cross-engine
   testing cannot cover. Repro is in [compiler-bugs.md](compiler-bugs.md).
 
+## ✅ FILED 2026-09-28 — H11 offload inventory → [offload-inventory.md](offload-inventory.md)
+
+Eight candidates with triggers; nothing moved. Next actionable, in order: **#1** when binaryang
+PUBLISHES stage 5 (the regex-over-WAT merge onto their parser/IR); **#4** when `allFeatures` is
+exported; **#6's foothold** (add wasmrt/wazmrt to the two cross-engine gates). The rest wait on
+owner decisions. Remaining backlog after this: **H12** (the `wasic` modularization design) and
+**`.wit` auto-emission** for the Go/Zig/Rust producers. **H10** waits on binaryang's H9.
+
 ## ✅ DONE 2026-09-28 — Zig and Rust producer suites (`zig_tests.ts` 15/15, `rust_tests.ts` 10/10)
 
 Both skip when their tool is absent, both are in testing.md's impact map, and both build in a temp
