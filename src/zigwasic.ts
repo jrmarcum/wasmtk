@@ -177,22 +177,26 @@ export async function compileZig(input: string, opts: ZigCompileOptions = {}): P
   // Library output: shrink + strip name/debug sections with binaryen -Oz (Rust path skips this;
   // a WASI program is left as zig emitted it so `wasmtk run` hosts the unmodified command).
   if (target === "library") {
+    // Optimisation is optional (an unoptimised library is still valid), but a failed -Oz must be
+    // SAID. `binaryenOptimize` never throws: it reports failure in `error`. The `catch` that used
+    // to sit here was dead code, so the failure stayed silent (fixed 2026-09-28). A missing artifact
+    // is not an -Oz failure: `report()` below checks for it and fails the build.
+    let bytes: Uint8Array | null = null;
     try {
-      const { bytes, optimized } = binaryenOptimize(await rt.readFile(out));
-      if (optimized) await rt.writeFile(out, bytes);
-      return await report(
-        out,
-        `wasm32-freestanding library${optimized ? " + binaryen -Oz" : ""}`,
-      );
-    } catch (e) {
-      // Optimisation is optional — an unoptimised library is still valid — but swallowing the error
-      // silently made a failed -Oz indistinguishable from one that was never attempted. Say so.
-      console.warn(
-        `  ⚠️  binaryen -Oz failed, shipping the unoptimised module: ` +
-          `${e instanceof Error ? e.message : e}`,
-      );
-      return await report(out, "wasm32-freestanding library, UNOPTIMISED");
+      bytes = await rt.readFile(out);
+    } catch { /* missing artifact — report() fails loudly on it */ }
+    let how = "wasm32-freestanding library";
+    if (bytes) {
+      const r = binaryenOptimize(bytes);
+      if (r.optimized) {
+        await rt.writeFile(out, r.bytes);
+        how += " + binaryen -Oz";
+      } else {
+        console.warn(`  ⚠️  binaryen -Oz failed, shipping the unoptimised module: ${r.error}`);
+        how += ", UNOPTIMISED";
+      }
     }
+    return await report(out, how);
   }
   return await report(out, "wasm32-wasi program");
 }

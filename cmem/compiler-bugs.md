@@ -1,5 +1,29 @@
 # Compiler bug log
 
+## The 2026-08-24 "-Oz failure is no longer silent" fix was DEAD CODE (FIXED 2026-09-28)
+
+That audit put a `catch` around `binaryenOptimize` in `zigwasic.ts` to warn when `-Oz` failed. But
+`binaryenOptimize` catches everything itself and returns `{ optimized: false }`, so the `catch` could
+never run and a failed `-Oz` stayed silent. The only trace was the missing " + binaryen -Oz" in the
+success line. The Go leaf build (`gowasic.ts`) had the same silence and no attempted fix. Found while
+checking that the new `zig_tests.ts` actually guards the audit's two findings: it did not reach
+either branch, so this was verified by reading, not by the suite.
+
+**Fix:** `binaryenOptimize` returns the reason in `error`. Both callers warn "binaryen -Oz failed,
+shipping the unoptimised module: <reason>" and label the artifact **UNOPTIMISED**. Optimisation stays
+optional. The Zig path no longer mislabels an unreadable artifact as an -Oz failure: it falls
+through to `report()`, whose missing/empty check (the audit's other finding) is real and was
+already correct. `zig_tests.ts` now checks the contract directly (optimized:false, a non-empty
+reason, the input returned unchanged). Reached suites: zig 18/18, go_merge 7/7, go_bindgen 7/7,
+go_asyncify 12/12. Nothing else calls `binaryenOptimize`.
+
+**Lesson:** a fix for a swallowed error must be verified by making the error HAPPEN. This one was
+reviewed and recorded as done, and it had never executed once.
+
+**Same pass:** `18_DenoExitNonZero.ts` (`@expect-exit: 3`) pins the `proc_exit(N)` exit-code fix,
+which had been verified only by hand. Inversion-checked: with the old "only exit:0" handling it
+fails with exactly the old symptom.
+
 ## `wasmtk run` exit status: three holes, now at parity with wasmtime (FIXED 2026-09-28)
 
 **Owner decision:** "we should be at parity with wasmtime". Measured wasmtime first: uncaught

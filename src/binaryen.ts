@@ -52,10 +52,15 @@ export default lib;
 
 /**
  * Binaryen `-Oz` over raw wasm bytes. Returns the optimized bytes, or the input unchanged on
- * failure. Shared by the native producers (Go/Zig) to shrink + strip name/debug sections from
- * toolchain output. (Rust's producer doesn't use this — rsxtk optimizes its own output.)
+ * failure WITH the reason in `error`. Callers must surface `error`: optimisation is optional, but a
+ * failed `-Oz` must not be silent. (The 2026-08-24 audit "fixed" that silence with a `catch` in the
+ * Zig producer, but this function never throws, so that catch was dead code and the failure stayed
+ * silent until 2026-09-28.) Shared by the native producers (Go/Zig) to shrink + strip name/debug
+ * sections from toolchain output. (Rust's producer doesn't use this — rsxtk optimizes its own.)
  */
-export function binaryenOptimize(bytes: Uint8Array): { bytes: Uint8Array; optimized: boolean } {
+export function binaryenOptimize(
+  bytes: Uint8Array,
+): { bytes: Uint8Array; optimized: boolean; error?: string } {
   try {
     const m = lib.readBinary(bytes);
     const feat = (lib as Record<string, unknown>)["Features"] as Record<string, number> | undefined;
@@ -68,8 +73,8 @@ export function binaryenOptimize(bytes: Uint8Array): { bytes: Uint8Array; optimi
     const out: Uint8Array = m.emitBinary();
     m.dispose();
     return { bytes: out, optimized: true };
-  } catch {
-    return { bytes, optimized: false };
+  } catch (e) {
+    return { bytes, optimized: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 

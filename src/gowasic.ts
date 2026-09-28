@@ -378,9 +378,16 @@ async function buildGoLeaf(baseDir: string, buildArg: string, out: string): Prom
   } finally {
     await shim.cleanup();
   }
-  const { bytes, optimized } = binaryenOptimize(await rt.readFile(out));
-  if (optimized) await rt.writeFile(out, bytes);
-  return await report(out, `tinygo:wasm-unknown leaf${optimized ? " + binaryen -Oz" : ""}`);
+  const opt = binaryenOptimize(await rt.readFile(out));
+  if (opt.optimized) await rt.writeFile(out, opt.bytes);
+  else {
+    // Optional, but never silent (2026-09-28: this failure used to vanish without a word).
+    console.warn(`  ⚠️  binaryen -Oz failed, shipping the unoptimised module: ${opt.error}`);
+  }
+  return await report(
+    out,
+    `tinygo:wasm-unknown leaf${opt.optimized ? " + binaryen -Oz" : ", UNOPTIMISED"}`,
+  );
 }
 
 async function buildWithStd(

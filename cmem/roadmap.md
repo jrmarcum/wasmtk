@@ -57,7 +57,7 @@ release.
    See [next-work.md](next-work.md).
 5. **Workspace letter H4** (memory drift T1–T11) closed in `cmem/`.
 
-Gate: **wasi 417/417 · engine 1128 ALL ON BASELINE · wast 288 files / 63,800 passed / 0 failed / 804
+Gate: **wasi 418/418 · engine 1128 ALL ON BASELINE · wast 288 files / 63,800 passed / 0 failed / 804
 skipped (ALL CLEAN)** · every other suite 0 failed. Post-mortems in
 [compiler-bugs.md](compiler-bugs.md).
 

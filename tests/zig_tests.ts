@@ -21,6 +21,7 @@
  */
 
 import { join } from "jsr:@std/path";
+import { binaryenOptimize } from "../src/binaryen.ts";
 
 const HERE = import.meta.dirname!;
 const FIXTURES = join(HERE, "zig_fixtures");
@@ -62,6 +63,17 @@ async function size(path: string): Promise<number> {
 }
 
 async function main(): Promise<void> {
+  // The -Oz failure CONTRACT (no zig needed). The 2026-08-24 audit "fixed" a silently swallowed
+  // -Oz failure with a catch in zigwasic, but binaryenOptimize never throws, so that catch was dead
+  // and the failure stayed silent. It must REPORT failure (optimized:false plus a reason) and hand
+  // the input back unchanged, so the producers can warn and ship the unoptimised module.
+  console.log("── binaryenOptimize failure contract ─────────────────────────");
+  const junk = new Uint8Array([0, 1, 2, 3]);
+  const opt = binaryenOptimize(junk);
+  ok("a failed -Oz reports optimized: false", opt.optimized === false);
+  ok("…with a non-empty reason", typeof opt.error === "string" && opt.error.length > 0);
+  ok("…and returns the input unchanged", opt.bytes === junk);
+
   console.log("── Zig producer (zigwasic) ───────────────────────────────────");
   if (!await toolAvailable("zig", ["version"])) {
     console.log("  (skipped — zig not on PATH)");

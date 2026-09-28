@@ -1158,7 +1158,7 @@ replacement.
 > (⏳ — to-do / planned / blocked) are always listed at the end of the table**, after every ✅ row.
 > Worked examples for each feature live in its command section above; deep implementation notes live
 > in [`cmem/`](cmem/). Test-count taglines in the table are historical snapshots — the current suite
-> is green (`tests/wasi/wasm_wasi` 417/417) on `jsr:@jrmarcum/binaryang`,
+> is green (`tests/wasi/wasm_wasi` 418/418) on `jsr:@jrmarcum/binaryang`,
 > with all 50 wasic phases, Stage 0/0.6/0.7, and the five Tier-1 stdlib capabilities
 > (Set/Map/Date/JSON/RegExp) shipped.
 
