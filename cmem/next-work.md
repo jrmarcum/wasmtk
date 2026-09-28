@@ -56,7 +56,7 @@
 >
 > State at pause: **v2.0.2 published and attested**, backend **binaryang 1.5.3**, every suite green
 > (wasi 417/417 · engine 1128 ALL ON BASELINE · wast ON BASELINE 288 files / 37,365). Working tree
-> clean. **One genuinely open item of our own: the Zig/Rust producer test suite.**
+> clean. **One genuinely open item of our own: the Zig/Rust producer test suite** (✅ done 2026-09-28).
 
 > Actionable backlog as of **2026-07-30** (after **v2.0.0** shipped — Phase 34 inline predicate
 > targets + the first breaking change). Authoritative status lives in [roadmap.md](roadmap.md); this
@@ -383,7 +383,16 @@ console.log(isPositive(5));   // isPositive() is invoked TWICE
   **every engine agrees on the wrong answer**, which is precisely the blind spot cross-engine
   testing cannot cover. Repro is in [compiler-bugs.md](compiler-bugs.md).
 
-## 🔴 Zig and Rust producers have NO test suite (found by the 2026-08-24 audit)
+## ✅ DONE 2026-09-28 — Zig and Rust producer suites (`zig_tests.ts` 15/15, `rust_tests.ts` 10/10)
+
+Both skip when their tool is absent, both are in testing.md's impact map, and both build in a temp
+dir. Zig: the library build (exports instantiated and CALLED), the program run on wasmtk and on
+wasmtime, `run <file.zig>` auto-detect, and a broken fixture (non-zero exit, error text, NO
+artifact: the two unguarded audit findings). Rust: rsxtk init/run/build, the built module on
+wasmtk's own WASI host, a missing file, and rsxtk removed from PATH (exit 1 plus the install hint).
+The original item follows.
+
+## (historical) 🔴 Zig and Rust producers have NO test suite (found by the 2026-08-24 audit)
 
 `src/zigwasic.ts` (286 lines) and `src/rustwasic.ts` (64) are gated by **nothing**, while `zig`,
 `cargo` and `rustc` are all installed and working on this machine and Zig fixtures already sit in the
