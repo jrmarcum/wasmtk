@@ -63,6 +63,10 @@
    module, nested ternaries grouped wrongly, and `select` ran both branches. Now `if`, first-`?`
    split, whole-branch build. `console_log.ts` gained its first error path
    (`setConsoleDiagnosticSink`). Found with it: sw34 (open). Test `7b_ConsoleStringTernary`.
+7. **H12 sw03 + sw34 (2026-09-29).** A console ternary is decided before any operator split
+   (`ok ? "pass" : "fail: " + msg` printed `passboom`), and `x instanceof Y` inside a console
+   expression is resolved instead of stubbed to 0. Tests `7b_ConsoleTernaryBeforeOperators`,
+   `15_ConsoleInstanceofCondition`. Open silent-wrong in the compiler 30 → 28.
 
 ## Release status (2026-09-28) — v2.0.3: typed declarations, exit-code parity, binaryang 1.7.0
 

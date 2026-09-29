@@ -7,7 +7,7 @@
 
 | class | compiler-open | compiler-fixed | other-open | other-fixed |
 | --- | --- | --- | --- | --- |
-| SILENT-WRONG | 30 | 39 | 2 | 13 |
+| SILENT-WRONG | 28 | 41 | 2 | 13 |
 | LOUD | 14 | 13 | 1 | 8 |
 | n/a | — | 3 | — | 3 |
 
@@ -16,9 +16,9 @@ bug; re-tallied 2026-09-28 after the typed-declaration rule landed: sw29 closed,
 ld09–ld14 added, and the new entry "Landing the typed-declaration rule" holds 2 fixed and counts
 once, as SILENT-WRONG, its worst); 2 pure groupings (`### wabt-ts 1.4.0` with its blockers under `####`, and `## FIXED — the 7 long-standing test failures`) carry a note instead and are not counted. An entry covering several defects takes its WORST class. PARTIAL counts as open. n/a entries have no status and sit in the -fixed column for placement only.
 
-**Open silent-wrong in the compiler: 30** (2026-09-29, which is H12/I11 bar (c): sw01 fixed, and
-sw33 found and fixed with it; then sw02 fixed and sw34 found open with it, so the round-1 table
-now has 47 rows. 31 on 2026-09-28: 29 after
+**Open silent-wrong in the compiler: 28** (2026-09-29, which is H12/I11 bar (c): sw01 fixed, and
+sw33 found and fixed with it; then sw02 fixed and sw34 found with it; then sw03 and sw34 fixed.
+The round-1 table has 47 rows. 31 on 2026-09-28: 29 after
 round 1, −1 sw29 closed by the typed-declaration rule, +3 found while landing it). It read 0 earlier the
 same day, after the first tally's 2 were fixed, and that 0 carried the warning below; the Phase 0b
 audit then CONFIRMED 28 more by running them (table below). The count is only as good as the
@@ -38,10 +38,10 @@ terminal fallback (console_log.ts ~2605) emits `(;? … ;) (T.const 0)` with no 
 | id | bug (native → compiled) | where |
 | --- | --- | --- |
 | ~~sw01~~ | ✅ FIXED 2026-09-29: `throw new TypeError(..)` / `throw 42` → **proc_exit(0)**: no catch, no output, exit 0. Every built-in Error constructor (not `AggregateError`) now throws like `Error`; a number / numeric var / boolean throws its string form; anything else (an object) is a hard `Unsupported throw` diagnostic. Tests `15_ThrowNonError`, `15_ThrowTypeErrorUncaught` (`@expect-exit: 1`), `15_ThrowObjectRefused` (`@expect-fail: compile`); all three fail on the old compiler | wasic throw branch |
-| sw34 | (found fixing sw02, 2026-09-29) `console.log(e instanceof Error ? "is error" : "not error")` in a catch: `is error` → `not error`. The console condition is `exprToWat`'s terminal stub `(;? e instanceof Error ;) (i32.const 0)`; the console path never resolves Error-family `instanceof` (wasic's emitExpr does). Predates sw02 (the old `select` carried the same stub). Repro `sw34_console_instanceof_cond_stub.ts` | console_log exprToWat fallback |
+| ~~sw34~~ | ✅ FIXED 2026-09-29 (same day): wasic's instanceof resolver now answers EVERY `x instanceof Y` (emitExpr models the Error family and user classes), and `exprToWat` consults it before its terminal stub. Test `15_ConsoleInstanceofCondition`; fails on the old compiler. Original report: (found fixing sw02, 2026-09-29) `console.log(e instanceof Error ? "is error" : "not error")` in a catch: `is error` → `not error`. The console condition is `exprToWat`'s terminal stub `(;? e instanceof Error ;) (i32.const 0)`; the console path never resolves Error-family `instanceof` (wasic's emitExpr does). Predates sw02 (the old `select` carried the same stub). Repro `sw34_console_instanceof_cond_stub.ts` | console_log exprToWat fallback |
 | ~~sw33~~ | ✅ FIXED 2026-09-29 (found fixing sw01): `String(<bool>)` went through `$__i32_to_str`: `true` → `1`. Now selects static "true"/"false". Test `15_ThrowNonError` | wasic `String(...)` in emitStringAssign |
 | ~~sw02~~ | ✅ FIXED 2026-09-29: console ternary with a template branch: `n=5` → `n=`. Four causes in the one construct, all fixed: (1) `getStrPtrLen` kept only `segs[0]` of a multi-piece branch (template, concat); the branch is now built whole by wasic's `emitStringAssign` via the string-expression resolver; (2) `select` ran BOTH branches (a call in the branch not taken still ran) and, when both captured a length in `$__str_op_len`, the ELSE length won; now `if` with the chosen branch's length; (3) `looksLikeString` missed templates, string-method calls and string-returning calls, so those ternaries printed `0` or built an invalid module (widened for the ternary only); (4) the split used the LAST `?` (`findTopLevelOp`), so a nested ternary grouped wrongly: new `splitTernary` (first `?`, matching `:`). Also: `console_log.ts` gained its first error path (`setConsoleDiagnosticSink`), and a branch nothing can build is now a diagnostic, not `""`. Test `7b_ConsoleStringTernary`; fails on the old compiler | console_log string ternary |
-| sw03 | `ok ? "pass" : "fail: " + msg`: `pass` → `passboom` | console_log `+` split |
+| ~~sw03~~ | ✅ FIXED 2026-09-29: `ok ? "pass" : "fail: " + msg`: `pass` → `passboom`. The `+` concat split ran before the ternary and cut at the `+` INSIDE the else branch. The string-ternary block now runs before every operator handler in `parseSingleArg` (the conditional binds looser than all of them). Golden-WAT: no existing output changed. Test `7b_ConsoleTernaryBeforeOperators`; fails on the old compiler | console_log `+` split |
 | sw04 | `Math.abs(s.charCodeAt(0) - 100)`: `3` → `100` (operand → 0) | console_log fallback |
 | sw05 | string arg that is not a plain var/literal (`count(names[1])`): `3` → `0` | console_log exprToWat string |
 | sw06 | `` `len=${s.length}` + "!" ``: `len=5!` → `len=!` | wasic appendConcatPart |

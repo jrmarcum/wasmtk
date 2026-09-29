@@ -89,6 +89,11 @@
     "wasmer": "match",
     "wazero": "match"
   },
+  "15_ConsoleInstanceofCondition": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "reject"
+  },
   "15_ElseChainForms": {
     "wasmtime": "match",
     "wasmer": "match",
@@ -1725,6 +1730,11 @@
     "wazero": "match"
   },
   "7b_ConsoleStringTernary": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
+  "7b_ConsoleTernaryBeforeOperators": {
     "wasmtime": "match",
     "wasmer": "match",
     "wazero": "match"

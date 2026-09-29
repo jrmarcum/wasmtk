@@ -13184,9 +13184,11 @@ class WasicTranspiler {
       setFuncTableLookup((name) =>
         this.functions.find((f) => f.name === name) ? this.getFuncTableIdx(name) : undefined
       );
+      // Every `x instanceof Y`, not only a user class (H12 sw34, 2026-09-29): emitExpr also models
+      // the built-in Error family (a caught exception is always an Error) and resolves other
+      // built-ins to false. The console path used to stub `e instanceof Error` to 0.
       setInstanceofResolver((tok, locs) => {
-        const m = tok.match(/^\w+\s+instanceof\s+(\w+)$/);
-        if (!m || !this.classDefs.has(m[1]!)) return undefined;
+        if (!/^\w+\s+instanceof\s+\w+$/.test(tok)) return undefined;
         return this.emitExpr(tok, locs as Map<string, WatType>, "i32");
       });
       // String-producing method calls (s.toUpperCase(), arr[i].toLowerCase(), …): resolve to a
@@ -13617,9 +13619,11 @@ class WasicTranspiler {
       setFuncTableLookup((name) =>
         this.functions.find((f) => f.name === name) ? this.getFuncTableIdx(name) : undefined
       );
+      // Every `x instanceof Y`, not only a user class (H12 sw34, 2026-09-29): emitExpr also models
+      // the built-in Error family (a caught exception is always an Error) and resolves other
+      // built-ins to false. The console path used to stub `e instanceof Error` to 0.
       setInstanceofResolver((tok, locs) => {
-        const m = tok.match(/^\w+\s+instanceof\s+(\w+)$/);
-        if (!m || !this.classDefs.has(m[1]!)) return undefined;
+        if (!/^\w+\s+instanceof\s+\w+$/.test(tok)) return undefined;
         return this.emitExpr(tok, locs as Map<string, WatType>, "i32");
       });
       // String-producing method calls (s.toUpperCase(), arr[i].toLowerCase(), …): resolve to a
