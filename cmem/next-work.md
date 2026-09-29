@@ -18,8 +18,9 @@
 >   there is V8: custom-page-sizes has no V8 flag (engine limit); custom descriptors run under the
 >   gate's flag, SCOPED to the proposal's directory (testing.md).
 > - wast re-recorded: **64,458 / 0 failed / 81 skipped**, 17 files changed, none down.
-> - Next: merge, then the owner-approved bump and publish (README Breaking Changes rows carry the
->   exit-code and typed-declaration changes).
+> - Merged, then **released as v2.0.3** the same day (owner: "bump and publish"; version 2.0.3
+>   chosen over 3.0.0). README Breaking Changes rows carry `2.0.3`. **NEXT: H12 Phase 0 fixes** —
+>   the round-1 table in compiler-bugs.md, sw01 first.
 
 > ## Branch audit 2026-09-28 — every unmerged branch and stash, and what became of it
 >

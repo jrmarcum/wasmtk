@@ -38,11 +38,26 @@
 > replace it with the real version at publish time. A breaking change may ALSO warrant a Feature
 > Status row if it ships alongside a feature — but the Breaking Changes row is mandatory.
 
-## Unreleased (on `main`, 2026-09-28) — binaryang 1.6.0, wast ALL CLEAN, exit-code parity, `.wit` auto-emission
+## Release status (2026-09-28) — v2.0.3: typed declarations, exit-code parity, binaryang 1.7.0
 
-**MERGED to `main` 2026-09-28** (fast-forward, `96aa53c`; five stacked branches, all deleted). **NOT
-pushed.** The owner has not decided on a release. **It contains a BREAKING change** (item 6; a README
-Breaking Changes row is already written with `_next release_`).
+**Released from `main` 2026-09-28** (owner: "bump and publish", once binaryang 1.7.0 was gated).
+Version **2.0.3**, the ordinary counter step: the owner chose it over a round-number jump, since the
+README's Breaking Changes table is where breakage is announced. **Two BREAKING changes** (items 6
+and 11), both in that table under `2.0.3`. User-facing summary: `CHANGELOG.md`.
+
+11. ⚠️ **BREAKING: every variable declaration states its type** (owner ruling; design-decisions.md).
+    `src/decltypes.ts` shared by wasic and `hybrid --auto`; counting-`for` counters are integers;
+    `tests/typed_decl_tests.ts`. Landing it fixed an i32-call-in-f64-context invalid module and an
+    annotated 2D array that read as empty, and filed sw30–32 / ld09–14 (compiler-bugs.md).
+12. **Phase 36 conditional types restored** from the never-merged `1.4.1` branch (branch audit,
+    next-work.md), hardened so string literals are not rewritten.
+13. **Backend → binaryang 1.7.0** (after 1.6.0, item 1). All five items of our report fixed; the
+    wast gate scopes the custom-descriptors V8 flag to its proposal → 64,458 / 0 / 81.
+14. **H12 Phase 0a/0b:** golden-WAT harness (483 entries) and audit round 1 (compiler-bugs.md).
+    Open silent-wrong compiler bugs at release: **31** — the audit found them; the release fixes
+    none of them yet (item 8's "0" was the count before the audit).
+
+Items 1–10 below were the earlier unreleased block, carried into this release:
 
 1. **Backend → binaryang 1.6.0.** One regression, ours: 1.6.0 honours `readDebugNames: true`, and
    four merge-path call sites asked for it. They now pass `false` (go_merge_tests 7/7).
@@ -70,10 +85,11 @@ Breaking Changes row is already written with `_next release_`).
 10. **`.wit` auto-emission** for every optimised or WAT→WASM artifact (Go, Zig, `wasmbundle`,
     `convert`/`wasic` on `.wat`).
 
-Gate on the merged tip (Deno 2.9.7): **wasi 421/421 · engine 378 modules / 1134 pairs ALL ON
-BASELINE · wast 288 files / 63,800 passed / 0 failed / 804 skipped (ALL CLEAN)** · seam 10/10 ·
-witgen 23/23 · zig 20/20 · rust 10/10 · every other suite 0 failed. Post-mortems in
-[compiler-bugs.md](compiler-bugs.md).
+Gate on the release tip (Deno 2.9.7, binaryang 1.7.0): **wasi 426/426 · engine 1134 pairs on
+baseline, 0 regressed · wast 288 files / 64,458 passed / 0 failed / 81 skipped (ALL CLEAN) ·
+golden-WAT 483 / 0 diverged** · typed_decl 18/18 · hybrid 13 + guard 2 · seam 10/10 · witgen 23/23 ·
+zig 20/20 · rust 10/10 · every other suite 0 failed. (Before items 11–14: wasi 421/421, wast
+63,800 / 804.) Post-mortems in [compiler-bugs.md](compiler-bugs.md).
 
 ## Release status (2026-08-31) — v2.0.2: backend on binaryang 1.5.3, wider `.wast` coverage
 

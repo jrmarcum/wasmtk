@@ -3298,6 +3298,15 @@ export function getFdWriteAllWat(): string {
 `;
 }
 
+/**
+ * WAT source for the numeric-to-text runtime helpers a compiled module links when it prints or
+ * concatenates numbers: `$__i32_to_str` (and its radix form), `$__i64_to_str`, `$__f64_to_str`
+ * (with the big-integer scratch routines it uses for exact decimal output), and the array-to-text
+ * writers. Each writes UTF-8 at a caller-supplied buffer and returns the byte count. wasic emits it
+ * only when the module needs numeric helpers.
+ *
+ * @returns The helper functions as WAT text, ready to splice into a module body.
+ */
 export function getHelperWat(): string {
   return `
   ;; ── i32 → decimal string ──────────────────────────────────────────────────

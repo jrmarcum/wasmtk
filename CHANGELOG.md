@@ -3,6 +3,78 @@
 All notable, user-facing changes to `wasmtk`. Versions follow the `deno.json` version and the
 published [`@jrmarcum/wasmtk`](https://jsr.io/@jrmarcum/wasmtk) JSR package.
 
+## 2.0.3 — Typed declarations, `wasmtk run` exit codes at parity with wasmtime, `binaryang` 1.7.0 (2026-09-28)
+
+**Two breaking changes.** Both are in the README's Breaking Changes table with the exact migration.
+
+### Breaking: every variable declaration states its type
+
+`wasic` used to guess the type of an untyped declaration, and guessed `i32` for an integer literal:
+`let a = 100000; a * a` silently wrapped to `1410065408`. There is no guess any more. The first
+`let` / `const` / `var` of a variable must state its type, and an untyped one is a compile error that
+names the line in your file:
+
+```
+Declaration needs a type (line 7): 'let n = 5;'. Every let/const/var states its type on its
+first definition, e.g. 'let n: number = …' (or ': i32' for an integer).
+```
+
+- **Migrating:** add the type the compiler names. `: i32` reproduces the old guess exactly;
+  `: number` (f64) is right for anything that may hold a fraction.
+- **Unchanged:** later assignments need no type; `for…of` / `for…in` / `catch` bindings; function
+  values whose parameters and return type are all typed (`const add = (a: i32, b: i32): i32 => …`).
+- **Destructuring** is typed on the pattern: `const [a, b]: [i32, i32] = t`,
+  `const { x, y }: Vec2 = v`.
+- **A counting-`for` counter** may stay untyped (`for (let i = 0; …)`). It is an integer, so a
+  fractional start, `/=`, `**=` or a fractional assignment to it is now an error. Give it a type
+  (`let x: number = 0`) if it should hold fractions.
+- **`wasmtk hybrid --auto`** keeps a function whose body has an untyped declaration in the
+  TypeScript host (with a warning naming it) rather than failing the build; an explicit `// @wasm`
+  still routes it, and wasic names the declaration.
+
+### Breaking: `wasmtk run` reports failure in its exit status
+
+At parity with wasmtime. A program that dies on an **uncaught exception** exits **1** (it exited 0).
+A program that calls **`proc_exit(N)`** exits **N**, silently (a non-zero N exited 1 with a spurious
+"❌ Run error"). **`wasmtk run file.ts` / `.js`** propagates the program's exit code (it was always
+0). Programs that complete normally, traps, and every compiler command are unaffected.
+
+### Fixed — wrong output that looked like success
+
+- **Numbers and booleans concatenated into a string were dropped**: `"n=" + 5` printed `n=`.
+- **String literals with an escaped quote** in a `console.log` call argument or a string enum
+  member were cut at the escaped quote.
+- **An `i32` function result used where an `f64` is expected** (`total + count()` with
+  `total: number`) produced a module that failed to load.
+- **A typed 2D array declared from another array** (`const d: i32[][] = rows`) read as a new, empty
+  array.
+- **A failed `-Oz` in the Go and Zig producers and in `wasmbundle`** was silent; it now warns with
+  the reason.
+
+### Restored: conditional types
+
+`type Toggle<T> = T extends i32 ? f64 : i32` (and the non-generic form), resolved at compile time,
+was documented as shipped but had never reached the released line. It is in now, and a type's name
+inside a string literal is no longer rewritten.
+
+### Added
+
+- **A `.wit` beside every `.wasm`** that an optimise, WAT→WASM, `wasmbundle`, Zig or Go build
+  writes, derived from the module's signatures. A hand-written `.wit` is never overwritten.
+- **A compiler that stopped on an undeclared receiver** now reports a diagnostic instead of
+  terminating its host process.
+
+### Backend: `@jrmarcum/binaryang` 1.7.0
+
+From 1.5.3, through 1.6.0. Nothing in wasmtk's own output changed (every compiled program's WAT is
+byte-identical). `wasmtk wast` gains the most: the SIMD and NaN-payload assertions now run through a
+wasm trampoline, `exnref` results are supported, the runner no longer counts a failure of the wrong
+kind as a pass, and 1.7.0 assembles the custom-descriptors proposal, named heap types in inline
+`call_indirect` signatures, `@name` and branch-hint annotations, and custom page sizes. The repo's
+own spec gate (which turns on V8's experimental wide-arithmetic, and custom descriptors for that
+proposal's files only) reads **64,458 passed, 0 failed, 81 skipped**; every remaining skip is an
+engine or spec limit.
+
 ## 2.0.2 — Backend on `binaryang` 1.5.3; wider `.wast` coverage; a Windows write-race fix (2026-08-27)
 
 No breaking changes, no API change. A backend alignment plus two fixes you may notice.

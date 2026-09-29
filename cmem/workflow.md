@@ -189,13 +189,16 @@ deno run --allow-read --allow-write --allow-run --allow-env tests/wasi_tests.ts 
 
 # 2b. hybrid + wasmmerge_guard are Deno.test-based — `deno run` runs NOTHING and exits 0
 deno test --no-check --allow-read --allow-write --allow-run --allow-env \
-  tests/hybrid_tests.ts tests/wasmmerge_guard_tests.ts     # expect 12 passed
+  tests/hybrid_tests.ts tests/wasmmerge_guard_tests.ts     # expect 15 passed (13 + 2)
+#     A hand-rolled gate script must switch to `deno test` for any file containing `Deno.test(`.
+
+# 2c. typed_decl_tests + golden_wat_tests (`deno run`); golden expects 483 / 0 diverged
 
 # 3. the Go suites — ONE AT A TIME (see traps)
 #    go_bindgen go_merge go_asyncify
 
-# 4. wast_tests   → expect 288 files / 63800 assertions / 0 failures / 804 skipped / 0 unrunnable
-#    (as of 2026-09-28, binaryang 1.6.0) → "✅ ALL CLEAN". Should a known failure ever be pinned
+# 4. wast_tests   → expect 288 files / 64458 assertions / 0 failures / 81 skipped / 0 unrunnable
+#    (as of 2026-09-28, binaryang 1.7.0) → "✅ ALL CLEAN". Should a known failure ever be pinned
 #    again, "✅ ON BASELINE — N known failure(s) still standing" is the pass condition.
 #    The known failures print in red every run by design; the gate fails only if a count MOVES.
 
@@ -265,7 +268,11 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
   failure as unproven until it reproduces alone.
 - **`deno doc --lint` must be clean across all 16 JSR entrypoints** or the JSR score drops below
   100. This has bitten twice: v1.11.4 scored 94 (missing `@module` tag), and v1.11.8 nearly shipped
-  with an undocumented `scaffoldZigProject`.
+  with an undocumented `scaffoldZigProject`. **Third time, v2.0.3 (2026-09-28):** two errors — a
+  JSDoc stranded by an INSERTION (a class added between `parseSexprs` and its comment in
+  `src/wast.ts`), and `getHelperWat` (`src/console_log.ts`), undocumented since March and shipped
+  that way in v2.0.2, flagged now. When inserting a declaration, insert it ABOVE the preceding
+  doc comment, never between a comment and what it documents.
 - **Verify a "new" failure against a clean tree** (`git stash` + `deno task install` + re-run)
   before attributing it to your change. `bundle_tests`/`StructImport` and the string-namespace
   failures were both confirmed pre-existing this way.

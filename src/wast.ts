@@ -42,7 +42,6 @@ export interface SexpList {
 /** Type guard: `true` when `s` is a {@link SexpList} (a list) rather than an atom (string). */
 export const isList = (s: Sexp): s is SexpList => typeof s !== "string";
 
-/** Read all top-level S-expressions from `.wast` source. */
 /**
  * An assembly failure tagged with the STAGE it happened at, because `assert_malformed` means
  * exactly one of them.
@@ -73,6 +72,7 @@ function parseErrorKey(e: unknown): string | null {
   return m ? m[1].trim() : null;
 }
 
+/** Read all top-level S-expressions from `.wast` source. */
 export function parseSexprs(src: string): SexpList[] {
   const out: SexpList[] = [];
   let i = 0;
