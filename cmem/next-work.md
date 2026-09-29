@@ -905,8 +905,9 @@ baselines. The "entire suite set" gate has no hole on this machine again.
   optional for run/build/modc (auto-detected); add/remove/list/fmt/clean need no `--lang`; Go
   `--go-target=wasm` browser scaffold removed (→ universal wasm loader). Correction recorded:
   producers do NOT auto-emit `.wit` (TS-only). See [polyglot-producers.md](polyglot-producers.md)
-  § "UPDATED 2026-07-28". **Follow-up ⏳: producer `.wit` auto-emission** (Go/Zig/Rust) — a real
-  roadmap item, currently hand-written for Go bindgen.
+  § "UPDATED 2026-07-28". **Follow-up: producer `.wit` auto-emission** — ✅ DONE 2026-09-28 for every
+  optimised or WAT→WASM artifact (Go, Zig, `wasmbundle`, `convert`/`wasic` on `.wat`; see
+  polyglot-producers.md). Rust is outside that rule (rsxtk optimises its own output).
 - **Dynamic runtime → runs on ANY WASI runtime — ✅ DONE (2026-07-27).** `wasmtk dync` output now
   imports ONLY `wasi_snapshot_preview1.*` and runs unchanged on wasmtime/wasmer/wazero (byte-identical
   stdout, 9/9). Shipped as a post-merge WAT transform **`internalizeDynrtHostImports`** in

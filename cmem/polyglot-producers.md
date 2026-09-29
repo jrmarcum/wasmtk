@@ -33,7 +33,17 @@
   pointer to `@jrmarcum/universal-wasm-loader` (a `goBrowserRemoved()` helper). `--go-target=wasm-unknown`
   (the alloc-free mergeable leaf) is KEPT. wasmtk produces only WASI modules now; browser consumption
   is the universal loader's job.
-- **CORRECTION — Go/Zig/Rust do NOT auto-emit `.wit`.** Only the TypeScript path (`wasic`/`modc`,
+- ✅ **UPDATED 2026-09-28 — Go and Zig now auto-emit a `.wit`** (owner: every `.wasm` passed through an
+  optimise or WAT→WASM step gets one). `src/witgen.ts` derives it from CORE signatures after the
+  build: Zig `modc`, Go `modc`/`build`, plus `wasmbundle`, `convert x.wat`, `wasic x.wat`. It never
+  overwrites a hand-written or `wasic`-generated `.wit` (so `strlib.wit`'s `string`s survive), and
+  it lists untranslatable exports in a `// skipped` comment. TinyGo's libc/float runtime exports
+  are filtered. **Rust is outside the rule:** rsxtk optimises its own output, so none of it passes
+  through wasmtk's optimiser. Zig `build` (not optimised) and every `run` write none, and neither
+  does a module with no interface to describe (only `_start`), matching the 2026-07-28 judgement that
+  an empty-world `.wit` is noise (dync stopped writing one then). The correction below was accurate
+  until then.
+- **(superseded 2026-09-28) CORRECTION — Go/Zig/Rust do NOT auto-emit `.wit`.** Only the TypeScript path (`wasic`/`modc`,
   Phase 41 `generateWit`) auto-writes a `.wit`. The Go `bindgen` flow uses a **hand-written** `.wit`
   (e.g. `tests/go_fixtures/strlib/strlib.wit`); `bindgen` itself is language-agnostic (consumes any
   `.wit`), but `.wit` PRODUCTION for the producers is still ⏳ (the "producer WIT emission" roadmap

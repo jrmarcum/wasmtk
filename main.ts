@@ -26,6 +26,7 @@ import {
   wasm2js,
 } from "./src/utils.ts";
 import { rt } from "./src/rt.ts";
+import { emitWitBeside } from "./src/witgen.ts";
 // Imported from their defining modules, not re-exported through utils.ts — the same pattern as
 // compileDyn below. `./wasic` and `./modc` are the documented public homes for these two (see the
 // README's Programmatic API table); routing them through utils.ts published the same declaration
@@ -292,6 +293,8 @@ Options:
         const { compileZig } = await import("./src/zigwasic.ts");
         const r = await compileZig(langPath, { outPath, target: "library" });
         if (!r.success) Deno.exit(1);
+        // .wit auto-emission for optimised artifacts (owner, 2026-09-28): the library went through -Oz.
+        if (r.outputPath) await emitWitBeside(r.outputPath, "zig library, -Oz");
         break;
       }
       if (effLang === "go") {
@@ -309,6 +312,8 @@ Options:
           target: goModcTarget,
         });
         if (!r.success) Deno.exit(1);
+        // .wit auto-emission (owner, 2026-09-28): TinyGo output goes through wasm-opt / binaryen -Oz.
+        if (r.outputPath) await emitWitBeside(r.outputPath, `go ${goModcTarget}, optimised`);
         break;
       }
       await compileModule(target, outPath);
@@ -500,6 +505,9 @@ Options:
         const { compileGoWasi } = await import("./src/gowasic.ts");
         const r = await compileGoWasi(langPath, { outPath, runtime: goRuntime, target: "wasip1" });
         if (!r.success) Deno.exit(1);
+        // .wit auto-emission (owner, 2026-09-28): an optimised artifact. (A Zig `build` is not
+        // optimised, so it gets none; `run` builds only to run, so it gets none either.)
+        if (r.outputPath) await emitWitBeside(r.outputPath, "go program, optimised");
       } else {
         console.error(
           "❌ wasmtk: `build` needs a Go/Zig/Rust program — pass a .go/.zig/.rs file (auto-detected) " +

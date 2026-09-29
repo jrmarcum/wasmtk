@@ -10,6 +10,7 @@ import wasm2js_compiler from "wasm2js";
 import binaryen from "./binaryen.ts";
 import wabt from "wabt";
 import { bundleImports } from "./tsbundler.ts";
+import { emitWitBeside } from "./witgen.ts";
 
 // NOTE: `compileWasi` and `compileModule` are deliberately NOT re-exported here. They live in
 // `wasic.ts` / `modc.ts`, which are the public homes the README's Programmatic API table documents,
@@ -525,6 +526,8 @@ export async function convertFile(p: string, outPath?: string): Promise<boolean>
       parsed.destroy();
       await rt.writeFile(out, new Uint8Array(buffer));
       console.log(`✅ Converted to ${out}`);
+      // .wit auto-emission for every WAT → WASM artifact (owner, 2026-09-28).
+      await emitWitBeside(out, "wat2wasm");
     } else {
       // --- WASM → WAT ---
       const wasmBytes = await rt.readFile(p);

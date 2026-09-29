@@ -43,6 +43,7 @@ import wabtInit from "wabt";
 import binaryen from "./binaryen.ts";
 import { extractExportNames, mergeWasmWat } from "./wasmmerge.ts";
 import { rt } from "./rt.ts";
+import { emitWitBeside } from "./witgen.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -407,4 +408,6 @@ export async function runWasmBundle(
     `\n✅ ${inputs.length} module(s) bundled → ${outputPath}` +
       ` (${exportCount} export(s), ${finalBytes.length} bytes)`,
   );
+  // .wit auto-emission for the bundle (owner, 2026-09-28): assembled from WAT and optimised.
+  await emitWitBeside(outputPath, "wasmbundle");
 }

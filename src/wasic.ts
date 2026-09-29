@@ -120,6 +120,7 @@ import wabt from "wabt";
 import binaryen from "./binaryen.ts";
 import { basename, dirname } from "@std/path";
 import { rt } from "./rt.ts";
+import { emitWitBeside } from "./witgen.ts";
 import { bundleImportsEx } from "./tsbundler.ts";
 import { type ExternalFuncDef, mergeWasmWat, type WasmWatType } from "./wasmmerge.ts";
 import { gateVarToLet, maskCode } from "./varscope.ts";
@@ -270,6 +271,9 @@ export async function compileWat(watPath: string, outPath?: string): Promise<Was
   const result = await watToOptimisedWasm(source, watPath, out);
   if (result.success) {
     console.log(`✅ WASI: ${out} (${result.sizeBytes} bytes)`);
+    // .wit auto-emission (owner, 2026-09-28): a .wat input has no TS types, so the .wit comes from
+    // core signatures. (A .ts input writes its richer source-typed .wit elsewhere.)
+    await emitWitBeside(out, "wat2wasm + -Oz");
   } else {
     console.error(`❌ wasic: ${result.error}`);
   }

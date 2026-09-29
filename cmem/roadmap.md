@@ -489,6 +489,7 @@ next-work.md "Published state".)
   § "UPDATED 2026-07-28".
 - **dync no longer writes the empty `.wit`**; merge notices `⚠️`→`ℹ️`. **Correction recorded:**
   Go/Zig/Rust do NOT auto-emit `.wit` (only TypeScript does; Go bindgen uses a hand-written one).
+  *(Superseded 2026-09-28: Go and Zig auto-emit for optimised artifacts; see polyglot-producers.md.)*
 - **README restructured**: Compiler Options → Choosing → Programmatic API → Producers & Backends →
   **Utility Options** (new: mod/info/wasm2js/convert alongside wasmbundle/jstyper/bindgen/wast/run) →
   Roadmap. Added wasic/modc/dync/hybrid **Limitations** notes. **Roadmap collapsed into ONE unified
