@@ -257,9 +257,10 @@ high-value subset.
     is a new first definition. A destructuring pattern is typed on the pattern:
     `const [a, b]: [i32, i32] = t`, `const { x, y }: Vec2 = v`.
   - **Exempt, because TypeScript forbids annotating them:** `for…of` / `for…in` bindings and
-    `catch` bindings. **Exempt because the type is already written:** a function value whose
-    parameters AND return type are all annotated (`const add = (a: i32, b: i32): i32 => …`); a
-    missing parameter or return type is still an error.
+    `catch` bindings. **Exempt because the type is already written (owner-confirmed 2026-09-28):**
+    a function value whose parameters AND return type are all annotated
+    (`const add = (a: i32, b: i32): i32 => …`); a missing parameter or return type is still an
+    error.
   - **A counting-`for` counter** (`for (let i = 0; …)`) may be untyped: it is an INTEGER by
     standard, and a fractional start, a `/=` or `**=` update, or a non-integer assignment in the
     header or body is an error. A counter the user types (`let i: number = 0.5`) is theirs. The check

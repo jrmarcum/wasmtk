@@ -26,7 +26,10 @@
 >   failures. It exposed and fixed a subnormal hex-float underflow. The 886 left are mostly
 >   unfinished-proposal modules that do not build (`custom-descriptors`, `wide-arithmetic`,
 >   `custom-page-sizes`) plus EH/ref kinds V8 will not hand to JS. Not yet itemised.
-> - Is 1.6.0 a release trigger? Not decided. That is the owner's call; nothing has been bumped.
+> - Is 1.6.0 a release trigger? No. **Owner decision 2026-09-28: bump and publish once the NEXT
+>   binaryang release (the item handed to that team) has landed and been gated here.** The release
+>   will carry two breaking changes already on the branch line: the `wasmtk run` exit codes and the
+>   typed-declaration rule (README Breaking Changes, `_next release_` rows). Nothing is bumped yet.
 >
 > ### (historical) ⏸️ PAUSED 2026-09-20 — waiting on the next binaryang release
 >
