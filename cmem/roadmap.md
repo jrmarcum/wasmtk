@@ -41,6 +41,8 @@
 ## Release status (2026-09-28) — v2.0.3: typed declarations, exit-code parity, binaryang 1.7.0
 
 **Released from `main` 2026-09-28** (owner: "bump and publish", once binaryang 1.7.0 was gated).
+**Verified on JSR:** `latest` = 2.0.3 (created 2026-09-29T02:34Z), provenance attested (rekor log
+2992087896), package score **100** (every check true). Release commit `43c4d8ef02f`, tag `v2.0.3`.
 Version **2.0.3**, the ordinary counter step: the owner chose it over a round-number jump, since the
 README's Breaking Changes table is where breakage is announced. **Two BREAKING changes** (items 6
 and 11), both in that table under `2.0.3`. User-facing summary: `CHANGELOG.md`.
