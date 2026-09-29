@@ -4,19 +4,54 @@
 > `@jrmarcum/binaryang` on 2026-08-27**. Sections dated before that keep the old package names on
 > purpose — they record what was reported to whom, and retitling them would make the record wrong.
 
-## FOLLOW-UP DRAFT (not yet sent) — 2026-09-28, found after the first letter went out
+## FOLLOW-UP (sent 2026-09-29; binaryang is working on it) — against 1.7.0: two items, 11 spec skips
 
-### 🟢 An out-of-range limit is accepted in text, then fails at ENCODE instead of validation (10)
+First, thanks: 1.7.0 fixed all five items from the 2026-09-28 letter, and we checked each one here.
+`return_call_indirect.wast` went 28 → 78, `allFeatures` / `defaultFeatures` are exported, `validate()`
+returns 0 for an invalid module, `name_annot` went 0 → 3 and `branch_hint` 1 → 2, and `(pagesize N)`
+memories and custom descriptors now assemble. What remains unbuilt in those files is V8's doing,
+not yours.
 
-Spec `assert_invalid` modules in `memory.wast` (6) and `table.wast` (3), plus 1 more, declare limits
-beyond what the type allows (e.g. a 32-bit memory above 65536 pages). You parse them, and `toBinary`
-then throws `u32 LEB128 out of range`. The spec calls these INVALID (a validation error: "memory
-size must be at most 65536 pages"), so a validation error is the expected answer. We now require a
-validation verdict for `assert_invalid`, so these 10 moved from pass to skip on our side.
+The spec gate on 1.7.0 is 64,434 passed / 0 failed / 105 skipped. 94 of those skips are V8 engine
+limits. The other **11 are the two items below**. Both reproduce on 1.7.0 as of 2026-09-29 through
+`compat/wabt`, `parseWat(…, { enable_all: true })` then `toBinary({})`.
 
-(Context: a new audit on our side found 186 passes that rested on the wrong failure. 147 of them
-were your parser's custom-descriptors gap being scored as "invalid", so that gap is now also
-visible as skips rather than hidden as passes: the item-5 count in the first letter rises.)
+### 🟢 1. A limit above u32 fails in the ENCODER instead of the validator (10 skips)
+
+```wat
+(module (memory 0x1_0000_0000))
+(module (memory 0 0x1_0000_0000))
+(module (import "M" "m" (memory 0x1_0000_0000)))
+(module (table 0x1_0000_0000 funcref))
+(module (memory 0x1_0000_0000 (pagesize 1)))
+```
+
+Each one parses, then `toBinary` throws
+`toBinary: the module could not be encoded: u32 LEB128 out of range: 4294967296`.
+
+The spec expects `assert_invalid` with "memory size" / "table size": the module is well formed but
+invalid. The files are `memory.wast` (6: the defined and imported forms), `table.wast` (3) and
+`proposals/custom-page-sizes/memory_max.wast` (1). Wasm 3.0 encodes limits as u64, so the encoder
+should be able to write these values, and the validator should reject them as over the type's
+maximum. We require a validation verdict for `assert_invalid`, so these count as skips until then.
+
+### 🟢 2. A branch hint on an instruction that is not a branch is accepted (1 skip)
+
+```wat
+(module
+  (func (param i32)
+    (local.get 0) (local.get 0)
+    (@metadata.code.branch_hint "\01") (i32.eq)
+    (drop)))
+```
+
+This parses and encodes (113 bytes). `custom/branch_hint.wast` expects it to be rejected as
+"invalid target": a hint may only precede `br_if` or `if`. 1.7.0 already rejects the other bad
+placements (a duplicate hint, a hint outside a function) and still accepts the same hint in front of
+`if`, as it should.
+
+When a release fixes these, we expect those 11 skips to turn into passes. We will re-record the gate
+and confirm.
 
 ## DRAFT (sent 2026-09-28) — 2026-09-28, against 1.6.0: one encoder bug, one parser gap
 

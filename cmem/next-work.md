@@ -22,8 +22,9 @@
 >    `(@metadata.code.branch_hint "\01")` before `i32.eq` must be refused as "invalid target"; 1.7.0
 >    refuses the other placements (duplicate, outside a function) but encodes this one.
 >
-> Status: drafted for the binaryang team via the owner (handoff protocol: nothing is written into
-> binaryang from here). When a release fixes them, expect those 11 files' skips to turn into passes.
+> Status: **SENT 2026-09-29** by the owner (`scripts/binaryang-report.md`, "FOLLOW-UP"); both items
+> re-verified on 1.7.0 the same day, and binaryang is working on them. When a release fixes them,
+> expect those 11 skips to turn into passes: re-record the wast gate and confirm.
 
 > ## ✅ 2026-09-28 — binaryang 1.7.0 pinned and fully gated (branch `chore/binaryang-1.7.0-2026-09-28`)
 >
