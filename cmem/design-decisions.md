@@ -246,7 +246,11 @@ high-value subset.
 
 ## Numeric / codegen correctness
 
-- 🔒 **An UNANNOTATED number is an f64 (owner decision 2026-09-28).** "All TypeScript numbers are a
+- ⏸️ **UNDER DISCUSSION (owner, 2026-09-28: "Hold on. That needs further discussion"), NOT a
+  settled rule and NOT to be implemented until it is.** The owner's first statement follows;
+  the open questions (performance, indexing, bitwise ops, the ABI of untyped exports, blast radius)
+  are to be discussed before anything changes.
+  **An UNANNOTATED number is an f64 (owner's first statement 2026-09-28).** "All TypeScript numbers are a
   64-bit float, so if the number is untyped it should automatically be that by default. If an error
   occurs after that, the user will need to debug and find his mistake." Only an explicit `i32` /
   `i64` annotation (wasic's integer subset, README) opts into integer semantics. Today

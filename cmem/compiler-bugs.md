@@ -70,7 +70,9 @@ terminal fallback (console_log.ts ~2605) emits `(;? … ;) (T.const 0)` with no 
 | ld07 | `s + n + 1` into a string: unsupported | wasic |
 | ld08 | `i64.toString()`: invalid module | wasic |
 
-**The design question `dq01` was ANSWERED by the owner 2026-09-28: it is a bug, now `sw29`.** "All
+**⏸️ `sw29` is ON HOLD (owner, 2026-09-28: "Hold on. That needs further discussion").** Its class
+depends on a decision that is not settled; do not implement. It is counted in the tally only
+provisionally. The owner's first statement was that `dq01` is a bug: "All
 TypeScript numbers are a 64-bit float, so if the number is untyped it should automatically be that
 by default."
 
