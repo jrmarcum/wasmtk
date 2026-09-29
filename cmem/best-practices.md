@@ -88,6 +88,15 @@ binary. Never hand-write the `deno install` line — `--allow-ffi` is required.
 
 ## 2. Investigating a defect
 
+**A speculative probe must undo EVERY side effect, not only the ones its suppressor knows about.**
+[wasmtk, 2026-09-29] The sw02 fix let the console string resolver try `emitStringAssign` inside
+`quietEmit`. `quietEmit` silences the terminal emit fallbacks only; `emitStringAssign`'s
+"Unsupported string assignment" went straight into `diagnostics`, so a probe that was allowed to
+fail aborted the compile, and two passing tests stopped building. The fix snapshots
+`diagnostics.length` and truncates back on failure. (It still leaves `__str_op` in `stringVars`, a
+name no program can use; recorded rather than claimed clean.) **A probe that can fail must leave no
+trace when it does: diagnostics, registered names, declared locals, allocated data.**
+
 **Before debugging a toolchain failure, prove it is yours: rebuild the UNMODIFIED commit.**
 [wazmrt + wasmtk] A one-command falsification is worth more than any amount of reading the diff you
 already believe in. **Used here 2026-08-20:** three Go suites went red during a session that had
@@ -341,6 +350,29 @@ line-ending measurement, run it against a file known to contain CRLF** — if th
 known positive, every negative it produced is worthless. The same applies to any "absence" measured
 by grep.
 
+**A second oracle must be shown unable to MANUFACTURE passes before its verdicts count.**
+[wasmtk, 2026-09-29] binaryang's validator became the wast runner's second `assert_invalid` oracle.
+An oracle that rejects too much turns every invalid-module assertion into a pass, which is the
+false-pass class the 2026-09-28 audit removed. So the runner validates every module the spec
+calls VALID and fails the gate on a single rejection (0 of all 288 files), and the guard was
+inversion-checked by narrowing the feature set (it flagged 3 valid GC modules). A rejection also
+counts only when the same bytes DECODE, because the validator pools decode and validation errors.
+**Ask of any new verdict source: what does it do with the inputs whose answer you already know?**
+
+**Measure a change in steps, so each gain has one cause; then a wrong prediction is a finding.**
+[wasmtk, 2026-09-29] The prediction for binaryang 1.7.1 plus the new oracle was 105 → 94 skips; the
+result was 66. Because the pin and the oracle were measured separately (96, then 66), both misses
+were explainable within minutes: `table.wast` gained on the pin alone, and the oracle judged 28
+assertions V8 had refused only for its own limits. Measured together, +39 would have been one
+unexplained number, and "better than predicted" is exactly when nobody asks why.
+
+**A golden check that shows the FIRST differing line hides the rest: diff the whole output before
+re-recording.** [wasmtk, 2026-09-29] sw02 changed 11 golden entries, and 9 of the first lines were
+the same harmless new local declaration. A full old-vs-new WAT diff (compile both, drop the known
+change, list the rest) showed 2 real changes, and one of them carried a pre-existing silent stub
+(`(;? e instanceof Error ;) (i32.const 0)`), filed as sw34. Re-recording on the first line alone
+would have frozen that stub into the golden snapshot without anyone seeing it.
+
 ### 🔁 STANDING QUESTION, both projects: *where is this construct USED, not where is it NAMED?*
 
 [binaryang + wasmtk, adopted 2026-08-27 — carried in binaryang's handoff and here, deliberately in
@@ -582,6 +614,12 @@ emoji as a surrogate pair. Nothing was lost only because the content was still i
 The general form: any edit whose failure mode is *destructive rather than a no-op* needs the
 destructive step to happen last. ⚠️ This is sharper for `cmem/` than for source — project memory
 is often the only copy of a decision, and an uncommitted memory edit has no other home.
+
+**A letter's SENT status is part of the record.** [wasmtk, 2026-09-29] A reply to binaryang,
+written and committed 2026-08-31, was never sent; binaryang waited four weeks. Nothing showed it,
+because no section heading said DRAFT or SENT, and its heading even carried the wrong date. Every
+report section now states `DRAFT (not yet sent)` or `SENT <date>`, and flips when the owner sends
+it; an unmarked older section is UNKNOWN, not sent.
 
 **Name the blast radius of a guarantee you cannot currently meet.** [wasmtk, 2026-08-20] When three
 Go suites could not run, the useful record was not "3 suites red" but "'ran the ENTIRE suite set'
