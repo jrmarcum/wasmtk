@@ -66,6 +66,11 @@ tests/go_fixtures/**/.tinygo-cache/
 # committed; the harness that makes it is.
 tests/.golden/
 
+# H12 Phase 0 audit repros compile in place (scripts/phase0/verify_repros.ts); only the .ts are sources.
+scripts/phase0/**/*.wasm
+scripts/phase0/**/*.wat
+scripts/phase0/**/*.wit
+
 # Claude Code machine-local settings (per-developer permission allowlist).
 # Local-only: it records commands approved on THIS machine and must not travel
 # with the repo — an allowlist from one machine should never pre-approve

@@ -7,16 +7,78 @@
 
 | class | compiler-open | compiler-fixed | other-open | other-fixed |
 | --- | --- | --- | --- | --- |
-| SILENT-WRONG | 0 | 34 | 2 | 12 |
-| LOUD | 0 | 12 | 1 | 8 |
+| SILENT-WRONG | 28 | 34 | 2 | 12 |
+| LOUD | 8 | 12 | 1 | 8 |
 | n/a | — | 3 | — | 3 |
 
-75 classified entries (re-tallied 2026-09-28 after the three entries at the top); 2 pure groupings (`### wabt-ts 1.4.0` with its blockers under `####`, and `## FIXED — the 7 long-standing test failures`) carry a note instead and are not counted. An entry covering several defects takes its WORST class. PARTIAL counts as open. n/a entries have no status and sit in the -fixed column for placement only.
+75 classified entries plus the 36 rows of the Phase 0b round-1 table (each row counted as one
+bug; re-tallied 2026-09-28); 2 pure groupings (`### wabt-ts 1.4.0` with its blockers under `####`, and `## FIXED — the 7 long-standing test failures`) carry a note instead and are not counted. An entry covering several defects takes its WORST class. PARTIAL counts as open. n/a entries have no status and sit in the -fixed column for placement only.
 
-**Open silent-wrong in the compiler: 0** (2026-09-28, which is H12/I11 bar (c)). It was 2 at the first
-tally: the JSON residual (PARTIAL) and the unheaded `"code " + x` concat gap. Both were REPRODUCED
-before anything was changed, both turned out broader than recorded, and both are fixed below. The
-count is only as good as the entries: a silent-wrong bug nobody has found is not in it.
+**Open silent-wrong in the compiler: 28** (2026-09-28, which is H12/I11 bar (c)). It read 0 earlier the
+same day, after the first tally's 2 were fixed, and that 0 carried the warning below; the Phase 0b
+audit then CONFIRMED 28 more by running them (table below). The count is only as good as the
+entries: a silent-wrong bug nobody has found is not in it.
+
+## H12 Phase 0b, audit round 1 (2026-09-28): 28 silent-wrong + 8 loud, CONFIRMED BY RUNNING
+
+**Class:** SILENT-WRONG (28) / LOUD (8) · **Status:** OPEN · **Scope:** compiler
+
+Four parallel read-only audits (fall-throughs, codegen, `wasic.ts`↔`console_log.ts` divergence,
+dead code/stale workarounds). **Every claim was run** with `scripts/phase0/verify_repros.ts` (native
+Deno vs compiled). Three claims were DISPROVED that way (`n || 7`; escaped string-enum in
+`console.log`; `console.error` of a null). Repros live in `scripts/phase0/round1/` by outcome; a fix
+flips its repro to MATCH. Most of the console-path rows share ONE root: `exprToWat`'s
+terminal fallback (console_log.ts ~2605) emits `(;? … ;) (T.const 0)` with no diagnostic.
+
+| id | bug (native → compiled) | where |
+| --- | --- | --- |
+| sw01 | `throw new TypeError(..)` / `throw 42` → **proc_exit(0)**: no catch, no output, exit 0 | wasic throw branch |
+| sw02 | console ternary with a template branch: `n=5` → `n=` | console_log getStrPtrLen |
+| sw03 | `ok ? "pass" : "fail: " + msg`: `pass` → `passboom` | console_log `+` split |
+| sw04 | `Math.abs(s.charCodeAt(0) - 100)`: `3` → `100` (operand → 0) | console_log fallback |
+| sw05 | string arg that is not a plain var/literal (`count(names[1])`): `3` → `0` | console_log exprToWat string |
+| sw06 | `` `len=${s.length}` + "!" ``: `len=5!` → `len=!` | wasic appendConcatPart |
+| sw07 | `console.log(s.includes("b"))`: `true` → `1` | wasic dotCallLookupFn |
+| sw08 | `s.indexOf(String(n))`: `2` → `0` (quietEmit nested failure) | wasic quietEmit sites |
+| sw09 | array in a template/console: `v=1,2,3` → `v=260` (a pointer) | both |
+| sw10 | `-x + 5`: `2` → `-8` (unary minus takes the rest) | wasic emitExpr |
+| sw11 | `!a && b`: `no` → `yes` | both |
+| sw12 | `c1 ? A : c2 ? B : C` grouped from the right: `-1` → `1` | wasic (and string ternary) |
+| sw13 | `2 ** 3 + 1`: `9` → `16` | wasic |
+| sw14 | a comparison anywhere infers bool (`n >> 1`, `n > 3 ? n : 3`): `4` → `true` | wasic inferInitType |
+| sw15 | binop typed from the LEFT operand: `i + f` = `3.5` → `3` | wasic lhsType |
+| sw16 | `if (0.5)` truncates: `yes` → `no` | wasic |
+| sw17 | `a >> 2 << 1`: `32` → `4` | wasic op table |
+| sw18 | `console.log(n << 2)`: `12` → `true` | console_log findTopLevelOp |
+| sw19 | `x ?? 5` on a non-nullable 0: `0` → `5` | wasic |
+| sw20 | `console.log(-7 % 4)`: `-3` → `1` (`rem_u`) | console_log |
+| sw21 | `console.log((a+1)*(a+2))`: `20` → `5` | console_log paren strip |
+| sw22 | `console.log(a ** 2)`: `9` → `0` | console_log |
+| sw23 | `console.log(n * -2)`: `-6` → `-2` | console_log |
+| sw24 | `console.log("C:\\tmp")` double-decoded: `C:\tmp` → `C:<TAB>mp` | console_log per-iov |
+| sw25 | `console.log(n > 0 ? true : false)`: `true` → `1` | console_log |
+| sw26 | `"x" + (a < b ? "lo" : "hi")`: `xlo` → `x0` | console_log |
+| sw27 | `"v=" + (x ?? 5)`: `v=3` → `v=0` | console_log |
+| sw28 | `Math.max(a, b, c)` ignores the 3rd: `9` → `5` | both |
+| ld01 | function-typed var from a ternary: undefined func | wasic |
+| ld02 | console `x % 2` on f64: `f64.rem` does not exist | console_log |
+| ld03 | console string `<`: unresolved local | console_log |
+| ld04 | console `Math.max` in i32 context: `$__i32_max` never emitted | console_log |
+| ld05 | console `tag() + 7`: stack mismatch | console_log |
+| ld06 | console `"ok: " + (a > b)`: invalid module | console_log |
+| ld07 | `s + n + 1` into a string: unsupported | wasic |
+| ld08 | `i64.toString()`: invalid module | wasic |
+
+**Design question for the owner (not counted):** `dq01`. An unannotated whole-number literal
+(`let a = 100000`) is typed i32, so `a * a` wraps (`10000000000` → `1410065408`), `+=` of an f64
+truncates, and `/` is integer division. The README maps `number` → f64, and an unannotated literal
+is a TS `number`. Bug or deliberate inference rule?
+
+**Also from the dead-code audit (cleanup, not bugs):** every private member is reachable. Unused
+exports `DATA_BASE` / `SCRATCH_SLOTS` / `ArrayLookup` (console_log.ts); the unused promise
+`+28 reactions` slot; `iovBase`/`scratchBase` are constants; stale comments at console_log.ts
+536-537, wasic.ts 15143-15148, 15443, 18694-18696, 1545-1547; duplicated `-Oz` code in
+`watToOptimisedWasm` vs `binaryenOptimize`.
 
 Classified 2026-09-28 from each entry's own text; re-tally whenever an entry is added or closed.
 

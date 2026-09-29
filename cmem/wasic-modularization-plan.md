@@ -80,6 +80,10 @@ After Phase 1, it means every module under the core tree. `tests/wasic_seam_test
     lib, `wasic` main and test).
   - A check that compares NOTHING fails (a typo'd filter once printed ✅).
   - **Recorded on `main` @ `1e27793`, Deno 2.9.7, binaryang 1.6.0.**
+- 🔄 **Phase 0b round 1 DONE 2026-09-28: 28 silent-wrong + 8 loud, all CONFIRMED by running**
+  (compiler-bugs.md § "H12 Phase 0b, audit round 1"; repros in `scripts/phase0/round1/`, verifier
+  `scripts/phase0/verify_repros.ts`). Bar (c) is at **28**. Next: fix them, then audit round 2.
+  One owner question is open (`dq01`, unannotated integer literals → i32).
 - ⏳ **Phase 0b–0d: the audit loop.** Run "look for code issues" over `wasic.ts` + `console_log.ts`
   until a full pass finds nothing new. Each fix is validated by a golden diff showing ONLY the
   intended change, then the full gate. 0d re-freezes the golden after the loop converges.
