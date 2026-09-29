@@ -246,6 +246,15 @@ high-value subset.
 
 ## Numeric / codegen correctness
 
+- 🔒 **An UNANNOTATED number is an f64 (owner decision 2026-09-28).** "All TypeScript numbers are a
+  64-bit float, so if the number is untyped it should automatically be that by default. If an error
+  occurs after that, the user will need to debug and find his mistake." Only an explicit `i32` /
+  `i64` annotation (wasic's integer subset, README) opts into integer semantics. Today
+  `let a = 100000` is typed i32 (`inferInitType`), so `a * a` wraps, `+=` of an f64 truncates, and
+  `/` divides as integers: that is now a BUG, recorded as `sw29` (compiler-bugs.md, round-1 table).
+  **Sequencing:** land it AFTER the mixed-type fixes (`sw14`, `sw15`: a binop typed from its left
+  operand only), because an f64 loop counter meeting i32 values would otherwise inherit that bug
+  everywhere.
 - **`Math.round` = `floor(x + 0.5)`**, NOT `f64.nearest` (which is banker's rounding and gives
   `round(2.5)=2`). Both `wasic.ts` (F64_UNARY special case) and `console_log.ts` must agree.
 - **mathlib is being converted to CORRECTLY-ROUNDED double-double, function by function** (`src/wasm/mathlib.wat`, 2026-07-01, "full CR sweep"). DONE + committed: `sin`/`cos`/`tan`, `exp`, `log`/`log2`/`log10`, `cbrt`. Each returns the IEEE-754 correctly-rounded result, validated **bit-for-bit vs a BigInt fixed-point oracle through the full pipeline** (wat2wasm + merge + Binaryen `-Oz`). Shared helpers (reused by every CR function): dd ops `$__ts`/`$__tp`/`$__dda`/`$__ddm`/`$__ddmd`/`$__ddri`/`$__dddiv` (multi-value `(hi,lo)`); `$__scalbn` (musl-style, subnormal/overflow-safe); `$__cr(hi,lo,k)` = correctly-round `(hi+lo)·2^k` (normal via `scalbn(hi+lo,k)`; subnormal via round-`(hi+lo)·2^(k+1074)`-to-even-integer then `·2^-1074` — this avoids the tail double-rounding where `scalbn(lo,k)` lands on exactly half-ulp). `exp`: dd Cody-Waite (dd ln2) + dd Taylor + `$__cr`. `log`: internal `$__logdd` (mantissa/exp decomposition + dd atanh series); `log2`/`log10` = `round(logdd · (1/ln2|1/ln10) dd)`. REMAINING (still old ~1e-11 approx, not yet CR): `expm1`, `log1p`, `pow`(`**`), `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`. NOTE: CR results differ from Deno's V8 `Math.*` on the small % where V8 isn't correctly-rounded (intended). Regen after editing: `wasmtk convert src/wasm/mathlib.wat` then `deno run -A scripts/gen_mathlib_bytes.ts`. Full historical trig detail:

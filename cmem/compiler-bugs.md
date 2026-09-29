@@ -7,21 +7,21 @@
 
 | class | compiler-open | compiler-fixed | other-open | other-fixed |
 | --- | --- | --- | --- | --- |
-| SILENT-WRONG | 28 | 34 | 2 | 12 |
+| SILENT-WRONG | 29 | 34 | 2 | 12 |
 | LOUD | 8 | 12 | 1 | 8 |
 | n/a | — | 3 | — | 3 |
 
 75 classified entries plus the 36 rows of the Phase 0b round-1 table (each row counted as one
 bug; re-tallied 2026-09-28); 2 pure groupings (`### wabt-ts 1.4.0` with its blockers under `####`, and `## FIXED — the 7 long-standing test failures`) carry a note instead and are not counted. An entry covering several defects takes its WORST class. PARTIAL counts as open. n/a entries have no status and sit in the -fixed column for placement only.
 
-**Open silent-wrong in the compiler: 28** (2026-09-28, which is H12/I11 bar (c)). It read 0 earlier the
+**Open silent-wrong in the compiler: 29** (2026-09-28, which is H12/I11 bar (c)). It read 0 earlier the
 same day, after the first tally's 2 were fixed, and that 0 carried the warning below; the Phase 0b
 audit then CONFIRMED 28 more by running them (table below). The count is only as good as the
 entries: a silent-wrong bug nobody has found is not in it.
 
 ## H12 Phase 0b, audit round 1 (2026-09-28): 28 silent-wrong + 8 loud, CONFIRMED BY RUNNING
 
-**Class:** SILENT-WRONG (28) / LOUD (8) · **Status:** OPEN · **Scope:** compiler
+**Class:** SILENT-WRONG (29, incl. sw29 from the owner's ruling) / LOUD (8) · **Status:** OPEN · **Scope:** compiler
 
 Four parallel read-only audits (fall-throughs, codegen, `wasic.ts`↔`console_log.ts` divergence,
 dead code/stale workarounds). **Every claim was run** with `scripts/phase0/verify_repros.ts` (native
@@ -60,6 +60,7 @@ terminal fallback (console_log.ts ~2605) emits `(;? … ;) (T.const 0)` with no 
 | sw26 | `"x" + (a < b ? "lo" : "hi")`: `xlo` → `x0` | console_log |
 | sw27 | `"v=" + (x ?? 5)`: `v=3` → `v=0` | console_log |
 | sw28 | `Math.max(a, b, c)` ignores the 3rd: `9` → `5` | both |
+| sw29 | an UNANNOTATED number is typed i32, not f64 (`let a = 100000; a * a`): `10000000000` → `1410065408` | wasic inferInitType. Owner decision 2026-09-28: untyped numbers are f64 (design-decisions.md). Land after sw14/sw15 |
 | ld01 | function-typed var from a ternary: undefined func | wasic |
 | ld02 | console `x % 2` on f64: `f64.rem` does not exist | console_log |
 | ld03 | console string `<`: unresolved local | console_log |
@@ -69,10 +70,9 @@ terminal fallback (console_log.ts ~2605) emits `(;? … ;) (T.const 0)` with no 
 | ld07 | `s + n + 1` into a string: unsupported | wasic |
 | ld08 | `i64.toString()`: invalid module | wasic |
 
-**Design question for the owner (not counted):** `dq01`. An unannotated whole-number literal
-(`let a = 100000`) is typed i32, so `a * a` wraps (`10000000000` → `1410065408`), `+=` of an f64
-truncates, and `/` is integer division. The README maps `number` → f64, and an unannotated literal
-is a TS `number`. Bug or deliberate inference rule?
+**The design question `dq01` was ANSWERED by the owner 2026-09-28: it is a bug, now `sw29`.** "All
+TypeScript numbers are a 64-bit float, so if the number is untyped it should automatically be that
+by default."
 
 **Also from the dead-code audit (cleanup, not bugs):** every private member is reachable. Unused
 exports `DATA_BASE` / `SCRATCH_SLOTS` / `ArrayLookup` (console_log.ts); the unused promise
