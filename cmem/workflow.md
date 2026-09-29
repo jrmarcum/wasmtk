@@ -216,11 +216,10 @@ Only when the owner asks. Steps, in order:
 git checkout main && git merge --ff-only <branch> && git push   # 1. merge FIRST
 # 2. bump "version" in deno.json ONLY, then:
 deno task update-version        # propagates to package.json + src/utils.ts VERSION
-# 2b. DENO FLOOR — on the NEXT release only (decided 2026-09-20, see design-decisions.md):
-#     capture the Deno in use and write it into deno.json as the floor.
-deno --version                  # -> "deno": ">=X.Y.Z"
-#     After that release the floor HOLDS: test a new Deno for compatibility BEFORE moving it.
-#     Deno has no LTS line, so a floor that tracks the newest release can strand consumers.
+# 2b. DENO FLOOR (REVISED by the owner 2026-09-28, see design-decisions.md § Tooling): while
+#     fixes are in flight the floor IS the installed Deno and moves up with each install, so
+#     nothing is written. Once we are OUT OF FIXES, write the TESTED minimum:
+deno --version                  # the version the full gate ran on -> "deno": ">=X.Y.Z"
 # 3. CHANGELOG entry (user-facing; lead with impact, not internals)
 # 4. promote roadmap.md's working-tree entry to a Release-status section
 # 5. pre-publish gate:

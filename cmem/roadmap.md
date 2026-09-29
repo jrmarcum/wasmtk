@@ -38,11 +38,11 @@
 > replace it with the real version at publish time. A breaking change may ALSO warrant a Feature
 > Status row if it ships alongside a feature — but the Breaking Changes row is mandatory.
 
-## Unreleased (working tree, 2026-09-28) — binaryang 1.6.0, `.wast` gate ALL CLEAN, SIMD runs
+## Unreleased (on `main`, 2026-09-28) — binaryang 1.6.0, wast ALL CLEAN, exit-code parity, `.wit` auto-emission
 
-Two unmerged branches, stacked: `chore/binaryang-1.6.0-2026-09-28` (`17d5a1e`), then
-`fix/wast-ref-args-2026-09-28` on top. Merge them in that order. The owner has not decided on a
-release.
+**MERGED to `main` 2026-09-28** (fast-forward, `96aa53c`; five stacked branches, all deleted). **NOT
+pushed.** The owner has not decided on a release. **It contains a BREAKING change** (item 6; a README
+Breaking Changes row is already written with `_next release_`).
 
 1. **Backend → binaryang 1.6.0.** One regression, ours: 1.6.0 honours `readDebugNames: true`, and
    four merge-path call sites asked for it. They now pass `false` (go_merge_tests 7/7).
@@ -56,9 +56,23 @@ release.
    then a false-pass audit demoted 186 passes that rested on the wrong failure → 63,800 / 804.
    See [next-work.md](next-work.md).
 5. **Workspace letter H4** (memory drift T1–T11) closed in `cmem/`.
+6. ⚠️ **BREAKING: `wasmtk run` exit status at parity with wasmtime.** An uncaught exception → 1,
+   `proc_exit(N)` → N, and `run x.ts` propagates the program's exit code. It also closed the README's
+   planned `os.Exit` row. The harness gained `@expect-exit`; the engine gate became exit-code aware,
+   with a VANISHED check.
+7. **Producer suites** `zig_tests` / `rust_tests`, and three silent `-Oz` failures made loud
+   (Zig, Go leaf, `wasmbundle`; the 2026-08-24 "fix" had been dead code).
+8. **Compiler:** numbers/booleans in string values no longer dropped; escaped-quote literals in
+   call args and string enums; the core's in-class `rt.exit` removed. **Open silent-wrong compiler
+   entries: 0** (H12 bar c).
+9. **H11** offload inventory and **H12** seams (four layers, the seam gate, every bug classified).
+   Phase 0 has not started.
+10. **`.wit` auto-emission** for every optimised or WAT→WASM artifact (Go, Zig, `wasmbundle`,
+    `convert`/`wasic` on `.wat`).
 
-Gate: **wasi 421/421 · engine 378 modules / 1134 pairs ALL ON BASELINE · wast 288 files / 63,800 passed / 0 failed / 804
-skipped (ALL CLEAN)** · every other suite 0 failed. Post-mortems in
+Gate on the merged tip (Deno 2.9.7): **wasi 421/421 · engine 378 modules / 1134 pairs ALL ON
+BASELINE · wast 288 files / 63,800 passed / 0 failed / 804 skipped (ALL CLEAN)** · seam 10/10 ·
+witgen 23/23 · zig 20/20 · rust 10/10 · every other suite 0 failed. Post-mortems in
 [compiler-bugs.md](compiler-bugs.md).
 
 ## Release status (2026-08-31) — v2.0.2: backend on binaryang 1.5.3, wider `.wast` coverage
