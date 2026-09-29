@@ -1,5 +1,39 @@
 # Next-work planning note
 
+> ## Branch audit 2026-09-28 — every unmerged branch and stash, and what became of it
+>
+> Owner: "make sure all unmerged items are merged that need to be merged." Method: each branch's
+> unique commits, then each change checked against `main` BY SUBSTANCE (a patch that no longer
+> reverse-applies only proves the file moved on, not that the change is missing).
+>
+> | item | content | disposition |
+> | --- | --- | --- |
+> | `feat/typed-declarations` | the typed-declaration rule | **merged** (fast-forward) |
+> | `1.4.1` (+ origin) | **Phase 36 conditional types**, never merged, README said shipped | **restored** on `fix/restore-phase36-conditional-types` (compiler-bugs.md) |
+> | `test/cross-runtime-wazmrt-wasmrt` | dync gate: argv table, `<NAME>_BIN`, timing, + wazmrt/wasmrt rows | **harvested** minus the two runtime rows (owner ruling: they test themselves) |
+> | `1.4.6` (+ origin) | `componentize` (jco P2 wrap) + WIT `string` for it; a lint cast | **not merged**: P2 is DEFERRED by decision (roadmap P2 row); kept as prior art |
+> | `1.1.8` (origin only) | licences, provenance | superseded: `main` has LICENSE-MIT/-APACHE and attested publishing |
+> | `1.3.8`, `1.4.7` (+ origin) | version bumps, one comment line, a lint fix already in `main` | superseded |
+> | `wasmtk-1.2.0` (+ origin) | lint fixes to root-level files that no longer exist | superseded |
+> | `stash@{0}` (2026-04-09) | Phase 5h `__i32cell` WIP | superseded: 5h ships by another route, its test passes |
+>
+> **Owner directive 2026-09-28: DELETE every unmerged branch whose content was included in other
+> work or superseded.** Merged branches, `origin/release/v*` (created by the publish workflow) and
+> `1.4.6` (deferred, not superseded) are out of scope and stay. The session's delete was refused by
+> the tool permission layer, so it is PENDING for the owner to run (or allow). Tips, for recovery:
+>
+> | ref | tip | delete |
+> | --- | --- | --- |
+> | `origin/1.1.8` (local `1.1.8` is MERGED, out of scope) | 1b6dd4d4b5e | `git push origin --delete 1.1.8` |
+> | `1.3.8` + origin | fc2b63b2bf1 | `git branch -D 1.3.8` · `git push origin --delete 1.3.8` |
+> | `1.4.7` + origin | 280febcefae | `git branch -D 1.4.7` · `git push origin --delete 1.4.7` |
+> | `wasmtk-1.2.0` + origin | 4b2d709bffa | `git branch -D wasmtk-1.2.0` · `git push origin --delete wasmtk-1.2.0` |
+> | `stash@{0}` | 47077ecfd3a | `git stash drop stash@{0}` |
+> | `1.4.1` + origin — ONLY after the Phase 36 restore is on `main` | a85d8bfc9b8 | `git branch -D 1.4.1` · `git push origin --delete 1.4.1` |
+> | `test/cross-runtime-wazmrt-wasmrt` (local only) — ONLY after the harvest is on `main` | 72cf256ffad | `git branch -D test/cross-runtime-wazmrt-wasmrt` |
+>
+> `main` is 26+ commits ahead of `origin/main`, unpushed until the release.
+
 > ## ✅ RESUMED 2026-09-28 — binaryang 1.6.0 pinned and fully gated (branch `chore/binaryang-1.6.0-2026-09-28`)
 >
 > The resume sequence below was followed step for step. Results:

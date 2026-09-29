@@ -111,6 +111,10 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 
 ## Current pass counts (2026-09-28, binaryang **1.6.0**; latest release v2.0.2 was gated on 1.5.3)
 
+> **2026-09-28, Phase 36 restored + dync runtime table, full gate green.** wasi **426/426** (+5
+> `36_*`) · engine 1134 on baseline, 0 regressed · golden-WAT 483 compared, 0 diverged (+5 recorded)
+> · wast 63,800 / 0 / 804 · every other suite green.
+>
 > **2026-09-28, typed-declaration rule landed, full gate on the final binary, all green.** wasi
 > 421/421 (71 sources annotated) · engine 1134 pairs on baseline, 0 regressed · wast 288 files /
 > 63,800 / 0 failed / 804 skipped (unchanged) · golden-WAT 478 compared, 0 diverged (one entry,

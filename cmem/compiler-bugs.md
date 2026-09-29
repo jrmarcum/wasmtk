@@ -8,10 +8,10 @@
 | class | compiler-open | compiler-fixed | other-open | other-fixed |
 | --- | --- | --- | --- | --- |
 | SILENT-WRONG | 31 | 36 | 2 | 12 |
-| LOUD | 14 | 12 | 1 | 8 |
+| LOUD | 14 | 13 | 1 | 8 |
 | n/a | — | 3 | — | 3 |
 
-76 classified entries plus the 45 rows of the Phase 0b round-1 table (each row counted as one
+77 classified entries (the 77th: Phase 36 restored, LOUD) plus the 45 rows of the Phase 0b round-1 table (each row counted as one
 bug; re-tallied 2026-09-28 after the typed-declaration rule landed: sw29 closed, sw30–sw32 and
 ld09–ld14 added, and the new entry "Landing the typed-declaration rule" holds 2 fixed and counts
 once, as SILENT-WRONG, its worst); 2 pure groupings (`### wabt-ts 1.4.0` with its blockers under `####`, and `## FIXED — the 7 long-standing test failures`) carry a note instead and are not counted. An entry covering several defects takes its WORST class. PARTIAL counts as open. n/a entries have no status and sit in the -fixed column for placement only.
@@ -98,6 +98,31 @@ exports `DATA_BASE` / `SCRATCH_SLOTS` / `ArrayLookup` (console_log.ts); the unus
 `watToOptimisedWasm` vs `binaryenOptimize`.
 
 Classified 2026-09-28 from each entry's own text; re-tally whenever an entry is added or closed.
+
+## Phase 36 conditional types were never on the main line (RESTORED 2026-09-28)
+
+**Class:** LOUD · **Status:** FIXED 2026-09-28 · **Scope:** compiler (+ docs)
+
+Found by the branch audit (next-work.md § "Branch audit 2026-09-28"). Phase 36
+(`type Toggle<T> = T extends i32 ? f64 : i32`, resolved at compile time by
+`expandConditionalTypes`) was built on branch `1.4.1` (a85d8bfc9b8, 2026-04-29) and **never
+merged**. The README's feature table and roadmap row described it as shipped, with four named tests
+and "124/124 suite"; `main` had neither the method nor the tests, and every Phase 36 program failed
+to compile (`Unsupported statement: const a: Toggle<i32> = 3.5;`). Loud for a user, but the docs
+claimed otherwise for five months, and no suite could notice: the tests were on the branch too.
+
+**Fix:** the method is ported into `src/wasic.ts` at its original place in `transpile()` (after
+`expandGenerics`, before `expandNamespaces`), and the four tests are in as
+`tests/wasi/wasm_wasi/36_*.ts`. **Hardened on the way in:** the original rewrote a type's name
+everywhere with a bare `\bName\b` replace, strings included (`"Scale is …"` → `"f64 is …"`, a
+silent-wrong it would have shipped with). Declarations are now found on masked source and use sites
+rewritten in code only. `36_ConditionalTypeNameInString` covers that, and was inversion-checked: it
+FAILS against the original replace.
+
+**Lesson:** a feature documented as shipped is a claim that needs a merged commit behind it. A
+release branch that carries features must be merged or its README rows reverted before the next
+branch starts from `main`. The branch audit found the other old branches held only version bumps,
+superseded work, or the deliberately deferred `componentize` (roadmap P2).
 
 ## Landing the typed-declaration rule: two defects it exposed (FIXED 2026-09-28)
 
