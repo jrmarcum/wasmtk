@@ -304,7 +304,11 @@ version ([design-decisions.md](design-decisions.md)).
   [design-decisions.md](design-decisions.md). The "Verify provenance was recorded on JSR" step now
   fails the publish job whenever it is missing, so this can no longer regress unnoticed —
   **expect the v2.0.0 Actions run to be red for this reason; the package published fine.**
-- 🗓️ **Deno floor — DECIDED 2026-09-20, execute AT THE NEXT BUMP.** Not an open question any more:
+- 🔒 **Deno floor — REVISED by the owner 2026-09-28** (see design-decisions.md § Tooling). While fixes
+  are in flight the floor is the installed Deno (2.9.7) and moves up with each install. Once we are
+  out of fixes, a TESTED minimum is set and only then written to `deno.json`. The next-bump timing
+  below is superseded.
+- 🗓️ **(superseded 2026-09-28) Deno floor — DECIDED 2026-09-20, execute AT THE NEXT BUMP.** Not an open question any more:
   the floor becomes whatever `deno --version` reports at the next bump-and-release (machine is on
   **2.9.7** today), written as `"deno": ">=X.Y.Z"` in `deno.json`. Until that release we keep
   cadence with Deno; **after it we HOLD and test future releases for compatibility before moving the
@@ -387,8 +391,8 @@ console.log(isPositive(5));   // isPositive() is invoked TWICE
 
 Eight candidates with triggers; nothing moved. Next actionable, in order: **#1** when binaryang
 PUBLISHES stage 5 (the regex-over-WAT merge onto their parser/IR); **#4** when `allFeatures` is
-exported; **#6's foothold** (add wasmrt/wazmrt to the two cross-engine gates). The rest wait on
-owner decisions. Remaining backlog after this: **H12** (the `wasic` modularization design) and
+exported. (#6's "foothold", adding wasmrt/wazmrt to our cross-engine gates, was DECLINED by the
+owner 2026-09-28: they test against our tests on their side.) The rest wait on owner decisions. Remaining backlog after this: **H12** (the `wasic` modularization design) and
 **`.wit` auto-emission** for the Go/Zig/Rust producers. **H10** waits on binaryang's H9.
 
 ## ✅ DONE 2026-09-28 — Zig and Rust producer suites (`zig_tests.ts` 15/15, `rust_tests.ts` 10/10)

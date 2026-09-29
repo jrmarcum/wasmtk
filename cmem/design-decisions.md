@@ -903,7 +903,21 @@ silently break (all `src/wasic.ts`):
     2026-09-20). `tests/` is deliberately NOT — those 404 files are hand-written compiler INPUT, and
     reformatting the corpus under test is a change to the test, not to its formatting.
 
-  - 🗓️ **DENO FLOOR — decided 2026-09-20, to be WRITTEN AT THE NEXT BUMP, not before.**
+  - 🔒 **DENO FLOOR — REVISED by the owner 2026-09-28 (supersedes the 2026-09-20 "write it at the
+    next bump" below):**
+
+    1. **While fixes are in flight, the floor IS the Deno currently installed** (2.9.7 on
+       2026-09-28), and it moves UP as newer versions are installed. Every gate run is therefore a
+       run on the floor. Record the version with each full-gate result.
+    2. **Once we are out of fixes, set a MINIMUM we have actually tested against**, and only then
+       write it as `"deno": ">=X.Y.Z"` in `deno.json`. That is a tested number, not "whatever is
+       installed at release time".
+    3. Nothing is written to `deno.json` before step 2.
+
+    The 2026-09-20 text follows for its reasoning (no LTS line, so hold and test before moving the
+    floor, which step 2 honours). Its "write it at the next bump" timing is superseded.
+
+  - 🗓️ **(superseded 2026-09-28) DENO FLOOR — decided 2026-09-20, to be WRITTEN AT THE NEXT BUMP.**
     `deno.json` declares no floor today. The owner's policy:
 
     1. **The floor becomes whatever Deno version is in use at the next bump-and-release.** It is

@@ -521,7 +521,10 @@ and **agree** on `deno fmt --check` (19 files), so formatting is not version-sen
 
 ⚠️ **`deno.json` declares NO Deno floor**, so nothing in this project validates a minimum supported
 version. A release can silently start requiring a newer Deno than a consumer has, and the first
-signal would be a user report.
+signal would be a user report. **Owner policy (2026-09-28):** while fixes are in flight the floor is
+the installed Deno (2.9.7), moving up with each install; once we are out of fixes, a TESTED
+minimum is written as `"deno": ">=X.Y.Z"`. Until then, note the Deno version beside every full-gate
+result. See design-decisions.md § Tooling.
 
 The full green pre-publish checklist (run before each release):
 
