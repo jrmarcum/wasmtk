@@ -60,6 +60,12 @@ tests/go_fixtures/**/*.wit
 tests/go_fixtures/**/*.bindings.ts
 tests/go_fixtures/**/.tinygo-cache/
 
+# Golden-WAT snapshot (H12 Phase 0a, tests/golden_wat_tests.ts). LOCAL on purpose, per the
+# modularization plan: it freezes THIS machine's emitted WAT (Deno + backend + paths) as the
+# byte-exact reference for the Phase 1–3 refactor. Re-recorded deliberately (`--record`), never
+# committed; the harness that makes it is.
+tests/.golden/
+
 # Claude Code machine-local settings (per-developer permission allowlist).
 # Local-only: it records commands approved on THIS machine and must not travel
 # with the repo — an allowlist from one machine should never pre-approve

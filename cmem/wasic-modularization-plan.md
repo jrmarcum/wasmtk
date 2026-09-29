@@ -69,8 +69,20 @@ After Phase 1, it means every module under the core tree. `tests/wasic_seam_test
   both were reproduced, found broader than recorded, and fixed (`4aa36ce` string+number/bool
   concat; the escaped-quote literal pair). That is 0 KNOWN; Phase 0's audit loop is what makes it
   mean something.
-- ⏳ **Phase 0 (the hard gate) has NOT started**: no golden-WAT harness (0a), no audit loop. The
-  sequence stands: 0a harness → 0b–0d audit loop to zero → Phase 1. **Next H12 step: build 0a.**
+- ✅ **Phase 0a DONE 2026-09-28: `tests/golden_wat_tests.ts`.** It compiles in-process (no
+  per-file spawn) every corpus `.ts` plus every `@test-pipeline` `wasic`/`modc` step (in place, in
+  order): **478 entries** (421 + 57), each frozen as ONE `.golden` file with `status` / `wat` /
+  `wit` sections. Failures are frozen too (5). Record 16s, check 16s; the snapshot is 139 MB, local and
+  gitignored (`tests/.golden/`).
+  - **Proven four ways:** (1) a check straight after recording shows 0 differences
+    (deterministic); (2) a planted golden edit is reported at its line; (3) a real one-line
+    EMITTER change is caught at line 1 of every module; (4) the same on a pipeline (its `modc`
+    lib, `wasic` main and test).
+  - A check that compares NOTHING fails (a typo'd filter once printed ✅).
+  - **Recorded on `main` @ `1e27793`, Deno 2.9.7, binaryang 1.6.0.**
+- ⏳ **Phase 0b–0d: the audit loop.** Run "look for code issues" over `wasic.ts` + `console_log.ts`
+  until a full pass finds nothing new. Each fix is validated by a golden diff showing ONLY the
+  intended change, then the full gate. 0d re-freezes the golden after the loop converges.
 
 ## Why now — sequencing before `wasm2ts`
 
