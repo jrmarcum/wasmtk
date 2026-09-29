@@ -1,5 +1,25 @@
 # Next-work planning note
 
+> ## Census of the 81 remaining wast skips (2026-09-28, binaryang 1.7.0, gate flags)
+>
+> By running every file and grouping `skipReasons`. **70 are V8** (engine limits): custom page
+> sizes has no V8 implementation (the 27 + 25 + 4 + 2 in `proposals/custom-page-sizes/`), 5
+> `threads` `assert_invalid` modules V8 accepts, and unimplemented-feature refusals in `align` (4),
+> `binary` (1 + 1 in custom-descriptors). **11 are binaryang, to report (not ours to fix):**
+>
+> 1. **Limits above u32 fail in the ENCODER, not the validator (10).** `(memory 0x1_0000_0000)`,
+>    `(memory 0 0x1_0000_0000)`, the imported forms (6 in `memory.wast`), `(table 0x1_0000_0000
+>    funcref)` and two more (3 in `table.wast`), `(memory 0x1_0000_0000 (pagesize 1))` (1 in
+>    `custom-page-sizes/memory_max.wast`). The spec expects `assert_invalid` "memory size" / "table
+>    size"; binaryang throws `u32 LEB128 out of range: 4294967296` at `toBinary`. Wasm 3.0 encodes
+>    limits as u64, so the encoder should write them and the validator should refuse them.
+> 2. **A branch hint on a non-branch is still accepted (1).** `custom/branch_hint.wast`:
+>    `(@metadata.code.branch_hint "\01")` before `i32.eq` must be refused as "invalid target"; 1.7.0
+>    refuses the other placements (duplicate, outside a function) but encodes this one.
+>
+> Status: drafted for the binaryang team via the owner (handoff protocol: nothing is written into
+> binaryang from here). When a release fixes them, expect those 11 files' skips to turn into passes.
+
 > ## ✅ 2026-09-28 — binaryang 1.7.0 pinned and fully gated (branch `chore/binaryang-1.7.0-2026-09-28`)
 >
 > The resume sequence (below) was followed. JSR served 1.7.0 some minutes after the tag was pushed;
