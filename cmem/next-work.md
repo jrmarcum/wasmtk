@@ -1,5 +1,26 @@
 # Next-work planning note
 
+> ## ✅ 2026-09-28 — binaryang 1.7.0 pinned and fully gated (branch `chore/binaryang-1.7.0-2026-09-28`)
+>
+> The resume sequence (below) was followed. JSR served 1.7.0 some minutes after the tag was pushed;
+> the first reads showed `latest: 1.6.1` and a 404 for `1.7.0_meta.json`, so poll before pinning.
+>
+> - Breaking changes in 1.7.0 (`interop` removed, IR shapes for custom descriptors) do not reach
+>   wasmtk: it imports only `compat/wabt` and `compat/binaryen`, which are unchanged.
+> - `-Oz` guard pre 42 / post 42. Golden-WAT 483 / 0 diverged. wasi 426/426. Engine 1134 on
+>   baseline. Every other suite green.
+> - **All five items we reported are fixed, each verified here:** (1) named heap type in an inline
+>   `call_indirect` signature: `return_call_indirect.wast` 28 → 78, its unbuilt module builds;
+>   (2) `allFeatures` / `defaultFeatures` exported from `./core/wabt-ts` (`Features` is type-only);
+>   (3) `compat/binaryen` `Module.validate()` returns 0 for an invalid module, with the reason on
+>   stderr (was 1 for everything); (4) `@name` / branch hints: `name_annot` 0 → 3, `branch_hint`
+>   1 → 2; (5) `(memory (pagesize N) …)` and custom descriptors now ASSEMBLE. What remains unbuilt
+>   there is V8: custom-page-sizes has no V8 flag (engine limit); custom descriptors run under the
+>   gate's flag, SCOPED to the proposal's directory (testing.md).
+> - wast re-recorded: **64,458 / 0 failed / 81 skipped**, 17 files changed, none down.
+> - Next: merge, then the owner-approved bump and publish (README Breaking Changes rows carry the
+>   exit-code and typed-declaration changes).
+
 > ## Branch audit 2026-09-28 — every unmerged branch and stash, and what became of it
 >
 > Owner: "make sure all unmerged items are merged that need to be merged." Method: each branch's
@@ -20,7 +41,8 @@
 > **Owner directive 2026-09-28: DELETE every unmerged branch whose content was included in other
 > work or superseded.** Merged branches, `origin/release/v*` (created by the publish workflow) and
 > `1.4.6` (deferred, not superseded) are out of scope and stay. The session's delete was refused by
-> the tool permission layer, so it is PENDING for the owner to run (or allow). Tips, for recovery:
+> the tool permission layer; **the owner is running these deletions (2026-09-28) — a session
+> does not attempt them.** Verify with `git branch -a` before relying on this table. Tips, for recovery:
 >
 > | ref | tip | delete |
 > | --- | --- | --- |

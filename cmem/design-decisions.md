@@ -852,8 +852,8 @@ silently break (all `src/wasic.ts`):
     pointing at one dependency at one version**:
 
     ```jsonc
-    "binaryen-backend": "jsr:@jrmarcum/binaryang@1.6.0/compat/binaryen",
-    "wabt":             "jsr:@jrmarcum/binaryang@1.6.0/compat/wabt"
+    "binaryen-backend": "jsr:@jrmarcum/binaryang@1.7.0/compat/binaryen",
+    "wabt":             "jsr:@jrmarcum/binaryang@1.7.0/compat/wabt"
     ```
 
     ⚠️ **The alias is `binaryen-backend`, not `binaryen`** — see the invariant below. This block is

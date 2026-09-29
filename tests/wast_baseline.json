@@ -152,16 +152,16 @@
     "skip": 0
   },
   "custom/branch_hint.wast": {
-    "pass": 1,
-    "skip": 2
+    "pass": 2,
+    "skip": 1
   },
   "custom/custom_annot.wast": {
     "pass": 14,
     "skip": 0
   },
   "custom/name_annot.wast": {
-    "pass": 0,
-    "skip": 3
+    "pass": 3,
+    "skip": 0
   },
   "data.wast": {
     "pass": 34,
@@ -562,13 +562,11 @@
   },
   "proposals/custom-descriptors/array_new_exact.wast": {
     "pass": 0,
-    "skip": 1,
-    "unbuilt": 1
+    "skip": 0
   },
   "proposals/custom-descriptors/binary-descriptors.wast": {
-    "pass": 0,
-    "skip": 5,
-    "unbuilt": 2
+    "pass": 3,
+    "skip": 0
   },
   "proposals/custom-descriptors/binary.wast": {
     "pass": 104,
@@ -576,58 +574,47 @@
   },
   "proposals/custom-descriptors/br_on_cast.wast": {
     "pass": 33,
-    "skip": 1,
-    "unbuilt": 1
+    "skip": 0
   },
   "proposals/custom-descriptors/br_on_cast_desc_eq.wast": {
-    "pass": 0,
-    "skip": 122,
-    "unbuilt": 5
+    "pass": 117,
+    "skip": 0
   },
   "proposals/custom-descriptors/br_on_cast_desc_eq_fail.wast": {
-    "pass": 0,
-    "skip": 122,
-    "unbuilt": 5
+    "pass": 117,
+    "skip": 0
   },
   "proposals/custom-descriptors/br_on_cast_fail.wast": {
     "pass": 33,
-    "skip": 1,
-    "unbuilt": 1
+    "skip": 0
   },
   "proposals/custom-descriptors/descriptors.wast": {
-    "pass": 0,
-    "skip": 57,
-    "unbuilt": 7
+    "pass": 50,
+    "skip": 0
   },
   "proposals/custom-descriptors/exact-casts.wast": {
-    "pass": 0,
-    "skip": 111,
-    "unbuilt": 3
+    "pass": 108,
+    "skip": 0
   },
   "proposals/custom-descriptors/exact-func-import.wast": {
-    "pass": 1,
-    "skip": 23,
-    "unbuilt": 8
+    "pass": 16,
+    "skip": 0
   },
   "proposals/custom-descriptors/exact.wast": {
-    "pass": 3,
-    "skip": 33,
-    "unbuilt": 16
+    "pass": 20,
+    "skip": 0
   },
   "proposals/custom-descriptors/ref_cast_desc_eq.wast": {
-    "pass": 0,
-    "skip": 109,
-    "unbuilt": 3
+    "pass": 106,
+    "skip": 0
   },
   "proposals/custom-descriptors/ref_get_desc.wast": {
-    "pass": 0,
-    "skip": 38,
-    "unbuilt": 7
+    "pass": 31,
+    "skip": 0
   },
   "proposals/custom-descriptors/struct_new_desc.wast": {
-    "pass": 0,
-    "skip": 44,
-    "unbuilt": 8
+    "pass": 39,
+    "skip": 0
   },
   "proposals/custom-page-sizes/binary.wast": {
     "pass": 106,
@@ -639,8 +626,8 @@
     "unbuilt": 1
   },
   "proposals/custom-page-sizes/custom-page-sizes.wast": {
-    "pass": 0,
-    "skip": 44,
+    "pass": 1,
+    "skip": 43,
     "unbuilt": 12
   },
   "proposals/custom-page-sizes/memory_max.wast": {
@@ -730,9 +717,8 @@
     "skip": 0
   },
   "return_call_indirect.wast": {
-    "pass": 28,
-    "skip": 51,
-    "unbuilt": 1
+    "pass": 78,
+    "skip": 0
   },
   "return_call_ref.wast": {
     "pass": 46,

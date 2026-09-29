@@ -15,7 +15,7 @@
  * Supported backends (switch by editing `deno.json` only):
  *
  *   "binaryen-backend": "npm:binaryen@^116.0.0"                          // Emscripten WASM blob
- *   "binaryen-backend": "jsr:@jrmarcum/binaryang@1.6.0/compat/binaryen"  // JSR-native TS port (current)
+ *   "binaryen-backend": "jsr:@jrmarcum/binaryang@1.7.0/compat/binaryen"  // JSR-native TS port (current)
  *   "binaryen-backend": "jsr:@jrmarcum/binaryen-ts@1.5.0/compat"         // SUPERSEDED — see below
  *
  * ⚠️ **`binaryen-ts` and `wabt-ts` merged into `@jrmarcum/binaryang` (2026-08-27).** One package now

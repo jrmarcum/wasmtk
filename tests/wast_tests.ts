@@ -61,25 +61,71 @@ import wabtInit from "wabt";
 // re-runs itself with the flag. It detects the feature, not an env marker, so it cannot loop and
 // cannot be fooled. Without `--allow-run` it continues unflagged, and the baselined
 // `wide-arithmetic.wast` counts then fail the gate LOUDLY rather than skipping quietly.
-const GATE_V8_FLAGS = ["--experimental-wasm-wide-arithmetic"];
+//
+// Each flag has a PROBE module that V8 validates only when the feature is on (checked both ways).
+//
+// A feature WITH A `scope` is turned on only for corpus files under that directory, in their own
+// subprocess. A feature that CHANGES core semantics must be scoped: `custom-descriptors` relaxes
+// `br_on_cast`'s type rule, so with it on, three `assert_invalid` modules in each of the CORE
+// `br_on_cast.wast` / `br_on_cast_fail.wast` validate and the core files lose 6 passes (measured
+// 2026-09-28). Core files are measured on core semantics; the proposal's own files carry the new
+// rule. `custom-descriptors` joined 2026-09-28 with binaryang 1.7.0, which assembles the proposal:
+// every module built, and V8 alone refused them unflagged. (`custom-page-sizes` has no V8 flag in
+// this engine; it stays an engine limit.)
+interface GateFeature {
+  flag: string;
+  probe: string;
+  /** Corpus directory (relative, trailing `/`) the flag is limited to; absent = every file. */
+  scope?: string;
+}
+const GATE_V8_FEATURES: GateFeature[] = [
+  {
+    flag: "--experimental-wasm-wide-arithmetic",
+    probe: "(module (func (param i64 i64 i64 i64) (result i64 i64) " +
+      "(i64.add128 (local.get 0) (local.get 1) (local.get 2) (local.get 3))))",
+  },
+  {
+    flag: "--experimental-wasm-custom-descriptors",
+    probe: "(module (type $s (struct)) (func (param (ref null (exact $s)))))",
+    scope: "proposals/custom-descriptors/",
+  },
+];
+/** Features every file gets: the gate process itself runs with these. */
+const BASE_FEATURES = GATE_V8_FEATURES.filter((f) => !f.scope);
+const GATE_V8_FLAGS = BASE_FEATURES.map((f) => f.flag);
+/** The features a corpus file runs under (base + any whose scope contains it). */
+const featuresFor = (rel: string): GateFeature[] =>
+  GATE_V8_FEATURES.filter((f) => !f.scope || rel.startsWith(f.scope));
+const isScoped = (rel: string): boolean =>
+  GATE_V8_FEATURES.some((f) => f.scope !== undefined && rel.startsWith(f.scope));
 
-async function wideArithmeticAvailable(): Promise<boolean> {
+/** Of `features`, the ones this V8 does NOT have on right now. */
+async function missingFeatures(features: GateFeature[] = BASE_FEATURES): Promise<string[]> {
   // deno-lint-ignore no-explicit-any
   const wabt: any = await (wabtInit as any)();
-  const probe = wabt.parseWat(
-    "probe.wat",
-    "(module (func (param i64 i64 i64 i64) (result i64 i64) " +
-      "(i64.add128 (local.get 0) (local.get 1) (local.get 2) (local.get 3))))",
-    { enable_all: true },
-  );
-  try {
-    return WebAssembly.validate(new Uint8Array(probe.toBinary({}).buffer));
-  } finally {
-    probe.destroy();
+  const missing: string[] = [];
+  for (const { flag, probe: text } of features) {
+    const probe = wabt.parseWat("probe.wat", text, { enable_all: true });
+    try {
+      if (!WebAssembly.validate(new Uint8Array(probe.toBinary({}).buffer))) missing.push(flag);
+    } finally {
+      probe.destroy();
+    }
   }
+  return missing;
 }
 
-if (!(await wideArithmeticAvailable())) {
+// One level of re-execution only. If the flagged child STILL lacks a feature (a future V8 that
+// dropped or renamed a flag), it must not re-run itself forever: it continues, and the files that
+// need the feature go OFF BASELINE loudly.
+const REEXEC_MARK = "WASMTK_WAST_GATE_REEXEC";
+const missing = await missingFeatures();
+if (missing.length > 0 && Deno.env.get(REEXEC_MARK) === "1") {
+  console.error(
+    `⚠️  still missing after re-running with V8 flags: ${missing.join(" ")} — this V8 no longer ` +
+      "accepts them; the files that need them will go OFF BASELINE.",
+  );
+} else if (missing.length > 0) {
   const self = new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
   try {
     const { code } = await new Deno.Command(Deno.execPath(), {
@@ -94,6 +140,7 @@ if (!(await wideArithmeticAvailable())) {
         self,
         ...Deno.args,
       ],
+      env: { [REEXEC_MARK]: "1" },
       stdin: "inherit",
       stdout: "inherit",
       stderr: "inherit",
@@ -104,7 +151,7 @@ if (!(await wideArithmeticAvailable())) {
       `⚠️  could not re-run with ${GATE_V8_FLAGS.join(" ")} (${
         e instanceof Error ? e.message : e
       });` +
-        " continuing without it — wide-arithmetic.wast will go OFF BASELINE.",
+        " continuing without them — the files that need them will go OFF BASELINE.",
     );
   }
 }
@@ -131,11 +178,19 @@ async function corpusFiles(): Promise<string[]> {
 
 // ── --scan-chunk (internal) ───────────────────────────────────────────────────────────────
 // Runs a slice of the corpus and writes JSON. Spawned by --update-baseline; not for direct use.
+// `which` is `base` (skip scoped files) or `scoped` (only scoped files; the parent started this
+// process with their flags, and a missing one is fatal rather than a quiet unflagged scan).
 if (Deno.args[0] === "--scan-chunk") {
-  const [, startS, countS, outPath] = Deno.args;
-  const files = (await corpusFiles()).slice(Number(startS), Number(startS) + Number(countS));
+  const [, startS, countS, outPath, which] = Deno.args;
+  const files = (await corpusFiles()).slice(Number(startS), Number(startS) + Number(countS))
+    .filter((rel) => (which === "scoped") === isScoped(rel));
   const acc: Record<string, { pass: number; skip: number; failed: number; unbuilt: number }> = {};
   for (const rel of files) {
+    const missingHere = await missingFeatures(featuresFor(rel));
+    if (missingHere.length > 0) {
+      console.error(`scoped features missing for ${rel}: ${missingHere.join(" ")}`);
+      Deno.exit(2);
+    }
     try {
       const r = await runWast(join(SUITE, rel), { maxFailures: 0 });
       acc[rel] = { pass: r.passed, skip: r.skipped, failed: r.failed, unbuilt: r.modulesFailed };
@@ -146,6 +201,45 @@ if (Deno.args[0] === "--scan-chunk") {
   await Deno.writeTextFile(outPath, JSON.stringify(acc));
   Deno.exit(0);
 }
+
+// ── --run-one (internal) ──────────────────────────────────────────────────────────────────────
+// Runs ONE scoped corpus file for the normal gate run, in a process started with that file's
+// scoped flags, and writes the result the gate compares. Missing a feature is fatal (exit 2), so a
+// scoped file can never be measured unflagged by accident.
+if (Deno.args[0] === "--run-one") {
+  const [, rel, outPath] = Deno.args;
+  const missingHere = await missingFeatures(featuresFor(rel));
+  if (missingHere.length > 0) {
+    console.error(`scoped features missing for ${rel}: ${missingHere.join(" ")}`);
+    Deno.exit(2);
+  }
+  const r = await runWast(join(SUITE, rel), { maxFailures: 5 });
+  await Deno.writeTextFile(
+    outPath,
+    JSON.stringify({
+      passed: r.passed,
+      failed: r.failed,
+      skipped: r.skipped,
+      modulesFailed: r.modulesFailed,
+      failures: r.failures,
+    }),
+  );
+  Deno.exit(0);
+}
+
+/** Deno args to run this script in a child with `rel`'s full flag set. */
+const SELF = new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+const childArgs = (flags: string[], ...rest: string[]): string[] => [
+  "run",
+  "--allow-read",
+  "--allow-write",
+  "--allow-net",
+  "--allow-run",
+  "--allow-env",
+  `--v8-flags=${flags.join(",")}`,
+  SELF,
+  ...rest,
+];
 
 // ── --update-baseline ────────────────────────────────────────────────────────────────────────
 //
@@ -161,27 +255,22 @@ if (Deno.args[0] === "--scan-chunk") {
 if (Deno.args.includes("--update-baseline")) {
   const files = await corpusFiles();
   const CHUNK = 20;
-  const self = new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
   const tmp = await Deno.makeTempDir();
   const merged: Record<string, { pass: number; skip: number; failed: number; unbuilt: number }> =
     {};
   const unrunnable: string[] = [];
 
-  async function scan(start: number, count: number): Promise<boolean> {
-    const out = join(tmp, `c${start}_${count}.json`);
+  // `which`: "base" scans a chunk's unscoped files under the base flags; "scoped" scans one scoped
+  // file under its own flags.
+  async function scan(
+    start: number,
+    count: number,
+    which: "base" | "scoped" = "base",
+  ): Promise<boolean> {
+    const out = join(tmp, `c${start}_${count}_${which}.json`);
+    const flags = which === "scoped" ? featuresFor(files[start]).map((f) => f.flag) : GATE_V8_FLAGS;
     const cmd = new Deno.Command(Deno.execPath(), {
-      args: [
-        "run",
-        "--allow-read",
-        "--allow-write",
-        "--allow-net",
-        `--v8-flags=${GATE_V8_FLAGS.join(",")}`,
-        self,
-        "--scan-chunk",
-        String(start),
-        String(count),
-        out,
-      ],
+      args: childArgs(flags, "--scan-chunk", String(start), String(count), out, which),
       stdout: "null",
       stderr: "null",
     });
@@ -197,6 +286,12 @@ if (Deno.args.includes("--update-baseline")) {
   console.log(`Rescanning ${files.length} corpus files in chunks of ${CHUNK}…`);
   for (let i = 0; i < files.length; i += CHUNK) {
     const n = Math.min(CHUNK, files.length - i);
+    for (let j = i; j < i + n; j++) {
+      if (isScoped(files[j]) && !(await scan(j, 1, "scoped"))) {
+        unrunnable.push(files[j]);
+        console.log(red(`    UNRUNNABLE under its scoped flags: ${files[j]}`));
+      }
+    }
     if (await scan(i, n)) continue;
     console.log(yellow(`  chunk ${i}..${i + n - 1} died — retrying file by file to isolate it`));
     for (let j = i; j < i + n; j++) {
@@ -258,9 +353,36 @@ const drifted: string[] = [];
 
 for (const rel of names) {
   const want = baseline[rel];
-  let r;
+  let r: {
+    passed: number;
+    failed: number;
+    skipped: number;
+    modulesFailed: number;
+    failures: string[];
+  };
   try {
-    r = await runWast(join(SUITE, rel), { maxFailures: 5 });
+    if (isScoped(rel)) {
+      // Its scoped flags cannot be turned on in this process: run it in a child that has them.
+      const out = await Deno.makeTempFile({ suffix: ".json" });
+      try {
+        const flags = featuresFor(rel).map((f) => f.flag);
+        const { code, stderr } = await new Deno.Command(Deno.execPath(), {
+          args: childArgs(flags, "--run-one", rel, out),
+          stdout: "null",
+          stderr: "piped",
+        }).output();
+        if (code !== 0) {
+          throw new Error(
+            `scoped run exited ${code}: ${new TextDecoder().decode(stderr).trim().slice(0, 200)}`,
+          );
+        }
+        r = JSON.parse(await Deno.readTextFile(out));
+      } finally {
+        await Deno.remove(out);
+      }
+    } else {
+      r = await runWast(join(SUITE, rel), { maxFailures: 5 });
+    }
   } catch (e) {
     console.log(red(`  ✗ ${rel} — could not run: ${e instanceof Error ? e.message : e}`));
     badFiles++;

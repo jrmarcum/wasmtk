@@ -933,7 +933,9 @@ wasmtk wast file.wast --verbose               # show skip/toolchain-gap detail
 > reader on a lone `;`, and a wabt-ts `parseWat` blow-up on `(ref (exact any))` (fixed upstream in
 > wabt-ts 1.4.1 — `exact.wast` now reports `pass=20 fail=0`). Measured on the full 288-file corpus in
 > a single process: **63,693 passed, 0 failed, 913 skipped** (2026-09-28), no OOM. (The repo's own
-> test gate enables V8's experimental wide-arithmetic and reads 63,800 / 804; the CLI uses the stable engine.)
+> test gate enables V8's experimental wide-arithmetic for every file, and custom-descriptors for
+> that proposal's own files only, and reads 64,458 / 81 on binaryang 1.7.0; the CLI uses the stable
+> engine.)
 
 It splits the script into commands, assembles each module with the WABT backend, instantiates it on
 the host engine with the standard `spectest` imports + a `register` link registry, and executes the
