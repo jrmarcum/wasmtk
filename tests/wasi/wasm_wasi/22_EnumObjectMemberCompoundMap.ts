@@ -24,7 +24,7 @@ class NetworkNode {
 export function testEnumClassIntegration(): void {
   console.log("--- Test 3: Enum Property Integration ---");
 
-  const router = new NetworkNode(101);
+  const router: NetworkNode = new NetworkNode(101);
   console.log("Initial Status Value:", router.status); // Expected: 0 (DeviceStatus.Offline)
 
   router.updateStatus(DeviceStatus.Online);

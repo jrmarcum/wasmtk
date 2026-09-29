@@ -1,6 +1,6 @@
 type i32 = number;
 export function testLabeledBlock(x: i32): i32 {
-  let val = 0;
+  let val: i32 = 0;
 
   my_logic: {
     val = 10;

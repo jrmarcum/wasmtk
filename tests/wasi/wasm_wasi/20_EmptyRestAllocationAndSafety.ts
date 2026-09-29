@@ -6,7 +6,7 @@ export function testEmptyRest(): void {
   const smallPair: i32[] = [55, 66];
 
   // Unpacking matches total elements exactly
-  const [first, second, ...remainder] = smallPair;
+  const [first, second, ...remainder]: i32[] = smallPair;
 
   console.log("First Element:", first);          // Expected: 55
   console.log("Second Element:", second);        // Expected: 66

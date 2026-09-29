@@ -25,19 +25,19 @@ function sumNested({ a: { b, c }, d }: Outer): i32 {
 function main(): void {
   // One level of nesting.
   const o: Outer = { a: { b: 5, c: 7 }, d: 9 };
-  const { a: { b, c }, d } = o;
+  const { a: { b, c }, d }: Outer = o;
   console.log("b:", b); // 5
   console.log("c:", c); // 7
   console.log("d:", d); // 9
 
   // Renamed bindings inside a nested pattern.
-  const { a: { b: bb, c: cc } } = o;
+  const { a: { b: bb, c: cc } }: Outer = o;
   console.log("bb:", bb); // 5
   console.log("cc:", cc); // 7
 
   // Two levels deep.
   const deep: Deep = { inner: { a: { b: 1, c: 2 }, d: 3 }, tag: 99 };
-  const { inner: { a: { b: db, c: dc }, d: dd }, tag } = deep;
+  const { inner: { a: { b: db, c: dc }, d: dd }, tag }: Deep = deep;
   console.log("db:", db);   // 1
   console.log("dc:", dc);   // 2
   console.log("dd:", dd);   // 3

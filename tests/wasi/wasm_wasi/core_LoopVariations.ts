@@ -8,7 +8,7 @@ export function testLoops(n: i32): i32 {
   }
 
   // Do-while (ensures body runs at least once)
-  let j = 0;
+  let j: i32 = 0;
   do {
     total += 1;
     j++;

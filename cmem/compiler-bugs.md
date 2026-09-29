@@ -7,14 +7,17 @@
 
 | class | compiler-open | compiler-fixed | other-open | other-fixed |
 | --- | --- | --- | --- | --- |
-| SILENT-WRONG | 29 | 34 | 2 | 12 |
-| LOUD | 8 | 12 | 1 | 8 |
+| SILENT-WRONG | 31 | 36 | 2 | 12 |
+| LOUD | 14 | 12 | 1 | 8 |
 | n/a | — | 3 | — | 3 |
 
-75 classified entries plus the 36 rows of the Phase 0b round-1 table (each row counted as one
-bug; re-tallied 2026-09-28); 2 pure groupings (`### wabt-ts 1.4.0` with its blockers under `####`, and `## FIXED — the 7 long-standing test failures`) carry a note instead and are not counted. An entry covering several defects takes its WORST class. PARTIAL counts as open. n/a entries have no status and sit in the -fixed column for placement only.
+76 classified entries plus the 45 rows of the Phase 0b round-1 table (each row counted as one
+bug; re-tallied 2026-09-28 after the typed-declaration rule landed: sw29 closed, sw30–sw32 and
+ld09–ld14 added, and the new entry "Landing the typed-declaration rule" holds 2 fixed and counts
+once, as SILENT-WRONG, its worst); 2 pure groupings (`### wabt-ts 1.4.0` with its blockers under `####`, and `## FIXED — the 7 long-standing test failures`) carry a note instead and are not counted. An entry covering several defects takes its WORST class. PARTIAL counts as open. n/a entries have no status and sit in the -fixed column for placement only.
 
-**Open silent-wrong in the compiler: 29** (2026-09-28, which is H12/I11 bar (c)). It read 0 earlier the
+**Open silent-wrong in the compiler: 31** (2026-09-28, which is H12/I11 bar (c); 29 after round 1,
+−1 sw29 closed by the typed-declaration rule, +3 found while landing it). It read 0 earlier the
 same day, after the first tally's 2 were fixed, and that 0 carried the warning below; the Phase 0b
 audit then CONFIRMED 28 more by running them (table below). The count is only as good as the
 entries: a silent-wrong bug nobody has found is not in it.
@@ -45,7 +48,7 @@ terminal fallback (console_log.ts ~2605) emits `(;? … ;) (T.const 0)` with no 
 | sw11 | `!a && b`: `no` → `yes` | both |
 | sw12 | `c1 ? A : c2 ? B : C` grouped from the right: `-1` → `1` | wasic (and string ternary) |
 | sw13 | `2 ** 3 + 1`: `9` → `16` | wasic |
-| sw14 | a comparison anywhere infers bool (`n >> 1`, `n > 3 ? n : 3`): `4` → `true` | wasic inferInitType |
+| sw14 | a comparison anywhere infers bool: `"h=" + (n >> 1)`: `h=4` → `h=true`. NARROWED 2026-09-28: the declaration half (`const h = n >> 1`) is gone with the typed-declaration rule, the concat half is not | wasic inferInitType (concat operand typing) |
 | sw15 | binop typed from the LEFT operand: `i + f` = `3.5` → `3` | wasic lhsType |
 | sw16 | `if (0.5)` truncates: `yes` → `no` | wasic |
 | sw17 | `a >> 2 << 1`: `32` → `4` | wasic op table |
@@ -60,7 +63,10 @@ terminal fallback (console_log.ts ~2605) emits `(;? … ;) (T.const 0)` with no 
 | sw26 | `"x" + (a < b ? "lo" : "hi")`: `xlo` → `x0` | console_log |
 | sw27 | `"v=" + (x ?? 5)`: `v=3` → `v=0` | console_log |
 | sw28 | `Math.max(a, b, c)` ignores the 3rd: `9` → `5` | both |
-| sw29 | an UNANNOTATED number is typed i32, not f64 (`let a = 100000; a * a`): `10000000000` → `1410065408` | wasic inferInitType. Owner decision 2026-09-28: untyped numbers are f64 (design-decisions.md). Land after sw14/sw15 |
+| ~~sw29~~ | ✅ CLOSED 2026-09-28: an UNANNOTATED number was typed i32 (`let a = 100000; a * a` wrapped). Now LOUD by rule: every declaration states its type (design-decisions.md); the repro was retired, `tests/typed_decl_tests.ts` asserts the refusal | wasic checkDeclarationTypes |
+| sw30 | an ARRAY declared from an array PARAMETER reads 0s: `const d: i32[] = xs` → sum `6` → `0` | wasic arrayVars (a name initialiser is not registered as an alias). Found landing the rule |
+| sw31 | a 2D array declared from a CALL reads 0s: `const d: i32[][] = mk()` → `3` → `0` (typed or not) | wasic 2D paths. Found landing the rule |
+| sw32 | closure state across two calls in ONE `console.log`: `k.inc(), k.inc()` → `1 2` → `1 1` | console_log arg evaluation. Found landing the rule |
 | ld01 | function-typed var from a ternary: undefined func | wasic |
 | ld02 | console `x % 2` on f64: `f64.rem` does not exist | console_log |
 | ld03 | console string `<`: unresolved local | console_log |
@@ -69,12 +75,21 @@ terminal fallback (console_log.ts ~2605) emits `(;? … ;) (T.const 0)` with no 
 | ld06 | console `"ok: " + (a > b)`: invalid module | console_log |
 | ld07 | `s + n + 1` into a string: unsupported | wasic |
 | ld08 | `i64.toString()`: invalid module | wasic |
+| ld09 | a function returning tuples from a TERNARY (`a < b ? [a, b] : [b, a]`): `$__arr_tmp` unresolved | wasic. Found landing the rule |
+| ld10 | `recs.push({ a: 1, b: 2 })` into `Array<{ a: i32; b: i32 }>`: unsupported expression | wasic. Found landing the rule |
+| ld11 | a 2D array declared from another 2D array's NAME: invalid module | wasic. Found landing the rule |
+| ld12 | a 2D array declared from a 2D PARAMETER, then `d[1][2]`: unsupported expression | wasic. Found landing the rule |
+| ld13 | `const b: string[] = a`: unsupported expression | wasic. Found landing the rule |
+| ld14 | a union-typed array filled by `push({ … })` literals, then `xs[i].type`: unsupported | wasic. Found landing the rule |
 
-**⏸️ `sw29` is ON HOLD (owner, 2026-09-28: "Hold on. That needs further discussion").** Its class
-depends on a decision that is not settled; do not implement. It is counted in the tally only
-provisionally. The owner's first statement was that `dq01` is a bug: "All
-TypeScript numbers are a 64-bit float, so if the number is untyped it should automatically be that
-by default."
+**`sw29` was settled by the owner's ruling (2026-09-28), not by an f64 default:** every
+declaration states its type, and a counting-`for` counter is an integer by standard. See
+design-decisions.md and the entry "Landing the typed-declaration rule" below. The "untyped number is
+an f64" idea was put on hold and then superseded.
+
+**sw30–sw32 and ld09–ld14 were found by LANDING that rule, not by the round-1 audit.** Requiring
+annotations pushed every program through the typed-declaration handlers, which turned out to be
+weaker than inference for arrays; the probes that showed it are filed beside the round-1 repros.
 
 **Also from the dead-code audit (cleanup, not bugs):** every private member is reachable. Unused
 exports `DATA_BASE` / `SCRATCH_SLOTS` / `ArrayLookup` (console_log.ts); the unused promise
@@ -83,6 +98,33 @@ exports `DATA_BASE` / `SCRATCH_SLOTS` / `ArrayLookup` (console_log.ts); the unus
 `watToOptimisedWasm` vs `binaryenOptimize`.
 
 Classified 2026-09-28 from each entry's own text; re-tally whenever an entry is added or closed.
+
+## Landing the typed-declaration rule: two defects it exposed (FIXED 2026-09-28)
+
+**Class:** SILENT-WRONG (one of two) · **Status:** FIXED 2026-09-28 · **Scope:** compiler
+
+The owner's rule (design-decisions.md) made a type mandatory on every first declaration, so code
+that used to reach the INFERRED declaration path now reaches the TYPED one. Two defects surfaced
+while the corpus was annotated; the golden-WAT harness showed both as unexplained diffs.
+
+1. **LOUD. An i32-returning call in an f64 context was not converted.** `total + add(1, 2)` with
+   `total: number` emitted `f64.add` over a raw i32 `call` → `CompileError` at instantiate. The
+   opposite direction (f64 call in an i32 context) was fixed 2026-06-30 and this mirror was never
+   written. Fix: `emitExpr`'s user-call return wraps `f64.convert_i32_s` when the callee's result is
+   i32-based and the context is f64.
+2. **SILENT-WRONG. An annotated 2D array from a NAME became a fresh empty array.**
+   `const data: i32[][] = initialRows;` went to the 2D-literal handler, which parsed `initialRows`
+   as an empty literal: `data` read 0s. `12_Final_Integration_Stress` would have printed wrong
+   sums; its golden WAT showed a `__malloc` where a `local.get` had been. Fix: a 2D annotation on a
+   non-literal initialiser is checked for presence and then dropped
+   (`stripInferableAnnotations`), so the declaration aliases the pointer through the inferred
+   path, as before the rule. That path is still wrong for a CALL initialiser (sw31) and invalid for
+   a NAME of another local 2D array (ld11); both are in the round-1 table.
+
+**Lesson:** a rule that FORCES a code path onto the whole corpus is a coverage event for that path.
+Probe the forced path on the shapes the corpus used, typed AND untyped against the pre-change
+compiler (`git stash` + reinstall), before annotating tests, or the annotation looks like the
+regression.
 
 ## String literals with escaped quotes in two more places (FIXED 2026-09-28)
 

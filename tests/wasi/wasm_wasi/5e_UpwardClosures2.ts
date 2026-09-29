@@ -5,8 +5,8 @@ function createAdder(x: i32) {
 }
 
 export function _start(): void {
-  const addFive = createAdder(5);
-  const result = addFive(10);
+  const addFive: (y: i32) => i32 = createAdder(5);
+  const result: i32 = addFive(10);
   console.log(result);
 }
 

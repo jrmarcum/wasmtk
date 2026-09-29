@@ -16,8 +16,18 @@ deno run ... tests/jstyper_tests.ts     # jstyper unit
 
 # ⚠️ TWO suites are Deno.test-based and need `deno test`, NOT `deno run`:
 deno test --no-check --allow-read --allow-write --allow-run --allow-env \
-  tests/hybrid_tests.ts tests/wasmmerge_guard_tests.ts     # expect 12 passed (10 + 2)
+  tests/hybrid_tests.ts tests/wasmmerge_guard_tests.ts     # expect 15 passed (13 + 2)
 ```
+
+(2026-09-28: a hand-rolled gate script ran EVERY suite with `deno run` and reported both as PASS
+in 0 s. The trap still bites; a gate script must switch to `deno test` when a file contains
+`Deno.test(`.)
+
+**Typed-declaration rule (2026-09-28): every wasi test states its declarations' types.** A new test
+with `let x = 1` now fails to COMPILE, which reads as a test failure for the wrong reason. Type
+integer literals `: i32` to keep the old i32 behaviour; `tests/typed_decl_tests.ts` is the rule's
+own gate (reasons asserted, accepted forms run). Round-1 repros in `scripts/phase0/round1/` are
+typed too; a repro with an untyped declaration would report COMPILE-FAIL instead of its bug.
 
 **`deno run` on those two exits 0 having executed NOTHING** — no output, no failures, a silent pass.
 Every other `tests/*_tests.ts` is a self-driving script with its own summary block; only
@@ -100,6 +110,12 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 `go_merge_tests` was mis-classified as a Go-only outlier until this grep showed the `wasic` call.
 
 ## Current pass counts (2026-09-28, binaryang **1.6.0**; latest release v2.0.2 was gated on 1.5.3)
+
+> **2026-09-28, typed-declaration rule landed, full gate on the final binary, all green.** wasi
+> 421/421 (71 sources annotated) · engine 1134 pairs on baseline, 0 regressed · wast 288 files /
+> 63,800 / 0 failed / 804 skipped (unchanged) · golden-WAT 478 compared, 0 diverged (one entry,
+> `18_Multi`, re-recorded as intended) · NEW `typed_decl_tests` 18 · hybrid 13 (+3) + guard 2 via
+> `deno test` · every other suite unchanged and green.
 
 > **2026-09-28, binaryang 1.6.0, full gate re-run, all green.** wasi 417/417 · engine 376 × 3 =
 > 1128 pairs ALL ON BASELINE · bindgen 142 · bundle 4 · dync 3+3 · go_merge 7 · go_bindgen 7 ·

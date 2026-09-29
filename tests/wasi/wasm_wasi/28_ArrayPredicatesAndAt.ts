@@ -13,17 +13,17 @@ export function testPredicatesAndAt(): void {
 
   const numbers: i32[] = [2, 4, 6, 8, 10];
 
-  const allPositive = numbers.every(isPositive);
-  const hasEven = numbers.some(isEven);
-  const firstMatchIdx = numbers.findIndex((x: i32) => x > 5);
+  const allPositive: boolean = numbers.every(isPositive);
+  const hasEven: boolean = numbers.some(isEven);
+  const firstMatchIdx: i32 = numbers.findIndex((x: i32) => x > 5);
 
   console.log("All Positive:", allPositive ? 1 : 0); // Expected: 1
   console.log("Has Even:", hasEven ? 1 : 0); // Expected: 1
   console.log("First Index > 5:", firstMatchIdx); // Expected: 2 (value 6)
 
   // Negative indexing via at()
-  const lastElem = numbers.at(-1);
-  const secondLast = numbers.at(-2);
+  const lastElem: i32 = numbers.at(-1);
+  const secondLast: i32 = numbers.at(-2);
 
   console.log("Last Element (-1):", lastElem); // Expected: 10
   console.log("Second Last (-2):", secondLast); // Expected: 8

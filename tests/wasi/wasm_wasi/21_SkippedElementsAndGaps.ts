@@ -6,7 +6,7 @@ export function testSkippedTupleElements(): void {
   const coordinates: [i32, i32, i32, i32] = [10, 999, 20, 888];
 
   // Skipping the second and fourth indices completely using syntax gaps
-  const [coordX, , coordY] = coordinates;
+  const [coordX, , coordY]: [i32, i32, i32, i32] = coordinates;
 
   console.log("Extracted X:", coordX); // Expected: 10
   console.log("Extracted Y:", coordY); // Expected: 20

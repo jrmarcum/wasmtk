@@ -1,13 +1,14 @@
 // 1. Natively import functions and linear memory directly from the WASM binary!
+type i32 = number;
 import { insert_symbol, lookup_symbol } from "./18_symbol_table.wasm";
 
 function runDenoPhase18Test() {
   console.log("🚀 Initializing Modern Deno Phase 18 Direct-Import Test...");
 
   const variableRecords: Array<{ namePtr: number; typeId: number; scopeId: number; addr: number }> = [];
-  const MAX_DEPTH = 100;       
-  const VARS_PER_SCOPE = 30;   
-  let currentStringPtr = 2000; 
+  const MAX_DEPTH: i32 = 100;       
+  const VARS_PER_SCOPE: i32 = 30;   
+  let currentStringPtr: i32 = 2000; 
 
   // Matrix generation for tracking names natively
   const nameMatrix: number[][] = Array.from({ length: MAX_DEPTH + 1 }, () => []);
@@ -22,11 +23,11 @@ function runDenoPhase18Test() {
     // --- PHASE 18A: INSERTION & ARITHMETIC ---
     for (let depth = 1; depth <= MAX_DEPTH; depth++) {
       for (let v = 0; v < VARS_PER_SCOPE; v++) {
-        const namePtr = nameMatrix[depth][v];
-        const typeId = (v % 4) + 1;
+        const namePtr: i32 = nameMatrix[depth][v];
+        const typeId: i32 = (v % 4) + 1;
         
         // Directly executed with native performance
-        const actualAddr = insert_symbol(namePtr, typeId, depth);
+        const actualAddr: i32 = insert_symbol(namePtr, typeId, depth);
         variableRecords.push({ namePtr, typeId, scopeId: depth, addr: actualAddr });
       }
     }
@@ -34,21 +35,21 @@ function runDenoPhase18Test() {
 
     // --- PHASE 18B: SHADOWING EXTREME STRESS ---
     console.log("🔥 Injecting Shadowed Variables...");
-    const shadowedNamePtr = 9999;
-    const localShadowAddr = insert_symbol(shadowedNamePtr, 4, 100);
+    const shadowedNamePtr: i32 = 9999;
+    const localShadowAddr: i32 = insert_symbol(shadowedNamePtr, 4, 100);
 
     // --- PHASE 18C: REVERSE-LOOKUP RESOLUTION INTEGRITY ---
     console.log("🔍 Running Phase 18C: Checking lookup resolution paths...");
     for (let i = 0; i < variableRecords.length; i += 13) {
-      const target = variableRecords[i];
-      const resolvedAddr = lookup_symbol(target.namePtr);
+      const target: { namePtr: number; typeId: number; scopeId: number; addr: number } = variableRecords[i];
+      const resolvedAddr: i32 = lookup_symbol(target.namePtr);
       
       if (resolvedAddr !== target.addr) {
         throw new Error(`[Lookup Failed] Expected address ${target.addr}, got ${resolvedAddr}`);
       }
     }
 
-    const activeLookupAddr = lookup_symbol(shadowedNamePtr);
+    const activeLookupAddr: i32 = lookup_symbol(shadowedNamePtr);
     if (activeLookupAddr !== localShadowAddr) {
       throw new Error(`[Shadowing Failure] Scope precedence bypassed!`);
     }

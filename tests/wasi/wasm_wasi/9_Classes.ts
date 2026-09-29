@@ -53,7 +53,7 @@ function main(): void {
   c.decrement();
   console.log("Counter:", c.getCount());  // 12
 
-  const doubled = Counter.create(5);
+  const doubled: i32 = Counter.create(5);
   console.log("Static doubled:", doubled);  // 10
 
   const p: Point = new Point(3.0, 4.0);

@@ -40,8 +40,8 @@ function main(): void {
   const k: f64 = parseFloat("1.5");
   console.log("k:", k); // 1.5 (bare parseFloat)
 
-  // No annotation: inferInitType resolves parseInt(...) to number (f64).
-  const m = parseInt("7", 10);
+  // parseInt(...) returns number (f64), stated explicitly.
+  const m: number = parseInt("7", 10);
   console.log("m:", m); // 7
 }
 

@@ -1,4 +1,5 @@
 // Test Exported Const Enum
+type i32 = number;
 export const enum Status {
   Pending,   // 0
   Active,    // 1
@@ -14,13 +15,13 @@ enum Color {
 }
 
 export function testEnums(): void {
-  const currentStatus = Status.Archived;
+  const currentStatus: Status = Status.Archived;
   
   if (currentStatus === 6) {
     console.log(Status.Active); // Should emit (i32.const 1)
   }
 
-  const myColor = Color.Green;
+  const myColor: Color = Color.Green;
   console.log(myColor); // Should emit (i32.const 20)
 }
 

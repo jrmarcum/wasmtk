@@ -1,3 +1,4 @@
+type i32 = number;
 export function testBigIntComparisons(val: bigint): void {
   const limit: bigint = 5000000000n; // Larger than i32 max
 
@@ -16,7 +17,7 @@ export function testBigIntComparisons(val: bigint): void {
   }
 
   // Mixed expression check
-  const isLarge = val >= limit;
+  const isLarge: boolean = val >= limit;
   console.log(isLarge);
 }
 

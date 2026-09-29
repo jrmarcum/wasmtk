@@ -1,7 +1,7 @@
 type i32 = number;
 export function testStateMachine(input: i32): i32 {
-  let state = 0;
-  let counter = 0;
+  let state: i32 = 0;
+  let counter: i32 = 0;
 
   for (let i = 0; i < input; i++) {
     switch (state) {

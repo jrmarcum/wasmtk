@@ -14,10 +14,10 @@ class NodeMetric {
 export function testNestedTuple(): void {
   console.log("--- Test 3: Nested Compound Tuple ---");
 
-  const metric = new NodeMetric(7, 150, 300);
+  const metric: NodeMetric = new NodeMetric(7, 150, 300);
 
   // Destructuring a tuple extracted directly from a parent object reference path
-  const [lower, upper] = metric.bounds;
+  const [lower, upper]: [i32, i32] = metric.bounds;
 
   console.log("Metric Node ID:", metric.id); // Expected: 7
   console.log("Lower Bound Value:", lower);  // Expected: 150

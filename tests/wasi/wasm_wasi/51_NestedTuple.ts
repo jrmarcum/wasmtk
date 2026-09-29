@@ -10,21 +10,21 @@ function addNested([[a, b], c]: [[i32, i32], i32]): i32 {
 function main(): void {
   // Nested tuple literal + nested destructuring.
   const t: [[i32, i32], i32] = [[1, 2], 3];
-  const [[a, b], c] = t;
+  const [[a, b], c]: [[i32, i32], i32] = t;
   console.log("a:", a); // 1
   console.log("b:", b); // 2
   console.log("c:", c); // 3
 
   // Mixed f64/i32 nested tuple.
   const u: [[f64, f64], i32] = [[1.5, 2.5], 7];
-  const [[ux, uy], uz] = u;
+  const [[ux, uy], uz]: [[f64, f64], i32] = u;
   console.log("ux:", ux); // 1.5
   console.log("uy:", uy); // 2.5
   console.log("uz:", uz); // 7
 
   // Flat tuple still works (regression guard).
   const p: [i32, i32] = [10, 20];
-  const [px, py] = p;
+  const [px, py]: [i32, i32] = p;
   console.log("px:", px); // 10
   console.log("py:", py); // 20
 

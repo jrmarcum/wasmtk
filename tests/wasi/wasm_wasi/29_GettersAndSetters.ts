@@ -25,7 +25,7 @@ class TemperatureSensor {
 export function testGettersAndSetters(): void {
   console.log("--- Test 2: Getters and Setters ---");
 
-  const sensor = new TemperatureSensor(0);
+  const sensor: TemperatureSensor = new TemperatureSensor(0);
 
   console.log("Initial Celsius:", sensor.celsius); // Expected: 0
   console.log("Initial Fahrenheit:", sensor.fahrenheit); // Expected: 32 (via getter)

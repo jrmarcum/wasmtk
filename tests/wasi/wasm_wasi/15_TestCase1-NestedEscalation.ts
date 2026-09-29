@@ -32,9 +32,9 @@ export function testNestedEscalation(fail: i32): i32 {
 
 // Execution block compatible with both TS runtimes and wasic _start[cite: 25]
 console.log("--- Test 1: Success Path ---");
-const score1 = testNestedEscalation(0);
+const score1: i32 = testNestedEscalation(0);
 console.log("Final Trace Score:", score1); // Expected: 17
 
 console.log("--- Test 1: Failure Path ---");
-const score2 = testNestedEscalation(1);
+const score2: i32 = testNestedEscalation(1);
 console.log("Final Trace Score:", score2); // Expected: 12

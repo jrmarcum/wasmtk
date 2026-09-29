@@ -8,7 +8,7 @@ function check(n: i32): i32 {
   return n * 2;
 }
 
-const v = check(21);
+const v: i32 = check(21);
 console.log("value", v);
 Deno.exit(3);
 console.log("never printed");

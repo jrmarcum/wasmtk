@@ -31,6 +31,7 @@ import { basename, dirname, join } from "@std/path";
 import { rt } from "./rt.ts";
 import { compileModule } from "./modc.ts";
 import { runBindgen } from "./bindgen.ts";
+import { findUntypedDeclarations } from "./decltypes.ts";
 
 // ── types ────────────────────────────────────────────────────────────────────
 
@@ -531,6 +532,24 @@ export function parseHybridFile(
     // separate follow-up.)
     if (opts.excludeDynamicBody && /\bany\b|\beval\s*\(/.test(text)) {
       continue; // leave in remainingSrc (host)
+    }
+
+    // wasic needs a type on every declaration (owner rule 2026-09-28). A function AUTO-routed by its
+    // signature whose BODY has an untyped declaration is not fully statically typed, so it stays in
+    // the TS host (where it runs as it always did) instead of failing the whole core compile. An
+    // explicit `// @wasm` is the user asking for WASM: it goes on, and wasic names the declaration.
+    if (auto && !forceWasm) {
+      const untyped = findUntypedDeclarations(text);
+      if (untyped.length > 0) {
+        const at = untyped[0].index;
+        const eol = text.indexOf("\n", at);
+        const decl = text.slice(at, eol === -1 ? undefined : eol).trim().slice(0, 60);
+        warnings.push(
+          `⚠  hybrid --auto: keeping '${name}' in the TS host — '${decl}' has no type (wasic needs ` +
+            `a type on every declaration; add one to route it to WASM)`,
+        );
+        continue; // leave in remainingSrc (host)
+      }
     }
 
     if (!text.trimStart().startsWith("export ")) text = "export " + text.trimStart();

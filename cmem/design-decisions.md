@@ -246,19 +246,44 @@ high-value subset.
 
 ## Numeric / codegen correctness
 
-- ⏸️ **UNDER DISCUSSION (owner, 2026-09-28: "Hold on. That needs further discussion"), NOT a
-  settled rule and NOT to be implemented until it is.** The owner's first statement follows;
-  the open questions (performance, indexing, bitwise ops, the ABI of untyped exports, blast radius)
-  are to be discussed before anything changes.
-  **An UNANNOTATED number is an f64 (owner's first statement 2026-09-28).** "All TypeScript numbers are a
-  64-bit float, so if the number is untyped it should automatically be that by default. If an error
-  occurs after that, the user will need to debug and find his mistake." Only an explicit `i32` /
-  `i64` annotation (wasic's integer subset, README) opts into integer semantics. Today
-  `let a = 100000` is typed i32 (`inferInitType`), so `a * a` wraps, `+=` of an f64 truncates, and
-  `/` divides as integers: that is now a BUG, recorded as `sw29` (compiler-bugs.md, round-1 table).
-  **Sequencing:** land it AFTER the mixed-type fixes (`sw14`, `sw15`: a binop typed from its left
-  operand only), because an f64 loop counter meeting i32 values would otherwise inherit that bug
-  everywhere.
+- **Every variable declaration states its type (owner ruling, 2026-09-28). BREAKING.** "We should
+  require the types in all variable declarations. When for loops syntax is involved the integer
+  state is observed standardly, and an error thrown if anything other than an integer is found."
+  It replaced a first idea (an untyped number defaults to f64), which was put on hold and never
+  implemented. The problem both address: wasic GUESSED a type for `let a = 100000` (i32), so `a * a`
+  wrapped (`sw29`). Now there is no guess to get wrong.
+  - **Scope (owner-confirmed):** the FIRST definition of a `let`/`const`/`var` needs the type. A
+    later assignment does not (it has the first definition's). A shadowing `let` in another block
+    is a new first definition. A destructuring pattern is typed on the pattern:
+    `const [a, b]: [i32, i32] = t`, `const { x, y }: Vec2 = v`.
+  - **Exempt, because TypeScript forbids annotating them:** `for…of` / `for…in` bindings and
+    `catch` bindings. **Exempt because the type is already written:** a function value whose
+    parameters AND return type are all annotated (`const add = (a: i32, b: i32): i32 => …`); a
+    missing parameter or return type is still an error.
+  - **A counting-`for` counter** (`for (let i = 0; …)`) may be untyped: it is an INTEGER by
+    standard, and a fractional start, a `/=` or `**=` update, or a non-integer assignment in the
+    header or body is an error. A counter the user types (`let i: number = 0.5`) is theirs. The check
+    is on all THREE parallel `for` emitters (multi-line, one-line braced, brace-less).
+  - **Where:** `checkDeclarationTypes` / `checkForCounter` in `src/wasic.ts`, run on the source as
+    written (strings and comments masked) before any rewrite. Line numbers are looked up in the
+    source as given (`sourceAsGiven`), because `stripComments` drops block comments with their
+    newlines.
+  - **After the presence check, some annotations are DROPPED on purpose** (`stripPatternTypes`,
+    `stripInferableAnnotations`): pattern types, and pointer-shaped types the declaration handlers
+    cannot read when the initialiser is a call / `await` / name / member access: `Promise<…>`,
+    `PromiseSettledResult<…>`, an object type literal, a tuple, an alias to a union or tuple (each
+    optionally `| null`), and a 2D array `T[][]`. Those declarations then compile through the
+    inferred path exactly as before the rule (golden-WAT byte-identical). Scalars, 1D arrays,
+    classes and interfaces keep their annotation: it carries meaning there (i32 vs f64, an upcast
+    `const s: Shape = c`). Retiring the drop list means teaching the typed handlers those shapes;
+    that belongs with the H12 front-end work, not here.
+  - **One detector, two users:** `src/decltypes.ts` (`findUntypedDeclarations`, pure). wasic refuses
+    what it finds. `hybrid --auto` keeps a signature-routable function whose BODY has an untyped
+    declaration in the TS host, with a warning naming it, instead of failing the whole core compile
+    (the function ran natively before and still does). An explicit `// @wasm` is still routed, and
+    wasic names the declaration.
+  - Gate: `tests/typed_decl_tests.ts` asserts the REASON for each refusal (message and line), and
+    compiles AND runs the accepted forms; `hybrid_tests.ts` covers the `--auto` routing.
 - **`Math.round` = `floor(x + 0.5)`**, NOT `f64.nearest` (which is banker's rounding and gives
   `round(2.5)=2`). Both `wasic.ts` (F64_UNARY special case) and `console_log.ts` must agree.
 - **mathlib is being converted to CORRECTLY-ROUNDED double-double, function by function** (`src/wasm/mathlib.wat`, 2026-07-01, "full CR sweep"). DONE + committed: `sin`/`cos`/`tan`, `exp`, `log`/`log2`/`log10`, `cbrt`. Each returns the IEEE-754 correctly-rounded result, validated **bit-for-bit vs a BigInt fixed-point oracle through the full pipeline** (wat2wasm + merge + Binaryen `-Oz`). Shared helpers (reused by every CR function): dd ops `$__ts`/`$__tp`/`$__dda`/`$__ddm`/`$__ddmd`/`$__ddri`/`$__dddiv` (multi-value `(hi,lo)`); `$__scalbn` (musl-style, subnormal/overflow-safe); `$__cr(hi,lo,k)` = correctly-round `(hi+lo)·2^k` (normal via `scalbn(hi+lo,k)`; subnormal via round-`(hi+lo)·2^(k+1074)`-to-even-integer then `·2^-1074` — this avoids the tail double-rounding where `scalbn(lo,k)` lands on exactly half-ulp). `exp`: dd Cody-Waite (dd ln2) + dd Taylor + `$__cr`. `log`: internal `$__logdd` (mantissa/exp decomposition + dd atanh series); `log2`/`log10` = `round(logdd · (1/ln2|1/ln10) dd)`. REMAINING (still old ~1e-11 approx, not yet CR): `expm1`, `log1p`, `pow`(`**`), `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`. NOTE: CR results differ from Deno's V8 `Math.*` on the small % where V8 isn't correctly-rounded (intended). Regen after editing: `wasmtk convert src/wasm/mathlib.wat` then `deno run -A scripts/gen_mathlib_bytes.ts`. Full historical trig detail:

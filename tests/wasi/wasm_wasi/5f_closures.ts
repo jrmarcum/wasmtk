@@ -6,10 +6,10 @@ function intSeq(): () => number {
     };
 }
 
-const nextInt = intSeq();
+const nextInt: () => number = intSeq();
 console.log(nextInt());
 console.log(nextInt());
 console.log(nextInt());
 
-const newInts = intSeq();
+const newInts: () => number = intSeq();
 console.log(newInts());

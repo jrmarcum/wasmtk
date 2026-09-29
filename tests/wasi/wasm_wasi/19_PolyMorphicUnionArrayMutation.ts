@@ -21,7 +21,7 @@ export function testUnionArrayOps(): void {
 
   let combinedWeight: i32 = 0;
   for (let i = 0; i < cluster.length; i++) {
-    const node = cluster[i];
+    const node: TreeNode = cluster[i];
     if (node.type === "leaf") {
       combinedWeight += node.weight;
     } else {

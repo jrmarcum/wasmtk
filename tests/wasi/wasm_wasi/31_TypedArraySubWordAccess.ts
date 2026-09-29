@@ -5,7 +5,7 @@ type i32 = number;
 export function testTypedArrayAccess(): void {
   console.log("--- Test 1: TypedArray Sub-Word Access ---");
 
-  const bytes = new Uint8Array(4);
+  const bytes: Uint8Array = new Uint8Array(4);
   bytes[0] = 255;
   bytes[1] = 128;
   bytes[2] = 64;
@@ -16,7 +16,7 @@ export function testTypedArrayAccess(): void {
   console.log("Uint8 Index 0:", bytes[0]);             // Expected: 255
   console.log("Uint8 Index 2:", bytes[2]);             // Expected: 64
 
-  const shorts = new Int16Array(2);
+  const shorts: Int16Array = new Int16Array(2);
   shorts[0] = 32000;
   shorts[1] = -16000;
 

@@ -6,7 +6,7 @@ export function testRestSplitting(): void {
   const source: i32[] = [100, 200, 300, 400];
 
   // Array destructuring with rest syntax
-  const [alpha, beta, ...omega] = source;
+  const [alpha, beta, ...omega]: i32[] = source;
 
   console.log("Alpha Element:", alpha);      // Expected: 100
   console.log("Beta Element:", beta);        // Expected: 200

@@ -19,7 +19,7 @@ type CommandResult = SuccessResult | FailureResult;
 export function evaluateResult(res: CommandResult, base: i32): i32 {
   if (res.status === "success") {
     // Narrowing successful: extract nested variant
-    const op = res.operation;
+    const op: MathOp = res.operation;
     if (op.type === "add") {
       return base + op.value;
     } else {

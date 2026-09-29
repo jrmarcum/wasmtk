@@ -23,7 +23,7 @@ export function testGenericInterfacePipeline(): void {
 
   const numbers: i32[] = [1, 2, 3];
 
-  const output = mapArray(numbers, addOffset);
+  const output: i32[] = mapArray(numbers, addOffset);
   console.log("Mapped Array Length:", output.length); // Expected: 3
   console.log("First Element:", output[0]);           // Expected: 6
   console.log("Third Element:", output[2]);           // Expected: 8

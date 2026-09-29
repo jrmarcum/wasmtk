@@ -1,6 +1,6 @@
 type i32 = number;
 export function testLabels(): i32 {
-  let count = 0;
+  let count: i32 = 0;
 
   outerLoop: for (let i = 0; i < 10; i++) {
     for (let j = 0; j < 10; j++) {

@@ -21,7 +21,7 @@ export function testTypePredicateBasic(): void {
   const c: Circle = { kind: 0, radius: 5.0 };
   const s: Shape = c; // Base pointer reference
 
-  const checkResult = isCircle(s);
+  const checkResult: boolean = isCircle(s);
   console.log("Predicate Check Result:", checkResult ? 1 : 0); // Expected: 1
 
   if (isCircle(s)) {

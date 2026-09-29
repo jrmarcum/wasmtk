@@ -6,7 +6,7 @@ function applyLogic(val: i32, callback: (n: i32) => i32): i32 {
 
 (function testCallbacks(): void {
   // Passing an anonymous arrow function directly
-  const result = applyLogic(10, (n) => n * n);
+  const result: i32 = applyLogic(10, (n) => n * n);
   console.log(result); // 100
 
   // Passing a pre-defined arrow

@@ -19,8 +19,8 @@ export function testStaticFields(): void {
 
   console.log("Initial Static Count:", CounterNode.getCount()); // Expected: 0
 
-  const n1 = new CounterNode(101);
-  const n2 = new CounterNode(102);
+  const n1: CounterNode = new CounterNode(101);
+  const n2: CounterNode = new CounterNode(102);
 
   console.log("Updated Static Count:", CounterNode.getCount()); // Expected: 2
   console.log("Direct Static Field Access:", CounterNode.totalInstances); // Expected: 2

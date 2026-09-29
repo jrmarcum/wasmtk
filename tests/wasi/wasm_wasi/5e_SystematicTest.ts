@@ -6,8 +6,8 @@ function createMultiplier(x: i32) {
 }
 
 export function _start(): void {
-  const triple = createMultiplier(3);
-  const result = triple(10);
+  const triple: (y: i32) => i32 = createMultiplier(3);
+  const result: i32 = triple(10);
   console.log(result); // Expected: 30
 }
 

@@ -1,6 +1,6 @@
 type i32 = number;
 export function testNestedLabels(target: i32): i32 {
-  let iterations = 0;
+  let iterations: i32 = 0;
 
   outer: for (let i = 0; i < 10; i++) {
     for (let j = 0; j < 10; j++) {

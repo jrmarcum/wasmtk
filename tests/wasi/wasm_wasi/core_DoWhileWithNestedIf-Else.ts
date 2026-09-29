@@ -1,7 +1,7 @@
 type i32 = number;
 export function testDoWhileLogic(limit: i32): i32 {
-  let result = 0;
-  let i = 0;
+  let result: i32 = 0;
+  let i: i32 = 0;
 
   do {
     if (i % 2 === 0) {

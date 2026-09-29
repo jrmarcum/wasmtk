@@ -13,7 +13,7 @@ export function testPhase22Prep(): void {
 
   // Inline enum bit-masking
   const mask: i32 = StorageFlags.Admin;
-  const isWriteAllowed = (mask & StorageFlags.Write) === StorageFlags.Write;
+  const isWriteAllowed: boolean = (mask & StorageFlags.Write) === StorageFlags.Write;
 
   // Exponentiation operator with numeric cast
   const baseVal: i32 = 2;

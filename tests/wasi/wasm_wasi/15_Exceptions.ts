@@ -57,9 +57,9 @@ function testThrowString(): void {
   }
 }
 
-const r1 = safeDivide(10, 2);
+const r1: i32 = safeDivide(10, 2);
 console.log(r1);          // 5
-const r2 = safeDivide(10, 0);
+const r2: i32 = safeDivide(10, 0);
 console.log(r2);          // Division by zero  then  -1
 withFinally(1);           // success  then  finally
 withFinally(-1);          // negative  then  finally

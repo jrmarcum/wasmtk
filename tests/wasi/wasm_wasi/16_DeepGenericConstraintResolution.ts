@@ -34,10 +34,10 @@ function inspectHeavy(item: HeavyItem): i32 {
 export function testGenericConstraints(): void {
   console.log("--- Test 3: Generic Constraints ---");
 
-  const baseItem = new Item(15);
+  const baseItem: Item = new Item(15);
   console.log("Base Scale Weight:", inspectItem(baseItem)); // Expected: 15
 
-  const heavyItem = new HeavyItem(100, 50);
+  const heavyItem: HeavyItem = new HeavyItem(100, 50);
   console.log("Heavy Scale Weight:", inspectHeavy(heavyItem)); // Expected: 150
 }
 

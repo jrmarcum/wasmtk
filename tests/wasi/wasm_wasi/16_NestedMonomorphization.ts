@@ -39,12 +39,12 @@ function sumBoxFI(a: BoxF64, b: BoxI32): f64 {
 export function testNestedGenerics(): void {
   console.log("--- Test 1: Nested Monomorphization ---");
 
-  const box1 = new BoxI32(10);
-  const box2 = new BoxI32(20);
+  const box1: BoxI32 = new BoxI32(10);
+  const box2: BoxI32 = new BoxI32(20);
   console.log("Int-Int Sum:", sumBoxII(box1, box2)); // Expected: 30
 
-  const box3 = new BoxF64(5.5);
-  const box4 = new BoxI32(4);
+  const box3: BoxF64 = new BoxF64(5.5);
+  const box4: BoxI32 = new BoxI32(4);
   console.log("Float-Int Sum:", sumBoxFI(box3, box4)); // Expected: 9.5
 }
 

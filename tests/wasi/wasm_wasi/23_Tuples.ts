@@ -44,7 +44,7 @@ console.log(mutable[1]); // 20
 // ── Tuple destructuring ──────────────────────────────────────────────────────
 
 const src: [i32, f64] = [7, 3.14];
-const [x, y] = src;
+const [x, y]: [i32, f64] = src;
 console.log(x); // 7
 console.log(y); // 3.14
 
@@ -57,12 +57,12 @@ function minMax(a: i32, b: i32): [i32, i32] {
   return [b, a];
 }
 
-const result = minMax(8, 3);
+const result: [i32, i32] = minMax(8, 3);
 console.log(result[0]); // 3
 console.log(result[1]); // 8
 
 // Access via element index on return value
-const result2 = minMax(42, 17);
+const result2: [i32, i32] = minMax(42, 17);
 console.log(result2[0]); // 17
 console.log(result2[1]); // 42
 
@@ -83,6 +83,6 @@ function divmod(a: i32, b: i32): [i32, i32] {
   return [q, r];
 }
 
-const qr = divmod(17, 5);
+const qr: [i32, i32] = divmod(17, 5);
 console.log(qr[0]); // 3
 console.log(qr[1]); // 2

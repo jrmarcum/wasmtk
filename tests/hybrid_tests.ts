@@ -46,7 +46,10 @@ Deno.test("hybrid — a nested-backtick interpolation whose text has a `}` does 
   const r = parseHybridFile(src);
   assertEquals(r.wasmFuncs.length, 1);
   const text = r.wasmFuncs[0].text;
-  assert(text.includes("return s;"), "body truncated before the return (nested-backtick `}` leaked)");
+  assert(
+    text.includes("return s;"),
+    "body truncated before the return (nested-backtick `}` leaked)",
+  );
   assert(text.trimEnd().endsWith("}"), "function did not extend to its real close brace");
   assert(!r.remainingSrc.includes("function tpl"), "function not removed from remaining source");
   assert(r.remainingSrc.includes("const y = tpl(1);"), "trailing host statement lost");
@@ -70,7 +73,10 @@ Deno.test("hybrid — call rewriting descends through a doubly-nested-backtick i
     "./m.bindings.ts",
     "./m.wasm",
   );
-  assert(runner.includes("lib.add(1, 2)"), "nested-interpolation call was not rewritten to lib.add");
+  assert(
+    runner.includes("lib.add(1, 2)"),
+    "nested-interpolation call was not rewritten to lib.add",
+  );
 });
 
 Deno.test("hybrid — a @wasm function with a brace inside a line comment is fully extracted", () => {
@@ -120,7 +126,10 @@ Deno.test("hybrid — a regex literal in host code does not disable downstream c
     "const a = add(1, 2);", // must STILL be rewritten
   ].join("\n");
   const runner = generateRunner(remaining, ["add"], "./b.bindings.ts", "./m.wasm");
-  assert(runner.includes("const a = lib.add(1, 2);"), "rewrite disabled by a preceding regex literal");
+  assert(
+    runner.includes("const a = lib.add(1, 2);"),
+    "rewrite disabled by a preceding regex literal",
+  );
   assert(runner.includes(`s.replace(/["'{}]/g, "")`), "regex literal was altered");
 });
 
@@ -150,6 +159,52 @@ Deno.test("hybrid — a `}` inside a regex literal in a @wasm body does not trun
   assert(r.wasmFuncs[0].text.includes("return x + 1;"), "body truncated at a regex brace");
 });
 
+// ── typed-declaration rule (2026-09-28): --auto keeps an untyped body in the host ──────────
+
+Deno.test("hybrid --auto — a typed signature with an UNTYPED local stays in the TS host, with a warning", () => {
+  const src = [
+    "export function total(n: i32): i32 {",
+    "  let sum = 0;", // wasic would refuse this declaration
+    "  for (let i = 0; i < n; i++) sum += i;",
+    "  return sum;",
+    "}",
+    "console.log(total(4));",
+  ].join("\n");
+  const r = parseHybridFile(src, { auto: true });
+  assertEquals(r.wasmFuncs.length, 0, "an untyped body was routed to WASM");
+  assert(r.remainingSrc.includes("function total"), "the function left the host source");
+  assert(
+    r.warnings.some((w) => w.includes("'total'") && w.includes("let sum = 0;")),
+    `no warning naming the function and the declaration: ${r.warnings.join(" | ")}`,
+  );
+});
+
+Deno.test("hybrid --auto — the same function fully typed IS routed (the counter needs no type)", () => {
+  const src = [
+    "export function total(n: i32): i32 {",
+    "  let sum: i32 = 0;",
+    "  for (let i = 0; i < n; i++) sum += i;",
+    "  return sum;",
+    "}",
+    "console.log(total(4));",
+  ].join("\n");
+  const r = parseHybridFile(src, { auto: true });
+  assertEquals(r.wasmFuncs.map((f) => f.name), ["total"]);
+  assertEquals(r.warnings.length, 0);
+});
+
+Deno.test("hybrid --auto — an explicit // @wasm with an untyped local is still routed (wasic names it)", () => {
+  const src = [
+    "// @wasm",
+    "export function total(n: i32): i32 {",
+    "  let sum = 0;",
+    "  return sum + n;",
+    "}",
+  ].join("\n");
+  const r = parseHybridFile(src, { auto: true });
+  assertEquals(r.wasmFuncs.map((f) => f.name), ["total"]);
+});
+
 Deno.test("hybrid — loadModule is injected after a multi-line import, not mid-statement", () => {
   const remaining = [
     "import {",
@@ -166,6 +221,6 @@ Deno.test("hybrid — loadModule is injected after a multi-line import, not mid-
   assert(closeImportIdx >= 0, "multi-line import not present");
   assert(loadIdx > closeImportIdx, "loadModule injected before the import closed");
   // The `foo,` continuation must not have been split from its `import {`.
-  assert(!runner.includes('import {\nimport { loadModule'), "loader spliced inside the import");
+  assert(!runner.includes("import {\nimport { loadModule"), "loader spliced inside the import");
   assert(runner.includes("const a = lib.add(1);"), "call not rewritten in runner body");
 });

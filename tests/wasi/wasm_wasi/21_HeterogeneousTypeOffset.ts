@@ -8,7 +8,7 @@ export function testHeterogeneousTuple(): void {
   const record: [i32, f64, boolean] = [42, 3.14159, true];
 
   // Destructure into independent scalar values
-  const [id, value, active] = record;
+  const [id, value, active]: [i32, f64, boolean] = record;
 
   console.log("Extracted ID:", id);         // Expected: 42
   console.log("Extracted Value:", value);   // Expected: 3.14159

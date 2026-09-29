@@ -1,6 +1,6 @@
 type i32 = number;
 function compose(initial: i32) {
-  const inner = (x: i32) => x + initial; // Closure A
+  const inner = (x: i32): i32 => x + initial; // Closure A
   return (y: i32) => inner(y) * 2;        // Closure B (captures Closure A)
 }
 

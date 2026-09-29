@@ -69,7 +69,7 @@ function main(): void {
 
   // Object destructuring with default
   const cfg: Config = { width: 800, height: 0 };
-  const { width = 1920, height = 1080 } = cfg;
+  const { width = 1920, height = 1080 }: Config = cfg;
   console.log(width);   // 800
   console.log(height);  // 1080
 

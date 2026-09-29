@@ -1,13 +1,14 @@
+type i32 = number;
 export function _start(): void {
   // for loop
-  let sum = 0;
+  let sum: i32 = 0;
   for (let i = 0; i < 5; i++) {
     sum += i;
   }
   console.log(sum); // 0+1+2+3+4 = 10
 
   // while with break
-  let x = 0;
+  let x: i32 = 0;
   while (true) {
     if (x >= 3) {
       break;
@@ -17,7 +18,7 @@ export function _start(): void {
   console.log(x); // 3
 
   // do...while
-  let n = 0;
+  let n: i32 = 0;
   do {
     n++;
   } while (n < 4);
@@ -37,7 +38,7 @@ export function _start(): void {
   }
 
   // continue
-  let evens = 0;
+  let evens: i32 = 0;
   for (let j = 0; j < 10; j++) {
     if (j % 2 !== 0) {
       continue;

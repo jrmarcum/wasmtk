@@ -16,7 +16,7 @@ export function testNumericEnums(): void {
   const targetBit: i32 = PermissionFlags.Execute;
 
   // Mask check matching common bit-packing compiler scenarios
-  const hasAccess = (userPerm & targetBit) === targetBit;
+  const hasAccess: boolean = (userPerm & targetBit) === targetBit;
 
   console.log("Admin Flag Literal:", PermissionFlags.Admin);      // Expected: 6
   console.log("MaxBits Auto Literal:", PermissionFlags.MaxBits);   // Expected: 7

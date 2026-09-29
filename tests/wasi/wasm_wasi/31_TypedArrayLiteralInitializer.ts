@@ -6,7 +6,7 @@ export function testTypedArrayInitializer(): void {
   console.log("--- Test 2: TypedArray Initializer ---");
 
   // Allocates header + copies literal float bytes
-  const floats = new Float64Array([10.5, 20.25, 30.75]);
+  const floats: Float64Array = new Float64Array([10.5, 20.25, 30.75]);
 
   console.log("Float64 Length:", floats.length);         // Expected: 3
   console.log("Float64 ByteLength:", floats.byteLength); // Expected: 24 (3 * 8 bytes)

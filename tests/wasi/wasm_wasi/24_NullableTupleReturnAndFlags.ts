@@ -16,13 +16,13 @@ export function testPhase24Post(): void {
   console.log("--- Post-Phase 23: Nullable Tuples & Flags ---");
 
   // Call returning null
-  const nullResult = getTupleValue(false);
+  const nullResult: NullableTuple | null = getTupleValue(false);
   console.log("Null Check:", nullResult === null ? 1 : 0); // Expected: 1
 
   // Call returning valid tuple pointer
-  const validResult = getTupleValue(true);
+  const validResult: NullableTuple | null = getTupleValue(true);
   if (validResult !== null) {
-    const [val, ratio] = validResult;
+    const [val, ratio]: NullableTuple = validResult;
     console.log("Extracted Int:", val ?? -1); // Nullish coalescing fallback (Phase 25)
     console.log("Extracted Float:", ratio);
   }

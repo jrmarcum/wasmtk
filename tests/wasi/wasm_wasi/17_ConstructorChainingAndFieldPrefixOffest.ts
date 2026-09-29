@@ -39,7 +39,7 @@ class NamedVector3D extends Vector3D {
 
 export function testMemoryLayout(): void {
   console.log("--- Test 2: Field Offset Alignment ---");
-  const vec = new NamedVector3D(11, 22, 33, 999);
+  const vec: NamedVector3D = new NamedVector3D(11, 22, 33, 999);
   vec.printCoords();
 }
 

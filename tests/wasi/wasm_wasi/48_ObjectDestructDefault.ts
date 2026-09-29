@@ -17,19 +17,19 @@ interface Counter {
 function main(): void {
   // x has a value, y is 0 → default used for y
   const v: Vec2 = { x: 3.5, y: 0.0 };
-  const { x = 1.0, y = 2.0 } = v;
+  const { x = 1.0, y = 2.0 }: Vec2 = v;
   console.log(x);  // 3.5
   console.log(y);  // 2
 
   // a has a value, b is 0 → default used for b
   const p: Counter = { a: 5, b: 0 };
-  const { a = 10, b = 20 } = p;
+  const { a = 10, b = 20 }: Counter = p;
   console.log(a);  // 5
   console.log(b);  // 20
 
   // renamed destructuring with default
   const q: Counter = { a: 0, b: 7 };
-  const { a: qa = 100, b: qb = 200 } = q;
+  const { a: qa = 100, b: qb = 200 }: Counter = q;
   console.log(qa);  // 100 (a was 0)
   console.log(qb);  // 7
 }

@@ -7,7 +7,7 @@ interface Vec2 {
 export function testDestructuring(): f64 {
   const v: Vec2 = { x: 10.5, y: 20.5 };
   // Mapping 'x' and 'y' to memory loads
-  const { x, y } = v;
+  const { x, y }: Vec2 = v;
   return x + y;
 }
 

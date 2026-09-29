@@ -8,7 +8,7 @@ export function testDynamicOps(): i32 {
   nums.push(30);
   
   // 2. Test Shift (Triggering memory.copy move)
-  const _first = nums.shift(); // first = 10, nums = [20, 30]
+  const _first: i32 = nums.shift(); // first = 10, nums = [20, 30]
   
   // 3. Test Length update
   return nums.length; // Expected: 2

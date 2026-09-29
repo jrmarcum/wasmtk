@@ -4,11 +4,11 @@ type Scaler = (val: i32) => i32;
 
 export function testClosurePassing(initialMultiplier: i32): i32 {
   // 1. Create the first upward closure (allocated on heap)
-  const baseScaler = (n: i32) => n * initialMultiplier;
+  const baseScaler = (n: i32): i32 => n * initialMultiplier;
 
   // 2. Pass that closure into a function that returns a NEW closure
   // This new closure CAPTURES the first closure pointer
-  const doubleScaler = createDoubleScaler(baseScaler);
+  const doubleScaler: Scaler = createDoubleScaler(baseScaler);
 
   // 3. Execute the resulting "wrapped" closure
   return doubleScaler(10); 

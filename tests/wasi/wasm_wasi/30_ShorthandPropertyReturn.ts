@@ -13,7 +13,7 @@ function createVector(x: i32, y: i32): Vector {
 export function testShorthandProperties(): void {
   console.log("--- Test 3: Shorthand Properties ---");
 
-  const vec = createVector(40, 60);
+  const vec: Vector = createVector(40, 60);
 
   console.log("Vector X:", vec.x); // Expected: 40
   console.log("Vector Y:", vec.y); // Expected: 60

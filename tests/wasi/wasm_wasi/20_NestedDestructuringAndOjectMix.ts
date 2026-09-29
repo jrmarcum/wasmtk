@@ -16,7 +16,7 @@ export function testNestedDestructuring(): void {
   ];
 
   // Unpack an item while catching the rest of the object reference pointers
-  const [leadPoint, ...trailingPoints] = points;
+  const [leadPoint, ...trailingPoints]: Coordinate[] = points;
 
   console.log("Lead X Coord:", leadPoint.x);               // Expected: 1
   console.log("Trailing Count:", trailingPoints.length);    // Expected: 2

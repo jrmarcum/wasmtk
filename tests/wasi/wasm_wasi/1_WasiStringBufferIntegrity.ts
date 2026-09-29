@@ -1,4 +1,5 @@
 // Core_WASI_Strings.ts
+type i32 = number;
 export function _start(): void {
   // Test 1: Empty string
   console.log(""); 
@@ -7,7 +8,7 @@ export function _start(): void {
   console.log("This is a significantly longer string designed to test if the compiler correctly calculates the byte length in the WASM data section or dynamic memory.");
 
   // Test 3: Multiple types in sequence
-  const val = 42;
+  const val: i32 = 42;
   console.log("Value is: ");
   console.log(val);
 }

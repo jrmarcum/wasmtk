@@ -29,9 +29,9 @@ export function createSecureMatrix(): SecureMatrix {
 }
 
 export function _start(): void {
-  const sm = createSecureMatrix();
+  const sm: SecureMatrix = createSecureMatrix();
   sm.addValue(0, 42);
-  const row0 = sm.getRow(0);
+  const row0: i32[] = sm.getRow(0);
   console.log(row0[0]); // Expected: 42
   
   // This should trigger the Phase 13 throw logic

@@ -14,9 +14,9 @@ export function testNullishCoalescing(): void {
   const realVal: i32 | null = getNullableValue(2);
 
   // Fallback triggers ONLY on null
-  const res1 = nullVal ?? 999;
-  const res2 = zeroVal ?? 999;
-  const res3 = realVal ?? 999;
+  const res1: i32 = nullVal ?? 999;
+  const res2: i32 = zeroVal ?? 999;
+  const res3: i32 = realVal ?? 999;
 
   console.log("Null Fallback:", res1); // Expected: 999
   console.log("Zero Fallback:", res2); // Expected: 0 (must NOT fall back)

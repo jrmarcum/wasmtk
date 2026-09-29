@@ -8,7 +8,7 @@ interface MatrixManager {
 
 export function createManager(initialRows: i32[][]): MatrixManager {
   // Capture the multi-dimensional array (Phase 6d)
-  const data = initialRows;
+  const data: i32[][] = initialRows;
 
   return {
     // Closure capturing 'data' (Phase 5e)
@@ -28,10 +28,10 @@ export function createManager(initialRows: i32[][]): MatrixManager {
 }
 
 export function _start(): void {
-  const manager = createManager([[1, 2], [3, 4, 5]]);
+  const manager: MatrixManager = createManager([[1, 2], [3, 4, 5]]);
   manager.addRow([6]);
   
-  const stats = manager.getSummary(); 
+  const stats: i32[] = manager.getSummary(); 
   // Expected stats: [2, 3, 1]
   console.log(stats.length); 
 }

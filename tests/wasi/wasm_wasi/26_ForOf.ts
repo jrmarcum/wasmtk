@@ -94,7 +94,7 @@ console.log(sumDynamic()); // 100
 const dynShort: i32[] = [7];
 dynShort.push(0);
 dynShort.pop();
-const [da = 10, db = 20] = dynShort;
+const [da = 10, db = 20]: i32[] = dynShort;
 console.log(da); // 7
 console.log(db); // 20
 
@@ -103,7 +103,7 @@ console.log(db); // 20
 const dynFull: i32[] = [11, 22, 33];
 dynFull.push(0);
 dynFull.pop();
-const [fa = 99, fb = 99, fc = 99] = dynFull;
+const [fa = 99, fb = 99, fc = 99]: i32[] = dynFull;
 console.log(fa); // 11
 console.log(fb); // 22
 console.log(fc); // 33

@@ -1,6 +1,6 @@
 type i32 = number;
 export function complexFlow(input: i32): i32 {
-  let x = 0;
+  let x: i32 = 0;
 
   for (let i = 0; i < input; i++) {
     switch (i % 3) {

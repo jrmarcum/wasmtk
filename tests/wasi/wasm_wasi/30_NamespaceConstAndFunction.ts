@@ -11,7 +11,7 @@ namespace PhysicsEngine {
 export function testNamespaces(): void {
   console.log("--- Test 1: Namespaces ---");
 
-  const force = PhysicsEngine.calculateForce(10);
+  const force: i32 = PhysicsEngine.calculateForce(10);
 
   console.log("Constant Read:", PhysicsEngine.GRAVITY); // Expected: 9
   console.log("Calculated Force:", force); // Expected: 90

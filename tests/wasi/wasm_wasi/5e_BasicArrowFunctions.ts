@@ -8,7 +8,7 @@ const doubleBigInt = (n: bigint): bigint => n * 2n;
 
 // Test: Multiple parameters, explicit body
 const calculateArea = (width: i32, height: i32): i32 => {
-  const area = width * height;
+  const area: i32 = width * height;
   return area;
 };
 

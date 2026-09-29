@@ -124,6 +124,7 @@ import { emitWitBeside } from "./witgen.ts";
 import { bundleImportsEx } from "./tsbundler.ts";
 import { type ExternalFuncDef, mergeWasmWat, type WasmWatType } from "./wasmmerge.ts";
 import { gateVarToLet, maskCode } from "./varscope.ts";
+import { findUntypedDeclarations } from "./decltypes.ts";
 import { MATHLIB_BYTES } from "./wasm/mathlib_bytes.ts";
 import {
   type ClosureVarLookup,
@@ -1846,12 +1847,17 @@ class WasicTranspiler {
   private usedExternalMethods: Map<string, { params: WatType[]; result: WatType | null }> =
     new Map();
 
+  // The source before `stripComments`, which drops block comments WITH their newlines: a diagnostic
+  // that reports a line number has to find its statement here, not count lines in `this.src`.
+  private sourceAsGiven = "";
+
   constructor(
     source: string,
     mode: "wasi" | "library" = "wasi",
     externalFuncs: ExternalFuncDef[] = [],
   ) {
     this.src = stripComments(source);
+    this.sourceAsGiven = source;
     this.mode = mode;
     // Register imported WASM functions so call-site type inference works correctly.
     for (const ef of externalFuncs) {
@@ -9920,6 +9926,11 @@ class WasicTranspiler {
       ) {
         return `(i32.trunc_f64_s ${callWat})`;
       }
+      // The mirror (2026-09-28): an i32-returning call in an f64 context (`total + add(1, 2)` with
+      // `total: number`) left the raw i32 call under `f64.add` → invalid wasm at instantiate.
+      if (fn.result && watBaseType(fn.result as WatType) === "i32" && defaultType === "f64") {
+        return `(f64.convert_i32_s ${callWat})`;
+      }
       return callWat;
     }
 
@@ -14469,6 +14480,9 @@ class WasicTranspiler {
           const initP = hdrParts[0] ?? "";
           const condP = hdrParts[1] ?? "";
           const updP = hdrParts[2] ?? "";
+          // The one-line loop is a PARALLEL path to the multi-line `forMatch` handler below: the
+          // counter rule must hold on both (a first version hooked only the multi-line one).
+          this.checkForCounter(initP, updP, forBodyInline, locals);
           const lbl2 = this.pendingLabel ?? String(this.loopCounter++);
           this.pendingLabel = null;
           const brk2 = `$break_${lbl2}`;
@@ -14523,6 +14537,8 @@ class WasicTranspiler {
             const condPart = parts[1] ?? "";
             const updPart = parts[2] ?? "";
             const forBody = [afterParen.replace(/;$/, "")];
+            // Third parallel `for` emitter (brace-less body); the counter rule holds here too.
+            this.checkForCounter(initPart, updPart, forBody, locals);
 
             const lbl = this.pendingLabel ?? String(this.loopCounter++);
             this.pendingLabel = null;
@@ -14570,6 +14586,7 @@ class WasicTranspiler {
 
         const [forBody, consumed] = this.extractBlock(lines, i + 1);
         i += consumed + 1;
+        this.checkForCounter(initPart, updPart, forBody, locals);
 
         const lbl = this.pendingLabel ?? String(this.loopCounter++);
         this.pendingLabel = null;
@@ -19202,7 +19219,238 @@ class WasicTranspiler {
     );
   }
 
+  /**
+   * Owner rule (2026-09-28): EVERY variable's first definition states its type. TypeScript numbers
+   * are f64, so an untyped declaration left the compiler to guess, and it guessed i32 for integer
+   * literals (`let a = 100000; a * a` wrapped). Now it is an error instead of a guess. Later
+   * assignments need no type (they have their first definition's). Exempt, because TypeScript
+   * forbids annotating them: `for…of` / `for…in` bindings and `catch` bindings. A counting-`for`
+   * counter (`for (let i = 0; …)`) is exempt too: it is an INTEGER by standard, checked where the
+   * loop is emitted (`checkForCounter`). Runs on the source as written, before any rewrite, with
+   * strings and comments masked.
+   */
+  private checkDeclarationTypes(src: string): void {
+    // ` (line N)` in the file AS GIVEN. `src` has lost block comments with their newlines, so the
+    // statement's line is looked up there instead: the nth identical line in `src` is the nth line
+    // in the given source that starts with the same text (a trailing `//` comment was stripped).
+    // No match (import-merged renames) → no line number, and the snippet still names the statement.
+    const givenLines = this.sourceAsGiven.split("\n").map((l) => l.trim());
+    const lineOf = (idx: number): string => {
+      const start = src.lastIndexOf("\n", idx - 1) + 1;
+      const end = src.indexOf("\n", idx);
+      const text = src.slice(start, end === -1 ? undefined : end).trim();
+      const nth = src.slice(0, start).split("\n").filter((l) => l.trim() === text).length;
+      let seen = 0;
+      for (let i = 0; i < givenLines.length; i++) {
+        if (givenLines[i].startsWith(text) && seen++ === nth) return ` (line ${i + 1})`;
+      }
+      return "";
+    };
+    const snippet = (idx: number) =>
+      src.slice(idx, src.indexOf("\n", idx) === -1 ? undefined : src.indexOf("\n", idx)).trim()
+        .slice(0, 60);
+    for (const d of findUntypedDeclarations(src)) {
+      const head = `Declaration needs a type${lineOf(d.index)}: '${snippet(d.index)}'. `;
+      this.diagnostics.push(
+        d.kind === "name"
+          ? head +
+            `Every let/const/var states its type on its first definition, e.g. '${d.keyword} ` +
+            `${d.target}: number = …' (or ': i32' for an integer).`
+          : head +
+            `Type the pattern, e.g. ${
+              d.target === "["
+                ? `'${d.keyword} [a, b]: [i32, i32] = …'`
+                : `'${d.keyword} { x, y }: Point = …'`
+            }.`,
+      );
+    }
+  }
+
+  /**
+   * Remove a destructuring PATTERN's type annotation: `const [a, b]: [i32, i32] = t` →
+   * `const [a, b] = t`. The owner rule requires the annotation (`checkDeclarationTypes`), but the
+   * destructuring machinery predates it and takes element types from the source value, so after the
+   * check has run the annotation is dropped rather than taught to every destructuring path. Masked
+   * scan with bracket depth, so `Map<string, [i32, i32]>` or `{ x: i32 }` types go whole; edits run
+   * back to front so earlier offsets stay valid.
+   */
+  private static stripPatternTypes(src: string): string {
+    const masked = maskCode(src);
+    const cuts: [number, number][] = [];
+    for (const m of masked.matchAll(/\b(?:let|const|var)\s*([\[{])/g)) {
+      const open = m.index! + m[0].length - 1;
+      const close = m[1] === "[" ? "]" : "}";
+      let depth = 0;
+      let end = -1;
+      for (let k = open; k < masked.length; k++) {
+        if (masked[k] === m[1]) depth++;
+        else if (masked[k] === close && --depth === 0) {
+          end = k;
+          break;
+        }
+      }
+      if (end < 0) continue;
+      let k = end + 1;
+      while (k < masked.length && /\s/.test(masked[k])) k++;
+      if (masked[k] !== ":") continue;
+      const colon = k;
+      let d = 0;
+      for (k = colon + 1; k < masked.length; k++) {
+        const c = masked[k];
+        if ("<([{".includes(c)) d++;
+        else if (">)]}".includes(c) && masked[k - 1] !== "=") d--;
+        else if (c === "=" && d === 0 && masked[k + 1] !== "=" && masked[k + 1] !== ">") break;
+      }
+      if (k < masked.length) cuts.push([colon, k]);
+    }
+    let out = src;
+    for (const [from, to] of cuts.reverse()) out = out.slice(0, from) + " " + out.slice(to);
+    return out;
+  }
+
+  /**
+   * Drop a declaration annotation the declaration handlers cannot read, where the value's own type
+   * is what the compiler already uses. Before the typed-declaration rule these declarations were
+   * written untyped and compiled by INFERRING from the initialiser; the rule makes the annotation
+   * mandatory, and the handlers do not parse these type shapes, so the annotation is checked for
+   * presence (`checkDeclarationTypes`) and then removed, which restores the inferred path exactly.
+   * Only pointer-shaped types, and only when the initialiser is a call, `await`, name, or member /
+   * element access (never a literal or `new`, whose layout the annotation decides):
+   *   `Promise<…>` / `PromiseSettledResult<…>[]`, an object type literal `{ … }`, a tuple `[ … ]`,
+   *   or a `type` alias to a union of 2+ members or to a tuple; each optionally `| null`.
+   * Scalars, arrays, classes and interfaces keep their annotation: it carries meaning there (an
+   * upcast `const s: Shape = c`, an i32 vs f64 choice).
+   */
+  private static stripInferableAnnotations(src: string): string {
+    const masked = maskCode(src);
+    // Top-level split on `sep`, ignoring nested brackets / generics.
+    const splitTop = (s: string, sep: string): string[] => {
+      const parts: string[] = [];
+      let d = 0;
+      let cur = "";
+      for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if ("<([{".includes(c)) d++;
+        else if (")]}".includes(c) || (c === ">" && s[i - 1] !== "=")) d--;
+        if (c === sep && d === 0) {
+          parts.push(cur.trim());
+          cur = "";
+        } else cur += c;
+      }
+      parts.push(cur.trim());
+      return parts.filter((p) => p !== "");
+    };
+    const nonNull = (t: string) =>
+      splitTop(t, "|").filter((m) => m !== "null" && m !== "undefined");
+    // `type NAME = BODY;` aliases (the body may span lines, as a discriminated union's does).
+    const aliases = new Map<string, string>();
+    for (const m of masked.matchAll(/\btype\s+([A-Za-z_$][\w$]*)\s*=/g)) {
+      let d = 0;
+      let k = m.index! + m[0].length;
+      const start = k;
+      for (; k < masked.length; k++) {
+        const c = masked[k];
+        if ("<([{".includes(c)) d++;
+        else if (")]}".includes(c) || (c === ">" && masked[k - 1] !== "=")) d--;
+        else if (c === ";" && d === 0) break;
+        else if (c === "\n" && d === 0 && !/^\s*\|/.test(masked.slice(k + 1))) {
+          if (masked.slice(start, k).trim() !== "") break;
+        }
+      }
+      aliases.set(m[1], masked.slice(start, k).trim());
+    }
+    const inferable = (type: string): boolean => {
+      const members = nonNull(type);
+      if (members.length !== 1) return false;
+      const t = members[0];
+      if (/^(Promise|PromiseSettledResult)\s*</.test(t)) return true;
+      if (t.startsWith("{") || t.startsWith("[")) return true;
+      // A 2D array from a name or a call: the annotated 2D handler builds a fresh array from a
+      // LITERAL and read `= rows` as an empty one (silent 0s). The inferred path aliases the
+      // pointer. 1D keeps its annotation: there the annotated path is the correct one.
+      if (/^[A-Za-z_$][\w$]*\s*\[\s*\]\s*\[\s*\]$/.test(t)) return true;
+      const body = aliases.get(t);
+      if (body === undefined) return false;
+      const bm = nonNull(body);
+      return bm.length >= 2 || (bm.length === 1 && bm[0].startsWith("["));
+    };
+    const cuts: [number, number][] = [];
+    for (const m of masked.matchAll(/\b(?:let|const|var)\s+[A-Za-z_$][\w$]*\s*(:)/g)) {
+      const colon = m.index! + m[0].length - 1;
+      let d = 0;
+      let k = colon + 1;
+      for (; k < masked.length; k++) {
+        const c = masked[k];
+        if ("<([{".includes(c)) d++;
+        else if (")]}".includes(c) || (c === ">" && masked[k - 1] !== "=")) d--;
+        else if (d === 0 && (c === ";" || c === "\n")) {
+          k = masked.length; // no initialiser on this declaration (`;` inside `{ a: T; }` is nested)
+          break;
+        } else if (c === "=" && d === 0 && masked[k + 1] !== "=" && masked[k + 1] !== ">") break;
+      }
+      if (k >= masked.length) continue;
+      if (!inferable(masked.slice(colon + 1, k).trim())) continue;
+      const init = masked.slice(k + 1).trimStart();
+      // A literal, `new`, or `Array.from(…)`: the annotation decides the layout, so it stays.
+      if (/^(\{|\[|new\b|Array\s*\.)/.test(init)) continue;
+      cuts.push([colon, k]);
+    }
+    let out = src;
+    for (const [from, to] of cuts.reverse()) out = out.slice(0, from) + " " + out.slice(to);
+    return out;
+  }
+
+  /**
+   * A counting-`for` counter declared WITHOUT a type is an integer by standard (owner rule
+   * 2026-09-28): its start value, the header update and every assignment to it in the body must be
+   * integers, and `/=` / `**=` are refused. Anything else is an error, never a silent f64 or
+   * truncation. An explicitly typed counter is the user's own choice and is not checked here.
+   */
+  private checkForCounter(
+    initPart: string,
+    updPart: string,
+    body: string[],
+    locals: Map<string, WatType>,
+  ): void {
+    const dm = initPart.match(/^(?:let|const|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);?$/);
+    if (!dm) return; // typed counter, or an init that declares nothing
+    const name = dm[1];
+    const isInt = (e: string) => {
+      const t = this.inferExprType(e.trim(), locals);
+      return t === "i32" || t === "i64";
+    };
+    const refuse = (what: string) =>
+      this.diagnostics.push(
+        `for-loop counter '${name}' must stay an integer: ${what}. Give it an explicit type ` +
+          `(e.g. 'let ${name}: number = …') if it is meant to hold fractions.`,
+      );
+    if (!isInt(dm[2])) refuse(`it starts as '${dm[2].trim().slice(0, 40)}'`);
+    const checkAssign = (stmt: string) => {
+      const a = stmt.match(
+        new RegExp(`(?:^|[^\\w$.])${name}\\s*(\\*\\*|[-+*/%])?=(?!=)\\s*(.+?)\\s*;?$`),
+      );
+      if (!a) return;
+      if (a[1] === "/" || a[1] === "**") refuse(`'${name} ${a[1]}= …' can produce a fraction`);
+      else if (!isInt(a[2])) refuse(`it is assigned '${a[2].slice(0, 40)}'`);
+    };
+    if (updPart) checkAssign(updPart);
+    // Assignments to the counter in the body. `maskCode` preserves offsets, so each masked
+    // statement's span is the same span in the raw line.
+    const assigns = new RegExp(`(?:^|[^\\w$.])${name}\\s*(\\*\\*|[-+*/%])?=(?!=)`);
+    for (const line of body) {
+      let offset = 0;
+      for (const stmt of maskCode(line).split(";")) {
+        if (assigns.test(stmt)) checkAssign(line.slice(offset, offset + stmt.length));
+        offset += stmt.length + 1;
+      }
+    }
+  }
+
   transpile(_moduleName: string): string {
+    // Owner rule 2026-09-28: every declaration is typed. Checked FIRST, on the source as written.
+    this.checkDeclarationTypes(this.src);
+    this.src = WasicTranspiler.stripPatternTypes(this.src);
+    this.src = WasicTranspiler.stripInferableAnnotations(this.src);
     // #14 2e.7b — ES6 var→let consumption gate (runs FIRST, before any other pass). ES6 `let`/`const`
     // is the required form: a provably-safe `var` is auto-repaired to `let`; an UNSAFE `var` (block
     // escape / use-before-decl / redeclaration / loop-closure capture) is a hard error — never silently
@@ -20735,9 +20983,23 @@ function suggestNextStepOnAbort(path: string, diagnostics: readonly string[]): v
   // OR legitimate dynamic dispatch wasic can't resolve statically. Flag it for the user to verify
   // rather than asserting either way. Every other diagnostic is a wasic-only static-subset limit.
   const errorLike = diagnostics.filter((d) => /Unknown function .* not declared/.test(d));
-  const featureLike = diagnostics.filter((d) => !errorLike.includes(d));
+  // Missing types (owner rule 2026-09-28) and for-counter violations are the user's to fix in the
+  // source; the dynamic runtime is NOT the answer to them.
+  const typeLike = diagnostics.filter((d) =>
+    /^Declaration needs a type|^for-loop counter '/.test(d)
+  );
+  const featureLike = diagnostics.filter((d) => !errorLike.includes(d) && !typeLike.includes(d));
 
   console.error("");
+  if (typeLike.length > 0) {
+    console.error(
+      "   Every let/const/var must state its type on its first definition (TypeScript numbers are",
+    );
+    console.error(
+      "   64-bit floats: write ': number', or ': i32' for an integer). Add the types above and recompile.",
+    );
+    console.error("");
+  }
   if (errorLike.length > 0) {
     console.error(
       "   Some item(s) above look like undefined names, not just unsupported features:",

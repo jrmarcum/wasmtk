@@ -1,6 +1,6 @@
 type i32 = number; // Alias for 32-bit integer
 export function testSwitch(value: i32): i32 {
-  let result = 0;
+  let result: i32 = 0;
 
   switch (value) {
     case 1:

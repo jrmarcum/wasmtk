@@ -19,7 +19,7 @@ interface HasWeight {
 type HeavyBox = HasName & HasDimensions & HasWeight;
 
 function calculateDensity(box: HeavyBox): i32 {
-  const volume = box.width * box.height;
+  const volume: i32 = box.width * box.height;
   return box.mass / volume;
 }
 
