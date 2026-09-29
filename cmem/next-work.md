@@ -16,8 +16,8 @@
 >   alone moved `table.wast` +3 (V8's refusal there is the spec's own maximum, so a verdict), and the
 >   oracle also judged 28 assertions V8 refused only for its own limits (the 24 demoted on
 >   2026-09-28 among them). Guard: 0 valid modules rejected.
-> - 📬 **Report to binaryang DRAFTED** (`scripts/binaryang-report.md`, top section, "DRAFT (not yet
->   sent)"); the owner sends it. The 66 remaining skips are V8 (61) and `threads` (5), none theirs.
+> - 📬 **Report to binaryang SENT 2026-09-29** (`scripts/binaryang-report.md`, top section). The
+>   thread is closed on our side: the 66 remaining skips are V8 (61) and `threads` (5), none theirs.
 
 > ## Census of the 81 remaining wast skips (2026-09-28, binaryang 1.7.0, gate flags)
 >

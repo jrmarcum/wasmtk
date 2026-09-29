@@ -8,7 +8,7 @@
 > sends it** (2026-09-29). Headings before 2026-09-28 never recorded it, which is how reply (6) sat
 > unsent for four weeks while binaryang waited on it. An unmarked older section is UNKNOWN, not sent.
 
-## DRAFT (not yet sent) — 2026-09-29: 1.7.1 re-gated here; all 11 are passes, and 28 more
+## SENT 2026-09-29 — 1.7.1 re-gated here; all 11 are passes, and 28 more
 
 Thank you for 1.7.1, and for the correction on item 2: you were right, and the gap was ours.
 
