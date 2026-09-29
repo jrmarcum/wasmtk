@@ -339,6 +339,19 @@ export function setStringExprResolver(
   _stringExprResolver = fn;
 }
 
+/** Reports an argument this module cannot emit correctly. Set by wasic.ts around
+ *  parseConsoleLogArgs; wasic turns it into a compile-aborting diagnostic (unless it is inside a
+ *  speculative quietEmit probe). Added 2026-09-29 (H12 sw02): before it, this module had NO error
+ *  path, so every unhandled argument became an empty string or a 0 in the output. */
+let _diagnosticSink: ((msg: string) => void) | undefined = undefined;
+/**
+ * Inject the callback that records a console-argument emission this module cannot do correctly;
+ * the compiler turns it into an aborting diagnostic. Pass `undefined` to clear it.
+ */
+export function setConsoleDiagnosticSink(fn: ((msg: string) => void) | undefined): void {
+  _diagnosticSink = fn;
+}
+
 /** Callback to resolve an array variable by name: returns its element type, base ptr, and length.
  *  ptr=-1 means runtime local (param). ptr=-2 means dynamic heap array (local with 8-byte header).
  *  dynamic=true means the array has a [length, capacity] header at its pointer. */
@@ -1398,66 +1411,89 @@ function parseSingleArg(
 
   // ── String ternary: cond ? strExpr : strExpr → strexpr using select for ptr and len
   if (_hasTernary) {
-    const ternQIdx = findTopLevelOp(token, "?");
-    if (ternQIdx !== -1) {
-      const afterQ = token.slice(ternQIdx + 1);
-      const ternCIdx = findTopLevelOp(afterQ, ":");
-      if (ternCIdx !== -1) {
-        const thenPart = afterQ.slice(0, ternCIdx).trim();
-        const elsePart = afterQ.slice(ternCIdx + 1).trim();
-        if (
-          looksLikeString(thenPart, locals, arrayLookup) ||
-          looksLikeString(elsePart, locals, arrayLookup)
-        ) {
-          const condWat = exprToWat(
-            token.slice(0, ternQIdx).trim(),
+    const tern = splitTernary(token);
+    if (tern) {
+      const [condPart, thenPart, elsePart] = tern;
+      // H12 sw02 (2026-09-29): looksLikeString knows literals, string vars and string-array
+      // elements only, so a ternary whose branches were templates, string-method calls or
+      // string-returning calls took the NUMERIC path: `flag ? s.toUpperCase() : s.slice(1)`
+      // printed `0`, and `n > 3 ? tag(1) : tag(-1)` built an invalid module. Widened HERE only:
+      // looksLikeString's other caller (string comparison) is a separate decision.
+      const isStringBranch = (b: string): boolean => {
+        if (looksLikeString(b, locals, arrayLookup) || b.startsWith("`")) return true;
+        if (/\.(toString|toFixed)\s*\(.*\)$/.test(b)) return true;
+        const mm = b.match(
+          /^(.+?)\.(toUpperCase|toLowerCase|trim|trimStart|trimEnd|slice|charAt|substring|substr|replace|replaceAll|padStart|padEnd|repeat)\s*\(.*\)$/,
+        );
+        if (mm && looksLikeString(mm[1]!, locals, arrayLookup)) return true;
+        const cm = b.match(/^(\w+)\s*\(.*\)$/);
+        return !!cm && funcLookup?.(cm[1]!)?.result === "string";
+      };
+      if (isStringBranch(thenPart) || isStringBranch(elsePart)) {
+        const condWat = exprToWat(
+          condPart,
+          locals,
+          "i32",
+          funcLookup,
+          allocString,
+          arrayLookup,
+          structLookup,
+          globals,
+        );
+        // Recursively parse branches to get strvar/strexpr segments for ptr+len.
+        // sw02 (H12, 2026-09-29): a branch that parses to MORE than one segment (a template
+        // `` `n=${n}` ``, a concat) used to keep only segs[0] and print `n=`. Such a branch, and
+        // any single non-string segment, is now built whole by the string-expression resolver
+        // (wasic's emitStringPtrLen), and a branch nothing can build is a diagnostic, not "".
+        const getStrPtrLen = (part: string): [string, string] => {
+          const segs = parseSingleArg(
+            part,
             locals,
-            "i32",
             funcLookup,
             allocString,
+            enumLookup,
             arrayLookup,
             structLookup,
+            dotCallLookup,
             globals,
+            enumStringLookup,
+            closureVarLookup,
           );
-          // Recursively parse branches to get strvar/strexpr segments for ptr+len
-          const getStrPtrLen = (part: string): [string, string] => {
-            const segs = parseSingleArg(
-              part,
-              locals,
-              funcLookup,
-              allocString,
-              enumLookup,
-              arrayLookup,
-              structLookup,
-              dotCallLookup,
-              globals,
-              enumStringLookup,
-              closureVarLookup,
-            );
-            const s = segs[0];
-            if (!s) return ["(i32.const 0)", "(i32.const 0)"];
-            if (s.kind === "strvar") {
-              return [`(local.get $${s.ptrLocal})`, `(local.get $${s.lenLocal})`];
-            }
-            if (s.kind === "strexpr") return [s.ptrWat, s.lenWat];
-            if (s.kind === "literal" && allocString) {
-              const [p, l] = allocString(s.text);
-              return [`(i32.const ${p})`, `(i32.const ${l})`];
-            }
-            // Any other string-valued branch (slice / method / call that parseSingleArg didn't
-            // surface as a strvar/strexpr): resolve via emitStringPtrLen rather than emit empty.
-            const r = _stringExprResolver?.(part.trim(), locals);
-            if (r) return [r.ptrWat, r.lenWat];
-            return ["(i32.const 0)", "(i32.const 0)"];
-          };
-          const [thenPtr, thenLen] = getStrPtrLen(thenPart);
-          const [elsePtr, elseLen] = getStrPtrLen(elsePart);
-          return [{
-            kind: "strexpr" as const,
-            ptrWat: `(select ${thenPtr} ${elsePtr} ${condWat})`,
-            lenWat: `(select ${thenLen} ${elseLen} ${condWat})`,
-          }];
-        }
+          const s = segs.length === 1 ? segs[0] : undefined;
+          if (s?.kind === "strvar") {
+            return [`(local.get $${s.ptrLocal})`, `(local.get $${s.lenLocal})`];
+          }
+          if (s?.kind === "strexpr") return [s.ptrWat, s.lenWat];
+          if (s?.kind === "literal" && allocString) {
+            const [p, l] = allocString(s.text);
+            return [`(i32.const ${p})`, `(i32.const ${l})`];
+          }
+          // Anything else (several segments, a slice / method / call that parseSingleArg did not
+          // surface as a strvar/strexpr): build the whole branch via emitStringPtrLen.
+          const r = _stringExprResolver?.(part.trim(), locals);
+          if (r) return [r.ptrWat, r.lenWat];
+          _diagnosticSink?.(
+            `console argument: cannot build the string ternary branch '${
+              part.trim().slice(0, 60)
+            }'.`,
+          );
+          return ["(i32.const 0)", "(i32.const 0)"];
+        };
+        const [thenPtr, thenLen] = getStrPtrLen(thenPart);
+        const [elsePtr, elseLen] = getStrPtrLen(elsePart);
+        // sw02: `if`, not `select`. `select` evaluates BOTH branches, so the branch not taken
+        // still ran its calls and allocations, and when both branches captured their length in
+        // the resolver's shared `$__str_op_len`, the ELSE branch's length always won. Only the
+        // chosen branch runs here, and it leaves its own length in `$__str_op_len` (each ptr is
+        // evaluated before its len, which is what the resolver's pairs require). Consumers
+        // evaluate ptrWat before lenWat.
+        return [{
+          kind: "strexpr" as const,
+          ptrWat: `(if (result i32) ${condWat} ` +
+            `(then ${thenPtr} (local.set $__str_op_len ${thenLen})) ` +
+            `(else ${elsePtr} (local.set $__str_op_len ${elseLen})))`,
+          lenWat: `(local.get $__str_op_len)`,
+        }];
       }
     }
   }
@@ -2665,6 +2701,35 @@ function literalMask(s: string): boolean[] {
     }
   }
   return mask;
+}
+
+/**
+ * Splits a top-level conditional `c ? a : b` into `[c, a, b]`, or null. The conditional operator
+ * is RIGHT-associative: `c1 ? A : c2 ? B : C` is `c1 ? A : (c2 ? B : C)`, so the split is at the
+ * FIRST top-level `?` and at the `:` that matches it (a nested `?` claims the next `:`). H12 sw02 /
+ * sw12, 2026-09-29: the string ternary used findTopLevelOp, which returns the LAST `?`, making
+ * `n > 4 ? "gt4" : n > 1` the condition; it also took the `?` of `??`.
+ */
+function splitTernary(expr: string): [string, string, string] | null {
+  const inStr = literalMask(expr);
+  let depth = 0, q = -1, nested = 0;
+  for (let i = 0; i < expr.length; i++) {
+    if (inStr[i]) continue;
+    const ch = expr[i];
+    if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") depth--;
+    else if (depth === 0 && ch === "?") {
+      if (expr[i + 1] === "." || expr[i + 1] === "?" || expr[i - 1] === "?") continue;
+      if (q === -1) q = i;
+      else nested++;
+    } else if (depth === 0 && ch === ":" && q !== -1) {
+      if (nested > 0) nested--;
+      else {
+        return [expr.slice(0, q).trim(), expr.slice(q + 1, i).trim(), expr.slice(i + 1).trim()];
+      }
+    }
+  }
+  return null;
 }
 
 function findTopLevelOp(expr: string, op: string): number {

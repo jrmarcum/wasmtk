@@ -192,7 +192,7 @@ deno test --no-check --allow-read --allow-write --allow-run --allow-env \
   tests/hybrid_tests.ts tests/wasmmerge_guard_tests.ts     # expect 15 passed (13 + 2)
 #     A hand-rolled gate script must switch to `deno test` for any file containing `Deno.test(`.
 
-# 2c. typed_decl_tests + engine_tests + golden_wat_tests (`deno run`); golden expects 486 / 0 diverged (2026-09-29)
+# 2c. typed_decl_tests + engine_tests + golden_wat_tests (`deno run`); golden expects 487 / 0 diverged (2026-09-29)
 
 # 3. the Go suites — ONE AT A TIME (see traps)
 #    go_bindgen go_merge go_asyncify
@@ -202,7 +202,7 @@ deno test --no-check --allow-read --allow-write --allow-run --allow-env \
 #    again, "✅ ON BASELINE — N known failure(s) still standing" is the pass condition.
 #    The known failures print in red every run by design; the gate fails only if a count MOVES.
 
-# 5. engine_cross_check → expect 1140 pairs on baseline (2026-09-29), 0 regressed, 0 improved;
+# 5. engine_cross_check → expect 1143 pairs on baseline (2026-09-29), 0 regressed, 0 improved;
 #    15 pairs (the five `36_*` modules) are not in the baseline yet
 deno run --allow-read --allow-run --allow-env --allow-write tests/engine_cross_check_tests.ts
 #    Multi-engine (V8 vs wasmtime/wasmer/wazero). Absent engines skip, never fail.

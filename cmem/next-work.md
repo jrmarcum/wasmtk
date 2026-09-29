@@ -3,8 +3,13 @@
 > ## 2026-09-29 — H12 sw01 fixed (+ sw33); binaryang answered the 11-skip letter
 >
 > - ✅ **sw01 + sw33 FIXED** on `fix/h12-sw01-throw-2026-09-29`, full gate green (testing.md).
->   Open silent-wrong in the compiler **31 → 30**. **NEXT: sw02** (console ternary with a template
->   branch), then down the round-1 table in compiler-bugs.md.
+>   Open silent-wrong in the compiler **31 → 30**.
+> - ✅ **sw02 FIXED** on `fix/h12-sw02-console-string-ternary-2026-09-29`; **sw34 found OPEN** with
+>   it (console `instanceof` condition is a 0 stub), so the count stays **30**. sw12 narrowed (its
+>   console half is fixed). `console_log.ts` now has an error path (`setConsoleDiagnosticSink`).
+>   **NEXT: sw03** (`ok ? "pass" : "fail: " + msg`: the `+` split runs before the ternary), then
+>   down the table. Most console rows share the `exprToWat` terminal-stub root: wiring THAT to the
+>   sink, with a test per row, is the likely efficient path.
 > - 📬 **binaryang's reply (2026-09-29):** **1.7.1 is PUBLISHED** and fixes item 1 (limits encode as
 >   u64, the validator rejects; it also fixed the validator ACCEPTING `(memory 0x1_0000_0000
 >   (pagesize 1))`, which would have turned our 10th skip into a failure). Item 2 is **OURS**:

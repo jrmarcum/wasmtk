@@ -111,6 +111,13 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 
 ## Current pass counts (2026-09-29, binaryang **1.7.1**; latest release v2.0.3)
 
+> **2026-09-29, H12 sw02 fixed, full gate green.** wasi **430/430** (+`7b_ConsoleStringTernary`) ·
+> golden-WAT **487 / 0**, RE-RECORDED with 11 existing entries changed, each reviewed by a full
+> old-vs-new WAT diff: 9 only gained the unused `$__str_op_ptr/len` declaration (the console-`?`
+> pre-scan over-declares; Binaryen strips it), 2 (`27_url-parsing`, `15_ThrowNonError`) turned a
+> console string `select` into an `if`. Engine 1143 on baseline (+3 hand-added, all `match`) · wast
+> 64,473 / 0 / 66 unchanged · Go 7/7/12 · every other suite green.
+
 > **2026-09-29, binaryang 1.7.1 + the second `assert_invalid` oracle, full gate green.** wast
 > **64,473 / 0 / 66** (from 64,434 / 105), measured in two steps: the pin alone 64,443 / 96
 > (`memory.wast` +6, `table.wast` +3: limits above u32), then binaryang's validator where V8 cannot

@@ -58,6 +58,11 @@
    validation verdict only, and fails the gate if binaryang rejects any module the spec calls valid
    (0 of all). Gate **64,473 / 0 / 66** (was 64,434 / 105): all 11 reported skips pass, plus 28
    assertions V8 had left open.
+6. **H12 sw02 (2026-09-29): string ternaries in `console.log`.** Template and concat branches lost
+   their values, method-call and string-returning-call branches printed `0` or built an invalid
+   module, nested ternaries grouped wrongly, and `select` ran both branches. Now `if`, first-`?`
+   split, whole-branch build. `console_log.ts` gained its first error path
+   (`setConsoleDiagnosticSink`). Found with it: sw34 (open). Test `7b_ConsoleStringTernary`.
 
 ## Release status (2026-09-28) — v2.0.3: typed declarations, exit-code parity, binaryang 1.7.0
 

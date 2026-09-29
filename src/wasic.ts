@@ -141,6 +141,7 @@ import {
   NWRITTEN_OFFSET,
   parseConsoleLogArgs,
   SCRATCH_BASE,
+  setConsoleDiagnosticSink,
   setEnumStrVarResolver,
   setFuncTableLookup,
   setInstanceofResolver,
@@ -13191,9 +13192,37 @@ class WasicTranspiler {
       // String-producing method calls (s.toUpperCase(), arr[i].toLowerCase(), …): resolve to a
       // ptr/len pair via emitStringPtrLen, captured into $__str_op_len (ptrWat runs the call and
       // leaves ptr; lenWat reads the captured len — both consumers evaluate ptrWat first).
+      // A console argument console_log.ts cannot emit correctly aborts the compile (H12 sw02),
+      // except inside a speculative quietEmit probe.
+      setConsoleDiagnosticSink((msg) => {
+        if (this.emitDiagSuppressDepth === 0) this.diagnostics.push(msg);
+      });
       setStringExprResolver((tok, locs) => {
         const w = this.quietEmit(() => this.emitStringPtrLen(tok, locs as Map<string, WatType>));
-        if (w === "(i32.const 0) (i32.const 0)") return undefined;
+        if (w === "(i32.const 0) (i32.const 0)") {
+          // H12 sw02: emitStringPtrLen does not build a template or a concat; emitStringAssign
+          // does. Build it into the $__str_op pair (declared for console ternaries).
+          const tk = tok.trim();
+          if (
+            !(tk.startsWith("`") || this.isStringExpr(tk, locs as Map<string, WatType>)) ||
+            !locs.has("__str_op_ptr")
+          ) return undefined;
+          // Speculative, like the emitStringPtrLen probe above: a failure is a stub, not a
+          // diagnostic, and the caller decides what an undefined means. emitStringAssign reports
+          // "Unsupported string assignment" past quietEmit, so its diagnostics are rolled back.
+          const diagMark = this.diagnostics.length;
+          const assign = this.quietEmit(() =>
+            this.emitStringAssign("__str_op", tk, locs as Map<string, WatType>)
+          );
+          if (this.diagnostics.length > diagMark || !assign.trim() || assign.includes("(;?")) {
+            this.diagnostics.length = diagMark;
+            return undefined;
+          }
+          return {
+            ptrWat: `(block (result i32) ${assign} (local.get $__str_op_ptr))`,
+            lenWat: `(local.get $__str_op_len)`,
+          };
+        }
         return {
           ptrWat: `(block (result i32) ${w} (local.set $__str_op_len))`,
           lenWat: `(local.get $__str_op_len)`,
@@ -13246,6 +13275,7 @@ class WasicTranspiler {
       setFuncTableLookup(undefined);
       setInstanceofResolver(undefined);
       setStringExprResolver(undefined);
+      setConsoleDiagnosticSink(undefined);
       setNullishResolver(undefined);
       setEnumStrVarResolver(undefined);
       const { statements, needsHelpers, needsStrGather, needsArrPrintHelper, needsJoinHelper } =
@@ -13595,9 +13625,37 @@ class WasicTranspiler {
       // String-producing method calls (s.toUpperCase(), arr[i].toLowerCase(), …): resolve to a
       // ptr/len pair via emitStringPtrLen, captured into $__str_op_len (ptrWat runs the call and
       // leaves ptr; lenWat reads the captured len — both consumers evaluate ptrWat first).
+      // A console argument console_log.ts cannot emit correctly aborts the compile (H12 sw02),
+      // except inside a speculative quietEmit probe.
+      setConsoleDiagnosticSink((msg) => {
+        if (this.emitDiagSuppressDepth === 0) this.diagnostics.push(msg);
+      });
       setStringExprResolver((tok, locs) => {
         const w = this.quietEmit(() => this.emitStringPtrLen(tok, locs as Map<string, WatType>));
-        if (w === "(i32.const 0) (i32.const 0)") return undefined;
+        if (w === "(i32.const 0) (i32.const 0)") {
+          // H12 sw02: emitStringPtrLen does not build a template or a concat; emitStringAssign
+          // does. Build it into the $__str_op pair (declared for console ternaries).
+          const tk = tok.trim();
+          if (
+            !(tk.startsWith("`") || this.isStringExpr(tk, locs as Map<string, WatType>)) ||
+            !locs.has("__str_op_ptr")
+          ) return undefined;
+          // Speculative, like the emitStringPtrLen probe above: a failure is a stub, not a
+          // diagnostic, and the caller decides what an undefined means. emitStringAssign reports
+          // "Unsupported string assignment" past quietEmit, so its diagnostics are rolled back.
+          const diagMark = this.diagnostics.length;
+          const assign = this.quietEmit(() =>
+            this.emitStringAssign("__str_op", tk, locs as Map<string, WatType>)
+          );
+          if (this.diagnostics.length > diagMark || !assign.trim() || assign.includes("(;?")) {
+            this.diagnostics.length = diagMark;
+            return undefined;
+          }
+          return {
+            ptrWat: `(block (result i32) ${assign} (local.get $__str_op_ptr))`,
+            lenWat: `(local.get $__str_op_len)`,
+          };
+        }
         return {
           ptrWat: `(block (result i32) ${w} (local.set $__str_op_len))`,
           lenWat: `(local.get $__str_op_len)`,
@@ -13650,6 +13708,7 @@ class WasicTranspiler {
       setFuncTableLookup(undefined);
       setInstanceofResolver(undefined);
       setStringExprResolver(undefined);
+      setConsoleDiagnosticSink(undefined);
       setNullishResolver(undefined);
       setEnumStrVarResolver(undefined);
       const {
@@ -18627,6 +18686,9 @@ class WasicTranspiler {
         // operand (`a === getName()`, `a === obj.f`, `a === s.slice(…)`) through the string-expr
         // resolver, which captures len into $__str_op_len.
         (/\bconsole\.(log|error|warn)\b/.test(l) && /===|!==|==|!=/.test(l)) ||
+        // A string ternary in a console argument leaves the chosen branch's length in
+        // $__str_op_len (H12 sw02). Over-declares for numeric ternaries; Binaryen strips it.
+        (/\bconsole\.(log|error|warn)\b/.test(l) && l.includes("?")) ||
         // Printing a string-enum variable routes through $__enum_str_<Enum>, whose multi-value
         // (ptr,len) result is captured into this pair. Over-declares slightly when string enums
         // exist but none is printed here — an unused local, which Binaryen strips.
@@ -20381,6 +20443,8 @@ class WasicTranspiler {
           // console.* with a string-equality op may route a non-trivial operand through the
           // string-expr resolver (captures len into $__str_op_len).
           (/\bconsole\.(log|error|warn)\b/.test(l) && /===|!==|==|!=/.test(l)) ||
+          // a string ternary in a console argument → $__str_op_len (H12 sw02; see emitFunction)
+          (/\bconsole\.(log|error|warn)\b/.test(l) && l.includes("?")) ||
           // string-enum variable printed → $__enum_str_<Enum> multi-value capture (see emitFunction)
           (this.stringEnumVars.size > 0 && /\bconsole\.(log|error|warn)\b/.test(l))
         )

@@ -101,6 +101,18 @@ high-value subset.
   (`console_log.ts`). Fixing only one left `console.log("x:", a * 5 % 9)` emitting
   `(i32.mul … (f64.rem …))`. These two loops are permanent parallel code paths: any operator
   precedence/associativity change belongs in both.
+- 🔒 **`console_log.ts` reports through `setConsoleDiagnosticSink` (2026-09-29, H12 sw02).** Until
+  then it had NO error path: every argument it could not emit became `""` or a `0` in the output,
+  which is the shared root of most console silent-wrong rows. wasic sets the sink around both
+  `parseConsoleLogArgs` calls and drops messages inside a `quietEmit` probe. **A new console
+  fallback reports through the sink; it never returns a stub silently.** The remaining stubs
+  (`exprToWat`'s terminal `(;? … ;)`) are the next place to wire it, row by row, each with a test.
+- **The conditional operator is RIGHT-associative; binary operators are left.** `findTopLevelOp`
+  returns the LAST match, which is right for `a - b - c` and wrong for `a ? b : c ? d : e`. Split a
+  ternary with `splitTernary` (first `?`, then the `:` that matches it), never with
+  `findTopLevelOp(…, "?")`. wasic's own numeric ternary still has the wrong grouping (sw12).
+- **A ternary evaluates ONE branch.** `select` evaluates both; use it only when both operands are
+  side-effect-free AND share no temp local. The console string ternary is an `if` for that reason.
 - **`+`/`-` intentionally have no guard.** `a + (b - c)` equals `(a + b) - c` in exact arithmetic, so
   there is no integer bug; they CAN differ in f64 rounding, which is a known, accepted nuance (the
   `+` path also carries string-concat logic, so changing it is higher-risk than the payoff).

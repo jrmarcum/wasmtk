@@ -1724,6 +1724,11 @@
     "wasmer": "match",
     "wazero": "match"
   },
+  "7b_ConsoleStringTernary": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "match"
+  },
   "9_ChainedNewAndMultiStmt": {
     "wasmtime": "match",
     "wasmer": "match",
