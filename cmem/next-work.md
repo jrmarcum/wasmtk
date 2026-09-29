@@ -1,5 +1,23 @@
 # Next-work planning note
 
+> ## 2026-09-29 — H12 sw01 fixed (+ sw33); binaryang answered the 11-skip letter
+>
+> - ✅ **sw01 + sw33 FIXED** on `fix/h12-sw01-throw-2026-09-29`, full gate green (testing.md).
+>   Open silent-wrong in the compiler **31 → 30**. **NEXT: sw02** (console ternary with a template
+>   branch), then down the round-1 table in compiler-bugs.md.
+> - 📬 **binaryang's reply (2026-09-29):** **1.7.1 is PUBLISHED** and fixes item 1 (limits encode as
+>   u64, the validator rejects; it also fixed the validator ACCEPTING `(memory 0x1_0000_0000
+>   (pagesize 1))`, which would have turned our 10th skip into a failure). Item 2 is **OURS**:
+>   `toBinary` never validates, and the branch-hint check lives in `wasmValidate`; V8 ignores the
+>   code-metadata section, so our V8-only `assert_invalid` verdict accepts it.
+> - ⏳ **Next branch (separate from sw01): pin binaryang 1.7.1, and give the wast runner a second
+>   `assert_invalid` oracle.** Where V8 ACCEPTS (`src/wast.ts` "toolchain accepted it"), ask
+>   `wasmValidate(bytes, { features: allFeatures() })`; its rejection is the verdict. **False-pass
+>   guard first:** run `wasmValidate` over every VALID module in the corpus and require 0
+>   rejections, or the new oracle can manufacture passes. Expect wast skips **105 → 94**, then
+>   re-record and REPORT the result to binaryang (they are waiting on it). `minimumDependencyAge` is
+>   `PT1M`, so 1.7.1 already resolves.
+
 > ## Census of the 81 remaining wast skips (2026-09-28, binaryang 1.7.0, gate flags)
 >
 > **Now 105** (same day): 24 former passes that rested on V8's own limitations are skips too —

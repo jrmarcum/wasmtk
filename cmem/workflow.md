@@ -192,7 +192,7 @@ deno test --no-check --allow-read --allow-write --allow-run --allow-env \
   tests/hybrid_tests.ts tests/wasmmerge_guard_tests.ts     # expect 15 passed (13 + 2)
 #     A hand-rolled gate script must switch to `deno test` for any file containing `Deno.test(`.
 
-# 2c. typed_decl_tests + engine_tests + golden_wat_tests (`deno run`); golden expects 483 / 0 diverged
+# 2c. typed_decl_tests + engine_tests + golden_wat_tests (`deno run`); golden expects 486 / 0 diverged (2026-09-29)
 
 # 3. the Go suites — ONE AT A TIME (see traps)
 #    go_bindgen go_merge go_asyncify

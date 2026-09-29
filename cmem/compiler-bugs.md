@@ -7,17 +7,18 @@
 
 | class | compiler-open | compiler-fixed | other-open | other-fixed |
 | --- | --- | --- | --- | --- |
-| SILENT-WRONG | 31 | 36 | 2 | 13 |
+| SILENT-WRONG | 30 | 38 | 2 | 13 |
 | LOUD | 14 | 13 | 1 | 8 |
 | n/a | — | 3 | — | 3 |
 
-78 classified entries (the 77th: Phase 36 restored, LOUD; the 78th: 24 wast passes resting on V8's own limits, SILENT-WRONG, other) plus the 45 rows of the Phase 0b round-1 table (each row counted as one
+78 classified entries (the 77th: Phase 36 restored, LOUD; the 78th: 24 wast passes resting on V8's own limits, SILENT-WRONG, other) plus the 46 rows of the Phase 0b round-1 table (each row counted as one
 bug; re-tallied 2026-09-28 after the typed-declaration rule landed: sw29 closed, sw30–sw32 and
 ld09–ld14 added, and the new entry "Landing the typed-declaration rule" holds 2 fixed and counts
 once, as SILENT-WRONG, its worst); 2 pure groupings (`### wabt-ts 1.4.0` with its blockers under `####`, and `## FIXED — the 7 long-standing test failures`) carry a note instead and are not counted. An entry covering several defects takes its WORST class. PARTIAL counts as open. n/a entries have no status and sit in the -fixed column for placement only.
 
-**Open silent-wrong in the compiler: 31** (2026-09-28, which is H12/I11 bar (c); 29 after round 1,
-−1 sw29 closed by the typed-declaration rule, +3 found while landing it). It read 0 earlier the
+**Open silent-wrong in the compiler: 30** (2026-09-29, which is H12/I11 bar (c): sw01 fixed, and
+sw33 found and fixed with it, so the round-1 table now has 46 rows. 31 on 2026-09-28: 29 after
+round 1, −1 sw29 closed by the typed-declaration rule, +3 found while landing it). It read 0 earlier the
 same day, after the first tally's 2 were fixed, and that 0 carried the warning below; the Phase 0b
 audit then CONFIRMED 28 more by running them (table below). The count is only as good as the
 entries: a silent-wrong bug nobody has found is not in it.
@@ -35,7 +36,8 @@ terminal fallback (console_log.ts ~2605) emits `(;? … ;) (T.const 0)` with no 
 
 | id | bug (native → compiled) | where |
 | --- | --- | --- |
-| sw01 | `throw new TypeError(..)` / `throw 42` → **proc_exit(0)**: no catch, no output, exit 0 | wasic throw branch |
+| ~~sw01~~ | ✅ FIXED 2026-09-29: `throw new TypeError(..)` / `throw 42` → **proc_exit(0)**: no catch, no output, exit 0. Every built-in Error constructor (not `AggregateError`) now throws like `Error`; a number / numeric var / boolean throws its string form; anything else (an object) is a hard `Unsupported throw` diagnostic. Tests `15_ThrowNonError`, `15_ThrowTypeErrorUncaught` (`@expect-exit: 1`), `15_ThrowObjectRefused` (`@expect-fail: compile`); all three fail on the old compiler | wasic throw branch |
+| ~~sw33~~ | ✅ FIXED 2026-09-29 (found fixing sw01): `String(<bool>)` went through `$__i32_to_str`: `true` → `1`. Now selects static "true"/"false". Test `15_ThrowNonError` | wasic `String(...)` in emitStringAssign |
 | sw02 | console ternary with a template branch: `n=5` → `n=` | console_log getStrPtrLen |
 | sw03 | `ok ? "pass" : "fail: " + msg`: `pass` → `passboom` | console_log `+` split |
 | sw04 | `Math.abs(s.charCodeAt(0) - 100)`: `3` → `100` (operand → 0) | console_log fallback |

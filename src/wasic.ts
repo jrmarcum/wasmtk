@@ -6969,6 +6969,18 @@ class WasicTranspiler {
           `${ind}(local.set $${varName}_ptr)`,
         ].join("\n");
       }
+      // sw33 (found fixing sw01, 2026-09-29): a boolean went through `$__i32_to_str` and printed
+      // `1` / `0`. Pick the static "true" / "false" string instead.
+      if (argType === "bool") {
+        const [tPtr, tLen] = this.allocString("true");
+        const [fPtr, fLen] = this.allocString("false");
+        const condWat = this.emitExpr(argExpr, locals, "i32");
+        return [
+          `(if ${condWat}`,
+          `${ind}  (then (local.set $${varName}_ptr (i32.const ${tPtr})) (local.set $${varName}_len (i32.const ${tLen})))`,
+          `${ind}  (else (local.set $${varName}_ptr (i32.const ${fPtr})) (local.set $${varName}_len (i32.const ${fLen}))))`,
+        ].join("\n");
+      }
       this.needsNumericHelpers = true;
       const helperName = argType === "f64"
         ? "$__f64_to_str"
@@ -11124,8 +11136,20 @@ class WasicTranspiler {
       const throwExnTag = (ptr: number, len: number): string =>
         `(throw $__exn_tag (i32.const ${ptr}) (i32.const ${len}))`;
 
+      // sw01 (H12 Phase 0, 2026-09-29): every built-in Error constructor with the `(message)`
+      // signature is thrown the same way as `Error` — wasic models a caught exception as its message
+      // string (see the `instanceof` Error family). `AggregateError(errors, msg)` is left out: its
+      // first argument is not the message. `new TypeError("x")` used to reach the proc_exit(0)
+      // fallback below and exit 0, skipping every enclosing catch.
+      const ERR_CTOR = String
+        .raw`(?:Error|TypeError|RangeError|SyntaxError|EvalError|ReferenceError|URIError)`;
+      if (new RegExp(String.raw`^new\s+${ERR_CTOR}\s*\(\s*\)$`).test(throwExpr)) {
+        return throwExnTag(...this.allocString(""));
+      }
       // throw new Error("msg") or throw new Error('msg')
-      const newErrMatch = throwExpr.match(/^new\s+Error\s*\(\s*["']([^"']*)["']\s*\)$/);
+      const newErrMatch = throwExpr.match(
+        new RegExp(String.raw`^new\s+${ERR_CTOR}\s*\(\s*["']([^"']*)["']\s*\)$`),
+      );
       if (newErrMatch) {
         const [ptr, len] = this.allocString(newErrMatch[1]);
         return throwExnTag(ptr, len);
@@ -11141,7 +11165,9 @@ class WasicTranspiler {
       // these fell to the `proc_exit(0)` fallback (a SILENT clean exit that skips any enclosing catch).
       // Build the message into the `$__throw_msg` (ptr,len) temp, then throw it. `$__throw_msg_ptr/len`
       // are declared by the pre-scan when a body line has a non-literal throw.
-      const newErrExprMatch = throwExpr.match(/^new\s+Error\s*\((.+)\)$/);
+      const newErrExprMatch = throwExpr.match(
+        new RegExp(String.raw`^new\s+${ERR_CTOR}\s*\((.+)\)$`),
+      );
       // A bare identifier (`throw e` — e.g. a re-throw of the caught string) is left to the string-var
       // path below (it already throws the var's own ptr/len directly — no temp needed).
       const throwArg = newErrExprMatch ? newErrExprMatch[1].trim() : (!/^\w+$/.test(throwExpr) &&
@@ -11153,15 +11179,27 @@ class WasicTranspiler {
         return `${assignWat}\n      (throw $__exn_tag (local.get $__throw_msg_ptr) (local.get $__throw_msg_len))`;
       }
       // throw someVar (string variable — ptr/len locals)
-      if (/^\w+$/.test(throwExpr)) {
-        if (locals.get(throwExpr) === "string") {
-          return `(throw $__exn_tag (local.get $${throwExpr}_ptr) (local.get $${throwExpr}_len))`;
-        }
-        // Numeric/opaque value — exit without a message
-        return `(call $proc_exit (i32.const 0))\n      (unreachable)`;
+      if (/^\w+$/.test(throwExpr) && locals.get(throwExpr) === "string") {
+        return `(throw $__exn_tag (local.get $${throwExpr}_ptr) (local.get $${throwExpr}_len))`;
       }
-      // Fallback
-      return `(call $proc_exit (i32.const 0))\n      (unreachable)`;
+      // sw01: a NUMBER or BOOLEAN (`throw 42`, `throw code`, `throw n > 0`) is thrown as its string
+      // form, which is what the catch variable prints. Both of these used to be `proc_exit(0)`: a
+      // silent clean exit that skipped every enclosing catch.
+      if (
+        /^(?:-?\d[\d_]*(?:\.\d+)?|true|false)$/.test(throwExpr) ||
+        (/^\w+$/.test(throwExpr) &&
+          ["i32", "i64", "f32", "f64", "bool"].includes(locals.get(throwExpr) as string))
+      ) {
+        const assignWat = this.emitStringAssign("__throw_msg", `String(${throwExpr})`, locals);
+        return `${assignWat}\n      (throw $__exn_tag (local.get $__throw_msg_ptr) (local.get $__throw_msg_len))`;
+      }
+      // Anything else (an object, a class instance, a call of unknown type) has no model here.
+      // Refuse it rather than exit 0.
+      this.diagnostics.push(
+        `Unsupported throw: 'throw ${throwExpr.slice(0, 60)}'. wasic throws a string: use ` +
+          `\`throw new Error(msg)\` (or TypeError / RangeError / …), a string, or a number.`,
+      );
+      return `(unreachable)`;
     }
 
     // Function-type variable: const f: (a: i32) => i32 = someFunc  OR  let f: (a: i32) => i32;

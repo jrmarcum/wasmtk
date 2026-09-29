@@ -109,8 +109,15 @@ grep -ohE '^import .*from "\.\./src/[a-z_]+\.ts"' tests/<suite>.ts       # src m
 
 `go_merge_tests` was mis-classified as a Go-only outlier until this grep showed the `wasic` call.
 
-## Current pass counts (2026-09-28, binaryang **1.6.0**; latest release v2.0.2 was gated on 1.5.3)
+## Current pass counts (2026-09-29, binaryang **1.7.0**; latest release v2.0.3)
 
+> **2026-09-29, H12 sw01 + sw33 fixed, full gate green.** wasi **429/429** (+3 `15_Throw*`) ·
+> golden-WAT **486 / 0** (+3 recorded; the 483 existing outputs byte-identical) · engine 1134 on
+> baseline, 0 regressed, + 6 new pairs hand-added for `15_ThrowNonError` / `15_ThrowTypeErrorUncaught`
+> (same pattern as `15_Exceptions` / `15_panic`) · wast 64,434 / 0 / 105 unchanged · Go 7 / 7 / 12 ·
+> every other suite green. ⚠️ The 5 `36_*` modules (15 pairs, all `match`) are still NOT in
+> `engine_baseline.json`, since the Phase 36 restore; left for a deliberate `--update-baseline`.
+>
 > **2026-09-28 (after v2.0.3), engine-refusal rule + user explanations.** New suite
 > `engine_tests.ts` **11/11** (`deno run`). wast **64,434 / 0 / 105** (24 false passes → skips).
 > Full gate green: wasi 426/426 · engine 1134 on baseline, 0 regressed · golden-WAT 483 / 0 ·

@@ -3,6 +3,10 @@
 > Formerly two threads, to `@jrmarcum/binaryen-ts` and `@jrmarcum/wabt-ts`, which **merged into
 > `@jrmarcum/binaryang` on 2026-08-27**. Sections dated before that keep the old package names on
 > purpose — they record what was reported to whom, and retitling them would make the record wrong.
+>
+> **Every section heading states `DRAFT (not yet sent)` or `SENT <date>`, and flips when the owner
+> sends it** (2026-09-29). Headings before 2026-09-28 never recorded it, which is how reply (6) sat
+> unsent for four weeks while binaryang waited on it. An unmarked older section is UNKNOWN, not sent.
 
 ## FOLLOW-UP (sent 2026-09-29; binaryang is working on it) — against 1.7.0: two items, 11 spec skips
 
@@ -178,7 +182,12 @@ caught on your side.
 
 ---
 
-## REPLY — 2026-08-27 (6): your `.gitattributes` rule taken; a SECOND CR trap, opposite direction
+## REPLY — 2026-08-31 (6), SENT 2026-09-29: your `.gitattributes` rule taken; a SECOND CR trap, opposite direction
+
+> Written 2026-08-31 (commit `83c02a2`) in reply to binaryang's letter of that day, but held unsent
+> by mistake; the heading carried "2026-08-27" until 2026-09-29. Sent by the owner 2026-09-29 with a
+> cover note: the "six-item checklist" below is now nine items (best-practices §5.5), and the
+> "byte count in python" row predates the no-Python rule (the count itself stands).
 
 ### Wildcard-first — adopted, and you diagnosed it more precisely than we did
 

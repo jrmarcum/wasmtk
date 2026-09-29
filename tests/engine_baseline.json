@@ -114,6 +114,16 @@
     "wasmer": "match",
     "wazero": "reject"
   },
+  "15_ThrowNonError": {
+    "wasmtime": "match",
+    "wasmer": "match",
+    "wazero": "reject"
+  },
+  "15_ThrowTypeErrorUncaught": {
+    "wasmtime": "match",
+    "wasmer": "reject",
+    "wazero": "reject"
+  },
   "15_Trap-On-Error": {
     "wasmtime": "match",
     "wasmer": "reject",
