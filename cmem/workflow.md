@@ -192,12 +192,12 @@ deno test --no-check --allow-read --allow-write --allow-run --allow-env \
   tests/hybrid_tests.ts tests/wasmmerge_guard_tests.ts     # expect 15 passed (13 + 2)
 #     A hand-rolled gate script must switch to `deno test` for any file containing `Deno.test(`.
 
-# 2c. typed_decl_tests + golden_wat_tests (`deno run`); golden expects 483 / 0 diverged
+# 2c. typed_decl_tests + engine_tests + golden_wat_tests (`deno run`); golden expects 483 / 0 diverged
 
 # 3. the Go suites — ONE AT A TIME (see traps)
 #    go_bindgen go_merge go_asyncify
 
-# 4. wast_tests   → expect 288 files / 64458 assertions / 0 failures / 81 skipped / 0 unrunnable
+# 4. wast_tests   → expect 288 files / 64434 assertions / 0 failures / 105 skipped / 0 unrunnable
 #    (as of 2026-09-28, binaryang 1.7.0) → "✅ ALL CLEAN". Should a known failure ever be pinned
 #    again, "✅ ON BASELINE — N known failure(s) still standing" is the pass condition.
 #    The known failures print in red every run by design; the gate fails only if a count MOVES.

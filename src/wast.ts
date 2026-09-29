@@ -20,6 +20,7 @@
  */
 import wabt from "wabt";
 import { rt } from "./rt.ts";
+import { engineName, explainEngineRejection } from "./engine.ts";
 
 // deno-lint-ignore no-explicit-any
 type WabtModule = any;
@@ -321,16 +322,10 @@ const WasmException =
   (WebAssembly as unknown as { Exception: abstract new (...a: never[]) => object })
     .Exception;
 
-/**
- * True when V8 rejected a module because a proposal it does not implement (or implements only
- * behind a flag) is in play — "enable with --experimental-wasm-…", "… requires
- * --experimental-wasm-… flag". That is not a verdict on the module, so it must not satisfy
- * `assert_invalid` or a binary `assert_malformed` (2026-09-28 audit: 11 such passes, e.g. V8
- * reading `align.wast`'s over-large alignment as an acquire-release ordering it will not validate).
- */
-function isFeatureGate(e: unknown): boolean {
-  return /--experimental-wasm-/.test(e instanceof Error ? e.message : String(e));
-}
+// (`isFeatureGate`, the flag-only check behind 11 false passes found by the 2026-09-28 audit, e.g.
+// V8 reading `align.wast`'s over-large alignment as an acquire-release ordering, was folded into
+// `explainEngineRejection` in src/engine.ts the same day, which also recognises custom page sizes
+// and size caps: see `engineSkip` in runWast.)
 
 const hostRefs = new Map<string, object>();
 function hostRef(n: string): object {
@@ -889,6 +884,12 @@ export interface WastResult {
   modulesFailed: number;
   /** Human-readable messages for each failed command (one entry per failure). */
   failures: string[];
+  /**
+   * Skips caused by the ENGINE (V8), by feature: what it does not implement or caps below the
+   * spec, as a sentence naming the engine and version (`src/engine.ts`), and how many assertions
+   * it cost. Added 2026-09-28 so users are told the engine is the reason, not the module.
+   */
+  engineLimits: Record<string, { statement: string; count: number }>;
 }
 
 /**
@@ -956,10 +957,20 @@ export async function runWast(
     skipReasons: {},
     modulesFailed: 0,
     failures: [],
+    engineLimits: {},
   };
   const skip = (reason: string) => {
     res.skipped++;
     res.skipReasons[reason] = (res.skipReasons[reason] ?? 0) + 1;
+  };
+  // A refusal traced to the ENGINE (src/engine.ts): record it by feature and return the skip label.
+  // Never a verdict: V8 refuses these modules whatever the assertion claims about them.
+  const engineSkip = (e: unknown, what: string): string | null => {
+    const lim = explainEngineRejection(e);
+    if (!lim) return null;
+    const slot = res.engineLimits[lim.feature] ??= { statement: lim.statement, count: 0 };
+    slot.count++;
+    return `${what}: not supported by the engine — ${lim.feature}`;
   };
   // `__skip__: <label>[: <detail>]` → `<label>` (the detail varies per assertion; the label does not).
   const skipLabel = (e: unknown) =>
@@ -969,7 +980,7 @@ export async function runWast(
     e instanceof AssembleError
       ? `module: ${e.stage} failed`
       : e instanceof WebAssembly.CompileError
-      ? "module: V8 validation rejected"
+      ? engineSkip(e, "module") ?? "module: V8 validation rejected"
       : e instanceof WebAssembly.LinkError
       ? "module: link failed"
       : e instanceof WebAssembly.RuntimeError
@@ -1517,9 +1528,13 @@ export async function runWast(
             const right = kind === "assert_unlinkable"
               ? e instanceof WebAssembly.LinkError
               : e instanceof WebAssembly.CompileError;
-            if (right && isFeatureGate(e)) {
-              skip(`${h}: V8 refused an unimplemented feature — not a verdict`);
-            } else if (right) res.passed++;
+            // The engine refusing for a limitation of its own (unimplemented proposal, flag-gated
+            // feature, size cap) is not the invalidity this asserts: V8 would refuse a VALID module
+            // the same way. Until 2026-09-28 only flag-gated refusals were caught here, so 16
+            // custom-page-sizes `assert_invalid`s passed on `invalid memory limits flags 0x8`.
+            const engine = right ? engineSkip(e, h) : null;
+            if (engine) skip(engine);
+            else if (right) res.passed++;
             else {
               skip(
                 `${h}: rejected for another reason (${
@@ -1586,8 +1601,16 @@ export async function runWast(
               }
               break;
             }
-            if (isBinary && isFeatureGate(e)) {
-              skip("assert_malformed: V8 refused an unimplemented feature — not a verdict");
+            // One engine refusal IS the verdict here: the limits flag byte `0x08`. The core spec has
+            // no such flag, so a module carrying it is malformed, which is what V8 says. (In the
+            // custom-page-sizes proposal the byte is legal; that directory's malformed checks do
+            // not rest on it.) Every other engine refusal is not a verdict.
+            const lim = isBinary ? explainEngineRejection(e) : null;
+            const engine = lim && lim.feature !== "custom page sizes"
+              ? engineSkip(e, "assert_malformed")
+              : null;
+            if (engine) {
+              skip(engine);
               break;
             }
             res.passed++;
@@ -1693,6 +1716,21 @@ export async function wastCli(target: string, opts: { verbose?: boolean } = {}):
       "   skipped = assertions using features/value-types out of scope (some ref kinds, unsupported\n" +
         "   proposals, or validation assertions the wabt+host toolchain does not reject).",
     );
+  }
+  // Say it plainly when the ENGINE is the reason: which feature, and that it is V8's limit.
+  const limits = new Map<string, { statement: string; count: number }>();
+  for (const r of results) {
+    for (const [feature, { statement, count }] of Object.entries(r.engineLimits)) {
+      const slot = limits.get(feature) ?? { statement, count: 0 };
+      slot.count += count;
+      limits.set(feature, slot);
+    }
+  }
+  if (limits.size > 0) {
+    console.log(`\n   Not supported by the engine — ${engineName()}:`);
+    for (const [feature, { statement, count }] of limits) {
+      console.log(`   • ${feature} (${count} skipped): ${statement}`);
+    }
   }
   return tf === 0 ? 0 : 1;
 }

@@ -7,11 +7,11 @@
 
 | class | compiler-open | compiler-fixed | other-open | other-fixed |
 | --- | --- | --- | --- | --- |
-| SILENT-WRONG | 31 | 36 | 2 | 12 |
+| SILENT-WRONG | 31 | 36 | 2 | 13 |
 | LOUD | 14 | 13 | 1 | 8 |
 | n/a | — | 3 | — | 3 |
 
-77 classified entries (the 77th: Phase 36 restored, LOUD) plus the 45 rows of the Phase 0b round-1 table (each row counted as one
+78 classified entries (the 77th: Phase 36 restored, LOUD; the 78th: 24 wast passes resting on V8's own limits, SILENT-WRONG, other) plus the 45 rows of the Phase 0b round-1 table (each row counted as one
 bug; re-tallied 2026-09-28 after the typed-declaration rule landed: sw29 closed, sw30–sw32 and
 ld09–ld14 added, and the new entry "Landing the typed-declaration rule" holds 2 fixed and counts
 once, as SILENT-WRONG, its worst); 2 pure groupings (`### wabt-ts 1.4.0` with its blockers under `####`, and `## FIXED — the 7 long-standing test failures`) carry a note instead and are not counted. An entry covering several defects takes its WORST class. PARTIAL counts as open. n/a entries have no status and sit in the -fixed column for placement only.
@@ -98,6 +98,39 @@ exports `DATA_BASE` / `SCRATCH_SLOTS` / `ArrayLookup` (console_log.ts); the unus
 `watToOptimisedWasm` vs `binaryenOptimize`.
 
 Classified 2026-09-28 from each entry's own text; re-tally whenever an entry is added or closed.
+
+## wast: 24 passes rested on V8's own limitations; users now told when the engine is the reason (FIXED 2026-09-28)
+
+**Class:** SILENT-WRONG · **Status:** FIXED 2026-09-28 · **Scope:** other (the `.wast` runner)
+
+Owner question: can wasmtk detect V8 and say plainly when it does not implement a feature? Building
+that (`src/engine.ts`: `explainEngineRejection`, `engineName`) exposed that the runner counted some
+of those very refusals as VERDICTS. At `assert_invalid` it treated any `CompileError` as a pass
+unless the message named an experimental flag, so a module V8 refused for a limitation of its own
+passed — though V8 refuses a VALID module identically:
+
+| file | passes | V8's reason | why not a verdict |
+| --- | --- | --- | --- |
+| `custom-page-sizes-invalid` | 19 → 3 | `invalid memory limits flags 0x8` | V8 does not implement the proposal at all |
+| `custom-page-sizes/memory_max` / `_i64` | 1 → 0, 2 → 1 | the same | the same |
+| `memory64` | 59 → 55 | above V8's 16 GiB cap | V8 also refuses the VALID 2^48-page module (the 2 existing skips) |
+| `table` / `table64` | 24 → 23, 2 → 1 | initial table above V8's 10,000,000 cap | the assertion is min > max; V8 never got there |
+
+**Deliberately kept as verdicts** (a narrower rule, measured): a 32-bit memory above 65,536 pages
+(`memory.wast`, `threads/memory.wast`: 12). V8 calls 65,536 its "implementation limit", but it is the
+SPEC's maximum, so V8 is enforcing the spec. And core `binary.wast`'s malformed memory-limits flag
+`0x08`: core has no such flag, so V8's refusal is the malformed verdict. A first cut demoted all 39;
+reading each message cut it to the 24 above. Gate: 64,458 → **64,434 passed / 0 failed / 105
+skipped**, 6 files changed, each accounted for.
+
+**User-facing:** `wasmtk run` / `mod` print `ℹ️ Not supported by the engine: V8 15.0.245.2 (the
+engine in Deno 2.9.7) does not implement the custom-page-sizes proposal …` under the error; the
+`wasmtk wast` summary lists each engine limitation once with its skip count; skip labels read
+`not supported by the engine — <feature>`. `isFeatureGate` (flag-only) is folded into the new
+module. Gate: `tests/engine_tests.ts` (11).
+
+**Lesson (again):** a refusal is a verdict only if the refuser would ACCEPT the valid twin. Check the
+valid twin (here: V8 refuses `(memory i64 0x1_0000_0000_0000)`, which is valid) before counting it.
 
 ## Phase 36 conditional types were never on the main line (RESTORED 2026-09-28)
 

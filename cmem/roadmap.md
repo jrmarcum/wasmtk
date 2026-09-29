@@ -38,6 +38,18 @@
 > replace it with the real version at publish time. A breaking change may ALSO warrant a Feature
 > Status row if it ships alongside a feature — but the Breaking Changes row is mandatory.
 
+## Unreleased (on `main`, 2026-09-28, after v2.0.3)
+
+1. **The engine is named when it is the reason** (owner request). `src/engine.ts`: V8's terse
+   refusals (custom page sizes: `invalid memory limits flags 0x8`; a memory64 above V8's 16 GiB cap;
+   a flag-gated proposal) become one sentence naming the feature and the V8/Deno version, printed by
+   `wasmtk run` / `mod` under the error and listed in the `wasmtk wast` summary. Not a breaking
+   change: output only.
+2. **wast: 24 false passes removed** (the same refusals had counted as `assert_invalid` verdicts);
+   gate 64,434 / 0 / 105. `tests/engine_tests.ts` (11).
+3. Two binaryang items found and handed over (next-work.md census): limits above u32 fail in the
+   encoder; a branch hint on a non-branch is accepted.
+
 ## Release status (2026-09-28) — v2.0.3: typed declarations, exit-code parity, binaryang 1.7.0
 
 **Released from `main` 2026-09-28** (owner: "bump and publish", once binaryang 1.7.0 was gated).

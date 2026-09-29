@@ -2,6 +2,11 @@
 
 > ## Census of the 81 remaining wast skips (2026-09-28, binaryang 1.7.0, gate flags)
 >
+> **Now 105** (same day): 24 former passes that rested on V8's own limitations are skips too —
+> custom page sizes (17 more), memory64 above V8's 16 GiB cap (4), tables above V8's 10,000,000
+> cap (2). Every one is labelled `not supported by the engine — <feature>` and reported to the user
+> (compiler-bugs.md). The census below is the 81 before that.
+>
 > By running every file and grouping `skipReasons`. **70 are V8** (engine limits): custom page
 > sizes has no V8 implementation (the 27 + 25 + 4 + 2 in `proposals/custom-page-sizes/`), 5
 > `threads` `assert_invalid` modules V8 accepts, and unimplemented-feature refusals in `align` (4),

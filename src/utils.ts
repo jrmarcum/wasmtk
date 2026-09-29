@@ -11,6 +11,7 @@ import binaryen from "./binaryen.ts";
 import wabt from "wabt";
 import { bundleImports } from "./tsbundler.ts";
 import { emitWitBeside } from "./witgen.ts";
+import { explainEngineRejection } from "./engine.ts";
 
 // NOTE: `compileWasi` and `compileModule` are deliberately NOT re-exported here. They live in
 // `wasic.ts` / `modc.ts`, which are the public homes the README's Programmatic API table documents,
@@ -368,8 +369,20 @@ export async function runWasi(path: string, args: string[]): Promise<void> {
     }
   } catch (err) {
     console.error(`❌ Run error: ${err}`);
+    explainIfEngine(err);
     rt.exit(1);
   }
+}
+
+/**
+ * Under a compile error that is the ENGINE's limitation (an unimplemented proposal, a flag-gated
+ * feature, a size cap), say so in plain words, naming the engine and version. V8's own text for
+ * these is terse (`invalid memory limits flags 0x8`) and reads as if the module were broken.
+ */
+function explainIfEngine(err: unknown): void {
+  if (!(err instanceof WebAssembly.CompileError)) return;
+  const lim = explainEngineRejection(err);
+  if (lim) console.error(`   ℹ️  Not supported by the engine: ${lim.statement}`);
 }
 
 /**
@@ -430,6 +443,7 @@ export async function callExport(path: string, fnName: string, params: string[])
     if (res !== undefined) console.log(`${res}`);
   } catch (err) {
     console.error(`❌ mod error: ${err}`);
+    explainIfEngine(err);
     rt.exit(1);
   }
 }
