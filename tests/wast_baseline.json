@@ -16,8 +16,8 @@
     "skip": 0
   },
   "align.wast": {
-    "pass": 136,
-    "skip": 4
+    "pass": 140,
+    "skip": 0
   },
   "align0.wast": {
     "pass": 4,
@@ -152,8 +152,8 @@
     "skip": 0
   },
   "custom/branch_hint.wast": {
-    "pass": 2,
-    "skip": 1
+    "pass": 3,
+    "skip": 0
   },
   "custom/custom_annot.wast": {
     "pass": 14,
@@ -440,16 +440,16 @@
     "skip": 0
   },
   "memory.wast": {
-    "pass": 72,
-    "skip": 6
+    "pass": 78,
+    "skip": 0
   },
   "memory64-imports.wast": {
     "pass": 30,
     "skip": 0
   },
   "memory64.wast": {
-    "pass": 55,
-    "skip": 6,
+    "pass": 59,
+    "skip": 2,
     "unbuilt": 2
   },
   "memory_copy.wast": {
@@ -621,8 +621,8 @@
     "skip": 1
   },
   "proposals/custom-page-sizes/custom-page-sizes-invalid.wast": {
-    "pass": 3,
-    "skip": 19,
+    "pass": 19,
+    "skip": 3,
     "unbuilt": 1
   },
   "proposals/custom-page-sizes/custom-page-sizes.wast": {
@@ -631,13 +631,13 @@
     "unbuilt": 12
   },
   "proposals/custom-page-sizes/memory_max.wast": {
-    "pass": 0,
-    "skip": 6,
+    "pass": 2,
+    "skip": 4,
     "unbuilt": 4
   },
   "proposals/custom-page-sizes/memory_max_i64.wast": {
-    "pass": 1,
-    "skip": 5,
+    "pass": 2,
+    "skip": 4,
     "unbuilt": 4
   },
   "proposals/threads/atomic.wast": {
@@ -1009,13 +1009,13 @@
     "skip": 0
   },
   "table.wast": {
-    "pass": 23,
-    "skip": 5,
+    "pass": 27,
+    "skip": 1,
     "unbuilt": 1
   },
   "table64.wast": {
-    "pass": 1,
-    "skip": 2,
+    "pass": 2,
+    "skip": 1,
     "unbuilt": 1
   },
   "table_copy.wast": {

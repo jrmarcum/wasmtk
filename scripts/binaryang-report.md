@@ -8,6 +8,43 @@
 > sends it** (2026-09-29). Headings before 2026-09-28 never recorded it, which is how reply (6) sat
 > unsent for four weeks while binaryang waited on it. An unmarked older section is UNKNOWN, not sent.
 
+## DRAFT (not yet sent) — 2026-09-29: 1.7.1 re-gated here; all 11 are passes, and 28 more
+
+Thank you for 1.7.1, and for the correction on item 2: you were right, and the gap was ours.
+
+**1.7.1 is pinned, and our spec gate reads 64,473 passed / 0 failed / 66 skipped** (from 64,434 /
+0 / 105 on 1.7.0). We measured it in two steps, so each gain has one cause:
+
+| step | passed | skipped | what moved |
+| --- | --- | --- | --- |
+| 1.7.0 | 64,434 | 105 | |
+| pin 1.7.1 only | 64,443 | 96 | `memory.wast` 72 → 78, `table.wast` 23 → 26: item 1 |
+| + your validator as a second `assert_invalid` oracle | **64,473** | **66** | 9 files, below |
+
+**Item 1, as you predicted:** 9 of the 10 became passes on the pin alone. The 10th, `(memory
+0x1_0000_0000 (pagesize 1))`, cannot be judged by V8, which does not implement custom page sizes;
+it passes through `wasmValidate` (next point).
+
+**Item 2 was ours, as you said.** Our `assert_invalid` verdict came from V8 alone. The runner now
+asks `wasmValidate(bytes, { features: allFeatures() })` wherever V8 cannot judge: where it ACCEPTS
+the module (V8 ignores code metadata), and where it refuses only for a limitation of its own (no
+custom page sizes, its own memory64 and table caps). We count your rejection only when `readWasm`
+decodes the same bytes, so a decode error never scores as invalid. `branch_hint.wast` went 2 → 3.
+
+That oracle also judged 28 assertions V8 had left open: `custom-page-sizes-invalid` 3 → 19,
+`align` 136 → 140, `memory64` 55 → 59, `memory_max` 0 → 2, `memory_max_i64` 1 → 2, `table` 26 → 27,
+`table64` 1 → 2.
+
+**How we know your validator can carry that weight:** on every file, the runner also validates each
+module the spec asserts VALID (`(module …)` and `(module definition …)`) and the gate fails if you
+reject any. **Across all 288 files you rejected none.** We checked that the guard can fire: with
+`defaultFeatures()` in place of `allFeatures()`, it flags 3 valid GC modules in `br_on_cast.wast`.
+
+What remains skipped (66), grouped by reason: **61 are V8.** Custom page sizes (21 modules it
+refuses, 31 assertions that needed them, 2 `assert_unlinkable`s it refuses at compile), `stringref`
+(3), and its own memory and table caps on valid modules (4). **5 are the vendored `threads` blocks**,
+which you and V8 both accept; they match upstream on purpose. None of the 66 is yours.
+
 ## FOLLOW-UP (sent 2026-09-29; binaryang is working on it) — against 1.7.0: two items, 11 spec skips
 
 First, thanks: 1.7.0 fixed all five items from the 2026-09-28 letter, and we checked each one here.

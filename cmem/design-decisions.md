@@ -848,18 +848,27 @@ silently break (all `src/wasic.ts`):
     testsuite"). **Do not remove the pin**, and never fix line endings by rewriting the vendored
     files — they are upstream's bytes and must stay that way.
   - 🔀 **BOTH BACKENDS ARE NOW ONE PACKAGE — `@jrmarcum/binaryang` (merged 2026-08-27).** `wabt-ts`
-    and `binaryen-ts` no longer exist as separate dependencies. `deno.json` keeps **two specifiers
-    pointing at one dependency at one version**:
+    and `binaryen-ts` no longer exist as separate dependencies. `deno.json` keeps **three specifiers
+    pointing at one dependency at one version** (the third added 2026-09-29):
 
     ```jsonc
-    "binaryen-backend": "jsr:@jrmarcum/binaryang@1.7.0/compat/binaryen",
-    "wabt":             "jsr:@jrmarcum/binaryang@1.7.0/compat/wabt"
+    "binaryen-backend":   "jsr:@jrmarcum/binaryang@1.7.1/compat/binaryen",
+    "binaryang-validate": "jsr:@jrmarcum/binaryang@1.7.1/wasm-validate",
+    "wabt":               "jsr:@jrmarcum/binaryang@1.7.1/compat/wabt"
     ```
+
+    - **`binaryang-validate` is the wast runner's second `assert_invalid` oracle** (`src/wast.ts`
+      `binaryangInvalid`, 2026-09-29): `wasmValidate(bytes, { features: allFeatures() })` decides
+      where V8 cannot (it accepts, or refuses only for a limit of its own). Two conditions keep it
+      sound, and neither may be dropped: (1) a rejection counts only if `readWasm` DECODES the same
+      bytes, because `wasmValidate` pools decode and validation errors; (2) every module the spec
+      asserts VALID is validated too, and the gate FAILS if binaryang rejects one
+      (`validatorRejectedValid`). Take `allFeatures` from binaryang, never a hand-written list (H10).
 
     ⚠️ **The alias is `binaryen-backend`, not `binaryen`** — see the invariant below. This block is
     the live shape; keep it in step with `deno.json` or it becomes the thing people copy.
 
-    - **Keep the two specifiers.** They are not redundant: `src/binaryen.ts` is a facade that also
+    - **Keep the compat specifiers separate.** They are not redundant: `src/binaryen.ts` is a facade that also
       supports `npm:binaryen`, and the bare `"wabt"` specifier is imported by five modules. Two
       names over one package preserves the ability to swap either half independently.
     - 🔒 **The Binaryen alias is `binaryen-backend`, NOT the bare `binaryen` (2026-08-31). Do not
@@ -870,12 +879,13 @@ silently break (all `src/wasic.ts`):
       **an import alias must not collide with the name of a package the project could actually
       resolve.** `"wabt"` does not collide with anything we can point it at, so it stays bare.
     - **They must move together.** Version skew between the assembler and the optimiser used to be
-      unavoidable; it is now self-inflicted. Bump both lines or neither.
+      unavoidable; it is now self-inflicted. Bump all three lines or none.
     - **There is no `./ir` and the root export is empty**, deliberately — 56 type names collide
       across the two retained IRs (`Type`, `ValueType`, `WasmModule`, `Token`, ~52 expression
-      nodes). Always import a **compat subpath**; never the bare package.
-  - 🔒 **THE RULE: `@jrmarcum/binaryang` is EXACT-pinned (no caret), both subpaths at the same
-    version, and it moves only with a full gate** (currently `1.6.0`, commit `17d5a1e6ae4`). Both
+      nodes). Always import a **compat subpath** (or a tool subpath such as `./wasm-validate`, which
+      exports no IR); never the bare package.
+  - 🔒 **THE RULE: `@jrmarcum/binaryang` is EXACT-pinned (no caret), every subpath at the same
+    version, and it moves only with a full gate** (currently `1.7.1`, 2026-09-29). Both
     halves are code generators whose *output text* we parse, so the pin is a CORRECTNESS pin, not a
     compatibility range. Never reintroduce a caret.
     - History, for the reasoning only: `^1.3.5` let wabt-ts 1.4.0 (a stricter validator rejecting

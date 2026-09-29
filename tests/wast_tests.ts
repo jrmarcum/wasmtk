@@ -222,6 +222,7 @@ if (Deno.args[0] === "--run-one") {
       skipped: r.skipped,
       modulesFailed: r.modulesFailed,
       failures: r.failures,
+      validatorRejectedValid: r.validatorRejectedValid,
     }),
   );
   Deno.exit(0);
@@ -359,6 +360,7 @@ for (const rel of names) {
     skipped: number;
     modulesFailed: number;
     failures: string[];
+    validatorRejectedValid: string[];
   };
   try {
     if (isScoped(rel)) {
@@ -414,6 +416,13 @@ for (const rel of names) {
   if (r.passed !== want.pass) drift.push(`passes ${want.pass} → ${r.passed}`);
   if (r.modulesFailed !== wantUnbuilt) {
     drift.push(`unbuilt modules ${wantUnbuilt} → ${r.modulesFailed}`);
+  }
+  // Not a baseline number: an invariant. binaryang's validator is the second `assert_invalid`
+  // oracle (2026-09-29), and it may only be trusted while it rejects NO module the spec calls valid;
+  // one such rejection means its other rejections can be manufacturing passes.
+  if (r.validatorRejectedValid.length > 0) {
+    drift.push(`binaryang's validator rejected ${r.validatorRejectedValid.length} VALID module(s)`);
+    r.failures = [...r.validatorRejectedValid, ...r.failures];
   }
 
   if (drift.length > 0) {

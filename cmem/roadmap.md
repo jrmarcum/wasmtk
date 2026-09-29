@@ -48,7 +48,16 @@
 2. **wast: 24 false passes removed** (the same refusals had counted as `assert_invalid` verdicts);
    gate 64,434 / 0 / 105. `tests/engine_tests.ts` (11).
 3. Two binaryang items found and handed over (next-work.md census): limits above u32 fail in the
-   encoder; a branch hint on a non-branch is accepted.
+   encoder; a branch hint on a non-branch is accepted. ✅ Closed 2026-09-29 by item 5.
+4. **H12 sw01 + sw33 (2026-09-29):** `throw new TypeError(…)` / `throw 42` exited 0 with no catch
+   run; now catchable, an uncaught one exits 1, and throwing an object is a compile error.
+   `String(<bool>)` gave `"1"`. Tests `15_Throw*` (3). Open silent-wrong in the compiler 31 → 30.
+5. **Backend → binaryang 1.7.1, and a second `assert_invalid` oracle (2026-09-29).** 1.7.1 encodes
+   limits as u64 and rejects the invalid ones (our item 1). The wast runner now asks binaryang's
+   `wasmValidate` where V8 cannot judge (it accepts, or refuses only for its own limit), counting a
+   validation verdict only, and fails the gate if binaryang rejects any module the spec calls valid
+   (0 of all). Gate **64,473 / 0 / 66** (was 64,434 / 105): all 11 reported skips pass, plus 28
+   assertions V8 had left open.
 
 ## Release status (2026-09-28) — v2.0.3: typed declarations, exit-code parity, binaryang 1.7.0
 

@@ -19,6 +19,7 @@
  * full testsuite while still validating everything in scope.
  */
 import wabt from "wabt";
+import { allFeatures, wasmValidate } from "binaryang-validate";
 import { rt } from "./rt.ts";
 import { engineName, explainEngineRejection } from "./engine.ts";
 
@@ -890,6 +891,13 @@ export interface WastResult {
    * it cost. Added 2026-09-28 so users are told the engine is the reason, not the module.
    */
   engineLimits: Record<string, { statement: string; count: number }>;
+  /**
+   * Modules the spec asserts VALID (`(module …)`, `(module definition …)`) that binaryang's
+   * validator rejected, as `<reason>: <module start>`. binaryang is the second `assert_invalid`
+   * oracle (added 2026-09-29), so a rejection of a valid module would let it manufacture passes;
+   * the gate requires this to be empty.
+   */
+  validatorRejectedValid: string[];
 }
 
 /**
@@ -958,6 +966,7 @@ export async function runWast(
     modulesFailed: 0,
     failures: [],
     engineLimits: {},
+    validatorRejectedValid: [],
   };
   const skip = (reason: string) => {
     res.skipped++;
@@ -999,6 +1008,23 @@ export async function runWast(
 
   const wabtMod: WabtModule = await getWabt();
   getGcClassifier(wabtMod); // `resultMatches` reads it for `(ref.struct)` & co.
+
+  // binaryang's VALIDATION verdict on `bytes`: its first error when the module DECODES but does not
+  // validate, else null. The second `assert_invalid` oracle (2026-09-29), for the modules V8 cannot
+  // judge: V8 ignores code metadata (a branch hint on a non-branch), and refuses some modules for
+  // limits of its own. `wasmValidate` pools decode and validation errors, and a decode failure is
+  // not the invalidity `assert_invalid` asserts, so the bytes must first survive the decoder alone
+  // (`readWasm` throws on a decode error and never validates).
+  const binaryangInvalid = (bytes: Uint8Array): string | null => {
+    const r = wasmValidate(bytes, { features: allFeatures() });
+    if (r.result === 0) return null; // Result.Ok
+    try {
+      wabtMod.readWasm(bytes, { readDebugNames: false }).destroy();
+    } catch {
+      return null; // undecodable here: not a validation verdict
+    }
+    return r.errors[0]?.message ?? "invalid";
+  };
 
   let cur: WebAssembly.Instance | null = null;
   const named = new Map<string, WebAssembly.Instance>();
@@ -1204,9 +1230,19 @@ export async function runWast(
             : "plain";
           const ids = cmd.list.slice(kind === "plain" ? 1 : 2, kind === "instance" ? undefined : 3)
             .filter((x): x is string => typeof x === "string" && x.startsWith("$"));
+          // The spec asserts these modules VALID: binaryang rejecting one disqualifies it as an
+          // `assert_invalid` oracle (see `validatorRejectedValid`).
+          const checkValid = (bytes: Uint8Array) => {
+            const why = binaryangInvalid(bytes);
+            if (why !== null) {
+              res.validatorRejectedValid.push(`${why}: ${src.slice(cmd.start, cmd.start + 70)}`);
+            }
+          };
           try {
             if (kind === "definition") {
-              const mod = new WebAssembly.Module(assemble(cmd) as BufferSource);
+              const defBytes = assemble(cmd);
+              checkValid(defBytes);
+              const mod = new WebAssembly.Module(defBytes as BufferSource);
               lastDefinition = mod;
               if (ids[0]) definitions.set(ids[0], mod);
               break;
@@ -1221,6 +1257,7 @@ export async function runWast(
             }
             const nameTok = ids[0];
             const bytes = assemble(cmd);
+            checkValid(bytes);
             cur = await instantiate(bytes);
             if (nameTok) named.set(nameTok, cur);
           } catch (e) {
@@ -1511,12 +1548,22 @@ export async function runWast(
           // false-green the `assert_malformed` stage split closed on 2026-09-19. Now `assert_invalid`
           // needs V8's VALIDATION verdict (a CompileError), `assert_unlinkable` needs a LinkError, and
           // any other failure is a labelled skip.
+          //
+          // ✚ SECOND ORACLE (2026-09-29): where V8 cannot judge — it ACCEPTED the module, or refused
+          // it only for a limitation of its own — binaryang's validator decides (`binaryangInvalid`,
+          // a validation verdict only, never a decode error). Sound only while binaryang rejects no
+          // module the spec calls valid, which `validatorRejectedValid` checks on every file.
           const mod = cmd.list[1] as SexpList;
           const kind = h === "assert_unlinkable" ? "assert_unlinkable" : "assert_invalid";
+          let bytes: Uint8Array | null = null;
           try {
-            const bytes = assemble(mod);
+            bytes = assemble(mod);
             if (kind === "assert_unlinkable") await instantiate(bytes);
             else await WebAssembly.compile(bytes as BufferSource); // validation
+            if (kind === "assert_invalid" && binaryangInvalid(bytes) !== null) {
+              res.passed++;
+              break;
+            }
             skip(`${h}: toolchain accepted it`);
             if (opts.verbose) {
               res.failures.push(
@@ -1532,8 +1579,14 @@ export async function runWast(
             // feature, size cap) is not the invalidity this asserts: V8 would refuse a VALID module
             // the same way. Until 2026-09-28 only flag-gated refusals were caught here, so 16
             // custom-page-sizes `assert_invalid`s passed on `invalid memory limits flags 0x8`.
-            const engine = right ? engineSkip(e, h) : null;
-            if (engine) skip(engine);
+            // (`engineSkip` records the limitation for the user, so it runs only when we skip.)
+            const engineRefused = right && explainEngineRejection(e) !== null;
+            if (
+              engineRefused && kind === "assert_invalid" && bytes &&
+              binaryangInvalid(bytes) !== null
+            ) {
+              res.passed++; // V8 could not judge; binaryang's validator rejected it
+            } else if (engineRefused) skip(engineSkip(e, h)!);
             else if (right) res.passed++;
             else {
               skip(

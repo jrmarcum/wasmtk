@@ -138,15 +138,21 @@ const inv = await runWast(
   join(SUITE, "proposals", "custom-page-sizes", "custom-page-sizes-invalid.wast"),
 );
 ok(
-  // 17 = the 16 page-size assert_invalids + the file's one plain page-size module V8 refuses.
-  "custom-page-sizes-invalid: 16 assert_invalids + 1 module are engine skips, not passes",
-  inv.engineLimits["custom page sizes"]?.count === 17 && inv.passed === 3,
-  `passed=${inv.passed} limits=${JSON.stringify(inv.engineLimits)}`,
+  // V8's refusal is still never the verdict. Since 2026-09-29 binaryang's validator judges what V8
+  // cannot: the 16 page-size assert_invalids pass on ITS rejection (3 → 19), and the file's one
+  // plain page-size module, which is valid, is still an engine skip (count 17 → 1).
+  "custom-page-sizes-invalid: V8 refusals are skips; binaryang's validator decides the 16",
+  inv.engineLimits["custom page sizes"]?.count === 1 && inv.passed === 19 &&
+    inv.validatorRejectedValid.length === 0,
+  `passed=${inv.passed} limits=${
+    JSON.stringify(inv.engineLimits)
+  } rejectedValid=${inv.validatorRejectedValid.length}`,
 );
 const core = await runWast(join(SUITE, "memory.wast"));
 ok(
-  "core memory.wast: the 32-bit size limits still PASS (V8's cap is the spec's)",
-  core.passed === 72 && Object.keys(core.engineLimits).length === 0,
+  // 72 → 78 on binaryang 1.7.1: limits above u32 now encode (as u64), and are refused as invalid.
+  "core memory.wast: the 32-bit size limits PASS, with no engine limit (V8's cap is the spec's)",
+  core.passed === 78 && Object.keys(core.engineLimits).length === 0,
   `passed=${core.passed} limits=${JSON.stringify(core.engineLimits)}`,
 );
 

@@ -197,13 +197,13 @@ deno test --no-check --allow-read --allow-write --allow-run --allow-env \
 # 3. the Go suites — ONE AT A TIME (see traps)
 #    go_bindgen go_merge go_asyncify
 
-# 4. wast_tests   → expect 288 files / 64434 assertions / 0 failures / 105 skipped / 0 unrunnable
-#    (as of 2026-09-28, binaryang 1.7.0) → "✅ ALL CLEAN". Should a known failure ever be pinned
+# 4. wast_tests   → expect 288 files / 64473 assertions / 0 failures / 66 skipped / 0 unrunnable
+#    (as of 2026-09-29, binaryang 1.7.1) → "✅ ALL CLEAN". Should a known failure ever be pinned
 #    again, "✅ ON BASELINE — N known failure(s) still standing" is the pass condition.
 #    The known failures print in red every run by design; the gate fails only if a count MOVES.
 
-# 5. engine_cross_check → expect 378 modules × 3 engines = 1134 pairs on baseline (2026-09-28),
-#    0 regressed, 0 improved (as of 2026-09-28)
+# 5. engine_cross_check → expect 1140 pairs on baseline (2026-09-29), 0 regressed, 0 improved;
+#    15 pairs (the five `36_*` modules) are not in the baseline yet
 deno run --allow-read --allow-run --allow-env --allow-write tests/engine_cross_check_tests.ts
 #    Multi-engine (V8 vs wasmtime/wasmer/wazero). Absent engines skip, never fail.
 #    An IMPROVEMENT fails too, until the baseline is re-recorded deliberately.

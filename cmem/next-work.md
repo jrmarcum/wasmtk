@@ -10,13 +10,14 @@
 >   (pagesize 1))`, which would have turned our 10th skip into a failure). Item 2 is **OURS**:
 >   `toBinary` never validates, and the branch-hint check lives in `wasmValidate`; V8 ignores the
 >   code-metadata section, so our V8-only `assert_invalid` verdict accepts it.
-> - ⏳ **Next branch (separate from sw01): pin binaryang 1.7.1, and give the wast runner a second
->   `assert_invalid` oracle.** Where V8 ACCEPTS (`src/wast.ts` "toolchain accepted it"), ask
->   `wasmValidate(bytes, { features: allFeatures() })`; its rejection is the verdict. **False-pass
->   guard first:** run `wasmValidate` over every VALID module in the corpus and require 0
->   rejections, or the new oracle can manufacture passes. Expect wast skips **105 → 94**, then
->   re-record and REPORT the result to binaryang (they are waiting on it). `minimumDependencyAge` is
->   `PT1M`, so 1.7.1 already resolves.
+> - ✅ **DONE (branch `chore/binaryang-1.7.1-2026-09-29`): binaryang 1.7.1 pinned, and the wast
+>   runner has a second `assert_invalid` oracle** (design-decisions.md, the binaryang block). wast
+>   **64,473 / 0 / 66**. The prediction "105 → 94" was WRONG in two places, each explained: the pin
+>   alone moved `table.wast` +3 (V8's refusal there is the spec's own maximum, so a verdict), and the
+>   oracle also judged 28 assertions V8 refused only for its own limits (the 24 demoted on
+>   2026-09-28 among them). Guard: 0 valid modules rejected.
+> - 📬 **Report to binaryang DRAFTED** (`scripts/binaryang-report.md`, top section, "DRAFT (not yet
+>   sent)"); the owner sends it. The 66 remaining skips are V8 (61) and `threads` (5), none theirs.
 
 > ## Census of the 81 remaining wast skips (2026-09-28, binaryang 1.7.0, gate flags)
 >
